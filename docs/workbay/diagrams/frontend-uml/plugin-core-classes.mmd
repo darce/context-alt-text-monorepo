@@ -1,0 +1,83 @@
+classDiagram
+%% Updated: 2026-03-28
+
+class AltContextAdminConfig {
+  <<window.AltContextAdmin>>
+  +nonce: string
+  +endpoints: map
+  +tenant_id?: string
+  +devMode?: boolean | string | number
+  +recognitionUrlFallback?: boolean
+}
+
+class ApiConfig {
+  +getConfig(): ApiConfig
+  +getEndpoint(primary, ...fallbacks): string
+  +isDevMode(): boolean
+}
+
+class HttpClient {
+  +fetchApi<T>(url, opts): Promise<T>
+  +stripTrailingSlash(url): string
+}
+
+class WorkbenchPage {
+  +tabs: ["scan","confirm"]
+  +uses WorkbenchProvider
+}
+
+class WorkbenchContext {
+  +activeSection: WorkbenchTab
+  +activeOverlay: WorkbenchOverlay
+  +jobHistory state
+  +mediaQuery state
+  +scan / cluster orchestration
+}
+
+class WorkbenchHooks {
+  +useRecognitionJobHistory()
+  +useMediaSelectionState()
+  +useWorkbenchFilters()
+  +useWorkbenchMedia(params)
+  +useJobStateMachine(opts)
+  +useTabParam()
+  +useOverlayParam()
+}
+
+class WorkbenchComponents {
+  +ScanTabContent
+  +ConfirmTabContent
+  +SyncStatusIndicator
+  +ConflictInbox
+  +DeadLetterPanel
+}
+
+class RetentionPage {
+  +useRetentionPageState()
+  +RetentionDialogs
+  +AuditTimeline
+}
+
+class RosterPage {
+  +tabs: ["entries","clusters"]
+  +useRosterEntries()
+  +useRecognitionClusters()
+  +useRecognitionCluster()
+}
+
+class RosterComponents {
+  +ClusterGrid
+  +ClusterDrawerPanel
+  +useClusterMediaMap()
+  +useClusterDragDrop()
+  +useClusterActions()
+}
+
+AltContextAdminConfig --> ApiConfig : localized
+ApiConfig --> HttpClient : supplies endpoints and nonce
+WorkbenchPage --> WorkbenchContext
+WorkbenchContext --> WorkbenchHooks
+WorkbenchPage --> WorkbenchComponents
+RetentionPage --> HttpClient
+RosterPage --> RosterComponents
+RosterComponents --> HttpClient

@@ -1,0 +1,21 @@
+{
+  "at": 1792299025.533448,
+  "command": [
+    "/Users/daniel/.local/bin/codebase-memory-mcp",
+    "cli",
+    "--json",
+    "search_graph",
+    "{\"name_pattern\": \".*(_redact_response|_request|describe|_usage).*\", \"project\": \"bakeoff-raw-auth-source-6633\"}"
+  ],
+  "exit": 0,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "results_refs: 4  (cols: id prefix)\n  0 bakeoff-raw-auth-source-6633.bakeoff.\n  1 bakeoff-raw-auth-source-6633.bakeoff.BakeoffClient.\n  2 bakeoff-raw-auth-source-6633.remote_client.RemoteSceneClient.\n  3 remote_client.py\nresults_ref_rule: @N+suffix=prefix+suffix\nresults: 11  (cols: qn label file lines in out)\n  @0+_USAGE_FIELDS Variable bakeoff.py 1306-1306 2 0\n  @0+_extract_usage Function bakeoff.py 1309-1329 1 2\n  @1+_redact_response Method bakeoff.py 676-699 1 0\n  @2+_request Method @3+ 102-152 5 6\n  @1+_request Method bakeoff.py 655-674 0 2\n  @2+_request_dict Method @3+ 154-158 6 2\n  @0+_sum_usage Function bakeoff.py 1332-1357 2 3\n  bakeoff-raw-auth-source-6633.test_eval_harness_bakeoff_raw_auth.describe Function test_eval_harness_bakeoff_raw_auth.py 80-81 5 0\n  @2+describe Method @3+ 180-207 0 1\n  @1+describe Method bakeoff.py 701-785 1 18\n  @1+weave_bench_describe Method bakeoff.py 787-813 1 7\ntotal: 11\nreturned: 11\nhas_more: false\ntruncated: false\n"
+      }
+    ],
+    "isError": false
+  },
+  "stderr": "warning: passing raw JSON to 'cli search_graph' is deprecated and will be removed in a future release; use flags (run 'cli search_graph --help'), --args-file <path>, or piped stdin.\n"
+}

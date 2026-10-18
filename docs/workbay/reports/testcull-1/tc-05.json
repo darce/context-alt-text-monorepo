@@ -1,0 +1,77 @@
+{
+  "lane": "tc-05",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py",
+      "verdict": "REWRITE",
+      "tests_total": 37,
+      "tests_affected": [
+        "test_warmup_clone_preserves_caption_and_lexicon_configuration",
+        "test_extract_caption_reasoning_only_names_reasoning_content",
+        "test_extract_caption_content_none_is_empty_error",
+        "test_extract_caption_joins_content_parts_array",
+        "test_timeout_wires_through_to_httpx_client",
+        "test_ablate_names_replaces_word_boundary_case_insensitive",
+        "test_ablate_names_reports_only_names_found",
+        "test_inject_distractor_picks_first_easy_wrong",
+        "test_inject_distractor_none_without_easy_wrong"
+      ],
+      "reason": "These nine checks call underscore-prefixed helpers or inspect BakeoffClient._client, while the public prompt, response, and evaluation-mode behavior is observable through the fake-transport client path.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:115 - directly calls _clone_bakeoff_client; apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:506, :513, :519 - call _extract_caption; apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:526 - reads client._client.timeout; apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:614, :634, :642, :651 - call _ablate_names or _inject_distractor directly.",
+      "subject": "scripts.eval_harness.bakeoff prompt, response parsing, transport timeout, and evaluation-mode behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-12", "TEST-16"],
+      "replacement": "Exercise warm-up through the public bake-off runner, extraction and name transforms through BakeoffClient.describe() or fetch_run_record() with the existing fake transport, and observe timeout through the transport request seam.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_cli.py",
+      "verdict": "SPEED",
+      "tests_total": 164,
+      "tests_affected": [
+        "test_cmd_score_check_determinism_raw_utf8_run_record_under_c_locale",
+        "test_f8_determinism_artifact_content_ignores_shared_out_decoy",
+        "test_score_gate_fail_call_sites_use_prefix_constants"
+      ],
+      "reason": "The nested C-locale check starts a CLI child that launches hash-seed children, the F8 regression also runs the real guard, and a neighboring test AST-scans call sites; move process-heavy checks later and keep the F8 and operator README contracts while asserting prefixes through CLI output.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_cli.py:6149 - requests --check-determinism from the C-locale child; apps/prototype-description-service/scene/tests/test_eval_harness_cli.py:6139 - helper starts a subprocess; apps/prototype-description-service/scene/tests/test_eval_harness_cli.py:2327, :2357 - F8 guard uses the real subprocess path; apps/prototype-description-service/scene/tests/test_eval_harness_cli.py:5791 - parses cli.py AST; apps/prototype-description-service/scene/tests/test_eval_harness_cli.py:5761 - reads the operator-facing README gate table.",
+      "subject": "scripts.eval_harness.cli cross-process determinism and C-locale I/O behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-24", "TEST-12"],
+      "replacement": "Keep lightweight mocked child-result cases local; move the real C-locale and hash-seed process checks to a later pipeline stage, and assert score-gate prefixes through CLI behavior instead of parsing cli.py AST.",
+      "est_seconds_saved": 26.6,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_corpus_inventory.py",
+      "verdict": "KEEP",
+      "tests_total": 26,
+      "tests_affected": [],
+      "reason": "The flagged frozen-record case raises AssertionError if assignment succeeds, and the other tests assert distinct image-feature and checkpoint behaviors.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_corpus_inventory.py:234 - attempts to mutate ImageRecord; apps/prototype-description-service/scene/tests/test_eval_harness_corpus_inventory.py:237 - explicitly raises AssertionError if mutation does not fail.",
+      "subject": "scripts.eval_harness.corpus_inventory image features and JSONL checkpoint behavior",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "None.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_describe_baseline.py",
+      "verdict": "KEEP",
+      "tests_total": 14,
+      "tests_affected": ["test_no_hardcoded_operator_uploads_constant"],
+      "reason": "Retain this module-level RH-01 guard: line 294 rejects reintroducing the forbidden /Volumes/Butter UPLOADS value, an invariant the --uploads/BASELINE_UPLOADS resolver tests do not cover.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_describe_baseline.py:294 - the check skips its assertion when UPLOADS is absent; apps/prototype-description-service/scripts/eval_harness/describe_baseline.py:47 - documents no hardcoded uploads path; apps/prototype-description-service/scripts/eval_harness/describe_baseline.py:99, :104 - resolves only from the CLI value or BASELINE_UPLOADS.",
+      "subject": "scripts.eval_harness.describe_baseline uploads-root resolution",
+      "duplicate_of": "",
+      "canon": ["TEST-11", "TEST-15"],
+      "replacement": "Keep test_no_hardcoded_operator_uploads_constant for the module-level RH-01 invariant; test_resolve_uploads_requires_flag_or_env separately guards CLI/env resolution.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

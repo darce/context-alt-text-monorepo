@@ -1,0 +1,95 @@
+classDiagram
+    direction TB
+    %% Core Observability Classes (current implementation)
+    class ClusteringLogger {
+        +bind_run_context(context)
+        +log_decision(identity_id, cluster_id, decision, similarity, reason)
+        +log_batch_start(identity_count, algorithm)
+        +log_batch_complete(report)
+        +log_cluster_renamed(cluster_id, old_label, new_label, tenant_id)
+        +log_cluster_merged(source_cluster_id, target_cluster_id, moved_count, tenant_id)
+        +log_cluster_split(original_cluster_id, new_cluster_ids, moved_counts, tenant_id)
+    }
+
+    class BatchJobReport {
+        <<dataclass>>
+        +job_id: str
+        +algorithm: str
+        +started_at: datetime
+        +completed_at: datetime?
+        +total_identities: int
+        +accept_count: int
+        +suggest_count: int
+        +reject_count: int
+        +clusters_created: int
+        +avg_similarity: float?
+        +duration_ms() float
+        +success_rate() float
+        +to_json() str
+    }
+
+    class DecisionLog {
+        <<dataclass>>
+        +identity_id: str
+        +cluster_id: str?
+        +decision: DecisionType
+        +similarity: float?
+        +reason: str?
+        +timestamp: datetime
+    }
+
+    class DecisionType {
+        <<enumeration>>
+        ACCEPT
+        SUGGEST
+        REJECT
+    }
+
+    class CurationEventLog {
+        <<dataclass>>
+        +event_type: CurationEventType
+        +cluster_id: str
+        +tenant_id: str
+        +timestamp: datetime
+        +details: dict
+    }
+
+    class CurationEventType {
+        <<enumeration>>
+        RENAME
+        MERGE
+        SPLIT
+        ASSIGN_OUTLIER
+        REMOVE_MEMBER
+    }
+
+    class RecognitionRunContext {
+        +add_event(event_type, identity_id?, cluster_id?, source_cluster_id?, target_cluster_id?, payload?)
+    }
+
+    class ObservabilityRepository {
+        +save_batch_report(report, tenant_id)
+        +add_decision(decision, tenant_id, algorithm, job_id, metadata)
+        +list_decisions(filters)
+    }
+
+    class ClusterVisualizer {
+        +generate_batch_report_chart(report, algorithm, timestamp?)
+        +generate_similarity_histogram(cluster_id, similarities, algorithm?)
+    }
+
+    %% Relationships
+    ClusteringLogger --> DecisionLog : creates
+    ClusteringLogger --> CurationEventLog : records
+    ClusteringLogger --> BatchJobReport : logs
+    ClusteringLogger --> RecognitionRunContext : emits events
+    DecisionLog --> DecisionType : uses
+    CurationEventLog --> CurationEventType : uses
+    ObservabilityRepository --> BatchJobReport : persists
+    ObservabilityRepository --> DecisionLog : persists
+    ClusterVisualizer --> BatchJobReport : visualizes
+
+    note for ClusteringLogger "Legend: ENTRY = external entrypoint; Dashed arrow = optional wiring."
+    note for ObservabilityRepository "Code anchors: recognition/observability/logging.py; recognition/observability/persistence.py; recognition/observability/reports.py; recognition/observability/recognition_runs.py"
+    note for ClusteringLogger "Layer: observability (recognition/observability/*)"
+    note for ObservabilityRepository "Layer: observability persistence (db/models/observability.py)"

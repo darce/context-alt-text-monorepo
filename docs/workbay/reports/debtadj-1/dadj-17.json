@@ -1,0 +1,226 @@
+{
+  "lane": "dadj-17",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 6422,
+      "finding_id": "CDXG-11",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1104-1110 - S2 separates matching helpers, export-to-metric mapping, offline report orchestration, and a dedicated GREEN/RED localization test.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No follow-up is needed; the closed plan and shipped test layout isolate localization correctness from report plumbing."
+    },
+    {
+      "db_id": 6423,
+      "finding_id": "CDXG-12",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:14,329-332 - the only allowed primary endpoint is detection_recall@frame_e2e/label_map_primary; score_report.py:1128-1130 stamps that endpoint as primary while the plan still promises a general quality-gap result at :26.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/stack_pair.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Narrow the deliverable to detector recall or define and test a primary endpoint that supports a recognition-quality winner claim."
+    },
+    {
+      "db_id": 6424,
+      "finding_id": "CDXG-13",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:317-319 - `_normalize_base_url` explicitly accepts both `http` and `https`; configured API-key and tenant credentials are passed into RemoteSceneClient at scripts/bench/driver.py:191-195.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/stack_pair.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Require HTTPS for remote stack URLs and add a test that rejects an HTTP URL."
+    },
+    {
+      "db_id": 6425,
+      "finding_id": "CDXG-14",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:688 permits nonzero identity tables on named bench stacks; scripts/bench/driver.py:194-195 reuses the configured tenant and :270-273 analyzes the same manifest IDs, then export_map.py:47-50 fetches their existing tenant/media rows without a pre-run reset.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/driver.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_resume.py",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Require a fresh run-isolated tenant or a documented stack reset before ingest so prior identities cannot influence clustering and exports."
+    },
+    {
+      "db_id": 6392,
+      "finding_id": "GRND-01",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/manifest.py:913 validates only `media_id >= 1`; bench corpus.py:113-145 adds no upper bound and bench driver.py:270-279 forwards the manifest ID, while eval_harness/face_pass.py:181-184 rejects IDs above 999999 because the analyze route truncates them.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/corpus.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Fail manifest loading when a bench media ID exceeds the analyze route's 999999 ceiling."
+    },
+    {
+      "db_id": 6393,
+      "finding_id": "GRND-02",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "scripts/eval_harness/face_pass.py:12-16 says detections with embedding=None are skipped, making public identity rows a lower bound; scripts/bench/export_map.py:430-470 turns those public rows into ImageDetection predictions and the plan still describes these as detection P/R at :1251.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/export_map.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Either report this as end-to-end embeddable-face yield or obtain an exhaustive detector export before calling the metric detection P/R."
+    },
+    {
+      "db_id": 6394,
+      "finding_id": "GRND-03",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "The plan at :712 says job_poll_timeout_sec defaults to 600 and aligns with client poll bounds; bench driver.py:195 passes it as timeout_s, while remote_client.py:75-78 uses it for each httpx request and :22,64,199-210 still poll up to 60 times at a fixed 2-second interval.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/driver.py",
+        "apps/prototype-description-service/scripts/eval_harness/remote_client.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_resume.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Enforce a total per-job deadline around polling and keep that budget separate from each HTTP request timeout."
+    },
+    {
+      "db_id": 6395,
+      "finding_id": "GRND-04",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "recognition/tests/unit/test_face_seam_characterization.py:97-110 defines API_FACE_PAYLOAD_TOP_LEVEL_KEYS and :457 asserts the list_by_media_ids payload key set against it; the closed plan names the same characterization test at :85.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_face_seam_characterization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No follow-up is needed; the payload-key characterization assertion now exists."
+    },
+    {
+      "db_id": 6396,
+      "finding_id": "GRND-05",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "bench score.py:60-83 reimplements IoU matrix construction and Hungarian assignment using scipy; eval_harness/face_assignment.py:199-207,286 already implements the corresponding shared-threshold association path, so the bench has a second matcher despite importing its threshold.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Reuse the shared association algorithm or factor out a common matcher and add a parity assertion for the bench coordinate conversion."
+    },
+    {
+      "db_id": 6397,
+      "finding_id": "GRND-06",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "remote_client.py:28-32 and :199-207 treat completed_with_errors as terminal for polling, then bench driver.py:473-477 classifies it as an analyze failure; test_resume.py:155-174 asserts the item fails with analyze_completed_with_errors.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_resume.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No follow-up is needed; partial-success status has an explicit fail-closed outcome and regression assertion."
+    },
+    {
+      "db_id": 6398,
+      "finding_id": "GRND-07",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "OBSOLETE",
+      "duplicate_of": null,
+      "evidence": "The closed plan now specifies scipy.optimize.linear_sum_assignment for the matcher at :418, and apps/prototype-description-service/pyproject.toml:28 declares scipy>=1.18.0,<2.0.0 as a direct dependency.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No follow-up is needed; the closed plan and project dependency metadata now state the SciPy requirement."
+    },
+    {
+      "db_id": 6399,
+      "finding_id": "GRND-08",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "The current plan contradicts itself: :445 describes stack media_id as a per-tenant DB id after analyze, while :453 calls it a client-supplied ID in the image_<media_id> part; remote_client.py:181-197 builds those part names client-side and analyze returns only a job id.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Make the join introduction describe the client-supplied multipart media ID consistently with the normative example."
+    },
+    {
+      "db_id": 6400,
+      "finding_id": "GRND-09",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "The active localization instructions still cite face_assignment.py:188-196 as the linear_sum_assignment implementation at plan :418; the current shared implementation is at face_assignment.py:286.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Update the matcher citation to the current symbol location or use a stable symbol link instead of a line range."
+    },
+    {
+      "db_id": 6401,
+      "finding_id": "GRND-10",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "NOT_DEFECT",
+      "duplicate_of": null,
+      "evidence": "The plan's primary rule at :438 also accepts a non-empty human cluster_label that is not an auto ID; export_map.py:253-274 maps those labels, and cli.py:730-732 confirms that only an explicit is_auto_label=True is excluded.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No follow-up is needed; a missing flag on a human-labeled row is covered by the plan's human-label clause and the shipped mapping behavior."
+    }
+  ]
+}

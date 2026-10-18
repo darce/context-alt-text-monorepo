@@ -1,0 +1,653 @@
+{
+  "adjudication_records": [
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 1,
+      "record_id": "synthetic-s2a-face-anchor-media-1-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-1-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 2,
+      "record_id": "synthetic-s2a-face-anchor-media-2-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-2-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 4,
+      "record_id": "synthetic-s2a-face-anchor-media-4-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-4-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 5,
+      "record_id": "synthetic-s2a-face-anchor-media-5-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-5-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 6,
+      "record_id": "synthetic-s2a-face-anchor-media-6-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-6-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 8,
+      "record_id": "synthetic-s2a-face-anchor-media-8-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-8-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 3,
+      "record_id": "synthetic-s2a-face-anchor-media-3-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-3-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 9,
+      "record_id": "synthetic-s2a-face-anchor-media-9-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-9-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 10,
+      "record_id": "synthetic-s2a-face-anchor-media-10-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-10-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 1,
+      "decision": "confirmed",
+      "media_id": 10,
+      "record_id": "synthetic-s2a-face-anchor-media-10-box-1",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-10-box-1",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 0,
+      "decision": "confirmed",
+      "media_id": 11,
+      "record_id": "synthetic-s2a-face-anchor-media-11-box-0",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-11-box-0",
+      "reviewer_kind": "human"
+    },
+    {
+      "box_index": 1,
+      "decision": "confirmed",
+      "media_id": 11,
+      "record_id": "synthetic-s2a-face-anchor-media-11-box-1",
+      "review_method": "independent_blind_review",
+      "reviewed_at": "2026-08-11T00:00:00Z",
+      "reviewer_id": "synthetic-reviewer-s2a-face-anchor-media-11-box-1",
+      "reviewer_kind": "human"
+    }
+  ],
+  "annotation_mode": "exhaustive",
+  "entries": [
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-1-box-0",
+          "h": 0.4,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 1,
+      "must_right": [],
+      "path": "celebs01/alice-a.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-2-box-0",
+          "h": 0.4,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 2,
+      "must_right": [],
+      "path": "celebs01/alice-b.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_b",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-4-box-0",
+          "h": 0.4,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Bob Example",
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 4,
+      "must_right": [],
+      "path": "celebs01/bob-a.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Bob Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_b",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-5-box-0",
+          "h": 0.4,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Bob Example",
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 5,
+      "must_right": [],
+      "path": "celebs01/bob-b.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Bob Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-6-box-0",
+          "h": 0.4,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 6,
+      "must_right": [],
+      "path": "celebs01/alice-wrong.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "base_caption": "",
+      "easy_wrong": [],
+      "face_boxes": [],
+      "face_count": 0,
+      "media_id": 7,
+      "must_right": [],
+      "path": "celebs01/fp-only.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-8-box-0",
+          "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.1,
+          "y": 0.1
+        }
+      ],
+      "face_count": 1,
+      "media_id": 8,
+      "must_right": [],
+      "path": "celebs01/fn-miss.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "base_caption": "",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-3-box-0",
+          "h": 0.4,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "stranger",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": null,
+          "source": "iptc",
+          "w": 0.4,
+          "x": 0.4,
+          "y": 0.4
+        }
+      ],
+      "face_count": 1,
+      "media_id": 3,
+      "must_right": [],
+      "path": "localwp/uploads/stranger-party.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [],
+      "provenance": {
+        "license": "consented",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": false,
+        "source": "localwp"
+      },
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "base_caption": "",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-9-box-0",
+          "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "stranger",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": null,
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.7,
+          "y": 0.1
+        }
+      ],
+      "face_count": 1,
+      "media_id": 9,
+      "must_right": [],
+      "path": "localwp/uploads/stranger-fn-miss.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [],
+      "provenance": {
+        "license": "consented",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": false,
+        "source": "localwp"
+      },
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "base_caption": "",
+      "demographic_cohort": "cohort_a",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-10-box-0",
+          "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.1,
+          "y": 0.1
+        },
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-10-box-1",
+          "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "stranger",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": null,
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.7,
+          "y": 0.7
+        }
+      ],
+      "face_count": 2,
+      "media_id": 10,
+      "must_right": [],
+      "path": "localwp/uploads/mixed-fn-miss.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example"
+      ],
+      "provenance": {
+        "license": "consented",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime)",
+        "publishable": false,
+        "source": "localwp"
+      },
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    {
+      "base_caption": "",
+      "easy_wrong": [],
+      "face_boxes": [
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-11-box-0",
+          "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Bob Example",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.5,
+          "y": 0.1
+        },
+        {
+          "adjudication_source": "human_adjudicated:synthetic-s2a-face-anchor-media-11-box-1",
+          "h": 0.2,
+          "lineage": {
+            "arbitration_of": null,
+            "batch_id": "synthetic-batch-S2A-face-determinism-anchor",
+            "capture_session_id": "synthetic-session-S2A-face-determinism-anchor-20260811",
+            "confidence": "high",
+            "decision": "named",
+            "label_source": "gold_reference",
+            "labeled_at": "2026-08-11T00:00:00Z",
+            "labeler_id": "synthetic-labeler-S2A-face-determinism-anchor",
+            "pass_index": 0,
+            "saw_machine_proposals": false,
+            "tool_version": "synthetic-face-anchor-generator-v1"
+          },
+          "name": "Alice Example",
+          "source": "iptc",
+          "w": 0.2,
+          "x": 0.5
+        }
+      ],
+      "face_count": 2,
+      "media_id": 11,
+      "must_right": [],
+      "path": "celebs01/y-missing-mixed-order.jpg",
+      "policy": {
+        "recognition_enabled": true
+      },
+      "present_identities": [
+        "Alice Example",
+        "Bob Example"
+      ],
+      "provenance": {
+        "license": "public_domain",
+        "note": "synthetic face determinism anchor — no real images; GT boxes pair with dim=8 unit-vector detections (F7 multi-regime); TRAP VLM6-R2-G-01 mixed-y order_degraded (labeled_y_missing_images freeze observability)",
+        "publishable": true,
+        "source": "celeb"
+      },
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    }
+  ],
+  "manifest_version": 3,
+  "roster": [
+    "Alice Example",
+    "Bob Example"
+  ],
+  "roster_cohorts": {
+    "Alice Example": "cohort_a",
+    "Bob Example": "cohort_b"
+  }
+}

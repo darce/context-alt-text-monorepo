@@ -1,0 +1,94 @@
+{
+  "lane": "hrev-php-settings",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "Initial run: 26 passed in 2.11s; final recheck: 26 passed in 2.28s."
+    },
+    {
+      "command": "for file in apps/prototype-wp-alt-context/src/api/class-settings-controller.php apps/prototype-wp-alt-context/src/api/class-context-category-policy.php apps/prototype-wp-alt-context/src/api/class-recognition-api-key-store.php apps/prototype-wp-alt-context/src/api/class-api.php apps/prototype-wp-alt-context/src/admin/class-admin.php apps/prototype-wp-alt-context/src/settings/class-recognition-policy.php; do php -l \"$file\" || exit 1; done",
+      "result": "pass",
+      "detail": "All six changed PHP files report no syntax errors."
+    },
+    {
+      "command": "php -r 'require \"apps/prototype-wp-alt-context/src/api/class-recognition-api-key-store.php\"; var_export(AltContext\\Api\\RecognitionApiKeyStore::decrypt(\"legacy-plain-key\")); echo PHP_EOL;'",
+      "result": "pass",
+      "detail": "Returned NULL, confirming unprefixed legacy plaintext is rejected by the current decryptor."
+    },
+    {
+      "command": "apps/prototype-wp-alt-context/vendor/bin/phpunit --filter SettingsControllerTest",
+      "result": "not_run",
+      "detail": "PHPUnit is not installed in this checkout; the PHP suite was reported as verified outside the sandbox in the dependency brief."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17060,
+      "finding_id": "FX3KEY-7d193e9eb5c20c0b-H-ada813d0103f68654227c0fd",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-settings-controller.php:13 - requires class-recognition-api-key-store.php; the file defines RecognitionApiKeyStore at :10. SettingsControllerTest::testSaveSettingsWritesUrlAndKeyToOptions exercises the key path.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testSaveSettingsWritesUrlAndKeyToOptions"
+    },
+    {
+      "db_id": 17061,
+      "finding_id": "FX3KEY-7d193e9eb5c20c0b-H-ef14bcf3d9d92543496427f3",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-settings-controller.php:296 writes the encrypted value and :1138 decrypts the option; apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:332 also decrypts it. But class-recognition-api-key-store.php:61 returns null unless the value has the acxenc:v1: prefix, so a pre-existing plaintext key is neither migrated nor usable by the proxy.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testSaveSettingsWritesUrlAndKeyToOptions (covers new writes; no legacy migration assertion)"
+    },
+    {
+      "db_id": 16876,
+      "finding_id": "DADJ-2728",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-api.php:231 and :242 attach can_view_media_queue to both GET routes; :417-418 requires manage_options. The guard explicitly rejects upload_files-only access.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/ClustersSchemaParityTest.php::testMediaQueueReadRequiresAdministratorCapability"
+    },
+    {
+      "db_id": 16863,
+      "finding_id": "DADJ-2726",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-settings-controller.php:674 uses RecognitionTransport; apps/prototype-wp-alt-context/src/support/class-recognition-transport.php:39-46 routes non-loopback GETs through wp_safe_remote_get and sets redirection to 0. Proxy egress uses the same transport contract.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/RecognitionTransportTest.php::testGetUsesSafeTransportForNonLoopbackHosts; testForcesRedirectionZeroOverridingCaller"
+    },
+    {
+      "db_id": 17041,
+      "finding_id": "FXCTXS-116e3c8b88c20def-H-b5bcd8eac74d918f47e20c12",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-context-category-policy.php:36 validates list keys with array_values($value) !== $value, avoiding PHP 8.1-only array_is_list().",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/ContextCategoryPolicyTest.php::testIsValidListRejectsStringKeysAndKeyGaps"
+    },
+    {
+      "db_id": 16864,
+      "finding_id": "DADJ-2729",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-settings-controller.php:287 encrypts new values before :296 writes them. Existing plaintext values at the same option are not migrated; class-recognition-api-key-store.php:61 rejects values without the acxenc:v1: prefix, leaving the old secret in wp_options and unreadable by the settings resolver.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testSaveSettingsWritesUrlAndKeyToOptions (covers new writes; no migration assertion)"
+    },
+    {
+      "db_id": 17065,
+      "finding_id": "FX3KEY-7471b5e7340766b4-M-03ec4c1d922d969284b17e4e",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "Production settings code calls RecognitionApiKeyStore::encrypt at class-settings-controller.php:287 and writes its result at :296; the proxy reads the same option through decrypt at class-abstract-recognition-proxy-controller.php:332.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testSaveSettingsWritesUrlAndKeyToOptions; apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php::testProxyRequestIncludesApiKeyHeader"
+    },
+    {
+      "db_id": 17042,
+      "finding_id": "FXCTXS-116e3c8b88c20def-M-0d86e2314424549a769ad4aa",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts:70-71 declares both context_categories response fields, and :116 declares the save payload field. SettingsPage consumes them and its test asserts the submitted category payload.",
+      "guard_test": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/SettingsPage.test.tsx::saves the remaining context categories in canonical order when one is unchecked"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Rechecked: 6 HOLDS, 2 PARTIAL, 0 NOT_FIXED/STILL_LIVE/NOW_FIXED; new findings high/medium/low: 0/0/0; lane test pass (26 passed). Existing plaintext API keys are not migrated and remain unreadable by the proxy. PHP lint passed; PHPUnit was not available locally."
+}

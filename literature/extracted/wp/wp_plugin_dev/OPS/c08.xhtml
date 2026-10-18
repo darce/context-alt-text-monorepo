@@ -1,0 +1,1150 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>8 Content</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_175" role="doc-pagebreak" title="175"/><a id="c08"/><span class="chapterNumber">8</span><br/><span class="chapterTitle">Content</span></h1>
+</header>
+<section><span id="c08-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c08-list-0001">
+<li id="c08-li-0001">Creating custom post types</li>
+<li id="c08-li-0002">Using custom post types</li>
+<li id="c08-li-0003">Adding and using post metadata</li>
+<li id="c08-li-0004">Building custom post meta boxes</li>
+<li id="c08-li-0005">Using custom taxonomies</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<aside>
+<div class="top hr"><hr/></div>
+<section><span id="c08-fea-0001"/>
+<h3 id="head-2-68">CODE DOWNLOADS FOR THIS CHAPTER</h3>
+<section><span id="c08-sec-0003"/>
+<p id="c08-para-0004">The code downloads for this chapter are found at <code><a href="http://www.wiley.com/go/prowordpressdev2e">www.wiley.com/go/prowordpressdev2e</a></code> on the Downloads tab.</p>
+</section>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c08-para-0005">Posts represent the content of a site in WordPress. In other content management systems, posts are often called <i>content</i>. However, WordPress has a legacy of starting as a blogging system, so the terminology stuck. Content is what makes a website a website. It is the most important aspect of the site from the user's perspective because it is the thing that they are building.</p>
+<p id="c08-para-0006">Taxonomies in WordPress are a way to classify or categorize posts. Metadata is additional information about a specific post. By combining these two features with posts, you can create any type of website imaginable.</p>
+<p id="c08-para-0007">Throughout this chapter, you will work on building a single plugin that houses a user's book collection. The post types, metadata, and taxonomies covered in this chapter contribute to the overall plugin. Nearly every snippet of code provided in the chapter contributes to the plugin by providing a view of how the topics presented work together to manage content.</p>
+<p id="c08-para-0008">One important note when dealing with content is that posts, metadata, and taxonomies are typically controlled by themes on the frontend of the site. Depending on what you are building, <span epub:type="pagebreak" id="Page_176" role="doc-pagebreak" title="176"/>you may not always have complete control over how the content is output. WordPress theme development is outside the scope of this book, but learning how themes work within the WordPress environment will strengthen your skill set and make you a better developer. In <a href="c14.xhtml">Chapter 14</a>, “The Kitchen Sink,” you will learn more about how plugins can display posts on the frontend.</p>
+</section>
+<section><span id="c08-sec-0004"/>
+<h2 id="head-2-69">CREATING CUSTOM POST TYPES</h2>
+<p>Out of the box, WordPress has several predefined post types that allow users to create and manage the content on their site. These types of content are all the average blogger will ever need.</p>
+<ul class="check" id="c08-list-0002">
+<li id="c08-li-0006"><b>Post:</b> Blog posts typically presented in order from newest to oldest on the homepage and archives.</li>
+<li id="c08-li-0007"><b>Page:</b> Top‐level, hierarchical types of content such as About, Contact, and a myriad of other pages.</li>
+<li id="c08-li-0008"><b>Attachment:</b> Media attached to other post types, such as image, audio, and video files.</li>
+<li id="c08-li-0009"><b>Revision:</b> Revisions of other post types used as a backup system in case a user needs to revert to an older copy.</li>
+<li id="c08-li-0010"><b>Nav menu item:</b> Items added to nav menus using WordPress’ built‐in menu management system.</li>
+<li id="c08-li-0011"><b>Reusable block:</b> One or more blocks from the block editor. When a user saves these reusable blocks, they are stored internally as a post.</li>
+</ul>
+<p id="c08-para-0010">As you can see, most of these post types do not match what you might typically think of when thinking of a “post.” Posts can really mean any type of content. For anything beyond a basic site or blog, other post types are necessary for running sites that don't fit within with this predefined mold. WordPress enables plugin developers to create content types to handle nearly any scenario.</p>
+<section><span id="c08-sec-0005"/>
+<h3 id="head-3-138">Post Type Possibilities</h3>
+<p id="c08-para-0011">Custom post types have been available since WordPress 3.0. Over the years, plugin developers have used the system to build a plethora of plugins that do things the creators likely didn't think possible. It shifted WordPress from just being a blogging platform to one of the most robust content management systems in the world. Some plugin developers have launched multimillion‐dollar businesses from a starting point of a single custom post type.</p>
+<p>You can use custom post types in WordPress to define any type of content. The following is a sample list of ideas, but you should not feel limited to anything but your own imagination:</p>
+<ul class="check" id="c08-list-0003">
+<li id="c08-li-0012">Book collection</li>
+<li id="c08-li-0013">Testimonials</li>
+<li id="c08-li-0014">eCommerce products</li>
+<li id="c08-li-0015">Famous quotes</li>
+<li id="c08-li-0016">Event calendar</li>
+<li id="c08-li-0017"><span epub:type="pagebreak" id="Page_177" role="doc-pagebreak" title="177"/>Music database</li>
+<li id="c08-li-0018">Image slideshows</li>
+<li id="c08-li-0019">Forums</li>
+</ul>
+</section>
+<section><span id="c08-sec-0006"/>
+<h3 id="head-3-139">Registering a Post Type</h3>
+<p id="c08-para-0013">WordPress makes it easy for plugin developers to create new post types with little code. Before diving in, you need to understand the main function for creating post types and its arguments.</p>
+<section><span id="c08-sec-0007"/>
+<h4 id="head-4-62">register_post_type</h4>
+<p>WordPress provides the <code>register_post_type</code>(
+<code>)</code> function to create new post types for a site. It is simple to use and gives plugin developers a ton of flexibility by simply configuring its arguments.</p>
+<pre id="c08-code-0001"><code>&lt;?php</code>
+<code>register_post_type( string $post_type, array|string $args = [] );</code></pre>
+<p>The function returns a post type object (
+<code>WP_Post_Type</code>) and accepts two parameters.</p>
+<ul class="check" id="c08-list-0004">
+<li id="c08-li-0020">
+<code>$post_type</code>: The name of the post type. This should contain only lowercase alphanumeric characters, underscores, and hyphens. The string has a maximum limit of 20 characters.</li>
+<li id="c08-li-0021">
+<code>$args</code>: An array of arguments that configure the post type and how it should be handled within WordPress.</li>
+</ul>
+<p id="c08-para-0016">WordPress has more than two dozen arguments for the <code>$args</code> parameter, some that have their own subarguments. Each argument provides unique functionality that helps define how your post type will work within the WordPress environment. You can view the entire list via <code><a href="https://developer.wordpress.org/reference/functions/register_post_type">https://developer.wordpress.org/reference/functions/register_post_type</a></code>. New options are added over time, so always be sure to reference that list on major updates.</p>
+</section>
+<section><span id="c08-sec-0008"/>
+<h4 id="head-4-63">Registering the Book Collection Post Type</h4>
+<p id="c08-para-0017">Now that you have a basic understanding of how the <code>register_post_type()</code> function works, it is time to create your first post type. This is the first step in creating the book collection plugin that you will put together throughout this chapter.</p>
+<p>The first step is to create a new folder named <code>plugin‐book‐collection</code> in your test environment's <code>wp‐content/plugins</code> folder. Then create a <code>plugin.php</code> file with the following code in it:</p>
+<pre id="c08-code-0002"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Book Collection</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: A plugin for managing a book collection.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>// Load custom post type functions.</code>
+<code>require_once plugin_dir_path( __FILE__ ) . 'post-types.php';</code></pre>
+<p id="c08-para-0019"><span epub:type="pagebreak" id="Page_178" role="doc-pagebreak" title="178"/>This is the primary plugin file. For the purposes of the Book Collection plugin, you will use it to load the various files needed throughout this chapter. The first file is related to registering post types. Now create a <code>post‐types.php</code> file in your plugin folder.</p>
+<p>The first thing you will do with this new file is create a basic custom post type named <code>book</code>. The following code snippet has a basic outline of what such a post type might look like. However, you can change the arguments to suit your needs.</p>
+<pre id="c08-code-0003"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_book_collection_post_types' );</code>
+<code> </code>
+<code>function pdev_book_collection_post_types() {</code>
+<code> </code>
+<code>       register_post_type( 'book', [</code>
+<code> </code>
+<code>             // Post type arguments.</code>
+<code>             'public'              =&gt; true,</code>
+<code>             'publicly_queryable'  =&gt; true,</code>
+<code>             'show_in_rest'        =&gt; true,</code>
+<code>             'show_in_nav_menus'   =&gt; true,</code>
+<code>             'show_in_admin_bar'   =&gt; true,</code>
+<code>             'exclude_from_search' =&gt; false,</code>
+<code>             'show_ui'             =&gt; true,</code>
+<code>             'show_in_menu'        =&gt; true,</code>
+<code>             'menu_icon'           =&gt; 'dashicons-book',</code>
+<code>             'hierarchical'        =&gt; false,</code>
+<code>             'has_archive'         =&gt; 'books',</code>
+<code>             'query_var'           =&gt; 'book',</code>
+<code>             'map_meta_cap'        =&gt; true,</code>
+<code> </code>
+<code>             // The rewrite handles the URL structure.</code>
+<code>             'rewrite' =&gt; [</code>
+<code>                    'slug'       =&gt; 'books',</code>
+<code>                    'with_front' =&gt; false,</code>
+<code>                    'pages'      =&gt; true,</code>
+<code>                    'feeds'      =&gt; true,</code>
+<code>                    'ep_mask'    =&gt; EP_PERMALINK,</code>
+<code>             ],</code>
+<code> </code>
+<code>             // Features the post type supports.</code>
+<code>             'supports' =&gt; [</code>
+<code>                    'title',</code>
+<code>                    'editor',</code>
+<code>                    'excerpt',</code>
+<code>                    'thumbnail'</code>
+<code>             ]</code>
+<code>       ] );</code>
+<code>}</code></pre>
+<p id="c08-para-0021">The previous code adds a relatively basic post type that works similarly to WordPress posts. It relies on the built‐in UI (
+<code>show_ui</code> argument), adds a book collection archive (
+<code>has_archive</code> argument), creates some custom rewrite URL rules (
+<code>rewrite</code> argument), and adds the features that it supports (
+<code>supports</code> argument).</p>
+<p id="c08-para-0022"><span epub:type="pagebreak" id="Page_179" role="doc-pagebreak" title="179"/>Note that the <code>pdev_book_collection_post_types()</code> function is an action that is executed on the <code>init</code> action hook. Post types should always be registered on this hook.</p>
+</section>
+</section>
+<section><span id="c08-sec-0009"/>
+<h3 id="head-3-140">Setting Post Type Labels</h3>
+<p id="c08-para-0023">If you activate the plugin at this point, you will get a new top‐level admin menu for managing books. What you might notice is that all of the text labels refer to “posts” instead of “books.” That is not a user‐friendly custom post type. You would not want a user to see a View Post link when what you really want them to see is a View Book link, for example.</p>
+<p id="c08-para-0024">If you do not set custom labels, WordPress will automatically fall back to the “page” post type labels for hierarchical post types and the “post” post type labels for nonhierarchical types.</p>
+<p>To set custom labels, you need to add the <code>labels</code> argument to the <code>$args</code> array (second parameter) for <code>register_post_type()</code>. The <code>labels</code> argument should look similar to the following:</p>
+<pre id="c08-code-0004"><code>// Text labels.</code>
+<code>'labels' =&gt; [</code>
+<code>       'name'                     =&gt; 'Books',</code>
+<code>       'singular_name'            =&gt; 'Book',</code>
+<code>       'add_new'                  =&gt; 'Add New',</code>
+<code>       'add_new_item'             =&gt; 'Add New Book',</code>
+<code>       'edit_item'                =&gt; 'Edit Book',</code>
+<code>       'new_item'                 =&gt; 'New Book',</code>
+<code>       'view_item'                =&gt; 'View Book',</code>
+<code>       'view_items'               =&gt; 'View Books',</code>
+<code>       'search_items'             =&gt; 'Search Books',</code>
+<code>       'not_found'                =&gt; 'No books found.',</code>
+<code>       'not_found_in_trash'       =&gt; 'No books found in Trash.',</code>
+<code>       'all_items'                =&gt; 'All Books',</code>
+<code>       'archives'                 =&gt; 'Book Archives',</code>
+<code>       'attributes'               =&gt; 'Book Attributes',</code>
+<code>       'insert_into_item'         =&gt; 'Insert into book',</code>
+<code>       'uploaded_to_this_item'    =&gt; 'Uploaded to this book',</code>
+<code>       'featured_image'           =&gt; 'Book Image',</code>
+<code>       'set_featured_image'       =&gt; 'Set book image',</code>
+<code>       'remove_featured_image'    =&gt; 'Remove book image',</code>
+<code>       'use_featured_image'       =&gt; 'Use as book image',</code>
+<code>       'filter_items_list'        =&gt; 'Filter books list',</code>
+<code>       'items_list_navigation'    =&gt; 'Books list navigation',</code>
+<code>       'items_list'               =&gt; 'Books list',</code>
+<code>       'item_published'           =&gt; 'Book published.',</code>
+<code>       'item_published_privately' =&gt; 'Book published privately.',</code>
+<code>       'item_reverted_to_draft'   =&gt; 'Book reverted to draft.',</code>
+<code>       'item_scheduled'           =&gt; 'Book scheduled.',</code>
+<code>       'item_updated'             =&gt; 'Book updated.'</code>
+<code>]</code></pre>
+<p id="c08-para-0026">There are at least 30 possible labels at the time this book was written. However, WordPress expands these labels from time to time as new features are added or things change with the software. You can find the most up‐to‐date list of labels for the current version of WordPress at <code><a href="https://developer.wordpress.org/reference/functions/get_post_type_labels">https://developer.wordpress.org/reference/functions/get_post_type_labels</a></code>.</p>
+<p id="c08-para-0027">If you activate the plugin at this point, you should see a new Books admin menu and screen, as shown in <a href="#c08-fig-0001" id="R_c08-fig-0001">Figure 8‐1</a>.</p>
+<figure> <img alt="Screenshot of the Books admin menu and screen to get a new top-level admin menu for managing books." class="center" src="images/c08f001.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c08-fig-0001" id="c08-fig-0001" role="doc-backlink"><b>FIGURE 8‐1</b></a>:</span> Books admin menu and screen</p>
+</figcaption>
+</figure>
+</section> <span epub:type="pagebreak" id="Page_180" role="doc-pagebreak" title="180"/>
+<section><span id="c08-sec-0010"/>
+<h3 id="head-3-141">Using Custom Capabilities</h3>
+<p id="c08-para-0028">When building a custom post type, you almost always want to register custom permissions for who can perform what actions. WordPress has a role and capability system for handling permissions, which you will learn more about in <a href="c09.xhtml">Chapter 9</a>, “Users and User Data.” If you add custom capabilities to your post type, the admin screen will not appear for the post type unless your user account has the appropriate capabilities.</p>
+<p id="c08-para-0029">For custom post types, it is simply a matter of registering the capabilities as an argument when calling <code>register_post_type()</code>. If no custom capabilities are set, WordPress will revert to the “page” post type capabilities for hierarchical post types and “post” capabilities for nonhierarchical types.</p>
+<p>The simplest and most effective way to create a suite of capabilities for your <code>book</code> post type is to assign a value to the <code>capability_type</code> argument, as shown in the following snippet:</p>
+<pre id="c08-code-0005"><code>'capability_type' =&gt; 'book',</code></pre>
+<p>Generally, you want to use the post type name as the capability name to keep things simple. By adding the preceding code to the arguments array for the post type, WordPress will create the following capabilities:</p>
+<ul class="check" id="c08-list-0005">
+<li id="c08-li-0022">
+<code>edit_book</code></li>
+<li id="c08-li-0023">
+<code>read_book</code></li>
+<li id="c08-li-0024">
+<code>delete_book</code></li>
+<li id="c08-li-0025">
+<code>create_books</code></li>
+<li id="c08-li-0026">
+<code>edit_books</code></li>
+<li id="c08-li-0027">
+<code>edit_others_books</code></li>
+<li id="c08-li-0028">
+<code>edit_private_books</code></li>
+<li id="c08-li-0029">
+<code>edit_published_books</code></li>
+<li id="c08-li-0030">
+<code>publish_books</code></li>
+<li id="c08-li-0031">
+<code>read_private_books</code></li>
+<li id="c08-li-0032">
+<code>delete_books</code></li>
+<li id="c08-li-0033">
+<code>delete_private_books</code></li>
+<li id="c08-li-0034"><span epub:type="pagebreak" id="Page_181" role="doc-pagebreak" title="181"/>
+<code>delete_published_books</code></li>
+<li id="c08-li-0035">
+<code>delete_others_books</code></li>
+</ul>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c08-para-0032"><b>NOTE</b> <i>If the post type name has an odd plural form (cannot be formed by simply adding an <i>s</i> to the end of the word), such as “boxes” for the “box” post type, you can pass an array to the</i> <code>capability_type</code> <i>argument to handle both the singular and plural forms:</i> <code>[ 'box', 'boxes' ]</code>. <i>This will ensure that a capability such as</i> <code>edit_boxes</code> <i>is correctly spelled.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c08-para-0033">You may have picked up something different with the first three capabilities in the previous list (
+<code>edit_book</code>, <code>read_book</code>, <code>delete_book</code>). They are in singular form rather than plural. Generally, a singular form represents what is called a <i>meta capability</i> in WordPress. Meta capabilities do something for a specific object, such as a post (book in this case). These capabilities are not assigned to roles and are determined dynamically by mapping them to the other (primitive) capabilities based on the current scenario.</p>
+<p>By default, WordPress has automatic mapping disabled. It is rare that you will want this disabled because it will mean having to write a custom mapping filter on the core <code>map_meta_cap</code> filter hook. Instead, you want to enable mapping by setting the <code>map_meta_cap</code> argument to true, as shown in the following code:</p>
+<pre id="c08-code-0006"><code>'map_meta_cap' =&gt; true,</code></pre>
+<p id="c08-para-0035">The preceding code will save you a lot of frustration attempting to manipulate how meta caps work manually.</p>
+<p id="c08-para-0036">For most post types, you will only ever need to set the <code>capability_type</code> and <code>map_meta_cap</code> arguments. However, there are scenarios where you will need more fine‐tuned control over the individual capabilities for the post type. In those cases, you will need to set the <code>capabilities</code> argument for <code>register_post_type()</code>. This will essentially give you manual control over what <code>capability_type</code> can do automatically.</p>
+<p>The following code snippet is one example of how you could set up your <code>book</code> post type capabilities:</p>
+<pre id="c08-code-0007"><code>'capabilities' =&gt; [</code>
+<code>       'edit_post'              =&gt; 'edit_book',</code>
+<code>       'read_post'              =&gt; 'read_book',</code>
+<code>       'delete_post'            =&gt; 'delete_book',</code>
+<code>       'create_posts'           =&gt; 'create_books',</code>
+<code>       'edit_posts'             =&gt; 'edit_books',</code>
+<code>       'edit_others_posts'      =&gt; 'edit_others_books',</code>
+<code>       'edit_private_posts'     =&gt; 'edit_private_books',</code>
+<code>       'edit_published_posts'   =&gt; 'edit_published_books',</code>
+<code>       'publish_posts'          =&gt; 'publish_books',</code>
+<code>       'read_private_posts'     =&gt; 'read_private_books',</code>
+<code>       'read'                   =&gt; 'read',</code>
+<code>       'delete_posts'           =&gt; 'delete_books',</code>
+<code>       'delete_private_posts'   =&gt; 'delete_private_books',</code>
+<code>       'delete_published_posts' =&gt; 'delete_published_books',</code>
+<code>       'delete_others_posts'    =&gt; 'delete_others_books'</code>
+<code>],</code></pre>
+<p id="c08-para-0038"><span epub:type="pagebreak" id="Page_182" role="doc-pagebreak" title="182"/>You don't have to stick to a specific formula with custom post types. Your plugin can mix these up. It can set the same capability for multiple capability options. Or it can set the same capability for each option. For example, you can set each of these capabilities to <code>manage_books</code> if you know only certain users will have permission to manage all book collection posts.</p>
+<p id="c08-para-0039">Another capability you can set is <code>do_not_allow</code> if you don't want to allow access to a specific task. Generally, you wouldn't use this, but some situations may call for it, such as setting <code>edit_others_posts</code> to <code>do_not_allow</code> so that no user can edit posts created by other users.</p>
+<p id="c08-para-0040">WordPress sometimes adds new capabilities to post types. It does not happen often, but it is necessary if something changes with the software. You can view the most updated list of post type capabilities at <code><a href="https://developer.wordpress.org/reference/functions/get_post_type_capabilities">https://developer.wordpress.org/reference/functions/get_post_type_capabilities</a></code>.</p>
+</section>
+<section><span id="c08-sec-0012"/>
+<h3 id="head-3-142">Attaching Existing Taxonomies</h3>
+<p id="c08-para-0041">In some cases, you may be building a post type in which you want to use an existing taxonomy. You can easily set this via the <code>taxonomies</code> argument within the <code>$args</code> array for <code>register_post_type()</code>. For example, WordPress has two general taxonomies for blog posts, <code>category</code> and <code>post_tag</code>, that you may want to use. However, you are not limited to taxonomies created by WordPress. Your post type can use taxonomies created by other plugins too.</p>
+<p>Suppose that you wanted to add post tags to <code>book</code> posts. You would set this as shown in the following code:</p>
+<pre id="c08-code-0008"><code>'taxonomies' =&gt; [</code>
+<code>       'post_tag'</code>
+<code>],</code></pre>
+<p id="c08-para-0043">By adding this to your <code>$args</code> array for <code>register_post_type()</code>, a new Tags submenu item will be added after your Books menu item in the admin, as shown in <a href="#c08-fig-0002" id="R_c08-fig-0002">Figure 8‐2</a>.</p>
+<figure> <img alt="Screenshot of the Tags submenu item added after the Books menu item has been added in the admin dashboard." class="center" src="images/c08f002.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c08-fig-0002" id="c08-fig-0002" role="doc-backlink"><b>FIGURE 8‐2</b></a>:</span> Tags submenu item</p>
+</figcaption>
+</figure>
+<p id="c08-para-0044"><span epub:type="pagebreak" id="Page_183" role="doc-pagebreak" title="183"/>You will learn how to add custom taxonomies specifically for your post type in the “Creating Custom Taxonomies” section later in this chapter.</p>
+</section>
+</section>
+<section><span id="c08-sec-0013"/>
+<h2 id="head-2-70">POST METADATA</h2>
+<p id="c08-para-0045">In WordPress, posts can have additional information attached to them. This information is called <i>post metadata</i>, or <i>post meta</i> for short. It is stored in the <code>$wpdb‐&gt;postmeta</code> table in the database.</p>
+<p id="c08-para-0046">Plugins can create, update, and delete meta values in an unlimited number of ways. Traditionally, this is done via a meta box, which you will learn more about in the “Meta Boxes” section of this chapter.</p>
+<p>Because you are building a plugin in this chapter for a user to store their book collection, think about the types of metadata related to books. The following are some things you may consider as additional information for the plugin that you are building:</p>
+<ul class="check" id="c08-list-0006">
+<li id="c08-li-0036">International Standard Book Number (ISBN)</li>
+<li id="c08-li-0037">Book author</li>
+<li id="c08-li-0038">Goodreads review link</li>
+<li id="c08-li-0039">Amazon affiliate link</li>
+<li id="c08-li-0040">Star rating system</li>
+</ul>
+<p id="c08-para-0048">It is important to remember that metadata is not an ideal way to group or categorize posts. The taxonomy system discussed later in this chapter is better for handling features such as categorizing books by genre, for example.</p>
+<section><span id="c08-sec-0014"/>
+<h3 id="head-3-143">Registering Post Metadata</h3>
+<p>While it is not strictly a requirement (many plugins skip this step), it is good practice to register any type of metadata your plugin uses with WordPress. To register metadata for a specific post type, you use the <code>register_post_meta()</code> function.</p>
+<pre id="c08-code-0009"><code>&lt;?php</code>
+<code>register_post_meta( string $post_type, string $meta_key, array $args );</code></pre>
+<p>The function accepts the following parameters:</p>
+<ul class="check" id="c08-list-0007">
+<li id="c08-li-0041">
+<code>$post_type</code>: The name of the post type</li>
+<li id="c08-li-0042">
+<code>$meta_key</code>: A unique key for storing and retrieving the meta value</li>
+<li id="c08-li-0043">
+<code>$args</code>: An array of optional arguments for further defining the metadata</li>
+</ul>
+<p>The following are the possible arguments that can be defined:</p>
+<ul class="check" id="c08-list-0008">
+<li id="c08-li-0044">
+<code>type</code>: The type of data allowed for the meta value. <code>'string'</code>, <code>'boolean'</code>, <code>'integer'</code>, and <code>'number'</code> are valid.</li>
+<li id="c08-li-0045">
+<code>description</code>: A human‐readable description for the meta that may be used.</li>
+<li id="c08-li-0046"><span epub:type="pagebreak" id="Page_184" role="doc-pagebreak" title="184"/>
+<code>single</code>: A Boolean value for whether the meta key has one value per object or an array of values.</li>
+<li id="c08-li-0047">
+<code>sanitize_callback</code>: A callback function or method when sanitizing the metadata.</li>
+<li id="c08-li-0048">
+<code>auth_callback</code>: A callback function or method to perform when running meta capability checks to determine whether the user can add, edit, or delete.</li>
+<li id="c08-li-0049">
+<code>show_in_rest</code>: Whether the metadata is considered public and can be shown via the REST API.</li>
+</ul>
+<p>For your book collection plugin, suppose you wanted to keep things simple and allow the user to add the book author's name. You can always register additional metadata later. Create a new file in your plugin folder named <code>post‐meta.php</code> and make sure to load it from your primary <code>plugin.php</code> file. Now add the following code to your new file:</p>
+<pre id="c08-code-0010"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_books_register_meta' );</code>
+<code> </code>
+<code>function pdev_books_register_meta() {</code>
+<code> </code>
+<code>       register_post_meta( 'book', 'book_author', [</code>
+<code>             'single'            =&gt; true,</code>
+<code>             'show_in_rest'      =&gt; true,</code>
+<code>             'sanitize_callback' =&gt; function( $value ) {</code>
+<code>                    return wp_strip_all_tags( $value );</code>
+<code>             }</code>
+<code>       ] );</code>
+<code>}</code></pre>
+<p id="c08-para-0053">The previous code registers a new bit of meta for <code>post</code> objects named <code>book_author</code>. It defines a post type of <code>book</code>. It also has a single meta value attached to it. However, you may decide to allow for multiple authors for each book and change the <code>single</code> argument to <code>false</code>.</p>
+</section>
+<section><span id="c08-sec-0015"/>
+<h3 id="head-3-144">Adding Post Metadata</h3>
+<p>WordPress provides the <code>add_post_meta()</code> function for adding new metadata to a specific post. The function accepts four parameters.</p>
+<pre id="c08-code-0011"><code>&lt;?php</code>
+<code>add_post_meta( int $post_id, string $meta_key, mixed $meta_value,</code>
+<code>bool $unique = false );</code></pre>
+<ul class="check" id="c08-list-0009">
+<li id="c08-li-0050">
+<code>$post_id</code> : The ID of the post to add metadata to.</li>
+<li id="c08-li-0051">
+<code>$meta_key</code>: The metadata key to add meta value(s) to.</li>
+<li id="c08-li-0052">
+<code>$meta_value</code>: The value attributed to the meta key. Multiple meta values may be added to a single key.</li>
+<li id="c08-li-0053">
+<code>$unique</code>: Whether the meta value provided should be the only meta value. If <code>true</code>, there will be only a single meta value. If <code>false</code>, multiple meta values can be added. By default, this parameter is set to <code>false</code>.</li>
+</ul>
+<p><span epub:type="pagebreak" id="Page_185" role="doc-pagebreak" title="185"/>Now that you know how the parameters work for <code>add_post_meta()</code>, you can insert some metadata to a specific post. Suppose you have a book post with the ID of <code>100</code>. The book is <i>The Way of Kings</i>, which was written by Brandon Sanderson. You could attach him as the author with the following code:</p>
+<pre id="c08-code-0012"><code>&lt;?php</code>
+<code>add_post_meta( 100, 'book_author', 'Brandon Sanderson', true );</code></pre>
+<p>If you were adding multiple authors to a book, such as for <i>The President Is Missing</i> by Bill Clinton and James Patterson, you would need to make two calls to <code>add_post_meta()</code>. You must also change the <code>$unique</code> parameter to <code>false</code>. The book post ID in the following example is <code>200</code>:</p>
+<pre id="c08-code-0013"><code>&lt;?php</code>
+<code>add_post_meta( 200, 'book_author', 'Bill Clinton',    false );</code>
+<code>add_post_meta( 200, 'book_author', 'James Patterson', false );</code></pre>
+</section>
+<section><span id="c08-sec-0016"/>
+<h3 id="head-3-145">Retrieving Post Metadata</h3>
+<p>WordPress makes it easy to get post metadata for display or to use in other PHP functions. To retrieve post metadata, use the <code>get_post_meta()</code> function, which accepts three parameters.</p>
+<pre id="c08-code-0014"><code>&lt;?php</code>
+<code>get_post_meta( int $post_id, string $key = '', bool $single = false );</code></pre>
+<ul class="check" id="c08-list-0010">
+<li id="c08-li-0054">
+<code>$post_id</code>: The ID of the post to get the metadata for.</li>
+<li id="c08-li-0055">
+<code>$meta_key</code>: The meta key name to retrieve meta value(s) for.</li>
+<li id="c08-li-0056">
+<code>$single</code>: Whether to return a single meta value (
+<code>true</code>) or return an array of values (
+<code>false</code>). By default, this parameter is set to <code>false</code>.</li>
+</ul>
+<p>Suppose you wanted to get the book author for <i>The Way of Kings</i> from the previous section on adding post metadata. You know the post ID (
+<code>100</code>) and the meta key (
+<code>book_author</code>). You can use the following snippet to return a single author:</p>
+<pre id="c08-code-0015"><code>&lt;?php</code>
+<code>$book_author = get_post_meta( 100, 'book_author', true );</code>
+<code>// Brandon Sanderson</code></pre>
+<p>How you handle this for multiple values will be slightly different because <code>get_post_meta()</code> will return an array if you set the <code>$single</code> parameter to <code>false</code>. Now get the authors of <i>The President Is Missing</i>, which you added in the previous section, and output the author names as a list.</p>
+<pre id="c08-code-0016"><code>&lt;?php</code>
+<code>$book_authors = get_post_meta( 200, 'book_author', false );</code>
+<code> </code>
+<code>echo '&lt;ul&gt;';</code>
+<code> </code>
+<code>foreach ( $book_authors as $author ) {</code>
+<code>       printf(</code>
+<code>            '&lt;li&gt;%s&lt;/li&gt;',</code>
+<code>            esc_html( $author )</code>
+<code>       );</code>
+<code>}</code>
+<code> </code>
+<code>echo '&lt;/ul&gt;';</code></pre>
+<p><span epub:type="pagebreak" id="Page_186" role="doc-pagebreak" title="186"/>The previous code will result in the following HTML output:</p>
+<pre id="c08-code-0017"><code>&lt;ul&gt;</code>
+<code>       &lt;li&gt;Bill Clinton&lt;/li&gt;</code>
+<code>       &lt;li&gt;James Patterson&lt;/li&gt;</code>
+<code>&lt;/ul&gt;</code></pre>
+</section>
+<section><span id="c08-sec-0017"/>
+<h3 id="head-3-146">Updating Post Metadata</h3>
+<p>WordPress provides the ability to update post metadata too. You can use the <code>update_post_meta()</code> function to update a preexisting meta value, completely overwrite all meta values for a given key, or add new metadata if it does not exist for a post. Many developers use it in lieu of <code>add_post_meta()</code> because it is simpler to use a function that adds or updates metadata.</p>
+<pre id="c08-code-0018"><code>&lt;?php</code>
+<code>update_post_meta( int $post_id, string $meta_key, mixed $meta_value, mixed</code>
+<code>$prev_value = '' );</code></pre>
+<ul class="check" id="c08-list-0011">
+<li id="c08-li-0057">
+<code>$post_id</code>: The post ID to update meta value(s) for.</li>
+<li id="c08-li-0058">
+<code>$meta_key</code>: The meta key to update meta value(s) for.</li>
+<li id="c08-li-0059">
+<code>$meta_value</code>: The new meta value to add to the meta key.</li>
+<li id="c08-li-0060">
+<code>$prev_value</code>: The previous meta value to overwrite. If this parameter is not set, all meta values will be overwritten in favor of the <code>$meta_value</code> parameter.</li>
+</ul>
+<p>Suppose that the user misspelled Brandon Sanderson's name on their first attempt of adding a book author for <i>The Way of Kings</i>. They used an <i>e</i> instead of an <i>a</i> for his first name. It is simply a matter of adding the new meta value and passing along the old meta value via the <code>$prev_value</code> parameter.</p>
+<pre id="c08-code-0019"><code>&lt;?php</code>
+<code>update_post_meta( 100, 'book_author', 'Brandon Sanderson', 'Brendon Sanderson' );</code></pre>
+<p>Because there is only a single book author in this case, you don't actually have to pass the previous value. You can update the book author as shown in the following code snippet:</p>
+<pre id="c08-code-0020"><code>&lt;?php</code>
+<code>update_post_meta( 100, 'book_author', 'Brandon Sanderson' );</code></pre>
+<p id="c08-para-0067">Remember that not setting the <code>$prev_value</code> parameter will wipe out all meta values associated with the <code>book_author</code> meta key. When you have multiple values for the key, it is often best to update individual values by passing the <code>$prev_value</code> into the function. This will ensure that you do not inadvertently delete metadata that you do not intend to delete.</p>
+</section>
+<section><span id="c08-sec-0018"/>
+<h3 id="head-3-147">Deleting Post Metadata</h3>
+<p>There are scenarios in which you will need to delete post metadata completely or to delete a single meta value from a given meta key. WordPress makes this process simple for developers with the <code>delete_post_meta()</code> function.</p>
+<pre id="c08-code-0021"><code>&lt;?php</code>
+<code>delete_post_meta( int $post_id, string $meta_key, mixed $meta_value = '' );</code></pre>
+<p><span epub:type="pagebreak" id="Page_187" role="doc-pagebreak" title="187"/>The function accepts three parameters.</p>
+<ul class="check" id="c08-list-0012">
+<li id="c08-li-0061">
+<code>$post_id</code>: The post ID to delete metadata for.</li>
+<li id="c08-li-0062">
+<code>$meta_key</code>: The meta key to delete one or more values for.</li>
+<li id="c08-li-0063">
+<code>$meta_value</code>: The meta value to delete for the given meta key. If this parameter is not set, all meta values for the meta key will be deleted.</li>
+</ul>
+<p>In the previous sections, you added, retrieved, and updated the author for <i>The Way of Kings</i>, which has a post ID of <code>100</code>. To delete all authors attached to the book, you would use the following code:</p>
+<pre id="c08-code-0022"><code>&lt;?php</code>
+<code>delete_post_meta( 100, 'book_author' );</code></pre>
+<p>However, the book entry for <i>The President Is Missing</i>, which has an ID of <code>200</code>, has two authors. Using the same method shown previously would delete both authors. If you wanted to delete only a single author from the book, you need to know the exact value and input it as the third parameter. Suppose you wanted to delete Bill Clinton, one of the authors. Use the following code, which would leave the second author attached to the post:</p>
+<pre id="c08-code-0023"><code>&lt;?php</code>
+<code>delete_post_meta( 200, 'book_author', 'Bill Clinton' );</code></pre>
+</section>
+</section>
+<section><span id="c08-sec-0019"/>
+<h2 id="head-2-71">META BOXES</h2>
+<p id="c08-para-0072">In the “Post Metadata” section of this chapter, you learned how to handle post metadata via code. However, knowing the appropriate functions will not help your plugin users without an interface. That is where meta boxes come into play. They provide a way for your plugin users to interact with metadata.</p>
+<p id="c08-para-0073">As a plugin developer, it is important to note that the long‐term future of meta boxes is a bit uncertain. With the introduction of the block editor, which is covered in <a href="c07.xhtml">Chapter 7</a>, “Blocks and Gutenberg,” developers are encouraged to use the block editor system to handle post metadata. There is no hard deadline for whether or when meta boxes will be deprecated or removed altogether from WordPress. The APIs related to the editor are also constantly being improved. It is important to keep this in mind when deciding how to present metadata options to users.</p>
+<section><span id="c08-sec-0020"/>
+<h3 id="head-3-148">What Is a Meta Box?</h3>
+<p id="c08-para-0074">Meta boxes are “boxes” within the post editing screen that allow users to edit metadata. Technically, anything can exist within a meta box. You can use PHP or JavaScript to output any arbitrary HTML output, but the most common use case is building form fields for users to edit custom metadata from plugins. In essence, meta boxes are a UI element.</p>
+</section> <span epub:type="pagebreak" id="Page_188" role="doc-pagebreak" title="188"/>
+<section><span id="c08-sec-0021"/>
+<h3 id="head-3-149">Adding a Custom Meta Box</h3>
+<p>To add a custom meta box to the post editing screen, you use the <code>add_meta_box()</code> function.</p>
+<pre id="c08-code-0024"><code>&lt;?php</code>
+<code>add_meta_box(</code>
+<code>       string $id,</code>
+<code>       string $title,</code>
+<code>       callable $callback,</code>
+<code>       string|array|WP_Screen $screen = null,</code>
+<code>       string $context = 'advanced',</code>
+<code>       string $priority = 'default',</code>
+<code>       array $callback_args = null</code>
+<code>);</code></pre>
+<p>The function accepts the following parameters.</p>
+<ul class="check" id="c08-list-0013">
+<li id="c08-li-0064">
+<code>$id</code>: A unique ID for the meta box.</li>
+<li id="c08-li-0065">
+<code>$title</code>: A text label shown at the top of the meta box.</li>
+<li id="c08-li-0066">
+<code>$callback</code>: A function or class method that will output the meta box content.</li>
+<li id="c08-li-0067">
+<code>$screen</code>: The screen or screens to output the meta box on. For post meta boxes, this is the name of the post type.</li>
+<li id="c08-li-0068">
+<code>$context</code>: Where to output the meta box by default on the editor screen. <code>'advanced'</code>, <code>'normal'</code>, and <code>'side'</code> are valid values.</li>
+<li id="c08-li-0069">
+<code>$priority</code>: The priority of the meta box in comparison to other boxes. Valid values are <code>'default'</code>, <code>'high'</code>, and <code>'low'</code>.</li>
+<li id="c08-li-0070">
+<code>$callback_args</code>: An optional array of custom data to pass as the second parameter to your callback function or method.</li>
+</ul>
+<p id="c08-para-0077">Meta boxes need to be registered on a specific hook. Generally, you could register them on the <code>add_meta_boxes</code> hook. However, for custom post types, it is best to register on the <code>add_meta_boxes_{$post_type}</code> hook, where <code>$post_type</code> is the name of the specific post type.</p>
+<p>For the plugin that you are building along in this chapter, you need to create a new file named <code>meta‐boxes.php</code> in your plugin folder and load it, as shown in the following snippet from your main <code>plugin.php</code> file:</p>
+<pre id="c08-code-0025"><code>require_once plugin_dir_path( __FILE__ ) . 'meta-boxes.php';</code></pre>
+<p>In your new <code>meta‐boxes.php</code> file, use the following code to register a new meta box on the <code>add_meta_boxes_book</code> hook:</p>
+<pre id="c08-code-0026"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'add_meta_boxes_book', 'pdev_book_register_meta_boxes' );</code>
+<code> </code>
+<code>function pdev_book_register_meta_boxes() {</code>
+<code> <span epub:type="pagebreak" id="Page_189" role="doc-pagebreak" title="189"/></code>
+<code>       add_meta_box(</code>
+<code>             'pdev-book-details',</code>
+<code>             'Book Details',</code>
+<code>             'pdev_book_details_meta_box',</code>
+<code>             'book',</code>
+<code>             'advanced',</code>
+<code>             'high'</code>
+<code>       );</code>
+<code>}</code></pre>
+<p id="c08-para-0080">As you can see, it is just a simple call to <code>add_meta_box()</code> within the function attached to the action hook. It registers a new meta box with an ID of <code>pdev‐book‐details</code>. Most of the parameters can be configured to your preference. The most important parameter from the function is the callback function, <code>pdev_book_details_meta_box</code>, which handles the output of the meta box content.</p>
+<p>A meta box can contain any number of form fields, but for this meta box, let's stick with outputting a field for the user to enter a single book author. In your plugin's <code>meta‐boxes.php</code> file, add the following callback function for the meta box:</p>
+<pre id="c08-code-0027"><code>function pdev_book_details_meta_box( $post ) {</code>
+<code> </code>
+<code>       // Get the existing book author.</code>
+<code>       $author = get_post_meta( $post-&gt;ID, 'book_author', true );</code>
+<code> </code>
+<code>       // Add a nonce field to check on save.</code>
+<code>       wp_nonce_field( basename( __FILE__ ), 'pdev-book-details' ); ?&gt;</code>
+<code> </code>
+<code>       &lt;p&gt;</code>
+<code>             &lt;label&gt;</code>
+<code>                    Book Author:</code>
+<code>                    &lt;br/&gt;</code>
+<code>                    &lt;input type="text" name="pdev-book-author"</code>
+<code>                    value="&lt;?php echo esc_attr( $author ); ?&gt;"/&gt;</code>
+<code>             &lt;/label&gt;</code>
+<code>       &lt;/p&gt;</code>
+<code> </code>
+<code>&lt;?php }</code></pre>
+<p id="c08-para-0082">One thing you should note about the previous code is the <code>$post</code> parameter for the <code>pdev_book_details_meta_box()</code> function. This parameter is automatically passed into the callback function for meta boxes and is the <code>WP_Post</code> object for the post.</p>
+<p id="c08-para-0083">The first thing the preceding code does is get the current book author value attached to the book and assign it to the <code>$author</code> variable. If this is a new post or an author has not yet been set, the value will be an empty string.</p>
+<p id="c08-para-0084">The second bit of code is a call to <code>wp_nonce:field()</code>, which outputs a hidden HTML form field with a nonce value. You will later check this value for security purposes when saving metadata to the database. Nonces are covered in more detail in <a href="c04.xhtml">Chapter 4</a>, “Security and Performance.”</p>
+<p id="c08-para-0085">The final thing the function does is output a text input field to allow the plugin user to enter a book author's name. The <code>value</code> attribute is an escaped copy of the <code>$author</code> variable.</p>
+</section> <span epub:type="pagebreak" id="Page_190" role="doc-pagebreak" title="190"/>
+<section><span id="c08-sec-0022"/>
+<h3 id="head-3-150">Saving Meta Box Data</h3>
+<p id="c08-para-0086">Creating a custom meta box is one part of a two‐part process of handling the user experience aspect of manipulating post metadata. The second part is adding, updating, and/or deleting metadata when a post is saved. This is the point where everything you learned in the “Post Metadata” section of this chapter becomes useful in practice.</p>
+<p>To save metadata from your custom meta box fields, you need to find the appropriate hook. There are several hooks that fire during the post‐saving procedure, and many theme authors rely directly on the <code>save_post</code> hook. However, it is not always the best option because it runs for every post type. Instead, when you are saving metadata for only a specific post type, use the <code>save_post_{$post_type}</code> hook where <code>$post_type</code> is the name of the post type. Aside from their different names and when they are fired, the two hooks are identical.</p>
+<pre id="c08-code-0028"><code>&lt;?php</code>
+<code>do_action( "save_post_{$post_type}", int $post_id, WP_Post $post, bool $update );</code></pre>
+<p>The hook passes up to three parameters:</p>
+<ul class="check" id="c08-list-0014">
+<li id="c08-li-0071">
+<code>$post_id</code>: The ID of the post currently being saved</li>
+<li id="c08-li-0072">
+<code>$post</code>: The post object for the current post</li>
+<li id="c08-li-0073">
+<code>$update</code>: A Boolean that determines if the current post is being updated (
+<code>true</code>) or is a new post being saved for the first time (
+<code>false</code>)</li>
+</ul>
+<p id="c08-para-0089">For saving the book author, you need to add a custom action to the <code>save_post_book</code> action hook and require the first two parameters, <code>$post_id</code> and <code>$post</code>, which provided necessary data.</p>
+<p>Append the following code snippet to your <code>meta‐boxes.php</code> file in your book plugin folder:</p>
+<pre id="c08-code-0029"><code>add_action( 'save_post_book', 'pdev_book_save_post', 10, 2 );</code>
+<code> </code>
+<code>function pdev_book_save_post( $post_id, $post ) {</code>
+<code> </code>
+<code>       // Verify the nonce before proceeding.</code>
+<code>       if (</code>
+<code>             ! isset( $_POST['pdev-book-details'] ) ||</code>
+<code>             ! wp_verify_nonce( $_POST['pdev-book-details'], basename( __FILE__ ) )</code>
+<code>       ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Bail if user doesn't have permission to edit the post.</code>
+<code>       if ( ! current_user_can( 'edit_post', $post_id ) ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Bail if this is an Ajax request, autosave, or revision.</code>
+<code>       if (</code>
+<code>             wp_is_doing_ajax() ||</code>
+<code>             wp_is_post_autosave( $post_id ) ||</code>
+<code>             wp_is_post_revision( $post_id )</code>
+<code>       ) {<span epub:type="pagebreak" id="Page_191" role="doc-pagebreak" title="191"/></code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Get the existing book author if the value exists.</code>
+<code>       // If no existing book author, value is empty string.</code>
+<code>       $old_author = get_post_meta( $post_id, 'book_author', true );</code>
+<code> </code>
+<code>       // Strip all tags from posted book author.</code>
+<code>       // If no value is passed from the form, set to empty string.</code>
+<code>       $new_author = isset( $_POST['pdev-book-author'] )</code>
+<code>                     ? wp_strip_all_tags( $_POST['pdev-book-author'] )</code>
+<code>                   : '';</code>
+<code> </code>
+<code>       // If there's an old value but not a new value, delete old value.</code>
+<code>       if ( ! $new_author &amp;&amp; $old_author ) {</code>
+<code>             delete_post_meta( $post_id, 'book_author' );</code>
+<code> </code>
+<code>       // If the new value doesn't match the new value, add/update.</code>
+<code>       } elseif ( $new_value !== $old_value ) {</code>
+<code>             update_post_meta( $post_id, 'book_author', $new_value );</code>
+<code>       }</code>
+<code>}</code></pre>
+<p id="c08-para-0091">The preceding code can essentially be broken into three sections. The first section of the code is running several checks to determine whether to proceed. Once the code runs through its checks, the second section gets the data it needs. Finally, it can move on to saving or deleting metadata.</p>
+<p id="c08-para-0092">The most important check comes first, which verifies that the nonce field created in the previous “Adding a Custom Meta Box” section is valid. The second check determines whether the current user has permission to edit the post at all. The third check is kind of a stock check that you should add when saving metadata. Posts are saved in all sorts of situations in WordPress, even when not on the edit post screen. Therefore, you must determine that the post is not being saved as part of an Ajax request, auto‐save is not running, and the post is not a revision.</p>
+<p id="c08-para-0093">After all the checks have passed, the previous code grabs the existing book author metadata via the <code>get_post_meta()</code> function. If no value exists in the database, the function will return an empty string. Then, it checks <code>$_POST['pdev‐book‐author']</code> to get the new book author posted from the HTML text input box. That data must be run through a sanitizing function to make sure it is safe. In this case, <code>wp_strip_all_tags()</code> works because there is no need for HTML.</p>
+<p id="c08-para-0094">After getting both the old and new book author metadata, it is a simple matter of running a conditional check to determine what to do with the data. If the new meta value is empty and an old value exists, use <code>delete_post_meta()</code> to delete it. Else, if the new value does not equal the old value, use <code>update_post_meta()</code> to update it. Also, remember that <code>update_post_meta()</code> will add a new meta value if it does not yet exist.</p>
+</section>
+</section>
+<section><span id="c08-sec-0023"/>
+<h2 id="head-2-72">CREATING CUSTOM TAXONOMIES</h2>
+<p id="c08-para-0095">Taxonomies are a way to group or categorize objects in WordPress. Technically, they can group any type of object, such as posts, comments, or users. However, the majority of plugins use taxonomies to group posts together.</p>
+<p><span epub:type="pagebreak" id="Page_192" role="doc-pagebreak" title="192"/>WordPress ships with several taxonomies by default.</p>
+<ul class="check" id="c08-list-0015">
+<li id="c08-li-0074"><b>Category:</b> A hierarchical taxonomy used to categorize blog posts</li>
+<li id="c08-li-0075"><b>Post Tag:</b> A nonhierarchical taxonomy used to tag blog posts</li>
+<li id="c08-li-0076"><b>Link Category:</b> A nonhierarchical taxonomy used to categorize links</li>
+<li id="c08-li-0077"><b>Nav Menu:</b> A nonhierarchical taxonomy that represents navigation menus and groups nav menu items</li>
+</ul>
+<p id="c08-para-0097">The true power of custom taxonomies is creating them to use alongside custom post types. Often, it is necessary to create custom taxonomies with post types so that users have a way to organize individual posts of the post type.</p>
+<section><span id="c08-sec-0024"/>
+<h3 id="head-3-151">Understanding Taxonomies</h3>
+<p id="c08-para-0098">To understand how taxonomies work, you must first understand that an individual taxonomy is a group of terms. Each term within the taxonomy is what technically groups posts together.</p>
+<p>In this chapter, you are creating a new custom post type: book. A user would use the book post type to organize their personal collection of books. Your plugin user will likely want some way to organize their book collection into groups. This is where custom taxonomies fit into the picture. Some possible taxonomies for books follow:</p>
+<ul class="check" id="c08-list-0016">
+<li id="c08-li-0078">Genre (fantasy, romance, science fiction)</li>
+<li id="c08-li-0079">Format (hardcover, paperback, digital)</li>
+<li id="c08-li-0080">Publisher (Wiley, Tor Books)</li>
+<li id="c08-li-0081">Form (novel, novella)</li>
+</ul>
+<p id="c08-para-0100">Each of these taxonomies would enable users to label their books with information that further defines the content. Essentially, taxonomies provide clearer organization and definition for the content.</p>
+<p>This section focuses on creating the <code>genre</code> taxonomy for the book post type, which you created earlier in this chapter.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c08-para-0102"><b>NOTE</b> <i>This chapter focuses solely on creating taxonomies for post types because this will be the scenario they'll be used for in most cases. However, you can add taxonomies to any object type in WordPress, such as comments and users.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c08-sec-0026"/>
+<h3 id="head-3-152">Registering a Custom Taxonomy</h3>
+<p id="c08-para-0103">WordPress makes it easy for plugin developers to register a custom taxonomy with a single function. Like registering a custom post type, it is simply a matter of calling the function and adding custom parameters.</p> <span epub:type="pagebreak" id="Page_193" role="doc-pagebreak" title="193"/>
+<section><span id="c08-sec-0027"/>
+<h4 id="head-4-64">register_taxonomy</h4>
+<p>WordPress provides the <code>register_taxonomy()</code> function for registering a new taxonomy with the system. This function enables you to create a new taxonomy and set it up by using custom arguments that define how the taxonomy should be handled within WordPress.</p>
+<pre id="c08-code-0030"><code>&lt;?php</code>
+<code>register_taxonomy( string $taxonomy, array|string $object_type, array|string </code>
+<code>$args = [] );</code></pre>
+<p>The function accepts three parameters.</p>
+<ul class="check" id="c08-list-0017">
+<li id="c08-li-0082">
+<code>$taxonomy</code>: The name of your plugin's taxonomy. This should contain only alphanumeric characters and underscores.</li>
+<li id="c08-li-0083">
+<code>$object_type</code>: A single object or an array of objects to add the taxonomy to. For post objects, this is the post type name.</li>
+<li id="c08-li-0084">
+<code>$args</code>: An array of arguments that defines how WordPress should handle your taxonomy.</li>
+</ul>
+<p id="c08-para-0106">There are many flags that you can set for the <code>$args</code> parameter, which is more than can be covered in this chapter. You can view all arguments via the developer documentation: <code><a href="https://developer.wordpress.org/reference/functions/register_taxonomy">https://developer.wordpress.org/reference/functions/register_taxonomy</a></code>.</p>
+</section>
+<section><span id="c08-sec-0028"/>
+<h4 id="head-4-65">Registering the Genre Taxonomy</h4>
+<p id="c08-para-0107">Now that you've reviewed the <code>register_taxonomy()</code> parameters and arguments, it is time to use that knowledge to create new taxonomies.</p>
+<p>First, you need to create a new <code>taxonomies.php</code> file within your plugin folder. Then, append the following line of code to your primary <code>plugin.php</code> file to load it:</p>
+<pre id="c08-code-0031"><code>require_once plugin_dir_path( __FILE__ ) . 'taxonomies.php';</code></pre>
+<p>The next code snippet will register a hierarchical taxonomy named <code>genre</code>, which users can use to organize their book collection. Add the following code to your <code>taxonomies.php</code> plugin file:</p>
+<pre id="c08-code-0032"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_books_register_taxonomies' );</code>
+<code> </code>
+<code>function pdev_books_register_taxonomies() {</code>
+<code> </code>
+<code>       register_taxonomy( 'genre', 'book', [</code>
+<code> </code>
+<code>             // Taxonomy arguments.</code>
+<code>             'public'            =&gt; true,</code>
+<code>             'show_in_rest'      =&gt; true,</code>
+<code>             'show_ui'           =&gt; true,</code>
+<code>             'show_in_nav_menus' =&gt; true,</code>
+<code>             'show_tagcloud'     =&gt; true,</code>
+<code>             'show_admin_column' =&gt; true,</code>
+<code>             'hierarchical'      =&gt; true,</code>
+<code>             'query_var'         =&gt; 'genre',</code>
+<code> <span epub:type="pagebreak" id="Page_194" role="doc-pagebreak" title="194"/></code>
+<code>             // The rewrite handles the URL structure.</code>
+<code>             'rewrite' =&gt; [</code>
+<code>                    'slug'         =&gt; 'genre',</code>
+<code>                    'with_front'   =&gt; false,</code>
+<code>                    'hierarchical' =&gt; false,</code>
+<code>                    'ep_mask'      =&gt; EP_NONE</code>
+<code>             ], </code>
+<code> </code>
+<code>             // Text labels.</code>
+<code>             'labels'            =&gt; [</code>
+<code>                    'name'                       =&gt; 'Genres',</code>
+<code>                    'singular_name'              =&gt; 'Genre',</code>
+<code>                    'menu_name'                  =&gt; 'Genres',</code>
+<code>                    'name_admin_bar'             =&gt; 'Genre',</code>
+<code>                    'search_items'               =&gt; 'Search Genres',</code>
+<code>                    'popular_items'              =&gt; 'Popular Genres',</code>
+<code>                    'all_items'                  =&gt; 'All Genres',</code>
+<code>                    'edit_item'                  =&gt; 'Edit Genre',</code>
+<code>                    'view_item'                  =&gt; 'View Genre',</code>
+<code>                    'update_item'                =&gt; 'Update Genre',</code>
+<code>                    'add_new_item'               =&gt; 'Add New Genre',</code>
+<code>                    'new_item_name'              =&gt; 'New Genre Name',</code>
+<code>                    'not_found'                  =&gt; 'No genres found.',</code>
+<code>                    'no_terms'                   =&gt; 'No genres',</code>
+<code>                    'items_list_navigation'      =&gt; 'Genres list navigation',</code>
+<code>                    'items_list'                 =&gt; 'Genres list',</code>
+<code> </code>
+<code>                    // Hierarchical only.</code>
+<code>                    'select_name'                =&gt; 'Select Genre',</code>
+<code>                    'parent_item'                =&gt; 'Parent Genre',</code>
+<code>                    'parent_item_colon'          =&gt; 'Parent Genre:'</code>
+<code>             ]</code>
+<code>       ] );</code>
+<code>}</code></pre>
+<p id="c08-para-0110">After you add the preceding code, you'll be presented with a new submenu item under the Books menu item in the admin, labeled Genres. You also have a new meta box for assigning genres to individual books, as shown in <a href="#c08-fig-0003" id="R_c08-fig-0003">Figure 8‐3</a>. WordPress will automatically generate this meta box.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c08-para-0112"><b>WARNING</b> <i>Your function for registering new taxonomies must be added to the</i> <code>init</code> <i>action hook for the taxonomies to be properly registered.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+</section>
+<section><span id="c08-sec-0030"/>
+<h3 id="head-3-153">Assigning a Taxonomy to a Post Type</h3>
+<p id="c08-para-0113">Rather than registering a custom taxonomy, sometimes you may need to assign a taxonomy to a post type. If your plugin creates the taxonomy, you would do this with the <code>register_taxonomy()</code> function. If your plugin is creating a custom post type but needs to add an existing taxonomy, you would use the <code>taxonomy</code> argument for <code>register_post_type()</code>. However, there are scenarios where you either need or can choose to use an alternative solution.</p>
+<figure> <img alt="“Screenshot of a new Genres submenu item under the Books menu item in the admin, with a new meta box for assigning genres to individual books.”" class="center" src="images/c08f003.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c08-fig-0003" id="c08-fig-0003" role="doc-backlink"><b>FIGURE 8‐3</b></a>:</span> Genres submenu</p>
+</figcaption>
+</figure>
+<p><span epub:type="pagebreak" id="Page_195" role="doc-pagebreak" title="195"/>WordPress provides the <code>register_taxonomy_for_object_type()</code> function, which enables you to set a taxonomy on any object type, which will typically be a specific post type.</p>
+<pre id="c08-code-0033"><code>&lt;?php</code>
+<code>register_taxonomy_for_object_type( string $taxonomy, string $object_type );</code></pre>
+<p>The function accepts two parameters.</p>
+<ul class="check" id="c08-list-0018">
+<li id="c08-li-0085">
+<code>$taxonomy</code>: The name of the taxonomy your plugin will add to the object type.</li>
+<li id="c08-li-0086">
+<code>$object_type</code>: The name of the object type to add the taxonomy to. Most of the time, this will be a post type.</li>
+</ul>
+<p>Suppose you are working for a client who has an existing plugin that already registers the <code>genre</code> taxonomy you added in the “Registering a Custom Taxonomy” section of this chapter. Instead of registering the taxonomy in your plugin, you can simply add the taxonomy to your new <code>book</code> post type, as shown in the next code snippet:</p>
+<pre id="c08-code-0034"><code>&lt;?php</code>
+<code>add_action( 'init', 'pdev_add_genres_to_books' );</code>
+<code> </code>
+<code>function pdev_add_genres_to_books() {</code>
+<code>       register_taxonomy_for_object_type( 'genre', 'book' );</code>
+<code>}</code></pre>
+</section>
+</section>
+<section><span id="c08-sec-0031"/>
+<h2 id="head-2-73">USING CUSTOM TAXONOMIES</h2>
+<p id="c08-para-0117">Like with custom post types, taxonomies are most often output via WordPress theme template files. However, there are scenarios where your plugin may need to use taxonomy functions for displaying information.</p> <span epub:type="pagebreak" id="Page_196" role="doc-pagebreak" title="196"/>
+<section><span id="c08-sec-0032"/>
+<h3 id="head-3-154">Retrieving a Taxonomy</h3>
+<p id="c08-para-0118">When you register a custom taxonomy with WordPress, it generates a new <code>WP_Taxonomy</code> object and stores the value globally with all the other taxonomy objects. In some cases, you may need to retrieve information about a registered taxonomy. The object's public properties are the arguments supplied for the <code>$args</code> array when you first registered the taxonomy with <code>register_taxonomy()</code>.</p>
+<p>The <code>get_taxonomy()</code> function allows you to get a specific <code>WP_Taxonomy</code> object. The function accepts a single parameter of <code>$taxonomy</code>, which should be the name of the taxonomy.</p>
+<pre id="c08-code-0035"><code>&lt;?php</code>
+<code>get_taxonomy( string $taxonomy );</code></pre>
+<p>Suppose you need to display the singular name label for the genre taxonomy that you registered. You would use the following code to get the taxonomy object and display this label:</p>
+<pre id="c08-code-0036"><code>&lt;?php</code>
+<code>// Get the genre taxonomy object.</code>
+<code>$genre = get_taxonomy( 'genre' );</code>
+<code> </code>
+<code>// Prints "Genre".</code>
+<code>echo $genre-&gt;labels-&gt;singular_name;</code></pre>
+</section>
+<section><span id="c08-sec-0033"/>
+<h3 id="head-3-155">Using a Taxonomy with Posts</h3>
+<p id="c08-para-0121">When using taxonomy with posts, you will generally be listing the taxonomy terms for the given post alongside some or all of the content of the post. This would allow viewers to note there is a taxonomy for the post and allow them to find related posts by a given taxonomy term.</p>
+<p>WordPress provides the <code>the_terms()</code> function for displaying a specific post's terms.</p>
+<pre id="c08-code-0037"><code>&lt;?php</code>
+<code>the_terms( </code>
+<code>       int $post_id, </code>
+<code>       string $taxonomy, </code>
+<code>       string $before = '', </code>
+<code>       string $sep = ', ', </code>
+<code>       string $after = '' </code>
+<code>);</code></pre>
+<p>The function accepts five parameters.</p>
+<ul class="check" id="c08-list-0019">
+<li id="c08-li-0087">
+<code>$id</code>: The ID of the post to list the taxonomy's terms for.</li>
+<li id="c08-li-0088">
+<code>$taxonomy</code>: The name of the taxonomy to list terms for.</li>
+<li id="c08-li-0089">
+<code>$before</code>: Content to display before the list of terms.</li>
+<li id="c08-li-0090">
+<code>$sep</code>: Any string of text or HTML to separate individual terms in the list. This defaults to a comma followed by a space.</li>
+<li id="c08-li-0091">
+<code>$after</code>: Content to display after the list of terms.</li>
+</ul>
+<p id="c08-para-0124">The <code>the_terms()</code> function is a wrapper function for <code>get_the_term_list()</code>. The former function displays the list of terms for the taxonomy, and the latter returns them for use in PHP. Their parameters are identical.</p>
+<p><span epub:type="pagebreak" id="Page_197" role="doc-pagebreak" title="197"/>Assuming you want to display the genres of the book post currently being viewed, you would use the following:</p>
+<pre id="c08-code-0038"><code>&lt;?php</code>
+<code>the_terms(</code>
+<code>       get_the_ID(),</code>
+<code>       'genre',</code>
+<code>       '&lt;div class="pdev-book-genres"&gt;',</code>
+<code>       ', ',</code>
+<code>       '&lt;/div&gt;'</code>
+<code>);</code></pre>
+<p>If you needed to return the value instead of immediately printing it to the screen, use the next code snippet:</p>
+<pre id="c08-code-0039"><code>&lt;?php</code>
+<code>$genres = get_the_term_list(</code>
+<code>       get_the_ID(),</code>
+<code>       'genre',</code>
+<code>       '&lt;div class="pdev-book-genres"&gt;',</code>
+<code>       ', ',</code>
+<code>       '&lt;/div&gt;'</code>
+<code>);</code></pre>
+</section>
+<section><span id="c08-sec-0034"/>
+<h3 id="head-3-156">Taxonomy Conditional Tags</h3>
+<p id="c08-para-0127">WordPress has a few conditional tags for taxonomies. Conditional tags check a specific condition and return <code>true</code> if the condition is met or <code>false</code> if the condition is not met.</p>
+<section><span id="c08-sec-0035"/>
+<h4 id="head-4-66">taxonomy_exists</h4>
+<p>The <code>taxonomy_exists()</code> function checks whether a taxonomy has been registered with WordPress. It accepts a single parameter of <code>$taxonomy</code>, which should be the name of the taxonomy you're checking.</p>
+<pre id="c08-code-0040"><code>&lt;?php</code>
+<code>taxonomy_exists( string $taxonomy );</code></pre>
+<p>Suppose you wanted to check whether the genre taxonomy exists before attempting to register a custom taxonomy of your own. You can use the following code to determine whether to register a custom taxonomy or register an existing taxonomy to your <code>book</code> post type:</p>
+<pre id="c08-code-0041"><code>&lt;?php</code>
+<code>add_action( 'init', 'pdev_maybe_register_genre' );</code>
+<code> </code>
+<code>function pdev_maybe_register_genre() {</code>
+<code> </code>
+<code>       if ( taxonomy_exists( 'genre' ) ) {</code>
+<code>             register_taxonomy_for_object_type( 'genre', 'book' );</code>
+<code>       } else {</code>
+<code>             register_taxonomy( 'genre', 'book' );</code>
+<code>       }</code>
+<code>}</code></pre>
+</section> <span epub:type="pagebreak" id="Page_198" role="doc-pagebreak" title="198"/>
+<section><span id="c08-sec-0036"/>
+<h4 id="head-4-67">is_taxonomy_hierarchical</h4>
+<p>The <code>is_taxonomy_hierarchical()</code> function determines whether a given taxonomy is hierarchical. It accepts a single parameter of <code>$taxonomy</code>, which should be the name of the taxonomy.</p>
+<pre id="c08-code-0042"><code>&lt;?php</code>
+<code>is_taxonomy_hierarchical( string $taxonomy );</code></pre>
+<p>Imagine that you wanted to display a list of terms using the <code>wp_list_categories()</code> function if a taxonomy was hierarchical but a tag cloud using the <code>wp_tag_cloud()</code> function if the taxonomy was flat. You could run an <code>if</code>/
+<code>else</code> check with the result of the <code>is_taxonomy_hierarchical()</code> function as the condition to check.</p>
+<pre id="c08-code-0043"><code>&lt;?php</code>
+<code>$taxonomy = 'genre';</code>
+<code> </code>
+<code>// If taxonomy is hierarchical, print list.</code>
+<code>if ( is_taxonomy_hierarchical( $taxonomy ) ) {</code>
+<code>       printf(</code>
+<code>             '&lt;ul&gt;%s&lt;/ul&gt;',</code>
+<code>             wp_list_categories( [</code>
+<code>                    'taxonomy' =&gt; $taxonomy,</code>
+<code>                    'title_li' =&gt; '',</code>
+<code>                    'echo'     =&gt; false</code>
+<code>             ] )</code>
+<code>       );</code>
+<code> </code>
+<code>// If taxonomy is flat, print tag cloud.</code>
+<code>} else {</code>
+<code>       printf(</code>
+<code>             '%s',</code>
+<code>             wp_tag_cloud( [</code>
+<code>                    'taxonomy' =&gt; $taxonomy,</code>
+<code>                    'echo'     =&gt; false</code>
+<code>             ] )</code>
+<code>       );</code>
+<code>}</code></pre>
+</section>
+<section><span id="c08-sec-0037"/>
+<h4 id="head-4-68">is_tax</h4>
+<p id="c08-para-0132">The <code>is_tax()</code> function determines whether a site visitor is on a term archive page on the frontend of the site. The function would more appropriately be named something like <code>is_taxonomy_term_archive()</code>, which is what it actually checks. However, <code>is_tax()</code> is a legacy function name that WordPress has stuck with.</p>
+<p>When using no parameters, the function simply checks whether the visitor is on any taxonomy term archive. However, you may optionally set one or both of its parameters for a more specific check.</p>
+<pre id="c08-code-0044"><code>&lt;?php</code>
+<code>is_tax( string|array $taxonomy = '', int|string|array $term = '' );</code></pre>
+<p>The following two parameters are accepted:</p>
+<ul class="check" id="c08-list-0020">
+<li id="c08-li-0092">
+<code>$taxonomy</code>: The name of the taxonomy to check for</li>
+<li id="c08-li-0093">
+<code>$term</code>: The name of the term from the taxonomy to check for</li>
+</ul>
+<p><span epub:type="pagebreak" id="Page_199" role="doc-pagebreak" title="199"/>With the next snippet of code, you display one of three messages depending on the condition that is true. You first check to see whether the visitor is on the fantasy genre archive page. If that is not the case, you check to see whether the visitor is on any genre archive page. Finally, if the first two checks fail, you check whether the visitor is on any taxonomy term archive page.</p>
+<pre id="c08-code-0045"><code>&lt;?php</code>
+<code>// If viewing a specific genre archive.</code>
+<code>if ( is_tax( 'genre', 'fantasy' ) ) {</code>
+<code>       echo 'You are viewing the fantasy genre archive';</code>
+<code> </code>
+<code>// If viewing any genre term archive.</code>
+<code>} elseif ( is_tax( 'genre' ) ) {</code>
+<code>       echo 'You are viewing a genre archive';</code>
+<code> </code>
+<code>// If viewing any taxonomy term archive.</code>
+<code>} elseif ( is_tax() ) {</code>
+<code>       echo 'You are viewing a taxonomy term archive.';</code>
+<code>}</code></pre>
+</section>
+</section>
+</section>
+<section><span id="c08-sec-0038"/>
+<h2 id="head-2-74">A POST TYPE, POST METADATA, AND TAXONOMY PLUGIN</h2>
+<p id="c08-para-0136">Throughout this chapter, you have been building the pieces of a book collection plugin. This plugin allows users to input the books they own, add the book author's name, and organize the books by genre. It is a simple plugin that you can further expand upon to make a more advanced book collection plugin. You can also use it as a template to create other custom post types, metadata, and taxonomies.</p>
+<p id="c08-para-0137">Review what the full plugin code should look like when it is finished. Each file of the plugin should be within the <code>plugin‐book‐collection</code> folder.</p>
+<p>The primary <code>plugin.php</code> file, which loads the other plugin files, should look like the following:</p>
+<pre id="c08-code-0046"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name: Book Collection</code>
+<code> * Plugin URI:  http://example.com/</code>
+<code> * Description: A plugin for managing a book collection.</code>
+<code> * Author:      WROX</code>
+<code> * Author URI:  http://wrox.com</code>
+<code> */</code>
+<code> </code>
+<code>// Load custom post type functions.</code>
+<code>require_once plugin_dir_path( __FILE__ ) . 'post-types.php';</code>
+<code>require_once plugin_dir_path( __FILE__ ) . 'post-meta.php';</code>
+<code>require_once plugin_dir_path( __FILE__ ) . 'meta-boxes.php';</code>
+<code>require_once plugin_dir_path( __FILE__ ) . 'taxonomies.php';</code></pre>
+<p>The <code>post‐types.php</code> file, which registers the <code>book</code> post type, should look like the next snippet:</p>
+<pre id="c08-code-0047"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_book_collection_post_types' );</code>
+<code> <span epub:type="pagebreak" id="Page_200" role="doc-pagebreak" title="200"/></code>
+<code>function pdev_book_collection_post_types() {</code>
+<code> </code>
+<code>       register_post_type( 'book', [</code>
+<code> </code>
+<code>             // Post type arguments.</code>
+<code>             'public'              =&gt; true,</code>
+<code>             'publicly_queryable'  =&gt; true,</code>
+<code>             'show_in_rest'        =&gt; true,</code>
+<code>             'show_in_nav_menus'   =&gt; true,</code>
+<code>             'show_in_admin_bar'   =&gt; true,</code>
+<code>             'exclude_from_search' =&gt; false,</code>
+<code>             'show_ui'             =&gt; true,</code>
+<code>             'show_in_menu'        =&gt; true,</code>
+<code>             'menu_icon'           =&gt; 'dashicons-book',</code>
+<code>             'hierarchical'        =&gt; false,</code>
+<code>             'has_archive'         =&gt; 'books',</code>
+<code>             'query_var'           =&gt; 'book',</code>
+<code>             'map_meta_cap'        =&gt; true,</code>
+<code> </code>
+<code>             // The rewrite handles the URL structure.</code>
+<code>             'rewrite' =&gt; [</code>
+<code>                    'slug'       =&gt; 'books',</code>
+<code>                    'with_front' =&gt; false,</code>
+<code>                    'pages'      =&gt; true,</code>
+<code>                    'feeds'      =&gt; true,</code>
+<code>                    'ep_mask'    =&gt; EP_PERMALINK,</code>
+<code>             ],</code>
+<code> </code>
+<code>             // Features the post type supports.</code>
+<code>             'supports' =&gt; [</code>
+<code>                    'title',</code>
+<code>                    'editor',</code>
+<code>                    'excerpt',</code>
+<code>                    'thumbnail'</code>
+<code>             ],</code>
+<code> </code>
+<code>             // Text labels.</code>
+<code>             'labels'              =&gt; [</code>
+<code>                    'name'                     =&gt; 'Books',</code>
+<code>                    'singular_name'            =&gt; 'Book',</code>
+<code>                    'add_new'                  =&gt; 'Add New',</code>
+<code>                    'add_new_item'             =&gt; 'Add New Book',</code>
+<code>                    'edit_item'                =&gt; 'Edit Book',</code>
+<code>                    'new_item'                 =&gt; 'New Book',</code>
+<code>                    'view_item'                =&gt; 'View Book',</code>
+<code>                    'view_items'               =&gt; 'View Books',</code>
+<code>                    'search_items'             =&gt; 'Search Books',</code>
+<code>                    'not_found'                =&gt; 'No books found.',</code>
+<code>                    'not_found_in_trash'       =&gt; 'No books found in Trash.',</code>
+<code>                    'all_items'                =&gt; 'All Books',</code>
+<code>                    'archives'                 =&gt; 'Book Archives',</code>
+<code>                    'attributes'               =&gt; 'Book Attributes',</code>
+<code>                    'insert_into_item'         =&gt; 'Insert into book',</code>
+<code>                    'uploaded_to_this_item'    =&gt; 'Uploaded to this book',</code>
+<code>                    'featured_image'           =&gt; 'Book Image',<span epub:type="pagebreak" id="Page_201" role="doc-pagebreak" title="201"/></code>
+<code>                    'set_featured_image'       =&gt; 'Set book image',</code>
+<code>                    'remove_featured_image'    =&gt; 'Remove book image',</code>
+<code>                    'use_featured_image'       =&gt; 'Use as book image',</code>
+<code>                    'filter_items_list'        =&gt; 'Filter books list',</code>
+<code>                    'items_list_navigation'    =&gt; 'Books list navigation',</code>
+<code>                    'items_list'               =&gt; 'Books list',</code>
+<code>                    'item_published'           =&gt; 'Book published.',</code>
+<code>                    'item_published_privately' =&gt; 'Book published privately.',</code>
+<code>                    'item_reverted_to_draft'   =&gt; 'Book reverted to draft.',</code>
+<code>                    'item_scheduled'           =&gt; 'Book scheduled.',</code>
+<code>                    'item_updated'             =&gt; 'Book updated.'</code>
+<code>             ]</code>
+<code>       ] );</code>
+<code>}</code></pre>
+<p>Next, check the <code>post‐meta.php</code> file, which registers the custom post metadata.</p>
+<pre id="c08-code-0048"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_books_register_meta' );</code>
+<code> </code>
+<code>function pdev_books_register_meta() {</code>
+<code> </code>
+<code>       register_post_meta( 'book', 'book_author', [</code>
+<code>             'single'            =&gt; true,</code>
+<code>             'show_in_rest'      =&gt; true,</code>
+<code>             'sanitize_callback' =&gt; function( $value ) {</code>
+<code>                    return wp_strip_all_tags( $value );</code>
+<code>             }</code>
+<code>       ] );</code>
+<code>}</code></pre>
+<p>Then, review your meta box code in the <code>meta‐boxes.php</code> file, which creates the UI for the user to enter and save their book metadata.</p>
+<pre id="c08-code-0049"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'add_meta_boxes_book', 'pdev_book_register_meta_boxes' );</code>
+<code> </code>
+<code>function pdev_book_register_meta_boxes() {</code>
+<code> </code>
+<code>       add_meta_box(</code>
+<code>             'pdev-book-details',</code>
+<code>             'Book Details',</code>
+<code>             'pdev_book_details_meta_box',</code>
+<code>             'book',</code>
+<code>             'advanced',</code>
+<code>             'high'</code>
+<code>       );</code>
+<code>}</code>
+<code> </code>
+<code>function pdev_book_details_meta_box( $post ) {</code>
+<code> </code>
+<code>       // Get the existing book author.</code>
+<code>       $author = get_post_meta( $post-&gt;ID, 'book_author', true );</code>
+<code> <span epub:type="pagebreak" id="Page_202" role="doc-pagebreak" title="202"/></code>
+<code>       // Add a nonce field to check on save.</code>
+<code>       wp_nonce_field( basename( __FILE__ ), 'pdev-book-details' ); ?&gt;</code>
+<code> </code>
+<code>       &lt;p&gt;</code>
+<code>             &lt;label&gt;</code>
+<code>                    Book Author:</code>
+<code>                    &lt;br/&gt;</code>
+<code>                    &lt;input type="text" name="pdev-book-author" </code>
+<code>                    value="&lt;?php echo esc_attr( $author ); ?&gt;"/&gt;</code>
+<code>             &lt;/label&gt;</code>
+<code>       &lt;/p&gt;</code>
+<code> </code>
+<code>&lt;?php }</code>
+<code> </code>
+<code>add_action( 'save_post_book', 'pdev_book_save_post', 10, 2 );</code>
+<code> </code>
+<code>function pdev_book_save_post( $post_id, $post ) {</code>
+<code> </code>
+<code>       // Verify the nonce before proceeding.</code>
+<code>       if (</code>
+<code>             ! isset( $_POST['pdev-book-details'] ) ||</code>
+<code>             ! wp_verify_nonce( $_POST['pdev-book-details'], basename( __FILE__ ) )</code>
+<code>       ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Bail if user doesn't have permission to edit the post.</code>
+<code>       if ( ! current_user_can( 'edit_post', $post_id ) ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Bail if this is an Ajax request, autosave, or revision.</code>
+<code>       if (</code>
+<code>             wp_is_doing_ajax() ||</code>
+<code>             wp_is_post_autosave( $post_id ) ||</code>
+<code>             wp_is_post_revision( $post_id )</code>
+<code>       ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> </code>
+<code>       // Get the existing book author if the value exists.</code>
+<code>       // If no existing book author, value is empty string.</code>
+<code>       $old_author = get_post_meta( $post_id, 'book_author', true );</code>
+<code> </code>
+<code>       // Strip all tags from posted book author.</code>
+<code>       // If no value is passed from the form, set to empty string.</code>
+<code>       $new_author = isset( $_POST['pdev-book-author'] )</code>
+<code>                     ? wp_strip_all_tags( $_POST['pdev-book-author'] )</code>
+<code>                   : '';</code>
+<code> </code>
+<code>       // If there's an old value but not a new value, delete old value.</code>
+<code>       if ( ! $new_author &amp; $old_author ) {</code>
+<code>             delete_post_meta( $post_id, 'book_author' );</code>
+<code> <span epub:type="pagebreak" id="Page_203" role="doc-pagebreak" title="203"/></code>
+<code>       // If the new value doesn't match the new value, add/update.</code>
+<code>       } elseif ( $new_value !== $old_value ) {</code>
+<code>             update_post_meta( $post_id, 'book_author', $new_value );</code>
+<code>       }</code>
+<code>}</code></pre>
+<p>Finally, review the <code>taxonomies.php</code> file, which is used for registering the custom genre taxonomy for organizing books in the collection.</p>
+<pre id="c08-code-0050"><code>&lt;?php</code>
+<code> </code>
+<code>add_action( 'init', 'pdev_books_register_taxonomies' );</code>
+<code> </code>
+<code>function pdev_books_register_taxonomies() {</code>
+<code> </code>
+<code>       register_taxonomy( 'genre', 'book', [</code>
+<code> </code>
+<code>             // Taxonomy arguments.</code>
+<code>             'public'            =&gt; true,</code>
+<code>             'show_in_rest'      =&gt; true,</code>
+<code>             'show_ui'           =&gt; true,</code>
+<code>             'show_in_nav_menus' =&gt; true,</code>
+<code>             'show_tagcloud'     =&gt; true,</code>
+<code>             'show_admin_column' =&gt; true,</code>
+<code>             'hierarchical'      =&gt; true,</code>
+<code>             'query_var'         =&gt; 'genre',</code>
+<code> </code>
+<code>             // The rewrite handles the URL structure.</code>
+<code>             'rewrite' =&gt; [</code>
+<code>                    'slug'         =&gt; 'genre',</code>
+<code>                    'with_front'   =&gt; false,</code>
+<code>                    'hierarchical' =&gt; false,</code>
+<code>                    'ep_mask'      =&gt; EP_NONE</code>
+<code>             ],</code>
+<code> </code>
+<code>             // Text labels.</code>
+<code>             'labels'            =&gt; [</code>
+<code>                    'name'                       =&gt; 'Genres',</code>
+<code>                    'singular_name'              =&gt; 'Genre',</code>
+<code>                    'menu_name'                  =&gt; 'Genres',</code>
+<code>                    'name_admin_bar'             =&gt; 'Genre',</code>
+<code>                    'search_items'               =&gt; 'Search Genres',</code>
+<code>                    'popular_items'              =&gt; 'Popular Genres',</code>
+<code>                    'all_items'                  =&gt; 'All Genres',</code>
+<code>                    'edit_item'                  =&gt; 'Edit Genre',</code>
+<code>                    'view_item'                  =&gt; 'View Genre',</code>
+<code>                    'update_item'                =&gt; 'Update Genre',</code>
+<code>                    'add_new_item'               =&gt; 'Add New Genre',</code>
+<code>                    'new_item_name'              =&gt; 'New Genre Name',</code>
+<code>                    'not_found'                  =&gt; 'No genres found.',</code>
+<code>                    'no_terms'                   =&gt; 'No genres',</code>
+<code>                    'items_list_navigation'      =&gt; 'Genres list navigation',</code>
+<code>                    'items_list'                 =&gt; 'Genres list',</code>
+<code> <span epub:type="pagebreak" id="Page_204" role="doc-pagebreak" title="204"/></code>
+<code>                    // Hierarchical only.</code>
+<code>                    'select_name'                =&gt; 'Select Genre',</code>
+<code>                    'parent_item'                =&gt; 'Parent Genre',</code>
+<code>                    'parent_item_colon'          =&gt; 'Parent Genre:'</code>
+<code>             ]</code>
+<code>       ] );</code>
+<code>}</code></pre>
+<p id="c08-para-0143">Now you have built a fully functional plugin that makes use of custom post types, post metadata, and taxonomies. This is just the beginning, though. There is an entire world of possibilities when it comes to building custom content solutions for your plugins. Use this plugin as a basic template to explore building custom content of your own.</p>
+</section>
+<section><span id="c08-sec-0039"/>
+<h2 id="head-2-75">SUMMARY</h2>
+<p id="c08-para-0144">This chapter represents a small sampling of what's possible with custom post types, post metadata, and taxonomies. The biggest lesson you should take away is that you can use WordPress to create and manage literally any type of content you can imagine. The platform isn't simply limited to blog posts and pages.</p>
+<p id="c08-para-0145">The information presented in this chapter reveals many possibilities for plugin developers. You can make plugins for public use to give thousands of people new ways to manage content, or you can use these tools for custom client websites that have unique content needs.</p>
+</section>
+</section>
+</body>
+</html>

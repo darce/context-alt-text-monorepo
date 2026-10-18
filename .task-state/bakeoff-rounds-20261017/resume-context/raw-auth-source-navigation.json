@@ -1,0 +1,183 @@
+{
+  "scope": "Read-only graph-first navigation for later INITIAL raw-auth source author; no source edits or authorization to bypass WHOLEtestPASS/rootREMOTEpublicREDACK.",
+  "graph": {
+    "http": {
+      "content": [
+        {
+          "type": "text",
+          "text": "results: 6  (rows: name label lines in out connected; group prefix \"-\" means empty; qn = prefix empty ? name : prefix + \".\" + name)\ncontext-alt-text-bakecache-eval-harness.bakeoff.BakeoffClient (bakeoff.py):\n  __init__ Method 528-607 0 8 list;_prompt_fingerprint;__init__\ncontext-alt-text-bakecache-eval-harness.remote_client.RemoteSceneClient (remote_client.py):\n  __init__ Method 59-97 0 2 -\n  _request Method 102-152 4 6 _request_dict;analyze;media_identities;clusters;get;RemoteClientError;CircuitOpenError;JobPollTimeoutError;_retry_after_seconds\n  _request_dict Method 154-158 6 2 _timed_chat;describe;wait_job;clustering_job;cluster_members;patch_cluster;RemoteClientError;_request\ncontext-alt-text-bakecache-eval-harness.bakeoff.BakeoffClient (bakeoff.py):\n  _timed_chat Method 858-907 2 6 describe;weave_bench_describe;append;_extract_caption;_extract_usage;_request_dict\n  run_configuration Method 823-833 3 3 describe;weave_bench_describe;main;decoding_contract\ntotal: 6\nreturned: 6\nhas_more: false\ntruncated: false\n"
+        }
+      ],
+      "isError": false
+    },
+    "cli": {
+      "content": [
+        {
+          "type": "text",
+          "text": "results: 16  (rows: name label lines in out connected; group prefix \"-\" means empty; qn = prefix empty ? name : prefix + \".\" + name)\ncontext-alt-text-bakecache-eval-harness.face_bakeoff (face_bakeoff.py):\n  BoundedStallError Class 70-78 1 0 walk_face_run_record\ncontext-alt-text-bakecache-eval-harness.build_bakeoff_report (build_bakeoff_report.py):\n  ComparabilityError Class 436-437 3 0 _expected_shas;_check_comparability\ncontext-alt-text-bakecache-eval-harness.fir_bakeoff_run (fir_bakeoff_run.py):\n  FirBakeoffRunError Class 83-84 19 0 build_run_plan;_normalise_subject_id;mated_identities_for;score_run;_reject_union_enrolled_count;_enrolled_for;_mated_unit_key;_as_declared_gallery;_validate_search_against_entry;_validate_stratum_searches\ncontext-alt-text-bakecache-eval-harness.bakeoff_intake (bakeoff_intake.py):\n  IntakeError Class 61-62 2 0 load_intake\ncontext-alt-text-bakecache-eval-harness.bakeoff_runner (bakeoff_runner.py):\n  NotCompetingError Class 84-85 2 0 _select_competing\ncontext-alt-text-bakecache-eval-harness.bakeoff (bakeoff.py):\n  PassOneJSONError Class 319-324 1 1 _parse_pass1_json\ncontext-alt-text-bakecache-eval-harness.bakeoff_candidates (bakeoff_candidates.py):\n  RegistryError Class 54-55 6 0 load_bakeoff_candidates;_read_yaml;_assert_sealed_invariants;_assert_counts;_assert_generation_pairs\n  RevisionVerifyError Class 58-59 3 0 _hf_list_repo_files\ncontext-alt-text-bakecache-eval-harness.bakeoff_runner (bakeoff_runner.py):\n  SkipNotesInconsistentError Class 96-97 1 0 _skip_reason\ncontext-alt-text-bakecache-eval-harness.bakeoff (bakeoff.py):\n  ThreeSurfaceParseError Class 347-351 1 1 _parse_three_surface_json\ncontext-alt-text-bakecache-eval-harness.bakeoff_runner (bakeoff_runner.py):\n  UnknownBaselineError Class 92-93 2 0 _parse_baseline_runs\n  UnknownCandidateError Class 80-81 2 0 _select_competing\n  UnknownIncumbentError Class 88-89 2 0 _parse_incumbent_runs\n  UnsupportedStackError Class 72-73 2 0 _plan_candidate\n  VramBudgetError Class 76-77 2 0 _plan_candidate\ncontext-alt-text-bakecache-eval-harness.bakeoff (bakeoff.py):\n  WeaveBenchRecordError Class 974-976 3 0 _load_weave_bench_source;weave_bench_run_record\ntotal: 27\nreturned: 16\nhas_more: true\nnext_offset: 16\ntruncated: true\ntruncation_reason: page_limit\n"
+        }
+      ],
+      "isError": false
+    }
+  },
+  "snippets": {
+    "raw_init": {
+      "content": [
+        {
+          "type": "text",
+          "text": "name: __init__\nqualified_name: context-alt-text-bakecache-eval-harness.bakeoff.BakeoffClient.__init__\nlabel: Method\nfile_path: /Users/daniel/Development/context-alt-text-monorepo-bakecache-1/apps/prototype-description-service/scripts/eval_harness/bakeoff.py\nstart_line: 528\nend_line: 607\nsource_mode: full\nsource: |\n      def __init__(\n          self,\n          base_url: str,\n          *,\n          model_id: str,\n          model_version: str | None = None,\n          model_revision: str | None = None,\n          seed: int | None = None,\n          no_think: bool = False,\n          timeout_s: float | None = None,\n          transport: httpx.BaseTransport | None = None,\n          eval_mode: str = \"standard\",\n          entry_traits: dict[int, dict[str, list[str]]] | None = None,\n          roster: list[str] | None = None,\n          prompt_variant: str = DEFAULT_PROMPT_VARIANT,\n          caption_length: str = DEFAULT_CAPTION_LENGTH,\n          two_pass: bool = False,\n          dual_length: bool = False,\n          face_gate: bool = False,\n          weave_bench: bool = False,\n          face_fixtures: dict[int, list[dict[str, Any]]] | None = None,\n          depiction_lexicon: DepictionLexicon | None = None,\n      ) -> None:\n          kwargs: dict[str, Any] = {\"transport\": transport}\n          if timeout_s is not None:\n              kwargs[\"timeout_s\"] = timeout_s\n          super().__init__(base_url, api_key=\"\", **kwargs)\n          self._transport = transport\n          self.model_id = model_id\n          self.model_version = model_version\n          self.model_revision = model_revision\n          self.seed = seed\n          self.no_think = no_think\n          if eval_mode not in EVAL_MODES:\n              raise ValueError(f\"unknown eval_mode {eval_mode!r}; expected one of {EVAL_MODES}\")\n          if eval_mode != \"standard\" and entry_traits is None:\n              raise ValueError(f\"eval_mode {eval_mode!r} requires entry_traits (per-media_id identities)\")\n          if prompt_variant not in PROMPT_VARIANTS:\n              raise ValueError(f\"unknown prompt_variant {prompt_variant!r}; expected one of {sorted(PROMPT_VARIANTS)}\")\n          if caption_length not in CAPTION_BANDS:\n              raise ValueError(f\"unknown caption_length {caption_length!r}; expected one of {sorted(CAPTION_BANDS)}\")\n          if PROMPT_VARIANTS[prompt_variant].three_surface:\n              # rg-008 fail-fast: the three-surface contract lives in the pass-2\n              # weave; without two_pass it would never reach the model.\n              if not two_pass:\n                  raise ValueError(\n                      f\"prompt_variant {prompt_variant!r} emits title/alt/caption from the pass-2 weave \"\n                      \"and requires two_pass=True (--two-pass)\"\n                  )\n              if dual_length:\n                  raise ValueError(\n                      f\"prompt_variant {prompt_variant!r} already emits the long surface in the weave; \"\n                      \"dual_length is incompatible (drop --dual-length)\"\n                  )\n          elif caption_length != DEFAULT_CAPTION_LENGTH:\n              # rg-008 fail-fast: only the three-surface contract carries a caption\n              # band. Accepting it elsewhere would stamp a treatment into the record\n              # that never reached the model -- a silently mislabelled arm.\n              raise ValueError(\n                  f\"caption_length {caption_length!r} applies to the three-surface weave; \"\n                  f\"prompt_variant {prompt_variant!r} does not emit a caption\"\n              )\n          if face_gate and face_fixtures is None:\n              raise ValueError(\"face_gate requires face_fixtures (per-media_id manifest face_boxes dicts)\")\n          if face_gate and not (roster or entry_traits):\n              # rg-008 fail-fast: with no known-name universe the gate cannot find\n              # context names to suppress and would silently sit open.\n              raise ValueError(\"face_gate requires a roster or entry_traits so it can fail closed\")\n          self.eval_mode = eval_mode\n          self.entry_traits = entry_traits or {}\n          self.roster = list(roster or [])\n          self.prompt_variant = prompt_variant\n          self.caption_length = caption_length\n          self.two_pass = two_pass\n          self.dual_length = dual_length\n          self.face_gate = face_gate\n          self.weave_bench = weave_bench\n          self.face_fixtures = face_fixtures or {}\n          self.depiction_lexicon = depiction_lexicon\n          self.prompt_sha256 = self._prompt_fingerprint()\ncallers: 0\ncallees: 3\n"
+        }
+      ],
+      "isError": false
+    },
+    "timed_chat": {
+      "content": [
+        {
+          "type": "text",
+          "text": "name: _timed_chat\nqualified_name: context-alt-text-bakecache-eval-harness.bakeoff.BakeoffClient._timed_chat\nlabel: Method\nfile_path: /Users/daniel/Development/context-alt-text-monorepo-bakecache-1/apps/prototype-description-service/scripts/eval_harness/bakeoff.py\nstart_line: 858\nend_line: 907\nsource_mode: full\nsource: |\n      def _timed_chat(\n          self,\n          messages: list[dict[str, Any]],\n          *,\n          pass_name: str,\n          passes: list[dict[str, Any]],\n          max_tokens: int = _CAPTION_MAX_TOKENS,\n      ) -> str:\n          \"\"\"One greedy chat completion; appends {pass, raw, latency_s, usage} so the\n          A/B bench can attribute per-pass latency and token usage (raw=None on\n          failure; usage=None when the server reported none). ``max_tokens``\n          defaults to the caption budget; the structured pass-1 raises it so a\n          fact-dense JSON never truncates mid-string (PassOneJSONError).\"\"\"\n          started = time.monotonic()\n          usage: dict[str, int] | None = None\n          try:\n              request_json: dict[str, Any] = {\n                  \"model\": self.model_id,\n                  \"temperature\": 0,\n                  \"max_tokens\": max_tokens,\n                  \"messages\": messages,\n              }\n              if self.seed is not None:\n                  request_json[\"seed\"] = self.seed\n              payload = self._request_dict(\n                  \"POST\",\n                  \"/v1/chat/completions\",\n                  json=request_json,\n              )\n              usage = _extract_usage(payload)\n              text = _extract_caption(payload)\n          except Exception:\n              passes.append(\n                  {\n                      \"pass\": pass_name,\n                      \"raw\": None,\n                      \"latency_s\": round(time.monotonic() - started, 3),\n                      \"usage\": usage,\n                  }\n              )\n              raise\n          passes.append(\n              {\n                  \"pass\": pass_name,\n                  \"raw\": text,\n                  \"latency_s\": round(time.monotonic() - started, 3),\n                  \"usage\": usage,\n              }\n          )\n          return text\ncallers: 2\ncallees: 4\n"
+        }
+      ],
+      "isError": false
+    },
+    "parent_request": {
+      "content": [
+        {
+          "type": "text",
+          "text": "name: _request\nqualified_name: context-alt-text-bakecache-eval-harness.remote_client.RemoteSceneClient._request\nlabel: Method\nfile_path: /Users/daniel/Development/context-alt-text-monorepo-bakecache-1/apps/prototype-description-service/scripts/eval_harness/remote_client.py\nstart_line: 102\nend_line: 152\nsource_mode: full\nsource: |\n      def _request(self, method: str, url: str, **kwargs: Any) -> Any:\n          deadline = kwargs.pop(\"_deadline\", None)\n          if self._consecutive_failures >= _BREAKER_THRESHOLD:\n              raise CircuitOpenError(\n                  f\"circuit open after {self._consecutive_failures} consecutive failures; \"\n                  \"aborting before further remote calls\"\n              )\n          rate_limit_retries = 0\n          while True:\n              try:\n                  if deadline is not None:\n                      remaining = deadline - time.monotonic()\n                      if remaining <= 0:\n                          raise JobPollTimeoutError(\"job polling deadline expired during request retries\")\n                      requested_timeout = kwargs.get(\"timeout\", self._timeout_s)\n                      kwargs[\"timeout\"] = min(float(requested_timeout), remaining)\n                  response = self._client.request(method, url, **kwargs)\n                  if response.status_code == 429:\n                      # Expected under the per-key RPM budget (STANDARD = 60 rpm);\n                      # back off and retry. Individual 429s do not charge the\n                      # breaker, but terminal exhaustion is a request-level failure\n                      # like any other and must strike it (S2-02) so a persistently\n                      # rate-limited key can open the circuit instead of hammering\n                      # the live box for ~50 min.\n                      rate_limit_retries += 1\n                      if rate_limit_retries > self._max_rate_limit_retries:\n                          self._consecutive_failures += 1\n                          raise RemoteClientError(\n                              f\"{method} {url} failed: 429 rate limit persisted after \"\n                              f\"{self._max_rate_limit_retries} backoff retries\"\n                          )\n                      wait_seconds = self._retry_after_seconds(response.headers.get(\"Retry-After\"))\n                      if deadline is not None:\n                          remaining = deadline - time.monotonic()\n                          if remaining <= 0:\n                              raise JobPollTimeoutError(\"job polling deadline expired during rate-limit wait\")\n                          wait_seconds = min(wait_seconds, remaining)\n                      time.sleep(wait_seconds)\n                      if deadline is not None and time.monotonic() >= deadline:\n                          raise JobPollTimeoutError(\"job polling deadline expired during rate-limit wait\")\n                      continue\n                  response.raise_for_status()\n                  payload = response.json()\n              except (httpx.HTTPError, json.JSONDecodeError) as exc:\n                  if deadline is not None and time.monotonic() >= deadline:\n                      raise JobPollTimeoutError(\"job polling deadline expired during request\") from exc\n                  self._consecutive_failures += 1\n                  status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None\n                  raise RemoteClientError(f\"{method} {url} failed: {exc}\", status_code=status_code) from exc\n              self._consecutive_failures = 0\n              return payload\ncallers: 4\ncallees: 5\n"
+        }
+      ],
+      "isError": false
+    },
+    "parent_request_dict": {
+      "content": [
+        {
+          "type": "text",
+          "text": "name: _request_dict\nqualified_name: context-alt-text-bakecache-eval-harness.remote_client.RemoteSceneClient._request_dict\nlabel: Method\nfile_path: /Users/daniel/Development/context-alt-text-monorepo-bakecache-1/apps/prototype-description-service/scripts/eval_harness/remote_client.py\nstart_line: 154\nend_line: 158\nsource_mode: full\nsource: |\n      def _request_dict(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:\n          payload = self._request(method, url, **kwargs)\n          if not isinstance(payload, dict):\n              raise RemoteClientError(f\"{method} {url}: expected JSON object, got {type(payload).__name__}\")\n          return payload\ncallers: 6\ncallees: 2\n"
+        }
+      ],
+      "isError": false
+    },
+    "parent_init": {
+      "content": [
+        {
+          "type": "text",
+          "text": "name: __init__\nqualified_name: context-alt-text-bakecache-eval-harness.remote_client.RemoteSceneClient.__init__\nlabel: Method\nfile_path: /Users/daniel/Development/context-alt-text-monorepo-bakecache-1/apps/prototype-description-service/scripts/eval_harness/remote_client.py\nstart_line: 59\nend_line: 97\nsource_mode: full\nsource: |\n      def __init__(\n          self,\n          base_url: str,\n          api_key: str,\n          *,\n          tenant_id: str = \"\",\n          timeout_s: float = _DEFAULT_TIMEOUT_S,\n          max_poll_attempts: int | None = None,\n          poll_interval: float = 2.0,\n          job_poll_timeout_s: float | None = None,\n          rate_limit_wait: float = 20.0,\n          max_rate_limit_retries: int = 4,\n          transport: httpx.BaseTransport | None = None,\n      ) -> None:\n          self.base_url = base_url\n          self.tenant_id = tenant_id\n          headers = {\"X-API-Key\": api_key}\n          if tenant_id:\n              headers[\"X-Tenant-ID\"] = tenant_id  # required by get_tenant_id deps (media routes)\n          self._client = httpx.Client(\n              base_url=base_url,\n              headers=headers,\n              timeout=httpx.Timeout(timeout_s),\n              transport=transport,\n          )\n          self._timeout_s = timeout_s\n          self._max_poll_attempts = max_poll_attempts\n          self._poll_interval = poll_interval\n          self._scale_poll_attempts_to_timeout = job_poll_timeout_s is not None\n          if job_poll_timeout_s is None:\n              job_poll_timeout_s = _DEFAULT_JOB_POLL_TIMEOUT_S\n          if not math.isfinite(job_poll_timeout_s) or job_poll_timeout_s <= 0:\n              raise ValueError(\"job_poll_timeout_s must be a finite value greater than 0\")\n          if max_poll_attempts is not None and max_poll_attempts < 1:\n              raise ValueError(\"max_poll_attempts must be at least 1\")\n          self._job_poll_timeout_s = job_poll_timeout_s\n          self._rate_limit_wait = rate_limit_wait\n          self._max_rate_limit_retries = max_rate_limit_retries\n          self._consecutive_failures = 0\ncallers: 0\ncallees: 0\n"
+        }
+      ],
+      "isError": false
+    },
+    "main_first120lines": {
+      "content": [
+        {
+          "type": "text",
+          "text": "name: main\nqualified_name: context-alt-text-bakecache-eval-harness.bakeoff.main\nlabel: Function\nfile_path: /Users/daniel/Development/context-alt-text-monorepo-bakecache-1/apps/prototype-description-service/scripts/eval_harness/bakeoff.py\nstart_line: 1651\nend_line: 1770\nsource_truncated: true\nsource_clipped: true\nnext_start_line: 1771\noriginal_end_line: 1875\nsource_mode: full\nsource: |+\n  def main(argv: list[str] | None = None) -> None:\n      args = build_parser().parse_args(argv)\n  \n      if args.weave_bench is not None and (args.two_pass or args.dual_length):\n          sys.exit(\"--weave-bench replays recorded pass-1 facts through pass-2 only; drop --two-pass/--dual-length\")\n  \n      if PROMPT_VARIANTS[args.prompt_variant].three_surface:\n          if not args.two_pass:\n              sys.exit(\n                  f\"--prompt-variant {args.prompt_variant} emits title/alt/caption from the pass-2 weave; add --two-pass\"\n              )\n          if args.dual_length:\n              sys.exit(\n                  f\"--prompt-variant {args.prompt_variant} already emits the long surface in the weave; \"\n                  \"drop --dual-length\"\n              )\n      elif args.caption_length != DEFAULT_CAPTION_LENGTH:\n          sys.exit(\n              f\"--caption-length {args.caption_length} applies to the three-surface weave; \"\n              f\"--prompt-variant {args.prompt_variant} does not emit a caption\"\n          )\n  \n      lexicon_knobs = {\n          \"--lexicon-families\": args.lexicon_families,\n          \"--lexicon-tiers\": args.lexicon_tiers,\n          \"--lexicon-version\": args.lexicon_version,\n      }\n      orphaned = [flag for flag, value in lexicon_knobs.items() if value is not None]\n      if args.lexicon_detail != \"full\":\n          orphaned.append(\"--lexicon-detail\")\n      if args.depiction_lexicon is None and orphaned:\n          # rg-008 fail-fast: silently ignoring these would ship a lexicon-off run\n          # that the operator believes was narrowed to a family or tier.\n          sys.exit(f\"{' '.join(orphaned)} require --depiction-lexicon; without it no rules are injected\")\n  \n      depiction_lexicon: DepictionLexicon | None = None\n      if args.depiction_lexicon is not None:\n          try:\n              depiction_lexicon = load_depiction_lexicon(\n                  args.depiction_lexicon,\n                  families=_csv_arg(args.lexicon_families),\n                  tiers=_csv_arg(args.lexicon_tiers),\n                  detail=args.lexicon_detail,\n                  version=args.lexicon_version,\n              )\n          except LexiconError as exc:\n              sys.exit(f\"LexiconError: {_printable_exc(exc)}\")\n          print(\n              f\"depiction lexicon: {depiction_lexicon.version} \"\n              f\"({depiction_lexicon.rule_count_summary()}, {len(depiction_lexicon.render())} chars)\",\n              file=sys.stderr,\n          )\n  \n      if os.environ.get(\"ACX_EVAL_LIVE\") != \"1\":\n          sys.exit(\"bakeoff fetch requires ACX_EVAL_LIVE=1 (safety gate, as VLM-2A live pattern)\")\n  \n      source_record: dict[str, Any] | None = None\n      source_sha256 = \"\"\n      if args.weave_bench is not None:\n          try:\n              source_record, source_sha256 = _load_weave_bench_source(Path(args.weave_bench))\n          except WeaveBenchRecordError as exc:\n              sys.exit(f\"WeaveBenchRecordError: {_printable_exc(exc)}\")\n          # Text-only weave-bench: weave_bench_run_record reads roster/media_id/face_boxes\n          # pins only \u2014 never opens image files (GOLDEN_IMAGES_DIR not required).\n          images_dir = \"\"\n          manifest = load_manifest(\n              args.manifest,\n              metadata_only=True,\n              skip_hash_verification=True,\n              hash_skip_reason=\"weave-bench bakeoff is text-only; image bytes never opened\",\n          )\n      else:\n          images_dir = os.environ.get(\"GOLDEN_IMAGES_DIR\", \"\")\n          if not images_dir:\n              sys.exit(\"GOLDEN_IMAGES_DIR is not set \u2014 see scene/tests/seed/README.md for the rsync bootstrap\")\n          manifest = load_manifest(args.manifest, images_dir=images_dir)\n      entry_traits = {\n          e.media_id: {\"present\": list(e.present_identities), \"easy_wrong\": list(e.easy_wrong)} for e in manifest.entries\n      }\n      roster = sorted(\n          set(getattr(manifest, \"roster\", []) or [])\n          | {n for e in manifest.entries for n in (*e.present_identities, *e.must_right, *e.easy_wrong)}\n      )\n      # Face-gate simulation source: the manifest's curated face_boxes (real\n      # FaceBox shape incl. anonymous strangers) stand in for face-service matches.\n      face_fixtures = {e.media_id: [b.model_dump() for b in e.face_boxes] for e in manifest.entries}\n      client = BakeoffClient(\n          args.endpoint,\n          model_id=args.model_id,\n          model_version=args.model_version,\n          model_revision=args.model_revision,\n          seed=args.seed,\n          no_think=args.no_think,\n          timeout_s=args.timeout,\n          eval_mode=args.eval_mode,\n          entry_traits=entry_traits,\n          roster=roster,\n          prompt_variant=args.prompt_variant,\n          caption_length=args.caption_length,\n          two_pass=args.two_pass,\n          dual_length=args.dual_length,\n          face_gate=args.face_gate,\n          weave_bench=args.weave_bench is not None,\n          face_fixtures=face_fixtures,\n          depiction_lexicon=depiction_lexicon,\n      )\n      started_at = datetime.now(tz=UTC).strftime(\"%Y-%m-%dT%H:%M:%SZ\")\n      stamp = started_at.replace(\":\", \"\").replace(\"-\", \"\").replace(\"T\", \"-\").rstrip(\"Z\")\n      out_dir = Path(__file__).parent / \"out\"\n      out_dir.mkdir(exist_ok=True)\n      # ``run-<stamp>-*`` so cli.prune_out_dir groups these records; slug the model id so\n      # HF-style ids ('Qwen/Qwen3-VL-4B') do not inject a '/' into the default filename.\n      bench_suffix = \"-weave-bench\" if args.weave_bench is not None else \"\"\n      record_path = (\n          Path(args.out)\n          if args.out\n          else out_dir / f\"run-{stamp}-bakeoff-{_safe_model_slug(args.model_id)}{bench_suffix}.json\"\n      )\n  \ncallers: 5\ncallees: 30\n"
+        }
+      ],
+      "isError": false
+    }
+  },
+  "semantic": {
+    "content": [],
+    "structuredContent": {
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "17725",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5967617034912109,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17753",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5825201272964478,
+          "snippet": "Prepared coordinator-only bakecache_consumers.py and exact accepted-command extraction consumer-checks.json: C6/M2/E9selectors. Hard guard requires actual independent P-I source gatePASS0+central review ID and complete reviewed protocol\u2026",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "17768",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5824881196022034,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17786",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5534340143203735,
+          "snippet": "Private permanent results/BAKECACHE-returned-frontier-audits4079regularfiles462051435B/no-symlinks manifestfaf48953386c2671627a2050a45efd0a16eba80d84faa35eb3832c812f1df068;\u2026",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17749",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5182054042816162,
+          "snippet": "## Changes\nCompleted the protocol test-only milestone with 2,745 specification IDs and 114 contract symbols, including corrected independent mutations, relationship controls, nested proof bindings, duplicate JSON members and\u2026",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "17749",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5159280300140381,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "blocker.description",
+          "entity_id": "1233",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5028253793716431,
+          "snippet": "BAKECACHE-C-R-CONTRACT-02: Reported public creation/adoption ledger and staging-publication handoff gap. Independent ledger review is active; the claim is not yet adjudicated.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17732",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.4971972703933716,
+          "snippet": "P-R bootstrapfailure already centrallyrecorded but notbehavioralclosingproof. Nativeworkers lackcentralMCP tools; a posthoc RED write afterGREEN would notprove requiredorder. AfterP-RgatePASS, P-I firstsourceworker mustnaturallycreate\u2026",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    "isError": false
+  },
+  "facts": [
+    "Parent _request_dict accepts **kwargs and forwards to _request; _request forwards to httpx.Client.request and owns existing retry/three-strike failure accounting. Raw-only header changes need no global parent authentication rewrite.",
+    "Parent constructor takes explicit API key; BakeoffClient currently passes empty string, preserving existing service/tenant clients independently.",
+    "Current main parses arguments before manifest gates and creates module out directory after constructing the client. Private-file refusal must precede network/output effects.",
+    "Main snippet is clipped after line1770, not full flow. Source author must read entire actual source and exact approved tests.",
+    "Existing warmup clone omits seed/model_revision/weave_bench; earlier review labels this pre-existing/outside raw-auth slice. Do not silently expand scope while adding credential propagation.",
+    "Sanitize raw failure/success reflections and printable chains without changing global service authentication or decoder/prompt/body/treatment semantics; exact approved tests and contract remain authoritative."
+  ],
+  "canonical_source_pins": {
+    "commit": "92c21115f31743dbf28b9e2e4ec29a1c1ac96a31",
+    "files": [
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+        "sha256": "f50cc3670964a9f13f05081785525ede736b8098e0bedbd5fbb9111e0f64d082",
+        "blob": "e999e0d6a42ef6e07be57ad9a94751305ff9bc5f"
+      },
+      {
+        "path": "apps/prototype-description-service/scripts/eval_harness/remote_client.py",
+        "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53",
+        "blob": "848e6d69d651f922f4afe53d18fb13a06a351423"
+      }
+    ]
+  }
+}

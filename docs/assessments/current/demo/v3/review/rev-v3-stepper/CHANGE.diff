@@ -1,0 +1,138 @@
+diff --git a/apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx b/apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx
+index 55d309735..d001b7495 100644
+--- a/apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx
++++ b/apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx
+@@ -1,7 +1,8 @@
+ import React from 'react';
+ 
+ import { guidedCopy } from '../../guidedPrototype/copy';
+-import { GUIDED_STEP, guidedStepIndex, type GuidedStep } from '../../guidedPrototype/state';
++import { guidedCopy as publicGuidedCopy } from '../../guidedPrototype/publicGuideCopy';
++import { GUIDED_STEP, type GuidedStep } from '../../guidedPrototype/state';
+ 
+ export type GuidedGuideStep = GuidedStep;
+ 
+@@ -12,14 +13,21 @@ const STEP_TITLE = {
+   [GUIDED_STEP.APPLY]: 'step.apply',
+ } as const;
+ 
++const PUBLIC_STEP_TITLE = {
++  [GUIDED_STEP.CONTEXT]: 'step.names.public',
++  [GUIDED_STEP.NAMES]: null,
++  [GUIDED_STEP.DRAFT]: 'step.review.public',
++  [GUIDED_STEP.APPLY]: null,
++} as const;
++
+ export const GUIDED_FACE_SECTION_ID = 'guided-section-face';
+ 
+-export const GUIDED_SECTION_IDS: Record<GuidedStep, string> = {
++export const GUIDED_SECTION_IDS = {
+   [GUIDED_STEP.CONTEXT]: 'guided-section-understand',
+   [GUIDED_STEP.NAMES]: GUIDED_FACE_SECTION_ID,
+   [GUIDED_STEP.DRAFT]: 'guided-section-review',
+   [GUIDED_STEP.APPLY]: 'guided-section-apply',
+-};
++} as const;
+ 
+ export const GUIDE_STEPS: readonly GuidedStep[] = [
+   GUIDED_STEP.CONTEXT,
+@@ -28,8 +36,46 @@ export const GUIDE_STEPS: readonly GuidedStep[] = [
+   GUIDED_STEP.APPLY,
+ ];
+ 
++export const PUBLIC_GUIDE_STEPS: readonly GuidedStep[] = [GUIDED_STEP.CONTEXT, GUIDED_STEP.DRAFT];
++
++export type GuidedPrototypeGuideScope = 'public' | 'admin';
++
++export const guideStepsForScope = (scope: GuidedPrototypeGuideScope): readonly GuidedStep[] =>
++  scope === 'public' ? PUBLIC_GUIDE_STEPS : GUIDE_STEPS;
++
++export const PUBLIC_GUIDED_STEP_FALLBACKS = {
++  [GUIDED_STEP.CONTEXT]: GUIDED_STEP.CONTEXT,
++  [GUIDED_STEP.NAMES]: GUIDED_STEP.CONTEXT,
++  [GUIDED_STEP.DRAFT]: GUIDED_STEP.DRAFT,
++  [GUIDED_STEP.APPLY]: GUIDED_STEP.DRAFT,
++} as const;
++
+ export const guidedStepLabel = (step: GuidedStep): string => guidedCopy(STEP_TITLE[step]);
+ 
++export const guidedStepLabelForScope = (step: GuidedStep, scope: GuidedPrototypeGuideScope): string => {
++  const publicStepTitle = PUBLIC_STEP_TITLE[step];
++  return scope === 'public' && publicStepTitle !== null
++    ? publicGuidedCopy(publicStepTitle)
++    : guidedStepLabel(step);
++};
++
++export const resolveGuidedStepForScope = (
++  activeStep: GuidedStep,
++  scope: GuidedPrototypeGuideScope,
++): GuidedStep => {
++  const steps = guideStepsForScope(scope);
++  return steps.includes(activeStep) ? activeStep : PUBLIC_GUIDED_STEP_FALLBACKS[activeStep];
++};
++
++const guidedStepIndexForList = (steps: readonly GuidedStep[], step: GuidedStep): number => {
++  const index = steps.indexOf(step);
++  if (index < 0) {
++    throw new Error(`Guided step "${step}" is not in the rendered step list.`);
++  }
++
++  return index;
++};
++
+ export const focusGuidedSection = (step: GuidedStep): void => {
+   const target = document.getElementById(GUIDED_SECTION_IDS[step]);
+   if (!target) {
+@@ -49,6 +95,7 @@ export interface GuidedPrototypeGuideProps {
+   open: boolean;
+   onToggle: () => void;
+   onSelect: (step: GuidedStep) => void;
++  scope?: GuidedPrototypeGuideScope;
+ }
+ 
+ export const GuidedPrototypeGuide = ({
+@@ -56,16 +103,28 @@ export const GuidedPrototypeGuide = ({
+   open,
+   onToggle,
+   onSelect,
++  scope = 'admin',
+ }: GuidedPrototypeGuideProps): React.JSX.Element => {
+-  const stepNumber = guidedStepIndex(activeStep) + 1;
+-  const stepTitle = guidedStepLabel(activeStep);
++  const renderedSteps = guideStepsForScope(scope);
++  const currentStep = resolveGuidedStepForScope(activeStep, scope);
++  const currentStepIndex = guidedStepIndexForList(renderedSteps, currentStep);
++  const stepNumber = currentStepIndex + 1;
++  const stepTitle = guidedStepLabelForScope(currentStep, scope);
++  const currentGuideLabel =
++    scope === 'public'
++      ? publicGuidedCopy('guide.current.public', {
++          stepNumber,
++          stepCount: renderedSteps.length,
++          stepTitle,
++        })
++      : guidedCopy('guide.current', { stepNumber, stepTitle });
+ 
+   return (
+     <nav className="acx-guided-guide" aria-label={guidedCopy('guide.label')} data-testid="guided-demo-stepper">
+       <div className="acx-guided-guide__bar">
+         <div>
+           <p className="acx-guided-guide__eyebrow">{guidedCopy('guide.label')}</p>
+-          <strong>{guidedCopy('guide.current', { stepNumber, stepTitle })}</strong>
++          <strong>{currentGuideLabel}</strong>
+         </div>
+         <button
+           type="button"
+@@ -79,9 +138,9 @@ export const GuidedPrototypeGuide = ({
+       {open ? (
+         <div className="acx-guided-guide__body">
+           <ol>
+-            {GUIDE_STEPS.map((step, index) => {
+-              const isCurrent = step === activeStep;
+-              const label = guidedStepLabel(step);
++            {renderedSteps.map((step, index) => {
++              const isCurrent = step === currentStep;
++              const label = guidedStepLabelForScope(step, scope);
+               return (
+                 <li key={step} className={isCurrent ? 'is-current' : undefined}>
+                   <button

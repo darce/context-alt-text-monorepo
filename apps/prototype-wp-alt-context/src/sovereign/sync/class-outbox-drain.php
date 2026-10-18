@@ -1,0 +1,796 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Sovereign\Sync;
+
+require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/class-conflict-repository.php';
+require_once __DIR__ . '/class-cross-plane-sequencer.php';
+require_once __DIR__ . '/class-outbox-dispatcher.php';
+require_once __DIR__ . '/class-outbox-query-repository.php';
+require_once __DIR__ . '/class-outbox-maintenance-service.php';
+require_once __DIR__ . '/class-outbox-status.php';
+require_once __DIR__ . '/../../api/class-tenant-identity.php';
+require_once __DIR__ . '/class-topology-command-repository.php';
+
+use AltContext\Api\TenantIdentity;
+use AltContext\Sovereign\Repositories\SyncStateRepository;
+use DateTimeImmutable;
+use DateTimeZone;
+use RuntimeException;
+use Throwable;
+
+use function add_action;
+use function apply_filters;
+use function array_keys;
+use function current_time;
+use function do_action;
+use function floor;
+use function function_exists;
+use function get_option;
+use function gmdate;
+use function is_array;
+use function is_finite;
+use function is_float;
+use function is_int;
+use function is_numeric;
+use function is_object;
+use function is_string;
+use function max;
+use function method_exists;
+use function min;
+use function time;
+use function trim;
+use function update_option;
+use function wp_clear_scheduled_hook;
+use function wp_next_scheduled;
+use function wp_rand;
+use function wp_schedule_single_event;
+use function wp_unschedule_event;
+
+class OutboxDrain {
+	private const DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
+	private const PURGE_HOOK = 'acx_sync_purge_terminal_rows';
+	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
+	private const DEFAULT_PURGE_TENANT_PAGE_SIZE = 25;
+	// Public so OutboxMaintenanceService can pace bulk requeue in drain-batch-sized
+	// chunks against the same 'acx_outbox_drain_batch_size' filter (E15-35 Slice 2).
+	public const DEFAULT_BATCH_SIZE = 25;
+	private const DEFAULT_CLAIM_LEASE_SECONDS = 300;
+
+	// E15-35 Slice 1 retry tunables. Window-first by construction: the exponential ramp
+	// 60,120,240,480,960,1920 then 3600s/attempt reaches the 24h window at ~attempt 29,
+	// well before the 40-attempt hard cap (~35h) — the window is the primary terminal and
+	// the count is a backstop for a wedged clock. Each value is apply_filters-overridable
+	// and fail-safe validated at read time (rg-008); the superseded count-only
+	// acx_outbox_max_attempts filter is retired (PR-12).
+	private const DEFAULT_BACKOFF_BASE_SECONDS = 60;
+	private const DEFAULT_BACKOFF_CAP_SECONDS = 3600;
+	private const DEFAULT_RETRY_WINDOW_SECONDS = 86400;
+	private const DEFAULT_RETRY_HARD_CAP_ATTEMPTS = 40;
+	private const BACKOFF_MAX_EXPONENT = 30;
+	private const BACKOFF_JITTER_DIVISOR = 10;
+
+	private OutboxDispatcher $dispatcher;
+	private ConflictRepository $conflict_repository;
+	private SyncStateRepository $sync_state_repository;
+	private CrossPlaneSequencer $sequencer;
+	private OutboxQueryRepository $query_repository;
+	private OutboxMaintenanceService $maintenance_service;
+	private string $table_name;
+	private int $batch_size;
+
+	public function __construct(
+		?OutboxDispatcher $dispatcher = null,
+		?ConflictRepository $conflict_repository = null,
+		?SyncStateRepository $sync_state_repository = null,
+		?CrossPlaneSequencer $sequencer = null,
+		?string $table_name = null,
+		?OutboxQueryRepository $query_repository = null,
+		?OutboxMaintenanceService $maintenance_service = null
+	) {
+		global $wpdb;
+
+		$default_table = 'wp_acx_sync_outbox';
+		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
+			$default_table = $wpdb->prefix . 'acx_sync_outbox';
+		}
+
+		$this->dispatcher = $dispatcher ?? new OutboxDispatcher();
+		$this->conflict_repository = $conflict_repository ?? new ConflictRepository();
+		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+		$this->table_name = $table_name ?? $default_table;
+		$this->sequencer = $sequencer ?? new CrossPlaneSequencer( new TopologyCommandRepository(), $this->table_name );
+		$this->query_repository = $query_repository ?? new OutboxQueryRepository( $this->table_name );
+		$this->maintenance_service = $maintenance_service ?? new OutboxMaintenanceService(
+			$this->query_repository,
+			$this->sync_state_repository,
+			$this->table_name
+		);
+		$this->batch_size = max( 1, (int) apply_filters( 'acx_outbox_drain_batch_size', self::DEFAULT_BATCH_SIZE ) );
+	}
+
+	public function register(): void {
+		add_action( self::DRAIN_HOOK, array( $this, 'drain' ) );
+		add_action( self::PURGE_HOOK, array( $this, 'purge_terminal_rows' ) );
+
+		OutboxMaintenanceService::maybe_schedule_purge();
+
+		if ( $this->query_repository->has_pending_operations() ) {
+			self::maybe_schedule_drain();
+		}
+		$this->schedule_drain_for_in_flight_backlog();
+	}
+
+	public static function maybe_schedule_drain(): void {
+		if ( function_exists( 'as_enqueue_async_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
+			$group = self::action_scheduler_group();
+			if ( self::existing_action_satisfies( time(), $group ) ) {
+				return;
+			}
+
+			try {
+				$action_id = as_enqueue_async_action( self::DRAIN_HOOK, array(), $group );
+				if ( (int) $action_id > 0 ) {
+					return;
+				}
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_outbox_action_scheduler_enqueue_failed', $exception );
+				// Fall through to WP-Cron when Action Scheduler is available but cannot enqueue.
+			}
+		}
+
+		self::schedule_wp_cron_drain_at( time() );
+	}
+
+	/**
+	 * Schedule a single future drain (E15-35): Action Scheduler when available, WP-Cron fallback.
+	 * Skipped when a drain is already queued at or before the requested time, so backoff
+	 * wake-ups never stack; a drain parked LATER than the requested time is advanced
+	 * (E15-35-BR-01: a parked backoff anchor must never make earlier-due work wait).
+	 */
+	private static function schedule_drain_at( int $timestamp ): void {
+		if ( function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
+			$group = self::action_scheduler_group();
+			if ( self::existing_action_satisfies( $timestamp, $group ) ) {
+				return;
+			}
+
+			try {
+				$action_id = as_schedule_single_action( $timestamp, self::DRAIN_HOOK, array(), $group );
+				if ( (int) $action_id > 0 ) {
+					return;
+				}
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_outbox_action_scheduler_enqueue_failed', $exception );
+				// Fall through to WP-Cron when Action Scheduler is available but cannot schedule.
+			}
+		}
+
+		self::schedule_wp_cron_drain_at( $timestamp );
+	}
+
+	/**
+	 * True when an existing Action Scheduler drain already runs at or before $desired
+	 * (skip scheduling: the queued drain covers the work). A drain parked LATER than
+	 * $desired is unscheduled so the caller can book the earlier slot (E15-35-BR-01):
+	 * enqueue and operator retry make rows due NOW, and a parked backoff anchor of up
+	 * to ~66min must not defer them.
+	 */
+	private static function existing_action_satisfies( int $desired, string $group ): bool {
+		$existing = as_next_scheduled_action( self::DRAIN_HOOK, array(), $group );
+		if ( true === $existing ) {
+			// A pending async action or one running right now: due immediately.
+			return true;
+		}
+
+		if ( false === $existing || null === $existing || ! is_numeric( $existing ) ) {
+			return false;
+		}
+
+		if ( (int) $existing <= $desired ) {
+			return true;
+		}
+
+		if ( function_exists( 'as_unschedule_action' ) ) {
+			as_unschedule_action( self::DRAIN_HOOK, array(), $group );
+		}
+
+		return false;
+	}
+
+	/**
+	 * WP-Cron mirror of the same policy: keep an existing event at or before $timestamp,
+	 * advance a later-parked one, book one when none exists.
+	 */
+	private static function schedule_wp_cron_drain_at( int $timestamp ): void {
+		$existing = wp_next_scheduled( self::DRAIN_HOOK, array() );
+		if ( false !== $existing && (int) $existing <= $timestamp ) {
+			return;
+		}
+
+		if ( false !== $existing ) {
+			wp_unschedule_event( (int) $existing, self::DRAIN_HOOK, array() );
+		}
+
+		wp_schedule_single_event( $timestamp, self::DRAIN_HOOK, array() );
+	}
+
+	public static function clear_scheduled_drain(): void {
+		wp_clear_scheduled_hook( self::DRAIN_HOOK, array() );
+
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::DRAIN_HOOK, array(), self::action_scheduler_group() );
+		}
+	}
+
+	public static function clear_scheduled_purge(): void {
+		wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
+
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::PURGE_HOOK, array(), self::action_scheduler_group() );
+		}
+	}
+
+	public function drain(): void {
+		$failure = null;
+		try {
+			// CON-3-FU-1: recover rows orphaned in_flight by a drain that died between claim and the
+			// terminal apply_result write, before loading the pending batch. The lease window leaves
+			// rows a concurrent drain is actively processing untouched.
+			$this->query_repository->reclaim_stale_in_flight_operations( $this->resolve_claim_lease_seconds() );
+
+			$operations = $this->sequencer->filter_ready_outbox_operations(
+				$this->query_repository->load_pending_operations( $this->batch_size )
+			);
+			if ( empty( $operations ) ) {
+				return;
+			}
+
+			$claimed = $this->claim_operations( $operations );
+			if ( empty( $claimed ) ) {
+				return;
+			}
+
+			$processed_tenants = $this->process_operation_batch( $claimed );
+			$tenant_ids = array_keys( $processed_tenants );
+			$this->refresh_curation_metrics_for_tenants( $tenant_ids );
+			$this->purge_terminal_rows_for_tenants( $tenant_ids );
+
+		} catch ( Throwable $exception ) {
+			$failure = $exception;
+			throw $exception;
+		} finally {
+			try {
+				// Completion, snapshot, and claim failures leave durable intent behind.
+				$this->schedule_drain_for_pending_backlog();
+				$this->schedule_drain_for_in_flight_backlog();
+			} catch ( Throwable $scheduling_exception ) {
+				self::schedule_wp_cron_drain_at( time() + $this->resolve_claim_lease_seconds() );
+				if ( null === $failure ) {
+					throw $scheduling_exception;
+				}
+				do_action( 'acx_outbox_recovery_schedule_failed', $scheduling_exception );
+			}
+			if ( null !== $failure ) {
+				// Also covers pending work when AS treats this executing action as queued.
+				self::schedule_wp_cron_drain_at( time() + $this->resolve_claim_lease_seconds() );
+			}
+		}
+	}
+
+	private function schedule_drain_for_in_flight_backlog(): void {
+		$earliest = $this->query_repository->earliest_in_flight_recovery_time( $this->resolve_claim_lease_seconds() );
+		$expiry = is_string( $earliest ) ? $this->wp_datetime_to_epoch( $earliest ) : null;
+		$now = $this->wp_datetime_to_epoch( current_time( 'mysql' ) );
+		if ( null !== $expiry && null !== $now ) {
+			// A separate WP-Cron event cannot be mistaken for the running AS action.
+			self::schedule_wp_cron_drain_at( time() + max( 1, $expiry - $now ) );
+		}
+	}
+
+	/**
+	 * Schedule the next drain for the earliest pending attempt (E15-35).
+	 *
+	 * Rows that are due now (NULL/elapsed next_attempt_at) trigger an immediate async drain;
+	 * a backlog that is entirely mid-backoff schedules one future single event at the
+	 * earliest next_attempt_at. No pending rows schedules nothing.
+	 */
+	private function schedule_drain_for_pending_backlog(): void {
+		if ( ! $this->query_repository->has_pending_operations() ) {
+			return;
+		}
+
+		$earliest = $this->query_repository->earliest_pending_attempt_time();
+		$earliest_timestamp = is_string( $earliest ) ? $this->wp_datetime_to_epoch( $earliest ) : null;
+		$now_timestamp = $this->wp_datetime_to_epoch( current_time( 'mysql' ) );
+
+		if ( null === $earliest_timestamp || null === $now_timestamp || $earliest_timestamp <= $now_timestamp ) {
+			self::maybe_schedule_drain();
+			return;
+		}
+
+		self::schedule_drain_at( time() + ( $earliest_timestamp - $now_timestamp ) );
+	}
+
+	/**
+	 * Claim each ready operation before dispatch so a concurrent drain cannot pick up the same
+	 * row. Only operations this drain won the claim for are returned for processing (CON-3).
+	 *
+	 * @param array<int,array<string,mixed>> $operations
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function claim_operations( array $operations ): array {
+		$claimed = array();
+		foreach ( $operations as $operation ) {
+			$outbox_id = max( 0, (int) ( $operation['id'] ?? 0 ) );
+			if ( $outbox_id <= 0 ) {
+				continue;
+			}
+
+			$claimed_operation = $this->query_repository->claim_operation( $outbox_id );
+			if ( false !== $claimed_operation ) {
+				$claimed[] = $claimed_operation;
+			}
+		}
+
+		return $claimed;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function find_operations( string $tenant_id, ?string $status = null, int $limit = 50, int $offset = 0 ): array {
+		return $this->query_repository->find_operations_by_status( $tenant_id, $status, $limit, $offset );
+	}
+
+	public function count_operations( string $tenant_id, ?string $status = null ): int {
+		return $this->query_repository->count_operations_by_status( $tenant_id, $status );
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function find_failed_operations( string $tenant_id, int $limit = 50, int $offset = 0 ): array {
+		return $this->query_repository->find_operations_by_status( $tenant_id, 'failed', $limit, $offset );
+	}
+
+	public function count_failed_operations( string $tenant_id ): int {
+		return $this->query_repository->count_operations_by_status( $tenant_id, 'failed' );
+	}
+
+	/**
+	 * @param int[] $outbox_ids
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function find_operations_by_ids( array $outbox_ids, string $tenant_id ): array {
+		return $this->query_repository->find_operations_by_ids( $outbox_ids, $tenant_id );
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	public function find_operation_by_id( int $outbox_id, string $tenant_id ): ?array {
+		return $this->query_repository->find_operation_by_id( $outbox_id, $tenant_id );
+	}
+
+	public function retry_failed_operation( int $outbox_id, string $tenant_id ): bool {
+		return $this->maintenance_service->retry_failed_operation( $outbox_id, $tenant_id );
+	}
+
+	/**
+	 * Thin delegator (REFA-6 convention) for E15-35 Slice 2 bulk dead-letter recovery.
+	 *
+	 * @return int|false Number of rows requeued, or false when the tenant id is invalid
+	 *                   or the database adapter is unavailable.
+	 */
+	public function retry_failed_operations_bulk( string $tenant_id ): int|false {
+		return $this->maintenance_service->retry_failed_operations_bulk( $tenant_id );
+	}
+
+	public function discard_operation( int $outbox_id, string $tenant_id ): bool {
+		return $this->maintenance_service->discard_operation( $outbox_id, $tenant_id );
+	}
+
+	public function re_enqueue_with_current_base( int $outbox_id, int $backend_version, string $tenant_id, ?string $merged_value = null ): bool {
+		return $this->maintenance_service->re_enqueue_with_current_base( $outbox_id, $backend_version, $tenant_id, $merged_value );
+	}
+
+	public function purge_terminal_rows(): void {
+		try {
+			$cursor_value = get_option( 'acx_sync_purge_tenant_cursor', '' );
+			$after_tenant_id = is_string( $cursor_value ) ? trim( $cursor_value ) : '';
+			$page_size = $this->resolve_positive_int_tunable( 'acx_sync_purge_tenant_page_size', self::DEFAULT_PURGE_TENANT_PAGE_SIZE );
+			$tenant_ids = $this->maintenance_service->list_terminal_purge_tenant_ids( $page_size, $after_tenant_id );
+			if ( empty( $tenant_ids ) ) {
+				if ( '' !== $after_tenant_id ) {
+					update_option( 'acx_sync_purge_tenant_cursor', '', false );
+					return;
+				}
+
+				$tenant = TenantIdentity::resolve();
+				$tenant_id = trim( (string) ( $tenant['value'] ?? '' ) );
+				if ( '' === $tenant_id ) {
+					return;
+				}
+
+				$tenant_ids = array( $tenant_id );
+			}
+
+			$this->purge_terminal_rows_for_tenants( $tenant_ids );
+			$last_tenant_id = trim( (string) end( $tenant_ids ) );
+			if ( count( $tenant_ids ) < $page_size ) {
+				update_option( 'acx_sync_purge_tenant_cursor', '', false );
+			} elseif ( '' !== $last_tenant_id ) {
+				update_option( 'acx_sync_purge_tenant_cursor', $last_tenant_id, false );
+			}
+		} catch ( Throwable $exception ) {
+			do_action( 'acx_sync_purge_terminal_rows_failed', '', $exception );
+		} finally {
+			// A failed tenant, a failed tenant scan, or an early return must not
+			// strand the recurring purge hook.
+			try {
+				OutboxMaintenanceService::maybe_schedule_purge();
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_sync_purge_reschedule_failed', $exception );
+			}
+		}
+	}
+
+	/**
+	 * Run one bounded, tenant-scoped purge for inline sync recovery.
+	 *
+	 * @return array<string,mixed>|false
+	 */
+	public function purge_terminal_rows_for_tenant( string $tenant_id, int $batch_cap = ReclaimerLiveness::INLINE_PURGE_BATCH_SIZE ): array|false {
+		return $this->maintenance_service->purge_terminal_rows(
+			trim( $tenant_id ),
+			max( 1, $batch_cap ),
+			$this->resolve_reclaimer_scheduler_mode()
+		);
+	}
+
+	private function resolve_reclaimer_scheduler_mode(): string {
+		$booked_scheduler_mode = ( new ReclaimerLiveness() )->booked_scheduler_mode();
+		if ( null !== $booked_scheduler_mode ) {
+			return $booked_scheduler_mode;
+		}
+
+		return function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' )
+			? ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER
+			: ReclaimerLiveness::SCHEDULER_WP_CRON;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $operations
+	 * @return array<string,true>
+	 */
+	private function process_operation_batch( array $operations ): array {
+		$results = $this->dispatcher->dispatch_batch( $operations );
+		$processed_tenants = array();
+		foreach ( $operations as $index => $operation ) {
+			$result = is_array( $results[ $index ] ?? null )
+				? $results[ $index ]
+				: array(
+					'status' => 'failed',
+					'error_code' => 'unexpected_response',
+					'error_message' => 'Remote curation replay did not return a result for this operation.',
+					'retryable' => true,
+				);
+			if ( ! $this->apply_result( $operation, $result ) ) {
+				continue;
+			}
+
+			$tenant_id = trim( (string) ( $operation['tenant_id'] ?? '' ) );
+			if ( '' !== $tenant_id ) {
+				$processed_tenants[ $tenant_id ] = true;
+			}
+		}
+
+		return $processed_tenants;
+	}
+
+	/**
+	 * @param array<int,string> $tenant_ids
+	 */
+	private function refresh_curation_metrics_for_tenants( array $tenant_ids ): void {
+		foreach ( $tenant_ids as $tenant_id ) {
+			$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
+		}
+	}
+
+	/**
+	 * @param array<int,string> $tenant_ids
+	 */
+	private function purge_terminal_rows_for_tenants( array $tenant_ids ): void {
+		foreach ( $tenant_ids as $tenant_id ) {
+			$normalized_tenant_id = trim( $tenant_id );
+			if ( '' === $normalized_tenant_id ) {
+				continue;
+			}
+
+			try {
+				$purged = $this->maintenance_service->purge_terminal_rows( $normalized_tenant_id );
+				if ( false === $purged ) {
+					do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id );
+				}
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_sync_purge_terminal_rows_failed', $normalized_tenant_id, $exception );
+			}
+		}
+	}
+
+	/**
+	 * @param array<string,mixed> $operation
+	 * @param array<string,mixed> $result
+	 * @throws RuntimeException When an owned result cannot be persisted.
+	 */
+	private function apply_result( array $operation, array $result ): bool {
+		global $wpdb;
+
+		$outbox_id = max( 0, (int) ( $operation['id'] ?? 0 ) );
+		$claim_token = $operation['claim_token'] ?? null;
+		if ( $outbox_id <= 0 || ! is_string( $claim_token ) || '' === $claim_token ) {
+			return false;
+		}
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
+			throw new RuntimeException( 'Outbox completion database adapter is unavailable.' );
+		}
+
+		$attempts = max( 0, (int) ( $operation['attempts'] ?? 0 ) ) + 1;
+		$attempted_at = current_time( 'mysql' );
+		$status = trim( (string) ( $result['status'] ?? 'failed' ) );
+
+		if ( OutboxStatus::ACKNOWLEDGED === $status ) {
+			return $this->persist_claim_result(
+				$operation,
+				array(
+					'status' => OutboxStatus::ACKNOWLEDGED,
+					'attempts' => $attempts,
+					'last_error_code' => null,
+					'last_error_message' => null,
+					'last_error_retryable' => null,
+					'acknowledged_version' => max( 0, (int) ( $result['backend_version'] ?? 0 ) ),
+					'last_attempted_at' => $attempted_at,
+					'first_failed_at' => null,
+					'next_attempt_at' => null,
+					'acknowledged_at' => $attempted_at,
+				),
+				array( '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s' )
+			);
+		}
+
+		if ( OutboxStatus::CONFLICT === $status ) {
+			return $this->persist_claim_result(
+				$operation,
+				array(
+					'status' => OutboxStatus::CONFLICT,
+					'attempts' => $attempts,
+					'last_error_code' => $this->normalize_text( $result['conflict_code'] ?? '', 'version_conflict' ),
+					'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Remote curation replay conflict.' ),
+					'last_error_retryable' => null,
+					'last_attempted_at' => $attempted_at,
+					'next_attempt_at' => null,
+				),
+				array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
+				$result
+			);
+		}
+
+		// E15-35 Slice 1: combined time+count terminal. Non-retryable failures (auth/4xx/invalid
+		// payload) still dead-letter at the first attempt — backoff applies to the retryable
+		// class only. A retryable failure stamps first_failed_at on its first failure and is
+		// terminal only when its first-failure age exceeds the retry window (primary, 24h) or
+		// attempts reach the hard cap (backstop, 40).
+		$retryable = (bool) ( $result['retryable'] ?? true );
+
+		$existing_first_failed_at = $this->normalize_text( $operation['first_failed_at'] ?? '', '' );
+		$first_failed_at = null !== $this->wp_datetime_to_epoch( $existing_first_failed_at )
+			? $existing_first_failed_at
+			: $attempted_at;
+		$failure_age_seconds = $this->wp_datetime_diff_seconds( $first_failed_at, $attempted_at );
+
+		$is_terminal = ! $retryable
+			|| $attempts >= $this->resolve_retry_hard_cap_attempts()
+			|| $failure_age_seconds > $this->resolve_retry_window_seconds();
+
+		$next_status = $is_terminal ? OutboxStatus::FAILED : OutboxStatus::PENDING;
+		$next_attempt_at = $is_terminal ? null : $this->compute_next_attempt_at( $attempts, $attempted_at );
+
+		return $this->persist_claim_result(
+			$operation,
+			array(
+				'status' => $next_status,
+				'attempts' => $attempts,
+				'last_error_code' => $this->normalize_text( $result['error_code'] ?? '', 'dispatch_failed' ),
+				'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Outbox dispatch failed.' ),
+				'last_error_retryable' => $retryable ? 1 : 0,
+				'last_attempted_at' => $attempted_at,
+				'first_failed_at' => $first_failed_at,
+				'next_attempt_at' => $next_attempt_at,
+			),
+			array( '%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s' )
+		);
+	}
+
+	/**
+	 * The guarded UPDATE acquires the InnoDB row lock before any conflict insert.
+	 * Reclaimers cannot replace its owner between transition and conflict persistence.
+	 * Zero rows is lost ownership; persistence failures throw and remain recoverable.
+	 *
+	 * @param array<string,mixed> $operation
+	 * @param array<string,mixed> $data
+	 * @param string[] $formats
+	 * @param array<string,mixed>|null $conflict_result
+	 * @throws RuntimeException When completion or its conflict transaction fails.
+	 * @throws Throwable When conflict persistence throws.
+	 */
+	private function persist_claim_result( array $operation, array $data, array $formats, ?array $conflict_result = null ): bool {
+		global $wpdb;
+
+		$transaction_started = false;
+		if ( null !== $conflict_result ) {
+			if ( ! method_exists( $wpdb, 'query' ) || ! $this->conflict_repository->supports_atomic_outbox_conflicts( $this->table_name ) ) {
+				throw new RuntimeException( 'Outbox conflicts require InnoDB transactional storage.' );
+			}
+			if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+				throw new RuntimeException( 'Could not start outbox conflict transaction.' );
+			}
+			$transaction_started = true;
+		}
+
+		try {
+			$data['claimed_at'] = null;
+			$data['claim_token'] = null;
+			$formats[] = '%s';
+			$formats[] = '%s';
+			$updated = $wpdb->update(
+				$this->table_name,
+				$data,
+				array( 'id' => (int) $operation['id'], 'status' => OutboxStatus::IN_FLIGHT, 'claim_token' => $operation['claim_token'] ),
+				$formats,
+				array( '%d', '%s', '%s' )
+			);
+			if ( false === $updated ) {
+				throw new RuntimeException( 'Could not persist outbox completion.' );
+			}
+			if ( 0 === (int) $updated ) {
+				if ( $transaction_started && false === $wpdb->query( 'ROLLBACK' ) ) {
+					throw new RuntimeException( 'Could not roll back lost outbox conflict claim.' );
+				}
+				return false;
+			}
+			if ( $transaction_started ) {
+				$conflict_id = $this->conflict_repository->record_conflict( $operation, $conflict_result );
+				if ( false === $conflict_id || $conflict_id <= 0 ) {
+					throw new RuntimeException( 'Could not persist owned outbox conflict.' );
+				}
+				if ( false === $wpdb->query( 'COMMIT' ) ) {
+					throw new RuntimeException( 'Could not commit outbox conflict transaction.' );
+				}
+			}
+			return true;
+		} catch ( Throwable $exception ) {
+			if ( $transaction_started ) {
+				$wpdb->query( 'ROLLBACK' );
+			}
+			throw $exception;
+		}
+	}
+
+	/**
+	 * Next attempt on the WP clock: min( base * 2^(n-1), cap ) + additive jitter (E15-35).
+	 *
+	 * `n = max(1, attempts)` is the post-increment attempt count, floored at 1 so a
+	 * just-requeued attempts=0 row uses the base delay. Jitter is additive-only
+	 * `[0, delay/10]` (PR-08), so the schedule is always strictly in the future.
+	 */
+	private function compute_next_attempt_at( int $attempts, string $attempted_at ): string {
+		$base = $this->resolve_backoff_base_seconds();
+		$cap = $this->resolve_backoff_cap_seconds();
+
+		$attempt = max( 1, $attempts );
+		$exponent = min( $attempt - 1, self::BACKOFF_MAX_EXPONENT );
+		$delay = max( 1, (int) min( (float) $base * (float) ( 2 ** $exponent ), (float) $cap ) );
+
+		$jitter_ceiling = (int) floor( $delay / self::BACKOFF_JITTER_DIVISOR );
+		$jitter = $jitter_ceiling > 0 ? wp_rand( 0, $jitter_ceiling ) : 0;
+
+		$from = $this->wp_datetime_to_epoch( $attempted_at )
+			?? $this->wp_datetime_to_epoch( current_time( 'mysql' ) )
+			?? time();
+
+		return gmdate( 'Y-m-d H:i:s', $from + $delay + $jitter );
+	}
+
+	private function resolve_backoff_base_seconds(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_backoff_base_seconds', self::DEFAULT_BACKOFF_BASE_SECONDS );
+	}
+
+	private function resolve_backoff_cap_seconds(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_backoff_cap_seconds', self::DEFAULT_BACKOFF_CAP_SECONDS );
+	}
+
+	private function resolve_retry_window_seconds(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_window_seconds', self::DEFAULT_RETRY_WINDOW_SECONDS );
+	}
+
+	private function resolve_retry_hard_cap_attempts(): int {
+		return $this->resolve_positive_int_tunable( 'acx_outbox_retry_hard_cap_attempts', self::DEFAULT_RETRY_HARD_CAP_ATTEMPTS );
+	}
+
+	/**
+	 * Fail-safe tunable read (rg-008): a filter returning a non-finite, non-numeric, or
+	 * non-positive value falls back to the default — a bad filter can never disable the
+	 * terminal ceiling or zero-out the backoff.
+	 */
+	private function resolve_positive_int_tunable( string $filter_name, int $default ): int {
+		$value = apply_filters( $filter_name, $default );
+
+		if ( is_int( $value ) ) {
+			return $value > 0 ? $value : $default;
+		}
+
+		if ( is_float( $value ) ) {
+			return is_finite( $value ) && $value > 0.0 ? max( 1, (int) $value ) : $default;
+		}
+
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			$numeric = (float) $value;
+			return is_finite( $numeric ) && $numeric > 0.0 ? max( 1, (int) $numeric ) : $default;
+		}
+
+		return $default;
+	}
+
+	/**
+	 * Parse a WP-clock 'Y-m-d H:i:s' wall-clock string to an epoch for interval math.
+	 *
+	 * The string is interpreted as UTC regardless of the site timezone: every outbox
+	 * timestamp is written with current_time('mysql') on the same WP clock, so offsets
+	 * cancel in diffs and additions (see CON-3-FU-REV-A1 for the clock-domain rationale).
+	 */
+	private function wp_datetime_to_epoch( string $datetime ): ?int {
+		$normalized = trim( $datetime );
+		if ( '' === $normalized ) {
+			return null;
+		}
+
+		$parsed = DateTimeImmutable::createFromFormat( 'Y-m-d H:i:s', $normalized, new DateTimeZone( 'UTC' ) );
+		return false !== $parsed ? $parsed->getTimestamp() : null;
+	}
+
+	private function wp_datetime_diff_seconds( string $from, string $to ): int {
+		$from_timestamp = $this->wp_datetime_to_epoch( $from );
+		$to_timestamp = $this->wp_datetime_to_epoch( $to );
+		if ( null === $from_timestamp || null === $to_timestamp ) {
+			return 0;
+		}
+
+		return max( 0, $to_timestamp - $from_timestamp );
+	}
+
+	private function resolve_claim_lease_seconds(): int {
+		return max( 1, (int) apply_filters( 'acx_outbox_claim_lease_seconds', self::DEFAULT_CLAIM_LEASE_SECONDS ) );
+	}
+
+	private function normalize_text( mixed $value, string $default ): string {
+		if ( ! is_string( $value ) ) {
+			return $default;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : $default;
+	}
+
+	private static function action_scheduler_group(): string {
+		$value = apply_filters( 'acx_outbox_action_scheduler_group', self::ACTION_SCHEDULER_GROUP );
+		if ( ! is_string( $value ) ) {
+			return self::ACTION_SCHEDULER_GROUP;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : self::ACTION_SCHEDULER_GROUP;
+	}
+}

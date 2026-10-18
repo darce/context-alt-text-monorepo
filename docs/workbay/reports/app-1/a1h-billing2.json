@@ -1,0 +1,91 @@
+{
+  "lane": "a1h-billing2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_provider.py recognition/tests/unit/test_app1_billing_repository.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "not_run",
+      "detail": "uv could not start pytest because it attempted to remove the read-only site-package link: `error: failed to remove file .../bin/alembic: Read-only file system (os error 30)`. Retried with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_provider.py recognition/tests/unit/test_app1_billing_repository.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "not_run",
+      "detail": "Pytest emitted `Timeout (0:04:00)!`; the stack waited in `asyncio/base_events.py:1948` (`select`) through `pytest_asyncio/plugin.py:905` (`inner`). It later printed `F` and more passing dots but did not produce a final test summary; the still-running command was interrupted after about eight minutes. Per lane guidance this async fixture timeout is recorded as a sandbox-limited not_run."
+    },
+    {
+      "command": "pytest recognition/tests/integration/test_app1_billing_namespace_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL database is unavailable in this sandbox per lane brief; inspected the test for TEST-15 assertions."
+    },
+    {
+      "command": "pytest recognition/tests/integration/test_app1_billing_reconcile_fixwave_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL database is unavailable in this sandbox per lane brief; inspected the test for TEST-15 assertions."
+    },
+    {
+      "command": "pytest recognition/tests/integration/test_app1_billing_reconcile_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL database is unavailable in this sandbox per lane brief; inspected the test for TEST-15 assertions."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16049,
+      "finding_id": "APP1-NAMESPACE-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_repository.py:576 - `_operator_scope` wraps `yield` in a `try/finally` and restores the previous `app.bypass_rls` value at line 580.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_repository.py::test_operator_scope_restores_bypass_on_success_busy_and_error"
+    },
+    {
+      "db_id": 16048,
+      "finding_id": "APP1-NAMESPACE-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_repository.py:81 - constructor raises `ValueError` unless `environment` and `seller_account` are both configured.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_namespace.py::test_constructor_rejects_inferred_or_invalid_namespace"
+    },
+    {
+      "db_id": 15535,
+      "finding_id": "APP1-HG-43",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_repository.py:232 - projection writes run inside `begin_nested()` and catch `IntegrityError` at line 244, keeping a failed duplicate insert inside its savepoint.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_repository.py::test_duplicate_projection_race_uses_savepoint_and_reports_discard"
+    },
+    {
+      "db_id": 15478,
+      "finding_id": "W2RECO-a759eea27bcc891d-H-435a2f63fcaa017fde9a3b58",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_repository.py:230 - projection writes enter `_tenant_context`; lines 433 and 466 wrap bounded cross-tenant reads in `_maintenance_rls_bypass`, whose enable/disable cleanup is at lines 718-732.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/integration/test_app1_billing_namespace_postgres.py::test_postgres_namespace_isolation_legacy_fail_closed_leases_and_rls"
+    },
+    {
+      "db_id": 16050,
+      "finding_id": "APP1-NAMESPACE-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_repository.py:675 - PostgreSQL reselect uses `populate_existing=True`; `_apply_lease_returning` also applies fresh owner/fence values at lines 861-868.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/integration/test_app1_billing_namespace_postgres.py::test_postgres_same_session_returning_lease_is_fresh"
+    },
+    {
+      "db_id": 15495,
+      "finding_id": "W2RECO-a759eea27bcc891d-M-d63cd78bc0f6daf3605d31bd",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_repository.py:387 - failed attempts at the configured ceiling set status to `DISCARDED` and clear `next_attempt_at`; pending scans also require a retryable status and attempts below the ceiling at line 418.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_repository.py::test_failed_inbox_rows_back_off_and_quarantine_at_ceiling"
+    },
+    {
+      "db_id": 15486,
+      "finding_id": "W2RECO-a759eea27bcc891d-L-4085992e2693b7baa6e97715",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_repository.py:754 - coercion parameters now declare `BillingSubscriptionStatus | str` and `WebhookInboxStatus | str`, so the string branches are reachable to mypy. No test assertion would fail with the former enum-only annotations; the typing correction has no runtime guard.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [],
+  "summary": "Six listed corrections hold and one type-only correction is only partially guarded; no new defects were found. The unit command stalled in an async fixture timeout and the PostgreSQL suites could not run in this sandbox."
+}

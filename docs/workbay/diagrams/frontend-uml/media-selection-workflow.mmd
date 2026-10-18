@@ -1,0 +1,16 @@
+flowchart TD
+    Start([Workbench mount]) --> LoadConfig[AltContextAdmin endpoints loaded]
+    LoadConfig --> FetchPage[useWorkbenchMedia(page, search)]
+    FetchPage --> MediaTable["MediaSelection list\n(thumbnail + detected identities)"]
+    MediaTable --> Filters{Search or paginate?}
+    Filters -- Yes --> UpdateParams[set page/search] --> FetchPage
+    MediaTable --> Select{Select rows?}
+    Select -- Yes --> SelectionState[useMediaSelectionState\ntrack ids + per-page select]
+    SelectionState --> ScanAction[ScanActionPanel.scanFaces()]
+    ScanAction --> JobHistory[useRecognitionJobHistory remembers job_id]
+    JobHistory --> PollStatuses[useScanStatus/useMultiScanStatus\nrefetchInterval=1.5s]
+    PollStatuses -->|all completed| TriggerCluster[BatchPanel.clusterFaces()]
+    TriggerCluster --> Invalidate[React Query invalidate media-identities]
+    MediaTable --> ConfirmTab[Confirm panel shows clusters + suggestions]
+    ConfirmTab --> RefreshClusters[listRecognitionClusters refetched]
+    RefreshClusters --> MediaTable

@@ -1,0 +1,7 @@
+{
+  "js/public/demo-tokens.scss": {
+    "file": "assets/public-demo-tokens-default.css",
+    "src": "js/public/demo-tokens.scss",
+    "isEntry": true
+  }
+}

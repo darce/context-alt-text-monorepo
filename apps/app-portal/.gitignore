@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# Root gitignore excludes new package-lock.json files; this SPA tracks its generated lock.
+!package-lock.json

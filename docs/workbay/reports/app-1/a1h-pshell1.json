@@ -1,0 +1,47 @@
+{
+  "lane": "a1h-pshell1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "$resolved_python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 7.06s; resolved to the lane-root .venv/bin/python."
+    },
+    {
+      "command": "apps/app-portal/node_modules/.bin/vitest run --root apps/app-portal",
+      "result": "not_run",
+      "detail": "Portal node_modules are absent; the brief says Vitest runs outside this sandbox."
+    },
+    {
+      "command": "npm --prefix apps/app-portal run typecheck",
+      "result": "not_run",
+      "detail": "Portal node_modules are absent; the brief says tsc runs outside this sandbox."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "high",
+      "file": "apps/app-portal/src/App.tsx",
+      "line": 291,
+      "title": "Sensitive billing-return query values remain in the browser URL",
+      "defect": "PortalShell routes using only location.pathname and leaves location.search/hash untouched. The opaque-attempt test seeds attempt_id and invitation values in a MemoryRouter path but checks only that they are not rendered, so it misses their continued presence in the URL.",
+      "failure_scenario": "A browser opens /billing/return?attempt_id=<uuid>&invitation=<token>; the SPA renders the return screen while the invitation token remains in the address bar and browser history.",
+      "fix": "Strip sensitive attempt, invitation, and raw-key parameters from the current URL with replace navigation before rendering the route, and assert the resulting router search/hash are clear.",
+      "test_file": "apps/app-portal/src/__tests__/account-navigation.test.tsx",
+      "urgency": "before_merge"
+    },
+    {
+      "severity": "low",
+      "file": "apps/app-portal/README.md",
+      "line": 3,
+      "title": "README says billing is absent although the portal mounts it",
+      "defect": "The overview and out-of-scope list say the package does not render billing, but App.tsx routes /billing to BillingScreen and the account navigation test covers that screen. The environment table also omits VITE_PAYMENTS_ENABLED and VITE_PUBLIC_PLAN_CODE.",
+      "failure_scenario": "A developer follows the portal README and concludes there is no billing UI or configuration, leaving checkout/manage disabled without learning how to enable the implemented screen.",
+      "fix": "Describe the existing billing routes and document VITE_PAYMENTS_ENABLED and VITE_PUBLIC_PLAN_CODE in the browser environment table; remove billing UI from the out-of-scope list.",
+      "test_file": "apps/app-portal/src/__tests__/account-navigation.test.tsx",
+      "urgency": "next_wave"
+    }
+  ],
+  "summary": "Rechecked 0 listed findings; found 1 high privacy URL issue and 1 low billing documentation mismatch. The lane pytest passed; portal Vitest and typecheck were not_run because node_modules are absent."
+}

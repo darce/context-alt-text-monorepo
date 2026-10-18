@@ -1,0 +1,104 @@
+{
+  "at": 1792304740.362565,
+  "key": "feature-bakerounds-20261017-raw-auth-ini-3255682b",
+  "nonce": "68117-fc932bec25fce266",
+  "base": "d1122b4d4b6fbe651279014234b43566aee661b0",
+  "head": "4980fd43d3976b15e1de2dc17e2da43669f70e9e",
+  "tree": "967ab090313cebd45f2feb997d41980991512b0b",
+  "base_tree": "d358db994d9e4bbd86b3b3835fc9ccbadfea5344",
+  "custody_dir": "/home/gate/bakeoff-rounds-20261017-inputs/results/custody/feature-bakerounds-20261017-raw-auth-ini-3255682b/68117-fc932bec25fce266-terminal",
+  "changed_paths": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.md"
+  ],
+  "anchors": {
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py": {
+      "blob": "051c04849b737bc990f29cd4f0fdfb58a5514b01",
+      "sha256": "9ea9f869de531a60862ecadb7fdabf17148edb46d09cfb6c5713f1bebc97c36c"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py": {
+      "blob": "43058b1b1f8689a6202f318fe4a5cfd42f434e40",
+      "sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py": {
+      "blob": "6c176f05157884ef049243c497628105d75e20dd",
+      "sha256": "7b3321088eb319016780c6b888aab487bfb6140f5cc8782a50425f64c5b9e537"
+    },
+    "apps/prototype-description-service/scripts/eval_harness/remote_client.py": {
+      "blob": "848e6d69d651f922f4afe53d18fb13a06a351423",
+      "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53"
+    },
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.json": {
+      "blob": "eb63be39e3de4026d34dbe51c125d65ca6057a84",
+      "sha256": "53883258ab994272d1d849dc3382693c4c967a101e906601e7ff265be75378cc"
+    },
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.md": {
+      "blob": "4e0ce2ac7e2d624fdc9de8f7d20eaf7be90e024e",
+      "sha256": "ba861b769bd72e26a7b11f80621f731b81ea91a3d3977c57dcc5f4158571326b"
+    }
+  },
+  "ignored": [
+    {
+      "path": ".brief.md",
+      "bytes": 8517,
+      "mode": 33188,
+      "sha256": "05cb08bc6f4bcff02f83d38af4c33528245dc7152e0a50d1ab06cfc2c8c1181f"
+    },
+    {
+      "path": ".grok-run.log",
+      "bytes": 0,
+      "mode": 33188,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".schema.json",
+      "bytes": 1070,
+      "mode": 33188,
+      "sha256": "b389e86c02a719cdcd169395f4eac3f37dd38f0224b2999a1b4b6ca0edf692a4"
+    },
+    {
+      "path": ".venv",
+      "bytes": 87,
+      "mode": 41471,
+      "symlink": "/home/gate/workbay-sandbox/.venv-lane-feature-bakerounds-20261017-raw-auth-ini-3255682b"
+    },
+    {
+      "path": ".workbay-lane-sandbox",
+      "bytes": 59,
+      "mode": 33188,
+      "sha256": "be6b2041a048bfda5aa31566463a03716e1c705e67af09d969af2f52087c5259"
+    },
+    {
+      "path": ".workbay-source-provenance",
+      "bytes": 228,
+      "mode": 33188,
+      "sha256": "cc7cf6c3930ab72e59d5ebd80c968c76ed2da54f0bfe5da684095ce7e369f816"
+    }
+  ],
+  "files": {
+    "ignored-run-metadata.tar.gz": {
+      "bytes": 5031,
+      "sha256": "babb2d0a6a11d8ffa5db6421aaa42fc3848ff9e65dafaef4d2cbc72628c348e7"
+    },
+    "delta.bundle": {
+      "bytes": 14906,
+      "sha256": "5fafa40f50640ecf95ee57bb1a66e735a7de07261b26541129bb5a53ad499c60"
+    },
+    "base.commit": {
+      "bytes": 269,
+      "sha256": "d1a0449c02fd34e422c0914562d2a11648d700ca4b09ce7afdbde1dbc1d997d9"
+    }
+  },
+  "clean": true,
+  "untracked_count": 0,
+  "bundle_verified": true,
+  "remote_full_bundle_not_created": true,
+  "pg_healthy": true,
+  "external_dir": "/Volumes/Butter/WorkBay/custody/raw-auth-whole-source-g2-68117-fc932bec25fce266",
+  "external_full_bundle_bytes": 165584397,
+  "external_full_bundle_sha256": "69d7254c6dfc1aca6e15030a30f13a3b586d63b51bd33a1295143a4183332e63",
+  "native_ref": "refs/remotes/bakeoff/raw-auth-whole-source-g2-native",
+  "native_ancestry_imported": true,
+  "external_full_hash_verified": true,
+  "product_execution_local": false
+}

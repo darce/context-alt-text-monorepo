@@ -1,0 +1,1078 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Tests\Unit;
+
+use AltContext\Api\SyncStatusController;
+use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
+use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\SyncPullResult;
+use AltContext\Tests\Stubs\InMemoryOutboxDrain;
+use AltContext\Tests\Stubs\NullSyncStateRepository;
+use AltContext\Tests\TestCase;
+use WP_REST_Request;
+
+/**
+ * @covers \AltContext\Api\SyncStatusController
+ */
+class SyncStatusControllerTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // RECOG-1: default source flipped to 'service' with an empty default URL.
+        // The lazy SyncPullJob path proxies to the effective target, so pin a service URL.
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+    }
+
+    public function testGetSyncStatusReturnsSnapshotMetadata(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+					return 12; }
+            public function get_last_updated(string $tenant_id): ?string {
+					return gmdate('Y-m-d H:i:s', time() - 60); }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(12, $data['last_snapshot_version']);
+        $this->assertIsString($data['last_synced_at']);
+        $this->assertSame('delta', $data['sync_mode']);
+        $this->assertSame('healthy', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
+        $this->assertSame(0, $data['pending_curation_operations']);
+        $this->assertSame(0, $data['failed_curation_operations']);
+        $this->assertSame(0, $data['conflict_count']);
+        $this->assertNull($data['last_curation_acknowledged_at']);
+        $this->assertNull($data['last_curation_conflict_at']);
+        $this->assertNull($data['last_curation_failed_at']);
+        $this->assertSame(
+            [
+                'pending' => 0,
+                'applied' => 0,
+                'failed' => 0,
+                'conflict' => 0,
+                'last_reconciled_at' => null,
+            ],
+            $data['topology_commands']
+        );
+    }
+
+    public function testGetSyncStatusIncludesReclaimerContractShapeFromFixture(): void
+    {
+        $fixture = json_decode(
+            (string) file_get_contents(dirname(__DIR__) . '/fixtures/sync-status/reclaimer.json'),
+            true
+        );
+        $this->assertIsArray($fixture);
+        $this->assertArrayHasKey('never_run', $fixture);
+
+        $controller = new SyncStatusController(new NullSyncStateRepository());
+        $response = $controller->get_sync_status(new WP_REST_Request('GET', '/acx/v1/recognition/sync-status'));
+        $reclaimer = $response->get_data()['reclaimer'];
+        $expected = $fixture['never_run'];
+
+        $this->assertSame(array_keys($expected), array_keys($reclaimer));
+        $this->assertSame('never_run', $reclaimer['state']);
+        $this->assertIsString($reclaimer['scheduler_mode']);
+        $this->assertIsInt($reclaimer['effective_period_seconds']);
+        $this->assertTrue($reclaimer['last_attempt_at'] === null || is_string($reclaimer['last_attempt_at']));
+        $this->assertTrue($reclaimer['last_success_at'] === null || is_string($reclaimer['last_success_at']));
+        $this->assertTrue($reclaimer['last_outcome'] === null || is_string($reclaimer['last_outcome']));
+        $this->assertTrue($reclaimer['last_purged_count'] === null || is_int($reclaimer['last_purged_count']));
+        $this->assertTrue($reclaimer['backlog_remaining'] === null || is_int($reclaimer['backlog_remaining']));
+        $this->assertTrue($reclaimer['backlog_oldest_age_seconds'] === null || is_int($reclaimer['backlog_oldest_age_seconds']));
+        $this->assertIsBool($reclaimer['batch_cap_reached']);
+    }
+
+    public function testGetSyncStatusIncludesCurationCountersWhenAvailable(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 9;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return '2026-02-14 00:00:00';
+            }
+            public function get_pending_curation_operations(string $tenant_id): int {
+                return 4;
+            }
+            public function get_conflict_count(string $tenant_id): int {
+                return 2;
+            }
+            public function get_failed_curation_operations(string $tenant_id): int {
+                return 1;
+            }
+            public function get_last_curation_acknowledged_at(string $tenant_id): ?string {
+                return '2026-03-07 02:00:00';
+            }
+            public function get_last_curation_conflict_at(string $tenant_id): ?string {
+                return '2026-03-07 02:30:00';
+            }
+            public function get_last_curation_failed_at(string $tenant_id): ?string {
+                return '2026-03-07 03:00:00';
+            }
+            public function get_pending_topology_commands(string $tenant_id): int {
+                return 2;
+            }
+            public function get_applied_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_failed_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_conflicted_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
+                return '2026-03-07 04:00:00';
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $data = $response->get_data();
+        $this->assertSame('failures', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
+        $this->assertSame(4, $data['pending_curation_operations']);
+        $this->assertSame(1, $data['failed_curation_operations']);
+        $this->assertSame(2, $data['conflict_count']);
+        $this->assertSame('2026-03-07 02:00:00', $data['last_curation_acknowledged_at']);
+        $this->assertSame('2026-03-07 02:30:00', $data['last_curation_conflict_at']);
+        $this->assertSame('2026-03-07 03:00:00', $data['last_curation_failed_at']);
+        $this->assertSame(
+            [
+                'pending' => 2,
+                'applied' => 1,
+                'failed' => 1,
+                'conflict' => 1,
+                'last_reconciled_at' => '2026-03-07 04:00:00',
+            ],
+            $data['topology_commands']
+        );
+    }
+
+    public function testGetSyncStatusReturnsStaleTrueWhenOld(): void
+    {
+        // Mock a timestamp older than 1 hour (default threshold)
+        $oldTimestamp = gmdate('Y-m-d H:i:s', time() - 7200); // 2 hours ago
+
+        $syncRepo = new class($oldTimestamp) extends NullSyncStateRepository {
+            private string $timestamp;
+            public function __construct(string $timestamp) {
+					$this->timestamp = $timestamp; }
+            public function get_snapshot_version(string $tenant_id): int {
+					return 5; }
+            public function get_last_updated(string $tenant_id): ?string {
+					return $this->timestamp; }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $data = $response->get_data();
+        $this->assertSame('stale', $data['sync_health']);
+        $this->assertTrue($data['is_stale'], 'Projection should be stale when updated_at is older than threshold');
+        $this->assertSame('delta', $data['sync_mode']);
+    }
+
+    public function testGetSyncStatusReturnsStaleFalseWhenRecent(): void
+    {
+        // Mock a recent timestamp within the 1-hour threshold
+        $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 300); // 5 minutes ago
+
+        $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
+            private string $timestamp;
+            public function __construct(string $timestamp) {
+					$this->timestamp = $timestamp; }
+            public function get_snapshot_version(string $tenant_id): int {
+					return 5; }
+            public function get_last_updated(string $tenant_id): ?string {
+					return $this->timestamp; }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $data = $response->get_data();
+        $this->assertSame('healthy', $data['sync_health']);
+        $this->assertFalse($data['is_stale'], 'Projection should not be stale when updated_at is recent');
+        $this->assertSame('delta', $data['sync_mode']);
+    }
+
+    public function testGetSyncStatusReturnsQueuedWhenPendingOperationsExist(): void
+    {
+        $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 300);
+
+        $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
+            private string $timestamp;
+
+            public function __construct(string $timestamp) {
+                $this->timestamp = $timestamp;
+            }
+
+            public function get_snapshot_version(string $tenant_id): int {
+                return 6;
+            }
+
+            public function get_last_updated(string $tenant_id): ?string {
+                return $this->timestamp;
+            }
+
+            public function get_pending_curation_operations(string $tenant_id): int {
+                return 3;
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $data = $response->get_data();
+        $this->assertSame('queued', $data['sync_health']);
+        $this->assertFalse($data['is_stale']);
+        $this->assertSame(3, $data['pending_curation_operations']);
+        $this->assertSame(0, $data['failed_curation_operations']);
+        $this->assertSame(0, $data['conflict_count']);
+    }
+
+    public function testGetSyncStatusReturnsStaleTrueWhenNullTimestamp(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+					return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+					return null; }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $data = $response->get_data();
+        $this->assertSame('stale', $data['sync_health']);
+        $this->assertTrue($data['is_stale'], 'Projection should be stale when updated_at is null');
+        $this->assertSame('full', $data['sync_mode']);
+    }
+
+    public function testResetMirrorClearsProjectionTablesInOneTransactionAndEmitsAuditHook(): void
+    {
+        global $wpdb;
+
+        $tenantId = self::currentTenantId();
+        $capturedTenantId = null;
+        $capturedTables = null;
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            /** @var string[] */
+            public array $resetProjectionCalls = [];
+
+            public function reset_projection_state(string $tenant_id): void {
+                $this->resetProjectionCalls[] = $tenant_id;
+            }
+        };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+        };
+
+        add_action(
+            'acx_sync_mirror_reset',
+            static function (string $hookTenantId, array $tableSuffixes) use (&$capturedTenantId, &$capturedTables): void {
+                $capturedTenantId = $hookTenantId;
+                $capturedTables = $tableSuffixes;
+            },
+            10,
+            2
+        );
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_header('Content-Type', 'application/json');
+        $request->set_body('{"confirm":true}');
+        $response = $controller->reset_mirror($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame([$tenantId], $syncRepo->resetProjectionCalls);
+        $this->assertSame($tenantId, $capturedTenantId);
+        $this->assertSame(['acx_clusters', 'acx_identity_members', 'acx_sync_outbox'], $capturedTables);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_clusters', $tenantId),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare(
+                'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+                'wp_acx_identity_members',
+                'wp_acx_clusters',
+                $tenantId
+            ),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_sync_outbox', $tenantId),
+            $wpdb->queries
+        );
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertNotContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testResetMirrorRequiresConfirmationInRequestBody(): void
+    {
+        global $wpdb;
+
+        $controller = new SyncStatusController(new NullSyncStateRepository());
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_param('confirm', true);
+
+        $response = $controller->reset_mirror($request);
+
+        $this->assertSame(400, $response->get_status());
+        $this->assertSame('acx_reset_mirror_confirmation_required', $response->get_data()['code']);
+        $this->assertNotContains('START TRANSACTION', $wpdb->queries);
+        $this->assertSame([], array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'DELETE FROM ')
+        )));
+    }
+
+    public function testResetMirrorRollsBackWhenProjectionTableDeleteFails(): void
+    {
+        global $wpdb;
+
+        $tenantId = self::currentTenantId();
+        $syncRepo = new class() extends NullSyncStateRepository {
+            /** @var string[] */
+            public array $resetProjectionCalls = [];
+
+            public function reset_projection_state(string $tenant_id): void {
+                $this->resetProjectionCalls[] = $tenant_id;
+            }
+        };
+
+        $clustersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE tenant_id = %s',
+            'wp_acx_clusters',
+            $tenantId
+        );
+        $wpdb->queryResults[$clustersDelete] = false;
+        $identityMembersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+            'wp_acx_identity_members',
+            'wp_acx_clusters',
+            $tenantId
+        );
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $response = $controller->reset_mirror($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(500, $response->get_status());
+        $this->assertSame([], $syncRepo->resetProjectionCalls);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains($identityMembersDelete, $wpdb->queries);
+        $this->assertContains($clustersDelete, $wpdb->queries);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testResetMirrorDeletesOnlyRequestedTenantProjectionRows(): void
+    {
+        $this->installTenantScopedDeleteDouble();
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            ['cluster_uuid' => 'cluster-a', 'tenant_id' => 'tenant-a'],
+            ['cluster_uuid' => 'cluster-b', 'tenant_id' => 'tenant-b'],
+        ];
+        $wpdb->tableRows['wp_acx_identity_members'] = [
+            ['identity_uuid' => 'identity-a', 'cluster_uuid' => 'cluster-a'],
+            ['identity_uuid' => 'identity-b', 'cluster_uuid' => 'cluster-b'],
+        ];
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            ['id' => 1, 'tenant_id' => 'tenant-a'],
+            ['id' => 2, 'tenant_id' => 'tenant-b'],
+        ];
+
+        $controller = new class(new NullSyncStateRepository(), $this->createSuccessfulSyncPullJob()) extends SyncStatusController {
+            protected function get_tenant_id(): string
+            {
+                return 'tenant-a';
+            }
+        };
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $response = $controller->reset_mirror($request);
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(
+            [['cluster_uuid' => 'cluster-b', 'tenant_id' => 'tenant-b']],
+            $wpdb->tableRows['wp_acx_clusters']
+        );
+        $this->assertSame(
+            [['identity_uuid' => 'identity-b', 'cluster_uuid' => 'cluster-b']],
+            $wpdb->tableRows['wp_acx_identity_members']
+        );
+        $this->assertSame(
+            [['id' => 2, 'tenant_id' => 'tenant-b']],
+            $wpdb->tableRows['wp_acx_sync_outbox']
+        );
+    }
+
+    public function testResetMirrorDeletesIdentityMembersBeforeClusters(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-a';
+        $controller = new class(new NullSyncStateRepository(), $this->createSuccessfulSyncPullJob()) extends SyncStatusController {
+            protected function get_tenant_id(): string
+            {
+                return 'tenant-a';
+            }
+        };
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $controller->reset_mirror($request);
+
+        $identityMembersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+            'wp_acx_identity_members',
+            'wp_acx_clusters',
+            $tenantId
+        );
+        $clustersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE tenant_id = %s',
+            'wp_acx_clusters',
+            $tenantId
+        );
+        $identityMembersIndex = array_search($identityMembersDelete, $wpdb->queries, true);
+        $clustersIndex = array_search($clustersDelete, $wpdb->queries, true);
+
+        $this->assertIsInt($identityMembersIndex);
+        $this->assertIsInt($clustersIndex);
+        $this->assertLessThan($clustersIndex, $identityMembersIndex);
+    }
+
+    public function testResetMirrorNeverIssuesBareDeleteStatements(): void
+    {
+        global $wpdb;
+
+        $controller = new class(new NullSyncStateRepository(), $this->createSuccessfulSyncPullJob()) extends SyncStatusController {
+            protected function get_tenant_id(): string
+            {
+                return 'tenant-a';
+            }
+        };
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $controller->reset_mirror($request);
+
+        $deleteQueries = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'DELETE FROM ')
+        ));
+        $bareDeleteQueries = array_values(array_filter(
+            $deleteQueries,
+            static fn(string $query): bool => preg_match('/^DELETE FROM \S+$/', $query) === 1
+        ));
+
+        $this->assertCount(3, $deleteQueries);
+        $this->assertSame([], $bareDeleteQueries);
+        foreach ($deleteQueries as $query) {
+            $this->assertStringContainsString('tenant_id', $query);
+        }
+    }
+
+    public function testTriggerSyncBuildsLazySyncJobWhenNoSyncPullJobInjected(): void
+    {
+          $syncRepo = new class() extends NullSyncStateRepository {
+            private string $lastSyncResult = 'ok';
+
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+            public function get_last_sync_result(string $tenant_id): string {
+                return $this->lastSyncResult;
+            }
+            public function set_last_sync_result(string $tenant_id, string $result): void {
+                $this->lastSyncResult = $result;
+            }
+		  };
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '"invalid"',
+        ]);
+
+        $controller = new SyncStatusController($syncRepo, null);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_failed', $data['reason']);
+        $this->assertSame('offline', $data['sync_health']);
+        $this->assertSame('unreachable', $data['last_sync_result']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        $this->assertStringContainsString('/recognition/tenants/', $calls[0]['url']);
+        $this->assertStringContainsString('/clusters/delta', $calls[0]['url']);
+        $this->assertStringContainsString('/clusters/snapshot', $calls[1]['url']);
+    }
+
+    public function testTriggerSyncReturnsSyncedTrueOnSuccess(): void
+    {
+        $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 10);
+
+          $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
+            private string $timestamp;
+            public function __construct(string $timestamp) {
+				$this->timestamp = $timestamp; }
+            public function get_snapshot_version(string $tenant_id): int {
+				return 3; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return $this->timestamp; }
+		  };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+				return SyncPullResult::ok(); }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame('ok', $data['reason']);
+        $this->assertSame('healthy', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
+        $this->assertSame('delta', $data['sync_mode']);
+        $this->assertSame(3, $data['last_snapshot_version']);
+        $this->assertSame($recentTimestamp, $data['last_synced_at']);
+        $this->assertFalse($data['is_stale']);
+    }
+
+    public function testResetMirrorTruncatesProjectionTablesAndRearmsSync(): void
+    {
+        global $wpdb;
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public int $snapshotVersion = 12;
+            public bool $resetProjectionStateCalled = false;
+
+            public function get_snapshot_version(string $tenant_id): int {
+                return $this->snapshotVersion;
+            }
+
+            public function reset_projection_state(string $tenant_id): void {
+                $this->resetProjectionStateCalled = true;
+                $this->snapshotVersion = 0;
+            }
+        };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+                return SyncPullResult::ok();
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
+        $request->set_body_params(['confirm' => true]);
+        $response = $controller->reset_mirror($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame('no_remote_data', $data['reason']);
+        $this->assertSame(0, $data['last_snapshot_version']);
+        $this->assertTrue($syncRepo->resetProjectionStateCalled);
+        $tenantId = self::currentTenantId();
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_clusters', $tenantId),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare(
+                'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+                'wp_acx_identity_members',
+                'wp_acx_clusters',
+                $tenantId
+            ),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_sync_outbox', $tenantId),
+            $wpdb->queries
+        );
+    }
+
+    public function testTriggerSyncReturnsUpdatedConflictCountAfterProjection(): void
+    {
+        $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 10);
+
+        $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
+            private string $timestamp;
+            private int $conflictCount = 0;
+
+            public function __construct(string $timestamp) {
+                $this->timestamp = $timestamp;
+            }
+
+            public function get_snapshot_version(string $tenant_id): int {
+                return 7;
+            }
+
+            public function get_last_updated(string $tenant_id): ?string {
+                return $this->timestamp;
+            }
+
+            public function get_conflict_count(string $tenant_id): int {
+                return $this->conflictCount;
+            }
+
+            public function setConflictCount(int $conflictCount): void {
+                $this->conflictCount = $conflictCount;
+            }
+        };
+
+        $syncJob = new class($syncRepo) implements SyncPullJobInterface {
+            private object $syncRepo;
+
+            public function __construct(object $syncRepo) {
+                $this->syncRepo = $syncRepo;
+            }
+
+            public function perform(string $tenant_id): SyncPullResult {
+                return $this->perform_bypass_cooldown($tenant_id);
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+                $this->syncRepo->setConflictCount(3);
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+                return $this->perform_bypass_cooldown($tenant_id);
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame('conflicts', $data['sync_health']);
+        $this->assertSame(3, $data['conflict_count']);
+        $this->assertSame($recentTimestamp, $data['last_synced_at']);
+        $this->assertSame(0, $data['topology_commands']['pending']);
+    }
+
+    public function testTriggerSyncReturnsSyncedFalseOnFailure(): void
+    {
+          $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+            public function get_last_sync_result(string $tenant_id): string {
+                return 'failed';
+            }
+		  };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::failed(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::failed(); }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+				return SyncPullResult::failed(); }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_failed', $data['reason']);
+        $this->assertSame('stale', $data['sync_health']);
+        $this->assertSame('failed', $data['last_sync_result']);
+        $this->assertTrue($data['is_stale']);
+    }
+
+    public function testTriggerSyncHandlesExceptionGracefully(): void
+    {
+          $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+		  };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::failed(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+                throw new \RuntimeException('Connection refused');
+            }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+                throw new \RuntimeException('Connection refused');
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_failed', $data['reason']);
+        $this->assertSame('stale', $data['sync_health']);
+    }
+
+    public function testTriggerSyncDoesNotRewriteContendedInlinePurgeAsFailure(): void
+    {
+        $liveness = new class() extends ReclaimerLiveness {
+            public int $lockContendedCalls = 0;
+            public int $failureCalls = 0;
+
+            public function should_run_inline(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function claim(string $tenant_id): string|false|null
+            {
+                return null;
+            }
+
+            public function record_lock_contended(string $tenant_id, ?string $scheduler_mode = null): void
+            {
+                ++$this->lockContendedCalls;
+            }
+
+            public function record_failure(string $tenant_id, ?string $scheduler_mode = null): void
+            {
+                ++$this->failureCalls;
+            }
+        };
+        $maintenance = new OutboxMaintenanceService(
+            null,
+            null,
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts',
+            $liveness
+        );
+        $outboxDrain = new OutboxDrain(null, null, null, null, null, null, $maintenance);
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+        };
+
+        $controller = new SyncStatusController(
+            new NullSyncStateRepository(),
+            $syncJob,
+            null,
+            $outboxDrain,
+            $liveness
+        );
+        $response = $controller->trigger_sync(new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger'));
+
+        $this->assertTrue($response->get_data()['synced']);
+        $this->assertSame(1, $liveness->lockContendedCalls);
+        $this->assertSame(0, $liveness->failureCalls);
+    }
+
+    public function testTriggerSyncReturnsFullShapeWhenSyncJobCannotBeBuilt(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 11;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return '2026-03-08 01:00:00';
+            }
+            public function get_pending_curation_operations(string $tenant_id): int {
+                return 2;
+            }
+            public function get_failed_curation_operations(string $tenant_id): int {
+                return 1;
+            }
+            public function get_conflict_count(string $tenant_id): int {
+                return 3;
+            }
+            public function get_pending_topology_commands(string $tenant_id): int {
+                return 4;
+            }
+            public function get_applied_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_failed_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_conflicted_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
+                return '2026-03-08 01:05:00';
+            }
+            public function get_last_sync_result(string $tenant_id): string {
+                return 'ok';
+            }
+        };
+
+        $controller = new class($syncRepo) extends SyncStatusController {
+            protected function build_sync_pull_job(): SyncPullJobInterface
+            {
+                throw new \RuntimeException('composition failed');
+            }
+        };
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_unavailable', $data['reason']);
+        $this->assertSame('composition failed', $data['error']);
+        $this->assertSame('failures', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
+        $this->assertSame(11, $data['last_snapshot_version']);
+        $this->assertSame('2026-03-08 01:00:00', $data['last_synced_at']);
+        $this->assertSame(2, $data['pending_curation_operations']);
+        $this->assertSame(1, $data['failed_curation_operations']);
+        $this->assertSame(3, $data['conflict_count']);
+        $this->assertSame(4, $data['topology_commands']['pending']);
+        $this->assertSame('2026-03-08 01:05:00', $data['topology_commands']['last_reconciled_at']);
+    }
+
+    public function testTriggerSyncReturnsNoRemoteDataReasonOnEmptyTenant(): void
+    {
+          $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+		  };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+				return SyncPullResult::ok(); }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame('no_remote_data', $data['reason']);
+        $this->assertSame('stale', $data['sync_health']);
+        $this->assertSame(0, $data['last_snapshot_version']);
+        $this->assertSame('full', $data['sync_mode']);
+    }
+
+    public function testRegisterRoutesIncludesGuardedBulkRetryRoute(): void
+    {
+        // E15-35 Slice 2: bulk dead-letter recovery is a POST route guarded by the same
+        // capability callback as the controller's other sync actions (REST nonce handled
+        // by core cookie auth).
+        $controller = new SyncStatusController(new NullSyncStateRepository(), null, null, new InMemoryOutboxDrain());
+        $controller->register_routes();
+
+        $definitions = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => '/recognition/sync/retry-failed' === $definition['route']
+        ));
+        $this->assertCount(1, $definitions);
+        $this->assertSame('acx/v1', $definitions[0]['namespace']);
+        $this->assertSame('POST', $definitions[0]['args']['methods']);
+        $this->assertSame('can_manage_recognition', $definitions[0]['args']['permission_callback'][1]);
+    }
+
+    public function testBulkRetryFailedOperationsRequeuesAllAndReportsCounts(): void
+    {
+        $tenantId = self::currentTenantId();
+        $outboxDrain = new InMemoryOutboxDrain([
+            ['id' => 1, 'tenant_id' => $tenantId, 'status' => 'failed', 'attempts' => 5],
+            ['id' => 2, 'tenant_id' => $tenantId, 'status' => 'failed', 'attempts' => 5],
+            ['id' => 3, 'tenant_id' => $tenantId, 'status' => 'pending', 'attempts' => 0],
+        ]);
+
+        $controller = new SyncStatusController(new NullSyncStateRepository(), null, null, $outboxDrain);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/retry-failed');
+        $response = $controller->bulk_retry_failed_operations($request);
+
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(2, $data['requeued']);
+        $this->assertSame(0, $data['failed_remaining']);
+        $this->assertSame(1, $outboxDrain->bulkRetryCalls);
+        $this->assertSame('pending', $outboxDrain->find_operation_by_id(1, $tenantId)['status']);
+        $this->assertSame('pending', $outboxDrain->find_operation_by_id(2, $tenantId)['status']);
+    }
+
+    public function testBulkRetryFailedOperationsReturns500WhenRequeueFails(): void
+    {
+        $outboxDrain = new class() extends InMemoryOutboxDrain {
+            public function retry_failed_operations_bulk(string $tenant_id): int|false
+            {
+                return false;
+            }
+        };
+
+        $controller = new SyncStatusController(new NullSyncStateRepository(), null, null, $outboxDrain);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/retry-failed');
+        $response = $controller->bulk_retry_failed_operations($request);
+
+        $this->assertSame(500, $response->get_status());
+        $this->assertSame('acx_bulk_retry_failed', $response->get_data()['code']);
+    }
+
+    private function createSuccessfulSyncPullJob(): SyncPullJobInterface
+    {
+        return new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+        };
+    }
+
+    private function installTenantScopedDeleteDouble(): void
+    {
+        $GLOBALS['wpdb'] = new class() extends \WPDBStub {
+            public function query($sql)
+            {
+                $result = parent::query($sql);
+                if ($result === false || $result === null) {
+                    return $result;
+                }
+
+                $normalizedSql = trim((string) $sql);
+                if (preg_match(
+                    "/^DELETE FROM `?(?P<table>[A-Za-z0-9_]+)`? WHERE tenant_id = '(?P<tenant>[^']*)'$/",
+                    $normalizedSql,
+                    $matches
+                ) === 1) {
+                    return $this->deleteRowsByTenant($matches['table'], $matches['tenant']);
+                }
+
+                if (preg_match(
+                    "/^DELETE FROM `?(?P<table>[A-Za-z0-9_]+)`? WHERE cluster_uuid IN \\( SELECT cluster_uuid FROM `?(?P<clusters>[A-Za-z0-9_]+)`? WHERE tenant_id = '(?P<tenant>[^']*)' \\)$/",
+                    $normalizedSql,
+                    $matches
+                ) !== 1) {
+                    return $result;
+                }
+
+                $clusterIds = [];
+                foreach ($this->tableRows[$matches['clusters']] ?? [] as $row) {
+                    if ((string) ($row['tenant_id'] ?? '') === $matches['tenant']) {
+                        $clusterIds[] = (string) ($row['cluster_uuid'] ?? '');
+                    }
+                }
+
+                $rows = $this->tableRows[$matches['table']] ?? [];
+                $before = count($rows);
+                $this->tableRows[$matches['table']] = array_values(array_filter(
+                    $rows,
+                    static fn(array $row): bool => ! in_array(
+                        (string) ($row['cluster_uuid'] ?? ''),
+                        $clusterIds,
+                        true
+                    )
+                ));
+
+                return $before - count($this->tableRows[$matches['table']]);
+            }
+
+            private function deleteRowsByTenant(string $table, string $tenant): int
+            {
+                $rows = $this->tableRows[$table] ?? [];
+                $before = count($rows);
+                $this->tableRows[$table] = array_values(array_filter(
+                    $rows,
+                    static fn(array $row): bool => (string) ($row['tenant_id'] ?? '') !== $tenant
+                ));
+
+                return $before - count($this->tableRows[$table]);
+            }
+        };
+    }
+}

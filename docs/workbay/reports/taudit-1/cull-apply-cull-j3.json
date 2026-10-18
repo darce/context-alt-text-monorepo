@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/phasePresentation.test.ts::both records source the clustering label from SYNC_VOCABULARY",
+    "verdict": "kept",
+    "reason": "It guards that both phase records keep their clustering copy aligned with the canonical sync vocabulary when that vocabulary changes.",
+    "covered_by": ""
+  },
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx::has no dead duplicateMatch / 409 Is-this branch references",
+    "verdict": "kept",
+    "reason": "It guards that the untouched naming panel does not show a duplicate question before a label collision is detected.",
+    "covered_by": ""
+  },
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx::LEGACY_CONFIRM_TAB is fully retired from the workbench nav module",
+    "verdict": "deleted",
+    "reason": "The export-name absence check has no independent user-visible coverage; the two-pane route test already verifies the legacy confirm query leaves the drawer closed, shows no tab UI, and preserves the URL.",
+    "covered_by": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx::does not shim legacy ?tab=confirm (inert param, overlay stays independent)"
+  }
+]

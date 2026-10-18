@@ -1,0 +1,5 @@
+# Seed media images are uncommitted (licensed per the provenance table; staged to
+# the VM by scripts/deploy/sync-demo.sh). Keep the dir + this ignore tracked.
+*
+!.gitkeep
+!.gitignore

@@ -1,0 +1,33 @@
+{
+  "lane": "a1h-usage5",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_gate3_operation_id_required.py recognition/tests/unit/test_app1_single_admission.py recognition/tests/unit/test_app1_usage_admission_wiring.py recognition/tests/unit/test_app1_usage_recognition_lifecycle.py recognition/tests/unit/test_app1_usage_sweeper_schedule.py recognition/tests/unit/test_app1_usage_worker_lifecycle.py",
+      "result": "not_run",
+      "detail": "uv exited 2 before pytest: failed to remove the shared environment's alembic executable because the filesystem is read-only."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_gate3_operation_id_required.py recognition/tests/unit/test_app1_single_admission.py recognition/tests/unit/test_app1_usage_admission_wiring.py recognition/tests/unit/test_app1_usage_recognition_lifecycle.py recognition/tests/unit/test_app1_usage_sweeper_schedule.py recognition/tests/unit/test_app1_usage_worker_lifecycle.py",
+      "result": "not_run",
+      "detail": "The suite printed `Timeout (0:04:00)!` during an async test and did not complete; it was interrupted after the timeout (exit 130). A targeted rerun identified the timed-out case and aiosqlite worker wait; per lane guidance this fixture timeout is a sandbox limit."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -vv -o timeout=45 -o timeout_method=signal recognition/tests/unit/test_app1_usage_worker_lifecycle.py::test_stalled_settlement_uses_exact_ids_past_older_active_batch",
+      "result": "not_run",
+      "detail": "Sandbox-limited aiosqlite fixture timeout: `Failed: Timeout (>45.0s) from pytest-timeout`; the worker thread was blocked at `.venv/lib/python3.12/site-packages/aiosqlite/core.py:59` in `future, function = tx.get()`."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16021,
+      "finding_id": "APP1-WORKER-RV06",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/worker/scan_worker.py:377 - `terminate_stalled_jobs_with_identities` retrieves exact terminated job identities; lines 394-397 combine those identities with unsettled retries and pass them to `_settle_stalled_usage`. The guard at apps/prototype-description-service/recognition/tests/unit/test_app1_usage_worker_lifecycle.py:184 asserts the exact stalled `(job_id, tenant_id)`; line 201 asserts its reservation is `COMMITTED`, while line 204 asserts the older active reservations remain `RESERVED`.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_worker_lifecycle.py::test_stalled_settlement_uses_exact_ids_past_older_active_batch"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The worker now settles exact stalled job identities and retries identities whose settlement is deferred; the regression test asserts that older active reservations cannot hide the stalled reservation. The lane suite could not complete because its aiosqlite fixture timed out in this sandbox, so verification is recorded as not_run; no new defects were found at the reviewed worker seams."
+}

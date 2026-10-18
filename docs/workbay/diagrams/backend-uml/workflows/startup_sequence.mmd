@@ -1,0 +1,25 @@
+---
+title: Prototype Description Service Startup
+---
+sequenceDiagram
+    participant CLI as Uvicorn/CLI
+    participant App as api.main:create_app
+    participant Settings as recognition.config.get_settings
+    participant Cache as configure_dev_cache()
+    participant Static as FastAPI StaticFiles
+    participant Routers as recognition.interface_adapters.http.*
+    participant Handlers as register_exception_handlers()
+
+    Note over CLI,Routers: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over CLI,Routers: Mini-map: ENTRY: api/main.py:create_app -> recognition.interface_adapters.http.router, Code: apps/prototype-description-service/api/main.py | recognition/interface_adapters/http/router.py
+
+    CLI->>App: ENTRY: import api.main:app
+    App->>App: configure_logging("INFO")
+    App->>Cache: configure_dev_cache() via _log_startup_info
+    App->>Settings: load settings (env + yaml)
+    App->>Static: mount thumbnails_dir (base_url from settings)
+    App->>Routers: include /recognition routers (legacy + api)
+    App->>Handlers: register exception handlers
+    App-->>CLI: FastAPI app ready
+    Note over Routers: Non-recognition routers (roster/scene health) omitted for backend UML scope
+    Note over Routers: Per-request dependencies set app.current_tenant for RLS

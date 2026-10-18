@@ -1,0 +1,774 @@
+import React, { useEffect, useState } from 'react';
+import { __, sprintf } from '@wordpress/i18n';
+import { useSearchParams } from 'react-router-dom';
+import { listRosterEntries, type RosterEntry } from '../../api/rosterApi';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../api/queryKeys';
+import { PersonMergeDialog } from './PersonMergeDialog';
+import { clearPersonMergeUndoToken, PERSON_MERGE_UNDO_TOKEN_TTL_MS, usePersonMerge } from '../../hooks/usePersonMerge';
+import { isPersonMergeConflict, personMergeErrorMessage, type PersonMergePreview } from '../../api/personMergeApi';
+import { RosterEntriesTable } from './RosterEntriesTable';
+import { getEntryPersonUuid, ROSTER_ROUTE_PARAM_KEYS } from './rosterRoute';
+import { useDebouncedValue } from './hooks/useDebouncedValue';
+import { useCreatePerson } from '../../hooks/useRosterHooks';
+import { AlertCircle, CheckCircle2, Filter, UserPlus, Plus, X } from 'lucide-react';
+import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
+import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
+
+const RESERVED_LABEL_MESSAGE = __(
+  'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
+  'alt-context',
+);
+
+type QueueFilterId = RosterEntry['queue_memberships'][number];
+
+interface QueueFilterDetails {
+  badge: string;
+  status: string;
+  empty: string;
+}
+
+interface QueueReviewRoute {
+  href: string;
+  label: string;
+}
+
+const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
+
+/** URL key for directory text search — same short `s` convention as workbench. */
+const SEARCH_PARAM = 's';
+const NAMED_PEOPLE_HEADING_ID = 'acx-roster-named-title';
+
+/** Quiet period before the search summary is copied into role=status [ROSTER-W-03]. */
+export const SEARCH_STATUS_DEBOUNCE_MS = 300;
+
+// IDCHIP-1-MUI-R-04: the merge notice auto-dismisses while its undo action
+// remains available for the server's full validity window.
+export const UNDO_BANNER_TTL_MS = 30_000;
+const UNDO_TOKEN_VALIDITY_HOURS = PERSON_MERGE_UNDO_TOKEN_TTL_MS / (60 * 60 * 1000);
+
+const isQueueFilterId = (value: string | null): value is QueueFilterId =>
+  value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
+
+const getQueueFilterDetails = (queueFilter: QueueFilterId | null): QueueFilterDetails | null => {
+  switch (queueFilter) {
+    case 'singleton-proposals':
+      return {
+        badge: __('Filtered: Singleton proposals', 'alt-context'),
+        status: __('Showing singleton proposals queue only.', 'alt-context'),
+        empty: __('No people in singleton proposals queue.', 'alt-context'),
+      };
+    case 'hard-examples':
+      return {
+        badge: __('Filtered: Hard examples', 'alt-context'),
+        status: __('Showing hard examples queue only.', 'alt-context'),
+        empty: __('No people in hard examples queue.', 'alt-context'),
+      };
+    case 'needs-confirmation-after-merge':
+      return {
+        badge: __('Filtered: Needs confirmation after merge', 'alt-context'),
+        status: __('Showing needs confirmation after merge queue only.', 'alt-context'),
+        empty: __('No people in needs confirmation after merge queue.', 'alt-context'),
+      };
+    default:
+      return null;
+  }
+};
+
+const getQueueReviewRoute = (queueFilter: QueueFilterId | null): QueueReviewRoute | null => {
+  switch (queueFilter) {
+    case 'singleton-proposals':
+      return {
+        href: WORKBENCH_SCAN_ROUTE,
+        label: __('Review singleton proposals in the Review Queue', 'alt-context'),
+      };
+    case 'needs-confirmation-after-merge':
+      return {
+        href: WORKBENCH_SCAN_ROUTE,
+        label: __('Review merge confirmations in the Review Queue', 'alt-context'),
+      };
+    default:
+      return null;
+  }
+};
+
+const getQueueActionNotice = (queueFilter: QueueFilterId | null): string | null => {
+  if (queueFilter === 'hard-examples') {
+    return __(
+      'Hard-examples review actions stay unavailable here until the dedicated review contract lands.',
+      'alt-context',
+    );
+  }
+
+  return null;
+};
+
+/**
+ * Case-insensitive substring match over name and tags.
+ * Unnamed people (`name === ''`) never match a non-empty name fragment; they
+ * can still match via tags.
+ */
+const entryMatchesSearch = (entry: RosterEntry, normalizedQuery: string): boolean => {
+  if (normalizedQuery === '') {
+    return true;
+  }
+  if (entry.name.toLowerCase().includes(normalizedQuery)) {
+    return true;
+  }
+  return entry.tags.some((tag) => tag.toLowerCase().includes(normalizedQuery));
+};
+
+export interface RosterEntriesQuery {
+  isLoading: boolean;
+  isError: boolean;
+  data?: RosterEntry[];
+  refetch: () => unknown;
+}
+
+export interface RosterEntriesSectionProps {
+  query: RosterEntriesQuery;
+  routeNotice?: string | null;
+}
+
+export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntriesSectionProps): React.JSX.Element => {
+  const [mergeSequence, setMergeSequence] = useState(0);
+  const [mergeSessions, setMergeSessions] = useState<{ id: number; person: RosterEntry }[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [createHiddenBySearchNotice, setCreateHiddenBySearchNotice] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const createPerson = useCreatePerson();
+  const personFilter = searchParams.get('personFilter');
+  const queueParam = searchParams.get('queue');
+  const queueFilter: QueueFilterId | null = isQueueFilterId(queueParam) ? queueParam : null;
+  const queueFilterDetails = getQueueFilterDetails(queueFilter);
+  const isUnassignedFilter = personFilter === 'unassigned';
+  // URL is the shareable source of truth; local state keeps keystrokes from racing
+  // the controlled input against async search-param writes.
+  const searchFromUrl = searchParams.get(SEARCH_PARAM) ?? '';
+  const [searchQuery, setSearchQuery] = useState(searchFromUrl);
+  useEffect(() => {
+    setSearchQuery(searchFromUrl);
+  }, [searchFromUrl]);
+  const trimmedSearch = searchQuery.trim();
+  const normalizedSearch = trimmedSearch.toLowerCase();
+  const hasActiveSearch = normalizedSearch.length > 0;
+  const entries = query.data ?? [];
+  const visibleEntries = entries.filter((entry) => {
+    if (isUnassignedFilter && entry.cluster_count !== 0) {
+      return false;
+    }
+    // Boundary read: create_person / update_person REST bodies omit
+    // queue_memberships; treat absent as empty (same as derivePersonState).
+    const memberships = Array.isArray(entry.queue_memberships) ? entry.queue_memberships : [];
+    if (queueFilter !== null && !memberships.includes(queueFilter)) {
+      return false;
+    }
+    if (!entryMatchesSearch(entry, normalizedSearch)) {
+      return false;
+    }
+    return true;
+  });
+  const hasCategoricalFilter = queueFilterDetails !== null || isUnassignedFilter;
+  const activeFilterBadge =
+    queueFilterDetails !== null
+      ? queueFilterDetails.badge
+      : isUnassignedFilter
+        ? __('Filtered: Unassigned', 'alt-context')
+        : null;
+  const activeFilterStatus =
+    queueFilterDetails !== null
+      ? queueFilterDetails.status
+      : isUnassignedFilter
+        ? __('Showing unassigned people only.', 'alt-context')
+        : null;
+  const emptyFilterMessage =
+    queueFilterDetails !== null
+      ? queueFilterDetails.empty
+      : isUnassignedFilter
+        ? __('No unassigned people found.', 'alt-context')
+        : null;
+  const queueReviewRoute = getQueueReviewRoute(queueFilter);
+  const queueActionNotice = getQueueActionNotice(queueFilter);
+
+  /**
+   * Extend the existing filter status surface with a search result summary so
+   * SR users hear one status region (no second live region / A11Y-21). Match
+   * counts debounce; empty-search / empty-filter copy joins the same region
+   * immediately [E21-19-REV1-02].
+   */
+  const searchStatus =
+    hasActiveSearch && visibleEntries.length > 0
+      ? sprintf(
+          /* translators: 1: match count, 2: search query */
+          __('Showing %1$d matching “%2$s”.', 'alt-context'),
+          visibleEntries.length,
+          trimmedSearch,
+        )
+      : null;
+  // Filter/table stay live; only non-null status-region rewrites are delayed
+  // [ROSTER-W-03]. Transition to null flushes immediately [E21-19-REV1-01].
+  const announcedSearchStatus = useDebouncedValue(searchStatus, SEARCH_STATUS_DEBOUNCE_MS);
+
+  const emptySearchMessage = hasActiveSearch
+    ? hasCategoricalFilter
+      ? sprintf(
+          /* translators: %s: search query */
+          __('No people match “%s” within the current filter.', 'alt-context'),
+          trimmedSearch,
+        )
+      : sprintf(
+          /* translators: %s: search query */
+          __('No people match “%s”.', 'alt-context'),
+          trimmedSearch,
+        )
+    : null;
+
+  const handleOpenPerson = (entry: RosterEntry) => {
+    const personUuid = getEntryPersonUuid(entry);
+    if (personUuid === null) {
+      return;
+    }
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete('tab');
+      for (const key of ROSTER_ROUTE_PARAM_KEYS) {
+        // `queue` is the user-selected roster filter, not workspace-drawer
+        // state; preserve it so navigating into a person keeps the filter.
+        if (key === APP_LINK_PARAMS.queue) {
+          continue;
+        }
+        next.delete(key);
+      }
+      next.set('person', personUuid);
+      return next;
+    });
+  };
+
+  const clearFilter = () => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete('personFilter');
+        next.delete('queue');
+        next.set('tab', 'entries');
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
+  const clearSearch = () => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete(SEARCH_PARAM);
+        next.set('tab', 'entries');
+        return next;
+      },
+      { replace: true },
+    );
+    setCreateHiddenBySearchNotice(null);
+  };
+
+  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setSearchQuery(value);
+    setCreateHiddenBySearchNotice(null);
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (value === '') {
+          next.delete(SEARCH_PARAM);
+        } else {
+          next.set(SEARCH_PARAM, value);
+        }
+        next.set('tab', 'entries');
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
+  const handleAdd = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim()) {
+      return;
+    }
+
+    const submittedName = newName.trim();
+    // BR-60: reject reserved machine-shaped person names before create.
+    if (!isHumanLabeledTarget(submittedName)) {
+      setNameError(RESERVED_LABEL_MESSAGE);
+      return;
+    }
+    setNameError(null);
+    createPerson.mutate(
+      { name: submittedName },
+      {
+        onSuccess: () => {
+          setNewName('');
+          setIsAdding(false);
+          setNameError(null);
+          // A successful create that vanishes behind an active search reads as
+          // a failed add. Surface the recovery when the new name would not match.
+          if (hasActiveSearch && !submittedName.toLowerCase().includes(normalizedSearch)) {
+            setCreateHiddenBySearchNotice(
+              sprintf(
+                /* translators: 1: person name, 2: search query */
+                __(
+                  'Created “%1$s”. They are hidden by the current search for “%2$s” — clear search to see them.',
+                  'alt-context',
+                ),
+                submittedName,
+                trimmedSearch,
+              ),
+            );
+          } else {
+            setCreateHiddenBySearchNotice(null);
+          }
+        },
+      },
+    );
+  };
+
+  // True zero: roster genuinely has no people. Search must not promote this
+  // into the search-empty copy, and search-empty must never render onboarding.
+  const isTrueZeroState = !query.isLoading && !query.isError && entries.length === 0 && emptyFilterMessage === null;
+
+  const isEmptySearchResult =
+    !query.isLoading &&
+    !query.isError &&
+    !isTrueZeroState &&
+    entries.length > 0 &&
+    visibleEntries.length === 0 &&
+    hasActiveSearch;
+
+  const isEmptyFilterResult =
+    !query.isLoading &&
+    !query.isError &&
+    emptyFilterMessage !== null &&
+    visibleEntries.length === 0 &&
+    !hasActiveSearch;
+
+  const immediateEmptyStatus =
+    isEmptySearchResult && emptySearchMessage !== null
+      ? emptySearchMessage
+      : isEmptyFilterResult
+        ? emptyFilterMessage
+        : null;
+  const statusLines = [activeFilterStatus, announcedSearchStatus, immediateEmptyStatus].filter(
+    (line): line is string => line !== null,
+  );
+
+  return (
+    <section
+      className="acx-roster-section"
+      data-testid="roster-entries-section"
+      aria-labelledby={NAMED_PEOPLE_HEADING_ID}
+    >
+      {mergeSessions.map((session) => (
+        <PersonMergeFlow
+          key={session.id}
+          loser={session.person}
+          entries={entries}
+          undoTokenScope={`roster-${session.id}-${session.person.id}`}
+          onDismiss={(reason) => {
+            if (reason === 'banner-expired' || reason === 'banner-closed') {
+              return;
+            }
+            setMergeSessions((current) => current.filter((item) => item.id !== session.id));
+          }}
+        />
+      ))}
+      <header className="acx-roster-section__header">
+        <div className="acx-roster-section__title-group">
+          <h2 id={NAMED_PEOPLE_HEADING_ID}>
+            {sprintf(
+              /* translators: %d: count of people currently listed (after search and queue filters) */
+              __('Named people (%d)', 'alt-context'),
+              visibleEntries.length,
+            )}
+          </h2>
+          {activeFilterBadge && (
+            <span className="acx-roster-section__filter-badge" data-testid="roster-filter-badge">
+              <Filter size={12} aria-hidden="true" data-testid="roster-filter-badge-icon" />
+              {activeFilterBadge}
+            </span>
+          )}
+        </div>
+        {!isAdding && (
+          <button
+            type="button"
+            className="acx-button acx-button--primary"
+            onClick={() => {
+              setNameError(null);
+              setIsAdding(true);
+            }}
+          >
+            <UserPlus size={16} aria-hidden="true" />
+            {__('Add Person', 'alt-context')}
+          </button>
+        )}
+      </header>
+
+      {!query.isLoading && !query.isError && !isTrueZeroState && (
+        <div className="acx-form-group">
+          <label htmlFor="acx-roster-people-search">{__('Search people', 'alt-context')}</label>
+          <input
+            id="acx-roster-people-search"
+            type="search"
+            className="acx-input"
+            value={searchQuery}
+            onChange={handleSearchChange}
+            placeholder={__('Search by name or tag…', 'alt-context')}
+          />
+        </div>
+      )}
+
+      {query.isLoading && <p>{__('Loading roster entries…', 'alt-context')}</p>}
+
+      {query.isError && (
+        <div className="acx-error-state" role="status">
+          <p>{__('Unable to load roster entries.', 'alt-context')}</p>
+          <button type="button" className="acx-button acx-button--secondary" onClick={() => void query.refetch()}>
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      )}
+
+      {statusLines.length > 0 && (
+        <div className="acx-roster-section__filter" role="status">
+          {statusLines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+          {queueReviewRoute && (
+            <a href={queueReviewRoute.href} className="acx-link-button">
+              {queueReviewRoute.label}
+            </a>
+          )}
+          {queueActionNotice && <p>{queueActionNotice}</p>}
+          {/* Recovery buttons: when search is empty the empty-search panel owns them. */}
+          {!isEmptySearchResult && hasCategoricalFilter && (
+            <button type="button" className="acx-link-button" onClick={clearFilter}>
+              {__('Clear filter', 'alt-context')}
+            </button>
+          )}
+          {!isEmptySearchResult && hasActiveSearch && (
+            <button type="button" className="acx-link-button" onClick={clearSearch}>
+              {__('Clear search', 'alt-context')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {routeNotice && (
+        <div className="acx-roster-section__filter" role="status">
+          <p>{routeNotice}</p>
+        </div>
+      )}
+
+      {createHiddenBySearchNotice && (
+        <div className="acx-roster-section__filter" role="status">
+          <p>{createHiddenBySearchNotice}</p>
+          <button type="button" className="acx-link-button" onClick={clearSearch}>
+            {__('Clear search', 'alt-context')}
+          </button>
+        </div>
+      )}
+
+      {isAdding && (
+        <form className="acx-roster-section__add-form" onSubmit={handleAdd}>
+          <div className="acx-form-group">
+            <label className="acx-roster-field-label" htmlFor="acx-roster-add-name">
+              {__('Full name', 'alt-context')}
+            </label>
+            <input
+              id="acx-roster-add-name"
+              type="text"
+              className="acx-input"
+              placeholder={__('e.g. Pat Rivera', 'alt-context')}
+              value={newName}
+              onChange={(e) => {
+                setNewName(e.target.value);
+                if (nameError) {
+                  setNameError(null);
+                }
+              }}
+              disabled={createPerson.isPending}
+              autoFocus
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? 'acx-roster-add-name-error' : undefined}
+            />
+            {nameError && (
+              <p id="acx-roster-add-name-error" className="acx-roster-section__name-error" role="alert">
+                {nameError}
+              </p>
+            )}
+          </div>
+          <div className="acx-form-actions">
+            <button
+              type="submit"
+              className="acx-button acx-button--primary"
+              disabled={createPerson.isPending || !newName.trim()}
+            >
+              <Plus size={16} aria-hidden="true" />
+              {__('Create', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="acx-button acx-button--secondary"
+              onClick={() => {
+                setNameError(null);
+                setIsAdding(false);
+              }}
+              disabled={createPerson.isPending}
+            >
+              <X size={16} aria-hidden="true" />
+              {__('Cancel', 'alt-context')}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {!query.isLoading &&
+        !query.isError &&
+        (isTrueZeroState ? (
+          <div className="acx-roster-section__empty" data-testid="roster-zero-state">
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No people yet', 'alt-context')}
+              body={__('Add someone manually or run a scan to discover faces from your media library.', 'alt-context')}
+              action={{ label: __('Add Person', 'alt-context'), onClick: () => setIsAdding(true) }}
+              headingLevel={3}
+              iconClassName="acx-roster-section__empty-icon"
+            />
+            <div className="acx-roster-section__empty-actions">
+              <a href={WORKBENCH_SCAN_ROUTE} className="acx-link-button">
+                {__('Run a scan in the Review Queue', 'alt-context')}
+              </a>
+            </div>
+          </div>
+        ) : isEmptySearchResult && emptySearchMessage !== null ? (
+          <div className="acx-roster-section__filter" data-testid="roster-search-empty">
+            <button type="button" className="acx-link-button" onClick={clearSearch}>
+              {__('Clear search', 'alt-context')}
+            </button>
+            {hasCategoricalFilter && (
+              <button type="button" className="acx-link-button" onClick={clearFilter}>
+                {__('Clear filter', 'alt-context')}
+              </button>
+            )}
+          </div>
+        ) : isEmptyFilterResult ? null : (
+          <RosterEntriesTable
+            entries={visibleEntries}
+            onOpenPerson={handleOpenPerson}
+            onMergePerson={(entry) => {
+              setMergeSessions((current) => [...current, { id: mergeSequence, person: entry }]);
+              setMergeSequence((value) => value + 1);
+            }}
+          />
+        ))}
+    </section>
+  );
+};
+
+// Keep the undo mutation mounted after the notice closes so it can remain
+// available for the server-side token validity window.
+// Exported for direct testing of the close/undo-expiry lifecycle (IDCHIP-1-MUI-R-04/R-05).
+export const PersonMergeFlow = ({
+  loser,
+  entries,
+  undoTokenScope,
+  onDismiss,
+}: {
+  loser: RosterEntry;
+  entries: RosterEntry[];
+  undoTokenScope?: string;
+  onDismiss: (reason?: 'banner-expired' | 'banner-closed' | 'token-expired' | 'completed') => void;
+}) => {
+  const tokenScope = undoTokenScope ?? String(loser.id);
+  const merge = usePersonMerge(tokenScope);
+  const client = useQueryClient();
+  const attempts = React.useRef(0);
+  const [checking, setChecking] = useState(false);
+  const [reconciled, setReconciled] = useState<string | null>(null);
+  const [checkFailed, setCheckFailed] = useState(false);
+  const reconcileUndo = async () => {
+    setChecking(true);
+    setCheckFailed(false);
+    setReconciled('Checking the roster to confirm the undo outcome…');
+    try {
+      // Refresh related views without making undo recovery wait for their requests.
+      void client.invalidateQueries({ queryKey: queryKeys.clusters.all }).catch(() => undefined);
+      void client.invalidateQueries({ queryKey: queryKeys.media.identities() }).catch(() => undefined);
+      await client.invalidateQueries({ queryKey: queryKeys.roster.all, refetchType: 'none' });
+      const current = await client.fetchQuery({
+        queryKey: queryKeys.roster.entries(),
+        queryFn: listRosterEntries,
+        staleTime: 0,
+        retry: false,
+      });
+      setReconciled(
+        current.some((person) => person.id === loser.id)
+          ? 'Roster refreshed: the person is present.'
+          : 'Roster refreshed: the person is not present. The undo outcome could not be confirmed.',
+      );
+    } catch {
+      setReconciled('Unable to refresh the roster to confirm the undo outcome. Try checking again.');
+      setCheckFailed(true);
+    } finally {
+      setChecking(false);
+    }
+  };
+  const undo = () => {
+    if (merge.undoToken === null) {
+      return;
+    }
+    const isRetry = attempts.current > 0;
+    attempts.current += 1;
+    merge.undo.mutate(merge.undoToken, {
+      onError: (error) => {
+        if (isRetry && isPersonMergeConflict(error)) {
+          void reconcileUndo();
+        }
+      },
+    });
+  };
+  const pending = merge.undo.isPending || checking;
+  const retryableFailure = checkFailed || (!!merge.undo.error && !isPersonMergeConflict(merge.undo.error));
+  const dismissDisabled = pending || (!!merge.undo.error && !isPersonMergeConflict(merge.undo.error) && !reconciled);
+  const [open, setOpen] = useState(true);
+  const [bannerVisible, setBannerVisible] = useState(true);
+  const [merged, setMerged] = useState<PersonMergePreview | null>(null);
+  // Synchronous mirror of `merged`: the dialog's onSuccess handler calls
+  // onMerged() then onOpenChange(false) in the same tick, so the onOpenChange
+  // closure below would otherwise see the pre-update (stale) `merged` state.
+  const mergedRef = React.useRef(false);
+  const onDismissRef = React.useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  // IDCHIP-1-MUI-R-04: close the large notice after 30 seconds, but keep a
+  // compact recovery action until the server-side undo token expires.
+  useEffect(() => {
+    if (!merged || !bannerVisible || pending || retryableFailure) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setBannerVisible(false);
+      onDismissRef.current(merge.undo.isSuccess ? 'completed' : 'banner-expired');
+    }, UNDO_BANNER_TTL_MS);
+    return () => window.clearTimeout(timer);
+  }, [merged, bannerVisible, pending, retryableFailure, merge.undo.isSuccess]);
+
+  useEffect(() => {
+    if (merge.undoToken === null || merge.undoExpiresAt === null || merge.undo.isSuccess) {
+      return;
+    }
+    const delay = Math.max(0, merge.undoExpiresAt - Date.now());
+    const timer = window.setTimeout(() => {
+      clearPersonMergeUndoToken(tokenScope);
+      onDismissRef.current('token-expired');
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [tokenScope, merge.undoToken, merge.undoExpiresAt, merge.undo.isSuccess, merge.undo.error]);
+  return (
+    <>
+      <PersonMergeDialog
+        open={open}
+        loser={loser}
+        entries={entries}
+        merge={merge}
+        onMerged={(preview) => {
+          mergedRef.current = true;
+          setMerged(preview);
+        }}
+        onOpenChange={(next) => {
+          setOpen(next);
+          // IDCHIP-1-MUI-R-05: a session closed without a completed merge (cancel,
+          // Escape, backdrop) has nothing left to show — unmount it immediately
+          // instead of leaving a dead session in the list.
+          if (!next && !mergedRef.current) {
+            onDismiss();
+          }
+        }}
+      />
+      {merged && bannerVisible && (
+        <div className="acx-person-merge-banner" role="status">
+          {reconciled ? (
+            <p>{reconciled}</p>
+          ) : merge.undo.error ? (
+            <p>
+              <AlertCircle aria-hidden="true" />
+              {isPersonMergeConflict(merge.undo.error) ? 'This merge can no longer be undone. ' : 'Undo failed: '}
+              {personMergeErrorMessage(merge.undo.error)}
+            </p>
+          ) : (
+            <p>
+              <CheckCircle2 aria-hidden="true" />
+              {merge.undo.isSuccess ? 'Person restored.' : `Merged ${merged.loser.name} into ${merged.survivor.name}.`}
+            </p>
+          )}
+          {!reconciled && !merge.undo.isSuccess && !isPersonMergeConflict(merge.undo.error) && (
+            <button type="button" disabled={pending || merge.undoToken === null} onClick={undo}>
+              {merge.undo.isPending ? 'Undoing…' : 'Undo'}
+            </button>
+          )}
+          {checkFailed && (
+            <button type="button" disabled={checking} onClick={() => void reconcileUndo()}>
+              Check roster again
+            </button>
+          )}
+          {!merge.undo.isSuccess && !reconciled && !isPersonMergeConflict(merge.undo.error) && (
+            <p>
+              This notice closes after {UNDO_BANNER_TTL_MS / 1000} seconds. Undo remains available for{' '}
+              {UNDO_TOKEN_VALIDITY_HOURS} hours.
+            </p>
+          )}
+          <button
+            type="button"
+            disabled={dismissDisabled}
+            onClick={() => {
+              setBannerVisible(false);
+              onDismissRef.current('banner-closed');
+            }}
+            aria-label="Dismiss merge notification"
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      )}
+      {merged && !bannerVisible && (
+        <div className="acx-person-merge-banner" role="status">
+          {!merge.undo.isSuccess && !isPersonMergeConflict(merge.undo.error) && merge.undoToken !== null ? (
+            <>
+              <span>Undo remains available for {UNDO_TOKEN_VALIDITY_HOURS} hours.</span>
+              <button type="button" onClick={() => setBannerVisible(true)} aria-label="Undo recent merge">
+                Undo recent merge
+              </button>
+            </>
+          ) : (
+            <>
+              <span>{merge.undo.isSuccess ? 'Person restored.' : 'Merge undo needs review.'}</span>
+              <button type="button" onClick={() => setBannerVisible(true)} aria-label="Show merge status">
+                Show merge status
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearPersonMergeUndoToken(tokenScope);
+                  onDismiss();
+                }}
+                aria-label="Dismiss merge notification"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+};

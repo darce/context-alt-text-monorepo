@@ -1,0 +1,147 @@
+{
+  "decision_id": "fir-bench-decision-v1",
+  "schema_version": 1,
+  "gate_contract_path": "fir-gate-contract-v1.json",
+  "gate_contract_sha256": "22963fdc5ff6aa0dd9463ce6468d967783a0d998360d0f79e7ee2da456740573",
+  "planning_icc": 0.10,
+  "p_d": 0.15,
+  "power": 0.80,
+  "fold_protocol": {
+    "k": 5,
+    "seed": 2406466110
+  },
+  "gallery_lineage": {
+    "split_seed": 2468935812,
+    "templates_sha256": null
+  },
+  "primary": {
+    "estimand": "paired delta FNIR (SFace minus AuraFace) at FPIR fpir_target, end to end, on the non-mated source-unit denominator",
+    "comparison": ["sface", "auraface"],
+    "fpir_target": 0.01,
+    "end_to_end": true
+  },
+  "secondary_fpir_targets": [0.05, 0.001],
+  "hypotheses": [
+    {
+      "id": "H1",
+      "kind": "superiority",
+      "legs": ["sface", "auraface"],
+      "margin": 0,
+      "direction": "lower_bound_above_margin"
+    },
+    {
+      "id": "H2",
+      "kind": "non_inferiority",
+      "legs": ["auraface", "insightface"],
+      "margin": 0.05,
+      "direction": "upper_bound_below_margin"
+    }
+  ],
+  "alpha_family": 0.05,
+  "multiplicity": "holm",
+  "interval": {
+    "method": "paired_cluster_bootstrap",
+    "psu": "image_identity_component",
+    "n_boot": 10000,
+    "seed": 2429382368
+  },
+  "min_n_independent": 50,
+  "cell_floor_n_independent": 30,
+  "guardrails": [
+    {
+      "id": "G1",
+      "metric": "per_cohort_fpir",
+      "rule": null,
+      "cohort_scope": "per_cohort",
+      "role": "veto"
+    },
+    {
+      "id": "G2",
+      "metric": "false_names_per_1k_mentions",
+      "rule": null,
+      "cohort_scope": "all",
+      "role": "veto"
+    },
+    {
+      "id": "G3",
+      "metric": "worst_pair_cell_fnir",
+      "rule": null,
+      "cohort_scope": "pair_cell",
+      "role": "veto"
+    },
+    {
+      "id": "G4",
+      "metric": "p95_ms_per_face",
+      "rule": null,
+      "cohort_scope": "all",
+      "role": "veto"
+    },
+    {
+      "id": "G5",
+      "metric": "cost_per_accepted_description",
+      "rule": null,
+      "cohort_scope": "all",
+      "role": "report_only"
+    }
+  ],
+  "boundary_semantics": "v2",
+  "frames": [
+    {
+      "frame_id": "golden150-v1",
+      "admissibility": "diagnostic",
+      "sealed": false,
+      "source_sha256": null,
+      "exhaustive": null
+    },
+    {
+      "frame_id": "corpus646-v3r",
+      "admissibility": "development",
+      "sealed": false,
+      "source_sha256": null,
+      "exhaustive": null
+    },
+    {
+      "frame_id": "fir-occ-v1-prob",
+      "admissibility": "development",
+      "sealed": false,
+      "source_sha256": null,
+      "exhaustive": null
+    },
+    {
+      "frame_id": "fir-occ-v1-chal",
+      "admissibility": "development",
+      "sealed": false,
+      "source_sha256": null,
+      "exhaustive": null
+    },
+    {
+      "frame_id": "confirm-v1",
+      "admissibility": "confirmatory",
+      "sealed": true,
+      "source_sha256": null,
+      "exhaustive": null
+    }
+  ],
+  "disconfirmers": [
+    {
+      "id": "D1",
+      "statement": "AuraFace delta-FNIR confidence interval lower bound is at or below 0 on fir-occ-v1-prob",
+      "review_date": "2026-12-15"
+    },
+    {
+      "id": "D2",
+      "statement": "A per-cohort FPIR guardrail is breached",
+      "review_date": "2026-12-15"
+    },
+    {
+      "id": "D3",
+      "statement": "The AE-5 canary is not detected",
+      "review_date": "2026-12-15"
+    }
+  ],
+  "ratification": {
+    "decision_ref": null,
+    "ratified_at": null
+  },
+  "seal": null
+}

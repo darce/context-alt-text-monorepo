@@ -1,0 +1,15 @@
+# Tech-Debt Register
+
+Deferred work that is intentionally not blocking the current merge but must not be lost. One file per item. Each entry states what was deferred, why it's safe to defer, the trigger for picking it up, and the acceptance criteria.
+
+Deferring is a decision, not a skip: every item here was consciously moved out of scope with a rationale, and is tracked so a later phase can close it.
+
+## Open items
+
+- [E21-5 VoiceOver AT protocol](e21-5-voiceover-at-protocol.md) — the manual screen-reader acceptance pass for the unified review queue, deferred to the next phase (UX-flow correctness prioritized first).
+- [OPS-1 `acx-backend` host retention hygiene](OPS-1-vm-host-retention-hygiene.md) — no scheduled reaper for the Docker build cache, image tags, or `/home/ubuntu` scratch; deferred while the box sits at 94 GB free. Note the trap: an age-based `docker image prune -a` destroys the rollback tag history to reclaim ~80 MB.
+- [OPS-2 vendored `remote_agent.sh` fork](OPS-2-vendored-remote-agent-fork.md) — our untracked 2026-07-22 copy shares the upstream sandbox root without writing the reap marker (8.8 GB unreapable and growing) and caps lanes at 3 against upstream's 20 on a shared scope namespace.
+- [OPS-3 publishing redaction corrupts the workbay hook overlay](OPS-3-workbay-overlay-redacted-test-fixtures.md) — the overlay publisher rewrites finding-style ids to the literal token `internal`, inside test fixtures and the guard's own block message, so `scripts/hooks/` ships at 14 failed / 42 passed and `make check-all` can never be green. The guard's detection logic is intact and still blocks real violations; the damage is to its self-test and to the message it prints.
+- [OPS-4 grok-remote briefs dropped by the xAI input filter](OPS-4-grok-input-filter-brief-hygiene.md) — a 403 `permission-denied` 8 s after the prompt is an input-filter reject, not a first-turn exit; person/likeness wording, a doubled brief body, replayed quarantine notices and caps imperatives push a parser-fix brief over the threshold. Local lint + neutral protocol text landed 2026-09-19; renderer-side items deferred upstream.
+- [OPS-5 description-service production needs a clean OCI VM](OPS-5-description-service-production-needs-a-clean-oci-vm.md) — docker images (8.39 GB reclaimable) and 55 unattached volumes on `acx-backend` are unaudited, and production shares the host with gate clones, lane sandboxes and harness stores; audit deferred until the APP1RB-1 / DEBTFIX-1 wave lands.
+- [CAPCTX-1 metadata names and off-frame facts in generated alt text](CAPCTX-1-embedded-image-caption-context-in-alt-text.md) — deferred source-aware naming authorization, record attribution and caption cleanup. The current face/roster gate does not remove names already in GPU prose; metadata captions are cut silently at 500 characters. Continued deferral requires a recorded exposure boundary, with review due now and pickup before the next prompt/context change or captioning-exposure sign-off.

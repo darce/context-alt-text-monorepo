@@ -1,0 +1,546 @@
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { __, sprintf } from '@wordpress/i18n';
+
+import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
+import { describeRunItemsQueryKey } from '../../hooks/useDescribeRunApply';
+import { QUEUE_DRAFTS_HISTORY_QUERY_KEY, useQueueDrafts, type QueueDraft } from '../../hooks/useQueueDrafts';
+import type { DataSource } from '../../api/recognition/types';
+import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
+import { Checkbox } from '../../../components/ui/checkbox';
+import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
+import { IdentityClusterList } from './identity-clusters';
+import { MediaAltInlineEditor } from './MediaAltInlineEditor';
+import { MediaAltSuggest } from './MediaAltSuggest';
+import { QueueDraftCell } from './QueueDraftCell';
+import { mediaEditUrl } from './Panels';
+import { mediaLibraryUrl } from '../../utils/adminUrls';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
+
+/** Who may hold the row's polite region. */
+export type RowPoliteOwner = 'editor' | 'suggest';
+export type RowCommitOwner = RowPoliteOwner | 'queue';
+
+/**
+ * Row commit-lock primitives [S2c-4b-ii BR-01]. Shared by editor, Suggest, and
+ * queue correction controls. Exported to exercise competing synchronous claims
+ * and late owner releases independently of disabled-button paint.
+ *
+ * Claim result is decided on a ref so beginCommit can return synchronously.
+ * React may defer useState updaters; a side-effect flag inside setState is not
+ * a reliable "did I win?" signal. State still drives peerCommitPending paint.
+ */
+const useTableCommitLocks = (): {
+  commitOwners: Map<number, RowCommitOwner>;
+  beginCommit: (mediaId: number, owner: RowCommitOwner) => boolean;
+  endCommit: (mediaId: number, owner: RowCommitOwner) => void;
+} => {
+  const [commitOwners, setCommitOwners] = useState(new Map<number, RowCommitOwner>());
+  const commitOwnersRef = useRef(new Map<number, RowCommitOwner>());
+
+  // Compare-and-set: claim only when free. Returns whether this caller won.
+  // Exclusivity lives here — not in each caller's peerCommitPending guard.
+  const beginCommit = useCallback((mediaId: number, owner: RowCommitOwner): boolean => {
+    if (commitOwnersRef.current.has(mediaId)) {
+      return false;
+    }
+    commitOwnersRef.current.set(mediaId, owner);
+    setCommitOwners(new Map(commitOwnersRef.current));
+    return true;
+  }, []);
+
+  // Compare-and-clear: only the holding owner releases the lock.
+  const endCommit = useCallback((mediaId: number, owner: RowCommitOwner): void => {
+    if (commitOwnersRef.current.get(mediaId) !== owner) {
+      return;
+    }
+    commitOwnersRef.current.delete(mediaId);
+    setCommitOwners(new Map(commitOwnersRef.current));
+  }, []);
+
+  return { commitOwners, beginCommit, endCommit };
+};
+
+export const useRowCommitLock = (): {
+  commitOwner: RowCommitOwner | null;
+  beginCommit: (owner: RowCommitOwner) => boolean;
+  endCommit: (owner: RowCommitOwner) => void;
+} => {
+  const { commitOwners, beginCommit, endCommit } = useTableCommitLocks();
+  const beginRowCommit = useCallback((owner: RowCommitOwner) => beginCommit(0, owner), [beginCommit]);
+  const endRowCommit = useCallback((owner: RowCommitOwner) => endCommit(0, owner), [endCommit]);
+  return { commitOwner: commitOwners.get(0) ?? null, beginCommit: beginRowCommit, endCommit: endRowCommit };
+};
+
+interface MediaSelectionTableBodyProps {
+  items: WorkbenchMediaItem[];
+  isLoading: boolean;
+  detailIsLoading: boolean;
+  onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
+  selection: Record<string, boolean>;
+  identitiesDataSource?: DataSource;
+  identitiesLoading?: boolean;
+  onRetryIdentities?: () => void;
+  searchQuery?: string;
+  statusFilter?: WorkbenchMediaStatus;
+  onClearSearch: () => void;
+  onClearStatusFilter?: () => void;
+  draftRunId?: string | null;
+  hasDraftFilter?: boolean;
+  onClearDraftFilters?: () => void;
+}
+
+export const MediaSelectionTableBody = ({
+  items,
+  isLoading,
+  detailIsLoading,
+  onToggleRow,
+  selection,
+  identitiesDataSource,
+  identitiesLoading,
+  onRetryIdentities,
+  searchQuery = '',
+  statusFilter = 'all',
+  onClearSearch,
+  onClearStatusFilter,
+  draftRunId = null,
+  hasDraftFilter = false,
+  onClearDraftFilters,
+}: MediaSelectionTableBodyProps): React.JSX.Element => {
+  // Queue ownership belongs to the mounted table, not a visible row. Filtering
+  // or removing and redisplaying a row must not admit a competing correction.
+  const { commitOwners, beginCommit, endCommit } = useTableCommitLocks();
+  const mediaIds = useMemo(() => items.map((item) => item.id), [items]);
+  const queryClient = useQueryClient();
+  const {
+    draftsByMediaId,
+    isLoading: draftsLoading,
+    isError: draftsIsError,
+    historyTruncated,
+  } = useQueueDrafts(mediaIds, draftRunId);
+  const filterByDrafts = hasDraftFilter || Boolean(draftRunId);
+  const retryDraftLookup = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: QUEUE_DRAFTS_HISTORY_QUERY_KEY });
+    if (draftRunId) {
+      void queryClient.invalidateQueries({ queryKey: describeRunItemsQueryKey(draftRunId) });
+    }
+  }, [draftRunId, queryClient]);
+  const visibleItems = useMemo(() => {
+    // Failed lookup must not collapse to a false "no matches" empty [GPUFLOW-3-U-R-04].
+    if (!filterByDrafts || draftsLoading || draftsIsError) {
+      return items;
+    }
+    return items.filter((item) => draftsByMediaId[item.id] != null);
+  }, [draftsByMediaId, draftsIsError, draftsLoading, filterByDrafts, items]);
+  const truncationHeading = __('Only recent drafts were checked. Older drafts may not be listed.', 'alt-context');
+  const draftTruncationNotice = (
+    <tr>
+      <td colSpan={4}>
+        <EmptyState
+          variant={EmptyStateVariant.UNAVAILABLE}
+          heading={truncationHeading}
+          body={__('Show all media to return to the media library.', 'alt-context')}
+          action={{
+            label: __('Show all media', 'alt-context'),
+            onClick: () => onClearDraftFilters?.(),
+          }}
+          headingLevel={3}
+          announceState={false}
+        />
+      </td>
+    </tr>
+  );
+
+  if (isLoading && items.length === 0) {
+    return (
+      <>
+        {Array.from({ length: 5 }, (_, index) => (
+          <MediaSelectionSkeletonRow key={`skeleton-${index}`} />
+        ))}
+      </>
+    );
+  }
+
+  if (filterByDrafts && draftsIsError) {
+    return (
+      <tr>
+        <td colSpan={4}>
+          <EmptyState
+            variant={EmptyStateVariant.UNAVAILABLE}
+            heading={__('Could not load drafts.', 'alt-context')}
+            body={__('Retry the lookup, or show all media to leave the draft filter.', 'alt-context')}
+            action={{
+              label: __('Try again', 'alt-context'),
+              onClick: retryDraftLookup,
+            }}
+            headingLevel={3}
+            announceState={false}
+          />
+          <button type="button" className="button" onClick={() => onClearDraftFilters?.()}>
+            {__('Show all media', 'alt-context')}
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
+  if (visibleItems.length === 0) {
+    const hasActiveSearch = searchQuery.trim().length > 0;
+    const hasStatusFilter = statusFilter !== 'all';
+
+    if (items.length > 0 && filterByDrafts) {
+      if (historyTruncated) {
+        return draftTruncationNotice;
+      }
+      return (
+        <tr>
+          <td colSpan={4}>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No media items match the current filters.', 'alt-context')}
+              body={__('Show all media to return to the media library.', 'alt-context')}
+              action={{
+                label: __('Show all media', 'alt-context'),
+                onClick: () => onClearDraftFilters?.(),
+              }}
+              headingLevel={3}
+              announceState={false}
+            />
+          </td>
+        </tr>
+      );
+    }
+
+    if (hasActiveSearch) {
+      return (
+        <tr>
+          <td colSpan={4}>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No media matches your search.', 'alt-context')}
+              body={__('Clear the search to return to the media library.', 'alt-context')}
+              action={{
+                label: __('Clear search', 'alt-context'),
+                onClick: () => {
+                  onClearSearch();
+                  queueMicrotask(() => {
+                    document.getElementById('acx-media-search')?.focus();
+                  });
+                },
+              }}
+              headingLevel={3}
+              announceState={false}
+            />
+          </td>
+        </tr>
+      );
+    }
+
+    if (hasStatusFilter) {
+      return (
+        <tr>
+          <td colSpan={4}>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No media items match the current filters.', 'alt-context')}
+              body={__('Show all media to return to the media library.', 'alt-context')}
+              action={{
+                label: __('Show all media', 'alt-context'),
+                onClick: () => onClearStatusFilter?.(),
+              }}
+              headingLevel={3}
+              announceState={false}
+            />
+          </td>
+        </tr>
+      );
+    }
+
+    return (
+      <tr>
+        <td colSpan={4}>
+          <EmptyState
+            variant={EmptyStateVariant.EMPTY}
+            heading={__('No media in the library yet.', 'alt-context')}
+            body={__('Upload images in the WordPress media library, then return here to scan.', 'alt-context')}
+            action={{ label: __('Open the media library', 'alt-context'), href: mediaLibraryUrl() }}
+            headingLevel={3}
+            announceState={false}
+          />
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <>
+      {filterByDrafts && historyTruncated ? draftTruncationNotice : null}
+      {visibleItems.map((item, index) => (
+        <MediaSelectionRow
+          key={item.id}
+          item={item}
+          eagerLoad={index < 8}
+          detailIsLoading={detailIsLoading}
+          onToggleRow={onToggleRow}
+          checked={selection[item.id.toString()] ?? false}
+          identitiesDataSource={identitiesDataSource}
+          identitiesLoading={identitiesLoading}
+          onRetryIdentities={onRetryIdentities}
+          draft={draftsByMediaId[item.id]}
+          queueCommitPending={commitOwners.get(item.id) === 'queue'}
+          beginQueueCommit={beginCommit}
+          endQueueCommit={endCommit}
+        />
+      ))}
+    </>
+  );
+};
+
+interface MediaSelectionRowProps {
+  item: WorkbenchMediaItem;
+  eagerLoad: boolean;
+  detailIsLoading: boolean;
+  onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
+  checked: boolean;
+  identitiesDataSource?: DataSource;
+  identitiesLoading?: boolean;
+  onRetryIdentities?: () => void;
+  draft?: QueueDraft;
+  queueCommitPending: boolean;
+  beginQueueCommit: (mediaId: number, owner: RowCommitOwner) => boolean;
+  endQueueCommit: (mediaId: number, owner: RowCommitOwner) => void;
+}
+
+interface RowPoliteState {
+  owner: RowPoliteOwner | null;
+  message: string;
+}
+
+const MediaSelectionRow = ({
+  item,
+  eagerLoad,
+  detailIsLoading,
+  onToggleRow,
+  checked,
+  identitiesDataSource,
+  identitiesLoading,
+  onRetryIdentities,
+  draft,
+  queueCommitPending,
+  beginQueueCommit,
+  endQueueCommit,
+}: MediaSelectionRowProps): React.JSX.Element => {
+  const thumbDimensions = item.thumbnailDimensions;
+  const detailReady = [item.mimeType, item.updatedAt, item.dimensions].some((value) => value != null && value !== '');
+
+  // One persistent polite region per row (S2c-4a). Announce is last-writer-wins;
+  // clear is compare-and-clear so a sibling's blur-retirement cannot wipe a
+  // message it does not own (same principle as DescriptionHistoryPage's
+  // per-row correctionErrors map [RLSE-05]).
+  const [polite, setPolite] = useState<RowPoliteState>({ owner: null, message: '' });
+
+  // Keep the existing editor/Suggest lifecycle. Queue writes additionally own
+  // the table lock, released by their promise even if this row unmounts.
+  const { commitOwner: localCommitOwner, beginCommit, endCommit } = useRowCommitLock();
+  const commitOwner = queueCommitPending ? 'queue' : localCommitOwner;
+
+  const announcePolite = useCallback((owner: RowPoliteOwner, message: string): void => {
+    setPolite({ owner, message });
+  }, []);
+
+  const clearPolite = useCallback((owner: RowPoliteOwner): void => {
+    setPolite((current) => {
+      if (current.owner !== owner) {
+        return current;
+      }
+      return { owner: null, message: '' };
+    });
+  }, []);
+
+  const editorAnnounce = useCallback((message: string): void => announcePolite('editor', message), [announcePolite]);
+  const editorClear = useCallback((): void => clearPolite('editor'), [clearPolite]);
+  const suggestAnnounce = useCallback((message: string): void => announcePolite('suggest', message), [announcePolite]);
+  const suggestClear = useCallback((): void => clearPolite('suggest'), [clearPolite]);
+  // beginCommit returns whether the claim won — surfaces must not write on false.
+  const editorCommitStart = useCallback(
+    (): boolean => !queueCommitPending && beginCommit('editor'),
+    [beginCommit, queueCommitPending],
+  );
+  const editorCommitEnd = useCallback((): void => endCommit('editor'), [endCommit]);
+  const suggestCommitStart = useCallback(
+    (): boolean => !queueCommitPending && beginCommit('suggest'),
+    [beginCommit, queueCommitPending],
+  );
+  const suggestCommitEnd = useCallback((): void => endCommit('suggest'), [endCommit]);
+  const queueCommitStart = useCallback((): boolean => {
+    if (!beginCommit('queue')) {
+      return false;
+    }
+    if (!beginQueueCommit(item.id, 'queue')) {
+      endCommit('queue');
+      return false;
+    }
+    return true;
+  }, [beginCommit, beginQueueCommit, endCommit, item.id]);
+  const queueCommitEnd = useCallback((): void => {
+    endCommit('queue');
+    endQueueCommit(item.id, 'queue');
+  }, [endCommit, endQueueCommit, item.id]);
+
+  return (
+    <tr>
+      <td>
+        <Checkbox
+          ariaLabel={sprintf(__('Select media item %s', 'alt-context'), item.title)}
+          checked={checked}
+          onCheckedChange={(nextChecked: boolean) => onToggleRow(item, nextChecked)}
+        />
+      </td>
+      <td className="acx-media-selection__thumb-cell">
+        <a href={mediaEditUrl(item.id)} aria-label={sprintf(__('Edit %s', 'alt-context'), item.title)}>
+          {item.thumbnailUrl ? (
+            <img
+              src={item.thumbnailUrl}
+              srcSet={item.thumbnailSrcset ?? undefined}
+              sizes={item.thumbnailSizes ?? undefined}
+              alt={
+                // Prefer real alt over a leftover decorative marker (same
+                // precedence as DescriptionCandidateService: has_alt_text wins).
+                // Empty alt only when decorative AND altText is null. [WBUX-5-R1-01][A11Y-02]
+                item.altText != null ? decodeHtmlEntities(item.altText) : item.isDecorative ? '' : item.title
+              }
+              className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
+              loading={eagerLoad ? 'eager' : 'lazy'}
+              fetchPriority={eagerLoad ? 'high' : 'auto'}
+              decoding="async"
+              width={thumbDimensions?.width ?? undefined}
+              height={thumbDimensions?.height ?? undefined}
+            />
+          ) : (
+            <span className="acx-media-selection__thumb acx-media-selection__thumb--placeholder" />
+          )}
+        </a>
+      </td>
+      <td className="acx-media-selection__details">
+        <a href={mediaEditUrl(item.id)} className="acx-media-selection__link">
+          <p className="acx-media-selection__media-title">
+            {item.title}
+            <span className="acx-media-selection__media-id"> (#{item.id})</span>
+          </p>
+        </a>
+        {/*
+          Row-owned polite region [S2c-4a / A11Y-08 / BR-32]. Always mounted in a
+          stable position, empty while quiet. Editor and Suggest announce through
+          props — no context provider for a two-consumer one-level hop.
+        */}
+        <div role="status" aria-live="polite" className="screen-reader-text" data-testid="media-selection-row-status">
+          {polite.message}
+        </div>
+        <MediaAltInlineEditor
+          mediaId={item.id}
+          altText={item.altText ?? null}
+          title={item.title}
+          isDecorative={item.isDecorative === true}
+          onPoliteAnnounce={editorAnnounce}
+          onPoliteClear={editorClear}
+          peerCommitPending={commitOwner !== null && commitOwner !== 'editor'}
+          onCommitStart={editorCommitStart}
+          onCommitEnd={editorCommitEnd}
+        />
+        <MediaAltSuggest
+          mediaId={item.id}
+          committedAlt={item.altText ?? null}
+          title={item.title}
+          isDecorative={item.isDecorative === true}
+          onPoliteAnnounce={suggestAnnounce}
+          onPoliteClear={suggestClear}
+          peerCommitPending={commitOwner !== null && commitOwner !== 'suggest'}
+          onCommitStart={suggestCommitStart}
+          onCommitEnd={suggestCommitEnd}
+        />
+        {draft ? (
+          <QueueDraftCell
+            mediaId={item.id}
+            draftText={draft.draftText}
+            title={item.title}
+            committedAlt={item.altText ?? null}
+            committedIsDecorative={item.isDecorative === true}
+            draftIdentity={JSON.stringify([draft.source, draft.runId])}
+            peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
+            onCommitStart={queueCommitStart}
+            onCommitEnd={queueCommitEnd}
+          />
+        ) : null}
+        {/* detail-meta is metadata loading, not an operator result — not a live region. */}
+        <div className="acx-media-selection__detail-meta">
+          {detailReady ? (
+            <>
+              {item.mimeType ? <span className="acx-media-selection__detail-chip">{item.mimeType}</span> : null}
+              {item.dimensions ? (
+                <span className="acx-media-selection__detail-chip">
+                  {sprintf(
+                    __('%1$d × %2$d px', 'alt-context'),
+                    item.dimensions.width ?? 0,
+                    item.dimensions.height ?? 0,
+                  )}
+                </span>
+              ) : null}
+            </>
+          ) : detailIsLoading ? (
+            <>
+              <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+              <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+            </>
+          ) : (
+            <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--muted">
+              {__('Details unavailable', 'alt-context')}
+            </span>
+          )}
+        </div>
+        <IdentityClusterList
+          identities={item.identities ?? []}
+          dataSource={identitiesDataSource}
+          isLoading={identitiesLoading}
+          onRetry={onRetryIdentities}
+        />
+      </td>
+      <td>
+        {item.tags.length === 0 ? (
+          <span className="acx-media-selection__tag acx-media-selection__tag--empty">
+            {__('No tags', 'alt-context')}
+          </span>
+        ) : (
+          <ul className="acx-media-selection__tags">
+            {item.tags.map((tag) => (
+              <li key={`${item.id}-${tag}`}>{tag}</li>
+            ))}
+          </ul>
+        )}
+      </td>
+    </tr>
+  );
+};
+
+const MediaSelectionSkeletonRow = (): React.JSX.Element => (
+  <tr className="acx-media-selection__skeleton-row" aria-hidden="true">
+    <td>
+      <span className="acx-media-selection__skeleton acx-media-selection__skeleton--checkbox" />
+    </td>
+    <td className="acx-media-selection__thumb-cell">
+      <span className="acx-media-selection__thumb acx-media-selection__thumb--skeleton" />
+    </td>
+    <td>
+      <div className="acx-media-selection__skeleton-stack">
+        <span className="acx-media-selection__skeleton acx-media-selection__skeleton--title" />
+        <span className="acx-media-selection__skeleton acx-media-selection__skeleton--text" />
+        <div className="acx-media-selection__detail-meta">
+          <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+          <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+        </div>
+      </div>
+    </td>
+    <td>
+      <span className="acx-media-selection__skeleton acx-media-selection__skeleton--tag" />
+    </td>
+  </tr>
+);

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://altcontext.app/schemas/wp-batch-run.schema.json",
+  "title": "WordPress Batch Run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "submitted_total",
+    "accepted_total",
+    "completed_total",
+    "failed_total",
+    "cancelled_total",
+    "unreadable_media_ids",
+    "failed_batches",
+    "child_job_ids",
+    "terminal_state"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "submitted_total": { "type": "integer", "minimum": 0 },
+    "accepted_total": { "type": "integer", "minimum": 0 },
+    "completed_total": { "type": "integer", "minimum": 0 },
+    "failed_total": { "type": "integer", "minimum": 0 },
+    "cancelled_total": { "type": "integer", "minimum": 0 },
+    "unreadable_media_ids": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "failed_batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["batch_index", "media_ids", "error_code", "error_message"],
+        "properties": {
+          "batch_index": { "type": "integer", "minimum": 0 },
+          "media_ids": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 }
+          },
+          "error_code": { "type": "string" },
+          "error_message": { "type": "string" }
+        }
+      }
+    },
+    "child_job_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "terminal_state": { "type": "boolean" }
+  }
+}

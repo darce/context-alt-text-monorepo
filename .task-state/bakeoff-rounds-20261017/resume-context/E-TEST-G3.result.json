@@ -1,0 +1,104 @@
+{
+  "status": "revise",
+  "summary": "REVISE: protected fixture cleanup can remove live-writer evidence, and executor process monitoring can abort valid fixture construction. CURRENTv1 test review only; E-check is bootstrap4 with zero E assertions.",
+  "source_sha": "de95358a1234e63d266098e5b2e993faf1202373",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/E-TEST-G3.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/E-TEST-G3.md"
+  ],
+  "commits": [
+    "64ef1482a62d3a135d18329cae09d5ff89f8cdee"
+  ],
+  "findings": [
+    {
+      "id": "C-FULL-GATE-01",
+      "severity": "HIGH",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_runner.py:1069",
+      "description": "Protected placement is corrected, but both lifetime helpers can remove a fixture while an unknown writer remains live.",
+      "evidence": "Exact current runner helper returns normally and deletes its root while a real audit-owned writer holds the same inode through an external hardlink; link count changes from 2 to 1. Its pathname-only writer scan misses that alias and remove_owned lacks the executor helper's single-link check. Executor test:1492-1496 also deletes roots with ordinary or unlinked live external writing FDs because it proves only descendant reap. Controls: both helpers clean a stopped ordinary writer; executor retains linked entries; runner retains ordinary and unlinked live FDs. /tmp/e-test-g3/lifetimes.json and os-controls.json contain actual identities/outcomes, not C/E behavior.",
+      "fix": "Extend only the owned fixture lifetime glue: retain regular entries with multiple links, and independently bound/revalidate writer exclusion, including open/unlinked identities and aliases, before authorizing removal. Reap only proven owned children; retain roots on unknown/live/foreign references. Preserve all 233 IDs, source/P path policy and legacy ASTs; no global temporary-root override."
+    },
+    {
+      "id": "E-TEST-G3-01",
+      "severity": "MEDIUM",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_owned_executor.py:1367",
+      "description": "Normal process disappearance can fail the containment monitor before the intended test boundary.",
+      "evidence": "The first exact current factory/isolation audit exited 1: inventory -> _er_identity -> /proc/<pid>/stat.read_text raised ProcessLookupError(ESRCH). inventory catches only FileNotFoundError at line1370, so it killed/reaped the callback and retained its partially constructed fixture before any E call. The same current factory projections qualify 171 executor leaves/inventories under synchronous protected ownership; ordinary real-child and bounded-work isolation controls pass. Raw trace and reconstructed first script are retained in logs/fixtures.attempt1.* and snapshots/fixtures.attempt1.reconstructed.py. This is test-instrument failure, not E RED.",
+      "fix": "Handle the native process-disappearance outcomes of the bounded /proc census, including ESRCH during read, without treating disappearance alone as product failure or live-exit proof. Retain independently captured identities, bounded teardown/reap and uncertainty handling. Add a bounded real short-lived-child control; do not pace callbacks to hide the race or alter source tests in this review lane."
+    }
+  ],
+  "tests": [
+    {
+      "command": "../../.venv/bin/python -B -m pytest --noconftest -o required_plugins= -p no:cacheprovider -q scene/tests/test_eval_harness_owned_executor.py::test_success_error_interrupt_cleanup scene/tests/test_eval_harness_owned_executor.py::test_unknown_exit_blocks_eviction scene/tests/test_eval_harness_owned_executor.py::test_missing_subprocess_is_typed scene/tests/test_eval_harness_owned_executor.py::test_collector_armed_before_exec scene/tests/test_eval_harness_owned_executor.py::test_no_next_arm_without_cleanup_receipt scene/tests/test_eval_harness_bakeoff_runner.py::test_owned_shell_preserves_outputs_and_score_control scene/tests/test_eval_harness_bakeoff_runner.py::test_owned_batch_report_preserves_sealed_legs scene/tests/test_eval_harness_bakeoff_runner.py::test_owned_batch_rerun_and_all_refused scene/tests/test_eval_harness_bakeoff.py::test_custom_out_does_not_prune_module_out",
+      "exit_code": 4,
+      "summary": "Exact nine selectors from service root, plugin/conftest/cache disabled; 10.14s under 55s bound. Missing owned_executor collection; zero E assertions."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-e-test-g3-c6921c77/.venv/bin/ruff check --no-cache apps/prototype-description-service/scene/tests/test_eval_harness_owned_executor.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_runner.py",
+      "exit_code": 0,
+      "summary": "Both changed files pass focused lint; no unchanged P or broad suite."
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-bakerounds-20261017-e-test-g3-c6921c77/.venv/bin/ruff format --check --no-cache apps/prototype-description-service/scene/tests/test_eval_harness_owned_executor.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_runner.py",
+      "exit_code": 0,
+      "summary": "Both changed files pass format check without edits."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/provenance.py",
+      "exit_code": 0,
+      "summary": "Exact test/plan/P/Canon pins; E3 all six orders/17 edits, E4 both orders/10 edits; 117 original +116 added IDs; legacy83/no-prune3 preserved."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/fixtures.py",
+      "exit_code": 0,
+      "summary": "94 executor and133 owned runner case projections; 230 factory calls/523 P-valid inventories and leaf/container controls. Executor factory qualification is synchronous and separate from the failed isolation probe."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/semantic.py",
+      "exit_code": 0,
+      "summary": "40 raw mutation prefixes, five terminal and six proof mutations validate through current P; copied held/spec/authority controls are rejected by extracted current assertions."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/public_controls.py",
+      "exit_code": 0,
+      "summary": "Three actual public legacy inclusive shells pass expected outcomes; exact current score oracle rejects four policy mutants and accepts its control. No owned behavior."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/minima.py",
+      "exit_code": 0,
+      "summary": "Actual six source plans retain eleven fields; nine actual legacy preflight controls verify >=, > and null non-probe attribution."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/assertions.py",
+      "exit_code": 0,
+      "summary": "Current terminal-count/durable-report assertions reject absent/wrong evidence and accept valid controls; snapshots detect changed entries/bytes."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/lifetimes.py",
+      "exit_code": 0,
+      "summary": "Real OS pairs expose runner hardlink/live-alias deletion; stopped-writer and executor linked-entry controls retained. Exit0 means probe completed, not fixture approval."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/os_controls.py",
+      "exit_code": 0,
+      "summary": "Runner retains ordinary/unlinked live FDs; executor wrongly removes those roots. Stale-start signal refusal, TERM/KILL/reap and executor timeout retention controls pass."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/fixtures.py",
+      "exit_code": 1,
+      "summary": "Actual native ESRCH in the exact current containment census, before E behavior; complete failure trace retained."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/e-test-g3/prior.py",
+      "exit_code": 0,
+      "summary": "All 12402 entries in nine prior gate/author manifests verify, including the full1466 audit, minimum review and independent C fixture gate."
+    }
+  ],
+  "limitations": [
+    "Logical input de95358a is bound by native provenance to a131e96a and exact tree afde6f77610e5349a8519c197f02a18e7e699675. All three test pins and plan4c2a9d73/P-v1 b722859c verify; equal trees do not prove ancestry.",
+    "Review covers only the complete CURRENTv1 test specification. Proposed P2/v2 storage, adapter/fixture migration, C/E source prerequisites, M qualification, operational bakeoff and human quality approval remain separate. No future fields or consumers were supplied or executed.",
+    "Live MCP/graph/handoff/semantic tools were unavailable. Supplied verified ONNX/handoff receipts and declared201-node/665-edge coverage were navigation; exact checkout source/current AST outlines were authority. Six supplied Canon0.26.2 bodies and prior custody were hash-verified; no new embedding/model/index execution or central record mutation is claimed.",
+    "Central canonical findings remain OPEN until root records disposition. The seven prior E findings were individually re-reviewed; no self-closure or source authorization follows. Any fifth semantic E author requires the new LOUD Canon proposal and requested XHIGH fallback first; no author was dispatched.",
+    "Preserve /tmp/e-test-g3 before owned reap. audit-manifest.json SHA256 087a4584ef51fa77d5ef0554bce2a72b4031e0983905aa613543733e5bdb4ff1 binds current snapshots/scripts/raw logs/exits/pins and prior seals; final native review bundle/delivery seal are supplemental. Only this review pair changes. Probes used 1GiB address-space/30 CPU-second/55s bounds and paced record loops; native0.5CPU quota could not be independently read. Setup-only wrong-cwd and AST-extraction failures are retained separately from findings."
+  ]
+}

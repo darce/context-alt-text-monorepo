@@ -1,0 +1,43 @@
+{
+  "native_head": "4ccba83b688d13d294b4ce6d2569b6065a11ee2b",
+  "repo_path": "/Volumes/Butter/WorkBay/custody/raw-auth-source-g4-codemap-4ccba83b",
+  "project": "bakeoff-raw-source-g4-4ccba83b",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "snapshot": "/Volumes/Butter/WorkBay/custody/raw-auth-source-g4-codemap-4ccba83b/bakeoff.py",
+      "sha256": "03c4f94dcbcd89267163d5a4da190d651a3c1707b6b988b5b629ba3827bf616b",
+      "blob": "688bf3fd539537be9d6b4115d0c14fa6633b2986"
+    },
+    {
+      "path": "apps/prototype-description-service/scripts/eval_harness/remote_client.py",
+      "snapshot": "/Volumes/Butter/WorkBay/custody/raw-auth-source-g4-codemap-4ccba83b/remote_client.py",
+      "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53",
+      "blob": "848e6d69d651f922f4afe53d18fb13a06a351423"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "snapshot": "/Volumes/Butter/WorkBay/custody/raw-auth-source-g4-codemap-4ccba83b/test_eval_harness_bakeoff_raw_auth.py",
+      "sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e",
+      "blob": "43058b1b1f8689a6202f318fe4a5cfd42f434e40"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "snapshot": "/Volumes/Butter/WorkBay/custody/raw-auth-source-g4-codemap-4ccba83b/test_eval_harness_bakeoff_auth_protocol_fields.py",
+      "sha256": "7b3321088eb319016780c6b888aab487bfb6140f5cc8782a50425f64c5b9e537",
+      "blob": "6c176f05157884ef049243c497628105d75e20dd"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py",
+      "snapshot": "/Volumes/Butter/WorkBay/custody/raw-auth-source-g4-codemap-4ccba83b/test_eval_harness_bakeoff_auth_reflection.py",
+      "sha256": "0fbd93390befb4e69bc590b041bd07269fc299347c8aa954d518242f9002cfc4",
+      "blob": "4b3efa357e0cd6acd72fecbf88641132e5db0108"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_composed_encoding.py",
+      "snapshot": "/Volumes/Butter/WorkBay/custody/raw-auth-source-g4-codemap-4ccba83b/test_eval_harness_bakeoff_auth_composed_encoding.py",
+      "sha256": "7c7c6052356060a27ae27159234f723fe50d627ac1bcf7daadca4f5d5f3d9041",
+      "blob": "9d21d6f8c382a953e7d83b6a299e79a913711075"
+    }
+  ]
+}

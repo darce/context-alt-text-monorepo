@@ -1,0 +1,18 @@
+{
+  "lane": "cull-rec-unit-3",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 41,
+  "tests_in_partition": 658,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_ort_parity.py::test_models_skip_reason_names_fetch_command",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_opencv_ref.py::test_models_skip_reason_names_fetch_command",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_ort_parity.py:74-76 and apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_opencv_ref.py:80-83 assert the same two substrings in the shared MODELS_SKIP string; apps/prototype-description-service/recognition/tests/unit/face_pipeline_support.py:46-50 defines that single string. A regression in either substring fails both tests, and the ORT test adds no separate behavior check.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

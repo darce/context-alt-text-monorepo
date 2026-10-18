@@ -1,0 +1,16 @@
+schema_version: 1
+plugin: workbay-system
+components:
+  skills:
+    branch-review:
+      mode: patch
+      path: skills/branch-review/SKILL.md
+      base_path: skills/branch-review/SKILL.base.md
+      upstream_digest: sha256:9897904927cdff1400b06fbf24d0509a20d72fdce45954326f5244bb40db4940
+      on_upstream_change: warn
+    refactor-wp-alt-context:
+      mode: add
+      path: skills/refactor-wp-alt-context/SKILL.md
+    refactor-description-service:
+      mode: add
+      path: skills/refactor-description-service/SKILL.md

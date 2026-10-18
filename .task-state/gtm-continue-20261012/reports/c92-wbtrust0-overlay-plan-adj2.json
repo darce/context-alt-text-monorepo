@@ -1,0 +1,37 @@
+{
+  "status": "COMMITTED_GREEN_PENDING_PARENT",
+  "lane_id": "c92-wbtrust0-overlay-plan-adj2",
+  "source_verdict": "F4 planning contract revised; pending independent parent review, no author MERGE verdict",
+  "summary": "Documentation checks: 4/4 local links, 18/18 existing source paths and 4/4 static invariants passed; git diff --check passed. Product tests 0, causal RED assertions 0, fixture/setup errors 0; browser/E2E/quality acceptance UNRUN. Only two owned files changed.",
+  "source_identity": "Requested source 55cb4113b0327074a7a293ee49de2f65227393c7/tree af531f783e555cdf84a5891efabae0fe351394e3. Observed initial synthetic HEAD ee19ff161e16e2c8ce98d7bf27353773c2227c2c with exactly matching tree; no ancestry equivalence assumed.",
+  "evidence": [
+    "EXECUTED: initial worktree clean; git rev-parse verified exact source tree identity. Edits began on tool call 3; early plan checkpoint 8697e52 and report checkpoint c7373c7 preserve custody.",
+    "EXECUTED: bounded single-threaded in-sandbox .venv/bin/python (3.12.7) static documentation audit: 4/4 local Markdown links resolve; 18/18 explicitly listed existing source/test paths exist. Existence is not source loading, test execution or browser evidence.",
+    "EXECUTED: 4/4 static invariants: owned-file set, source tree match, unchanged executor line, balanced code fences. git diff --check exit 0.",
+    "PLAN-ONLY: typed placed/noFit result; placed rect finite, positive-size, contained in painted image and outside all face rects; all valid sides failing or unsupported geometry suppresses visual chip. Any shortening/final-size change requires actual CSS remeasurement and validation.",
+    "PLAN-ONLY: unit and browser acceptance distinguish rendered labels from noFit, retain outline accessible identity/activation/focus, and require real CSS-painted geometry, host reuse/load/resize/rebind/scoped cleanup. Decision 17075 browser gate retained; no production onLabelPlacement callback.",
+    "PRESERVED: executor, slice sequence, accepted product requirements and canon v0.26.2. Clarified PERC-01/A11Y-13/VIZ-12 source locators; removed inapplicable EVAL-16 DOM-recon citation. Supplied historical HTTP/DOM receipts remain premises, not executions by this lane.",
+    "UNRUN: product unit/integration tests, browser/E2E, live runtime, deployment, DB/network/email/credential/GPU/OCI operations; no implementation, test, map or configuration edits. No causal RED claimed (0 assertions run); no fixture/setup test errors (0 tests run)."
+  ],
+  "findings": [
+    "F4 addressed in the planning document: no overlapping fallback rectangle; noFit has no drawable geometry, no visual chip and no hidden functional action. Parent independent adjudication remains required.",
+    "Task-plan guard scripts/hooks/guard-task-plan-findings.py and scripts/review_pipeline.py are absent. Makefile.d is absent; mk/handoff.mk delegates plan-analyze there and no local implementation was found. No unavailable check is reported as passing."
+  ],
+  "commands": [
+    "git rev-parse --show-toplevel; git status --short; git rev-parse HEAD HEAD^{tree} (separate read-only commands)",
+    "Explicit in-worktree reads of CLAUDE.md, owned task plan, Makefile, mk/handoff.mk and scripts/task_plan_audit.py; bounded explicit-path rg discovery of documentation tooling",
+    "git add -- docs/tasks/v0.5.0/WBTRUST-6-attachment-overlay-task-plan.md; git commit -m \"docs(wbtrust-6): checkpoint explicit no-fit overlay contract\"",
+    "git add -f -- .task-state/gtm-continue-20261012/reports/c92-wbtrust0-overlay-plan-adj2.json; git commit -m \"docs(wbtrust-6): checkpoint adjudication custody report\" (report directory is ignored)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python - < inline static link/path/scope/identity/executor/fence audit; output /tmp/c92-wbtrust0-overlay-plan-adj2-audit.json",
+    "git diff --check; final owned-file/report schema audit; git commit -m \"docs(wbtrust-6): finalize no-fit contract adjudication\""
+  ],
+  "blockers": [
+    "Unavailable optional documentation tooling: task-plan guard, review_pipeline.py and plan-analyze implementation; direct static checks do not substitute for them.",
+    "Main landing pending five-disjoint-document join and fresh Sol xhigh R2. Product/browser/E2E/quality gates remain separate and unexecuted; no task is marked done and GTMSMOKE-1 remains ACTIVE."
+  ],
+  "next_actions": [
+    "Parent coordinator: import the two owned files, join the five disjoint documentation revisions, then dispatch fresh Sol xhigh R2; author does not authorize MERGE.",
+    "Later WBTRUST-6 implementation: preserve Haiku 5.5 xhigh executor, Sol HIGH standard and LOUD odd Opus/even Sol xhigh loop roles; satisfy real CSS browser gate 17075 plus no-fit identity/activation/focus checks.",
+    "Tooling-owner follow-up (outside this lane; no edits proposed here): restore missing task-plan guard/planning-analysis tooling if required by the parent gate. No additional source changes are needed for this documentation adjudication."
+  ]
+}

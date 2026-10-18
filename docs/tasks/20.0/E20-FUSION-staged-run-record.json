@@ -1,0 +1,395 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Russet Fathom. Russet Fathom on the Antarctic peninsula during her 2023 research residency.. A person stands at position 1 from the left",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-russet-fathom",
+              "fact_label": "Russet Fathom",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Russet Fathom. Russet Fathom on the Antarctic peninsula during her 2023 research residency.. A person stands at position 1 from the left",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Russet Fathom"
+      ],
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Hollow Pennant. Hollow Pennant at the science fair.. A person stands at position 1 from the left",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-hollow-pennant",
+              "fact_label": "Hollow Pennant",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Hollow Pennant. Hollow Pennant at the science fair.. A person stands at position 1 from the left",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Hollow Pennant"
+      ],
+      "media_id": 2,
+      "path": "mock_images/quiet-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Russet Fathom and Muted Current. Russet Fathom and Muted Current with friends.. A person stands at position 1 from the left. A person stands at position 2 from the left",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-russet-fathom",
+              "fact_label": "Russet Fathom",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            },
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-muted-current",
+              "fact_label": "Muted Current",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Russet Fathom and Muted Current. Russet Fathom and Muted Current with friends.. A person stands at position 1 from the left. A person stands at position 2 from the left",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 4,
+      "identities": [
+        "Russet Fathom",
+        "Muted Current"
+      ],
+      "media_id": 5,
+      "path": "mock_images/ccqw-candid.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Daniel Arce and Auburn Current. Auburn Current and Daniel Arce on vacation.. A person stands at position 1 from the left. A person stands at position 2 from the left",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-auburn-current",
+              "fact_label": "Auburn Current",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            },
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-daniel-arce",
+              "fact_label": "Daniel Arce",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Daniel Arce and Auburn Current. Auburn Current and Daniel Arce on vacation.. A person stands at position 1 from the left. A person stands at position 2 from the left",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 2,
+      "identities": [
+        "Daniel Arce",
+        "Auburn Current"
+      ],
+      "media_id": 23,
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Muted Yarrow. Muted Yarrow celebrating with friends.. A person stands at position 1 from the left",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-muted-yarrow",
+              "fact_label": "Muted Yarrow",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Muted Yarrow. Muted Yarrow celebrating with friends.. A person stands at position 1 from the left",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 6,
+      "identities": [
+        "Muted Yarrow"
+      ],
+      "media_id": 37,
+      "path": "mock_images/muted-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "An afternoon at the hotel pool.. A person is present.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "An afternoon at the hotel pool.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 30,
+      "path": "mock_images/slate-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Abstract painting by Linen Kestrel.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "none",
+              "decision": "dropped",
+              "fact_id": "identity:0:Linen Kestrel",
+              "fact_label": "Linen Kestrel",
+              "fact_source": "identity",
+              "review_reason": "unconfirmed_identity",
+              "target_evidence": null,
+              "visible": false
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Abstract painting by Linen Kestrel.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 27,
+      "path": "mock_images/linen-kestrel-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Muted Yarrow. Muted Yarrow at the neighborhood bar.. A person stands at position 1 from the left",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "object",
+              "decision": "object",
+              "fact_id": "identity:cluster:cluster-muted-yarrow",
+              "fact_label": "Muted Yarrow",
+              "fact_source": "identity",
+              "review_reason": null,
+              "target_evidence": "person",
+              "visible": true
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Muted Yarrow. Muted Yarrow at the neighborhood bar.. A person stands at position 1 from the left",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 1,
+      "identities": [
+        "Muted Yarrow"
+      ],
+      "media_id": 36,
+      "path": "mock_images/muted-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "Slate Willow at a summer garden picnic.. A person is present.",
+        "attachment_provenance": {
+          "facts": [
+            {
+              "altitude": "none",
+              "decision": "dropped",
+              "fact_id": "identity:cluster:cluster-slate-willow",
+              "fact_label": "Slate Willow",
+              "fact_source": "identity",
+              "review_reason": "face_not_detected",
+              "target_evidence": null,
+              "visible": false
+            },
+            {
+              "altitude": "caption",
+              "decision": "caption",
+              "fact_id": "event:garden-picnic",
+              "fact_label": "Garden picnic",
+              "fact_source": "event",
+              "review_reason": null,
+              "target_evidence": null,
+              "visible": false
+            },
+            {
+              "altitude": "caption",
+              "decision": "caption",
+              "fact_id": "place:summer-garden",
+              "fact_label": "Summer garden",
+              "fact_source": "place",
+              "review_reason": null,
+              "target_evidence": null,
+              "visible": false
+            }
+          ]
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "Slate Willow at a summer garden picnic.. A person is present.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "seeded",
+        "alt_text_draft": "A person standing outdoors near greenery.",
+        "attachment_provenance": {
+          "facts": []
+        },
+        "cached": false,
+        "model_id": "fusion-eval-stub",
+        "model_version": "1",
+        "visual_facts": {
+          "caption": "A person standing outdoors near greenery.",
+          "objects": [
+            "person",
+            "scene"
+          ]
+        }
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "fusion-runner://staged",
+    "fusion_mode": "staged",
+    "head_sha": "e4f1730f3c697f6abd6afefb817310de76f3f0c2",
+    "manifest_sha256": "2182b97628d855e7d7a7b2e8afbc73582dde59198d3030a66e6a1ea35fe9dbd9",
+    "started_at": "2026-07-10T05:05:05Z"
+  },
+  "schema": "acx-eval/v1"
+}

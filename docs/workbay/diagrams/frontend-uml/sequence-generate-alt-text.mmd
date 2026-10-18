@@ -1,0 +1,20 @@
+sequenceDiagram
+    %% Persisted suggestion acceptance flow
+    actor Admin
+    participant UI as SuggestionReviewPanel
+    participant Hooks as useMutation (React Query)
+    participant WPAPI as WP REST /recognition/suggestions
+    participant RecSvc as Recognition Service
+    participant DB as identity_suggestions + clusters
+
+    Admin->>UI: Click "Accept" on suggestion card
+    UI->>Hooks: acceptSuggestion(suggestion_id)
+    Hooks->>WPAPI: POST /recognition/suggestions/{id}/accept
+    WPAPI->>RecSvc: /recognition/suggestions/{id}/accept
+    RecSvc->>DB: set resolution='accepted'; resolved_at=now
+    RecSvc->>RecSvc: assign_identity_to_cluster()
+    RecSvc-->>WPAPI: SuggestionResponse
+    WPAPI-->>Hooks: status=accepted
+    Hooks->>Hooks: invalidate queries ['recognition-clusters','recognition-suggestions','identity-suggestions']
+    Hooks-->>UI: update list + toast
+    UI-->>Admin: Show updated badge + cluster counts

@@ -1,0 +1,165 @@
+# Scripts
+
+Utility scripts for local development and testing.
+
+## Directory Structure
+
+```text
+scripts/
+├── db_shell.sh                 # Database shell access
+├── deploy-env.sh               # Deployment environment helper
+├── reset_dev_db.sh             # Database reset
+├── setup.sh                    # Initial environment setup
+├── start_prototype_local.sh    # Local development server
+├── fetch_face_pipeline_models.py  # Fetch/verify YuNet+SFace ONNX (--verify-only)
+├── install_insightface_mac.sh  # Default: fetch face_pipeline models; --bench = insightface
+├── generate_canonical_report.py # Canonical reporting utility
+├── manage_api_keys.py          # Create/list/revoke tenant API keys
+├── verify_identity_schema.py   # Assert the baseline schema footprint
+└── utilities/
+    └── compare_media_embeddings.py  # Embedding similarity comparison
+```
+
+### Face pipeline models
+
+```bash
+# Download + sha256-verify into recognition/infrastructure/face_pipeline/models/
+uv run python scripts/fetch_face_pipeline_models.py
+
+# Offline preflight (no network): exit non-zero if missing or hash-mismatched
+uv run python scripts/fetch_face_pipeline_models.py --verify-only
+
+# Wrapper (default = fetch; --bench installs insightface for bake-off / incumbent)
+./scripts/install_insightface_mac.sh
+./scripts/install_insightface_mac.sh --bench
+```
+
+The production Docker image still installs `.[bench]` (insightface) through FIR-4
+for the dark-default incumbent profile; it does **not** bake face_pipeline ONNX
+bytes. Dark-env operators who set `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline`
+must provision models with the fetch script and re-check with `--verify-only`.
+
+## start_prototype_local.sh
+
+Starts the prototype description service with automatic dependency installation and database setup.
+
+**Usage:**
+
+```bash
+./scripts/start_prototype_local.sh [command]
+```
+
+**Commands:**
+
+- `start` - Install dependencies and launch uvicorn (default)
+- `install` - Install/upgrade dependencies only
+- `stop` - Stop running service
+- `help` - Show help
+
+**Environment variables:**
+
+- `SKIP_INSTALL=1` - Skip dependency installation
+- `SKIP_DB_START=1` - Skip starting Postgres container
+- `HOST` - Uvicorn host (default: 0.0.0.0)
+- `PORT` - Uvicorn port (default: 8000)
+- `FORCE_INSTALL=1` - Force reinstall dependencies even offline
+
+**Auto-setup features:**
+
+- Starts Docker/Colima if needed
+- Starts Postgres container
+- Installs Python dependencies
+- Launches uvicorn with hot reload
+
+## reset_dev_db.sh
+
+Resets the development database by dropping and recreating it with fresh migrations.
+
+**Usage:**
+
+```bash
+./scripts/reset_dev_db.sh [--with-sample-data]
+```
+
+**Options:**
+
+- `--with-sample-data` - Seed the database with sample test data
+
+**What it does:**
+
+- Bootstraps `.env` from `.env.example` when a clean checkout has no local env yet
+- Drops and recreates the database
+- Runs Alembic migrations
+- Creates the `recognition_test_user` for RLS testing
+- Optionally seeds sample data
+
+**Safety:**
+
+- Direct script usage requires `ALLOW_DEV_DB_RESET=1` in `.env` or the shell environment
+- `make reset` exports `ALLOW_DEV_DB_RESET=1` automatically because the target is already explicitly destructive and local-only
+- Only runs if `ENV_MODE=local` or `ENV_MODE=development`
+- Uses the canonical `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`DB_NAME` variables from `.env`
+
+## Test User Setup
+
+The `recognition_test_user` PostgreSQL role is automatically created:
+
+1. **On first container creation** - via `/docker-entrypoint-initdb.d/010-create-test-role.sql`
+2. **On database reset** - via `reset_dev_db.sh`
+
+The test user has:
+
+- CREATEDB and CREATEROLE privileges
+- Full access to all tables and sequences in the public schema
+- Ability to set `log_min_duration_statement` for debugging
+- **NOT** a SUPERUSER (so RLS policies remain enforced)
+
+## `manage_api_keys.py` environment labels
+
+`--env` names the database stack the command will target. For an OCI command,
+run it inside that stack's API container and use its exact label:
+
+| Target | CLI `--env` | Runtime `ACX_ENV` in API container | DSN host and guard |
+|---|---|---|---|
+| OCI production | `prod` | `prod` | Compose `postgres` is allowed; loopback and `.local` hosts are refused. |
+| OCI staging | `staging` | `staging` | Compose `postgres` is allowed when the runtime label matches. |
+| OCI development | `dev` | `dev` | Compose `postgres` is allowed when the runtime label matches. |
+| OCI dev-fir | `dev-fir` | `dev-fir` | Compose `postgres` is allowed when the runtime label matches. |
+| Local development | `local` | `local` (or unset for legacy invocations) | A local host is required; remote hosts are refused. |
+
+The API service receives `ACX_ENV` from the target stack's `.env` via Compose's
+`env_file: .env`; `--env` must match that trusted in-container value. The
+operator's Make `ENV` selects a stack on the host and is not the CLI runtime
+setting. If `ACX_ENV` is unset, the existing strict DSN-based fallback applies;
+in particular, it does not authorize a non-production command to use the
+Compose `postgres` host without a matching runtime label. Production continues
+to reject local DSN hosts, and local commands continue to reject remote DSNs.
+
+For example, run a staging command from the staging directory so Compose uses
+that stack's configuration and API container:
+
+```bash
+cd /opt/acx-backend/staging
+docker compose -f docker-compose.env.yml exec -T api \
+  python -m scripts.manage_api_keys --env staging tenant list < /dev/null
+```
+
+## Testing with RLS
+
+To run tests with Row-Level Security enabled:
+
+1. Ensure test user exists (it's created automatically on first DB start or reset)
+
+2. Set environment variable in `.env`:
+
+   ```env
+   ALLOW_RLS_BYPASS_FOR_TESTS=0
+   ```
+
+3. Run tests:
+
+   ```bash
+   python -m pytest
+   ```
+
+The test user has sufficient privileges to run tests while still enforcing RLS policies, allowing you to verify that tenant isolation works correctly.

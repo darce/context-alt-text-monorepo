@@ -1,0 +1,110 @@
+{
+  "lane": "dfadj3-04",
+  "base": "aa48716a0aa82de54d7357231192aa1940873cb2",
+  "results": [
+    {
+      "db_id": 16786,
+      "finding_id": "DADJ-5699",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/corpus.py:131 - bench manifests route through load_v3_manifest; apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py:53 - missing annotation_mode is rejected; apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py:71 - roster_only count mismatch yields stranger_faces 0.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/corpus.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Keep the v3 loader and derive detection eligibility from document annotation mode and exhaustive face boxes."
+    },
+    {
+      "db_id": 16793,
+      "finding_id": "DADJ-6237",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:345 - lists required v3 Golden fields including roster, base_caption, must_right, easy_wrong, and policy; apps/prototype-description-service/scripts/bench/tests/fixtures/v3_boxed_detection.json:2 - fixture is manifest_version 3; apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py:57 - loads the fixture through the current loader.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Keep the fixture contract and literal example aligned with the loadable v3 Golden schema."
+    },
+    {
+      "db_id": 16871,
+      "finding_id": "DADJ-6385",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1151 - detection_entries are the accepted entries intersected with detection_scoring_set; apps/prototype-description-service/scripts/bench/score_report.py:1209 - detection metric inputs use detection_manifest; docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:672 - primary detection endpoint uses detection_scoring_set while identification uses accepted_set.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "S",
+      "related": [
+        16827
+      ],
+      "fix_hint": "Assign the pinned detection recall primary to detection_scoring_set and reserve accepted_set for identification endpoints."
+    },
+    {
+      "db_id": 16872,
+      "finding_id": "DADJ-6386",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1151 - detection_entries are filtered to detection_scoring_set; apps/prototype-description-service/scripts/bench/score_report.py:1179 - constructs accepted_manifest; apps/prototype-description-service/scripts/bench/score_report.py:1180 - constructs detection_manifest; apps/prototype-description-service/scripts/bench/score_report.py:1197 and :1209 pass the corresponding subset to identification and detection input construction.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Build detection inputs from the detection_scoring_set subset while retaining accepted_set for identification inputs."
+    },
+    {
+      "db_id": 16827,
+      "finding_id": "DADJ-6414",
+      "task": "DEBTFIX-1",
+      "verdict": "DUPLICATE",
+      "duplicate_of": 16871,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:672-673 - the primary detection endpoint and every detection endpoint use detection_scoring_set; this is the same population assignment as db 16871.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "M",
+      "related": [
+        16871
+      ],
+      "fix_hint": "Use the canonical population correction recorded for db 16871."
+    },
+    {
+      "db_id": 16831,
+      "finding_id": "DADJ-6425",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/preflight.py:86 - requires timestamped per-stack reset and empty-row evidence; apps/prototype-description-service/scripts/bench/driver.py:445 - validates fresh reset evidence before preflight and run-dir setup; apps/prototype-description-service/scripts/bench/tests/test_preflight.py:734 and :749 - nonempty-state evidence raises pre_run_reset_unverified before run_leg; docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1178 - requires both stack resets and verified empty identity state before run.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/preflight.py",
+        "apps/prototype-description-service/scripts/bench/driver.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Require a fresh per-stack empty-state attestation and the documented stack reset before ingest."
+    }
+  ]
+}

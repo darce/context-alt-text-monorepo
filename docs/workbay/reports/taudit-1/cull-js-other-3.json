@@ -1,0 +1,28 @@
+{
+  "lane": "cull-js-other-3",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 40,
+  "tests_in_partition": 404,
+  "results": [
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::AuthExpiredError 401 and 403 round-trip exact status (M4)",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::classifies AuthExpiredError 401 and 403 as auth_expired (apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts:61)",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts:302 - M4 repeats both constructor statuses and classifier tags/statuses; apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts:60 - earlier test checks classifier identity, tags, and statuses for both inputs.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::classifies TimeoutError as timeout and AbortError as abort — distinguishable [FEBT1-W2A-05]",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::plain-object AbortError classifies as abort; TimeoutError as timeout (F3) (apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts:419)",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts:90 - plain-object TimeoutError and AbortError classification assertions; apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts:419 - F3 repeats the same two classification outcomes and also checks the name helper.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

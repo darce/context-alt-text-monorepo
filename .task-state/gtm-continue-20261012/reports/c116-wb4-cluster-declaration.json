@@ -1,0 +1,54 @@
+{
+  "status": "COMMITTED_GREEN_PENDING_PARENT",
+  "lane_id": "c116-wb4-cluster-declaration",
+  "source_verdict": "Scoped gate GREEN for the mechanical declaration-time dependency fix: DeclarationTimeRequireOnceGuardTest 21/21 after vs 1 causal failure before (testResidualDeclarationTimeGapsAreEmpty, ClusterReadService trait gap). Guard family 107/107 after. ClusterReadServiceTest 23/23 before and after. ClustersControllerTest 16 failures identical before and after, pre-existing and not caused by this edit. No task, E2E, quality, runtime or full-suite PASS is claimed.",
+  "summary": "Added the project-pattern require_once for the canonical DetectsSystemDefinedLabels trait to ClusterReadService so the declaration-time guard sees its trait dependency satisfied. One added line, no refactor, no test or ignore-list change, no other production file touched.",
+  "source_identity": "Requested sourceSHA 2c15bbd1dddbdd524ed93c6c9b7382e68bde258d is absent from this history-stripped checkout (git cat-file -e: absent). Exact tree governs: requested tree 04839f3afbed9b108ebcacf6a1e6fbadab0b7a24 matches HEAD^{tree} of the initial sandbox base 8dcac4bdce8390f474df863e0e30a1b537ff20db. Ancestry unverified.",
+  "owned_paths": [
+    "apps/prototype-wp-alt-context/src/api/services/class-cluster-read-service.php",
+    ".task-state/gtm-continue-20261012/reports/c116-wb4-cluster-declaration.json"
+  ],
+  "commits": {
+    "source_wip": "729f624 (owned source line only; no Co-Authored-By trailer per lane rule)",
+    "report_final": "the commit that adds this report; resolve with git log -1 on the branch"
+  },
+  "evidence": [
+    "EXECUTED edit: apps/prototype-wp-alt-context/src/api/services/class-cluster-read-service.php:8 adds require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php'; directly after the existing projection-exception require. Pattern copied from class-cluster-merge-service.php:8 and class-cluster-label-service.php:8. Trait file namespace AltContext\\Support matches the use import at line 12. git diff 8dcac4b HEAD names only this file; diff is one inserted line.",
+    "EXECUTED php -l on the edited file: no syntax errors (PHP 8.3.6 CLI).",
+    "EXECUTED offline composer install with COMPOSER_DISABLE_NETWORK=1, COMPOSER_CACHE_READ_ONLY=1, pinned lock, no update: exit 0; vendor/autoload.php and vendor/bin/phpunit present; composer.lock unchanged; vendor/ is git-ignored.",
+    "EXECUTED BEFORE, DeclarationTimeRequireOnceGuardTest.php on a scratch copy of base 8dcac4b (git archive into /tmp/c116-before; vendor hardlinked): 21 tests, 1 failure. Failure testResidualDeclarationTimeGapsAreEmpty at the assertion on line 201 with message: api/services/class-cluster-read-service.php — use-trait DetectsSystemDefinedLabels (need trait-detects-system-defined-labels.php). Causal RED on real production source, from the static scanner, not setup noise.",
+    "EXECUTED AFTER, same file on the fixed worktree: 21 tests, 0 failures, 0 errors, 0 skipped; PHPUnit OK (21 tests, 39 assertions).",
+    "EXECUTED AFTER guard family, 11 files matching Classmap, RequireOnce, Autoload, DeclarationTime and Guard under tests/Unit: OK (107 tests, 269 assertions), exit 0. The base run of this wider family was not executed.",
+    "EXECUTED ClusterReadServiceTest.php (23 tests) AFTER: 23 pass, 0 failures, 0 errors, 0 skipped (JUnit receipt). BEFORE, first run on the scratch copy without packages/shared-contracts gave 2 errors: UnexpectedValueException Could not resolve packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json. That is a scratch fixture gap, not causal RED. With packages/shared-contracts extracted from base 8dcac4b, BEFORE: 23 tests, 0 failures, 0 errors (JUnit receipt). So the trait gap has no runtime causal RED in ClusterReadServiceTest; it is a static declaration-time gap only.",
+    "EXECUTED ClustersControllerTest.php (41 tests): 16 failures BEFORE and AFTER, with an identical failure-name list (diff empty). Sampled diff: expected backend_proxy with total 1 and repair_pending true, actual unavailable with projection_status bootstrapping. The edit neither causes nor fixes these. Not classified as fixture versus product defect; out of lane.",
+    "Receipts (scratch, not committed): /tmp/c116-before-guard.xml, /tmp/c116-after-guard.xml, /tmp/c116-after-cluster.xml, /tmp/c116-before-cluster2.xml, /tmp/c116-before-controller.log, /tmp/c116-after-controller.log, /tmp/c116-after-guards-set.log."
+  ],
+  "findings": [
+    "PRIOR FINDING c104 S5 (DeclarationTimeRequireOnceGuardTest residual gap, RED at line 201): RESOLVED for this file. The guard now passes 21/21 and the scanner reports no residual declaration-time gap in src/.",
+    "The gap is static and declaration-time only. ClusterReadService resolves its trait at runtime through the composer autoloader, and ClusterReadServiceTest passes 23/23 both before and after once fixtures are matched. No runtime behaviour changed.",
+    "ClustersControllerTest.php shows 16 failures on both base and fix. They are pre-existing, unrelated to this trait dependency, and not investigated further in this lane.",
+    "No other production file, existing test, assertion, skip, ignore list or config was edited. No new test module was added."
+  ],
+  "commands": [
+    "git rev-parse --show-toplevel; git status --short; git rev-parse HEAD HEAD^{tree}",
+    "git cat-file -e 2c15bbd1dddbdd524ed93c6c9b7382e68bde258d (absent)",
+    "php -l apps/prototype-wp-alt-context/src/api/services/class-cluster-read-service.php",
+    "git commit (WIP 729f624, owned source only; no Co-Authored-By trailer)",
+    "env COMPOSER_DISABLE_NETWORK=1 COMPOSER_CACHE_READ_ONLY=1 COMPOSER_CACHE_DIR=/home/gate/.cache/composer COMPOSER_MEMORY_LIMIT=512M OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300 composer install --no-plugins --no-scripts --no-interaction --prefer-dist --no-progress (exit 0)",
+    "git archive 8dcac4b apps/prototype-wp-alt-context | tar -x -C /tmp/c116-before; git archive 8dcac4b packages/shared-contracts | tar -x -C /tmp/c116-before; cp -al <worktree vendor> into the scratch copy",
+    "cd apps/prototype-wp-alt-context && env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300 php -d memory_limit=512M vendor/bin/phpunit --configuration phpunit.xml.dist --do-not-cache-result --enforce-time-limit --default-time-limit 60 [--log-junit ...] tests/Unit/DeclarationTimeRequireOnceGuardTest.php (BEFORE exit 1; AFTER exit 0)",
+    "Same PHPUnit prefix over the 11-file guard family (AFTER exit 0, OK 107/269), over ClusterReadServiceTest.php, ClustersControllerTest.php, ClustersHostAutoloadTest.php, ProjectionQueryErrorGuardTest.php and TopUnlabeledCanonicalTargetNameTest.php (AFTER exit 1 from ClustersControllerTest only; BEFORE scratch exit 2 from missing schema fixture and the same 16 controller failures)",
+    "python3 -I xml.etree JUnit counts per class (see evidence)"
+  ],
+  "blockers": [
+    "ClustersControllerTest.php: 16 pre-existing failures on base and fix, unclassified (fixture versus product). Outside this lane's scope; not caused or fixed by this edit.",
+    "Full Unit suite not run in this lane. Only the declaration guard family and ClusterRead modules were executed, so no full-suite PASS is claimed.",
+    "Requested source commit 2c15bbd1 is absent in this stripped transport; tree identity governs (04839f3). Ancestry unverified.",
+    "No runtime, E2E, browser, native DB, multi-worker or live-service evidence was produced or claimed."
+  ],
+  "next_actions": [
+    "Parent: import commit 729f624 and the report commit; run the full Unit suite in a parent-authorized window to confirm the only failures are the 16 known ClustersControllerTest cases.",
+    "Parent: open a separate triage lane for the 16 ClustersControllerTest proxy-fallback failures to classify fixture versus product defect. Not in this lane's OWNEDPATHS.",
+    "No scope proposal needed for this lane: the fix is complete inside OWNEDPATHS."
+  ]
+}

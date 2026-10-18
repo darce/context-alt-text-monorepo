@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firbench/frame-v1",
+  "title": "FIRBENCH-1 Frame (S1 Frame), schema_version 1",
+  "description": "Frame JSON written by S1. Lists are used for keyed maps so every object stays closed. Exhaustive stays null until measured.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "frame_id",
+    "admissibility",
+    "sealed",
+    "source_sha256",
+    "exhaustive",
+    "planning_icc",
+    "design_effect",
+    "n_eff",
+    "n_units",
+    "n_nonmated_eff",
+    "sampling_arm_counts",
+    "images",
+    "faces",
+    "psu_map",
+    "folds",
+    "identity_folds",
+    "gallery_sha256_by_fold",
+    "fold_roles"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "frame_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "admissibility": {"enum": ["diagnostic", "development", "confirmatory"]},
+    "sealed": {"type": "boolean"},
+    "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "exhaustive": {
+      "type": ["boolean", "null"],
+      "description": "Independently established frame face-box coverage. Face annotation tiers neither establish nor erase this evidence; null remains unknown. Never upgrade a roster_only GoldenManifest."
+    },
+    "planning_icc": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+    "design_effect": {"type": "number", "exclusiveMinimum": 0},
+    "n_eff": {"type": "number", "minimum": 0},
+    "n_units": {"type": "integer", "minimum": 0},
+    "n_nonmated_eff": {"type": "number", "minimum": 0},
+    "sampling_arm_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["probability", "challenge"],
+      "properties": {
+        "probability": {"type": "integer", "minimum": 0},
+        "challenge": {"type": "integer", "minimum": 0}
+      }
+    },
+    "images": {"type": "array", "items": {"$ref": "#/$defs/image_unit"}},
+    "faces": {"type": "array", "items": {"$ref": "#/$defs/gt_face"}},
+    "psu_map": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["image_id", "psu_id"],
+        "properties": {
+          "image_id": {"type": "string", "minLength": 1},
+          "psu_id": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "folds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["psu_id", "fold"],
+        "properties": {
+          "psu_id": {"type": "string", "minLength": 1},
+          "fold": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "identity_folds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["identity_id", "fold"],
+        "properties": {
+          "identity_id": {"type": "string", "minLength": 1},
+          "fold": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "gallery_sha256_by_fold": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fold", "sha256"],
+        "properties": {
+          "fold": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "fold_roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fold", "role"],
+        "properties": {
+          "fold": {"type": "integer", "minimum": 0},
+          "role": {"enum": ["fit", "test"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "image_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_id", "sha256", "sampling_arm", "inclusion_probability", "duplicate_group"],
+      "properties": {
+        "image_id": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sampling_arm": {"enum": ["probability", "challenge"]},
+        "inclusion_probability": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1},
+        "duplicate_group": {"type": ["string", "null"]},
+        "session_id": {"type": ["string", "null"]},
+        "synthetic_parent_id": {"type": ["string", "null"]}
+      }
+    },
+    "gt_face": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["face_id", "image_id", "box", "identity_status", "identity_id", "cohort", "annotation"],
+      "properties": {
+        "face_id": {"type": "string", "minLength": 1},
+        "image_id": {"type": "string", "minLength": 1},
+        "box": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
+        "identity_status": {"enum": ["named", "unknown", "unresolved"]},
+        "identity_id": {"type": ["string", "null"]},
+        "annotation": {"$ref": "#/$defs/face_annotation"},
+        "cohort": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["sex", "age_band", "origin"],
+          "properties": {
+            "sex": {"type": ["string", "null"]},
+            "age_band": {"type": ["string", "null"]},
+            "origin": {"type": ["string", "null"]}
+          }
+        }
+      }
+    },
+    "face_annotation": {
+      "description": "Per-face labels from the fir-occ-v1 assessment field table, S7 rubric and MCP16735. Required nullable fields preserve missing evidence without inventing clear labels. References point to external provenance/pre-adjudication, rubric, process-observation and QC records; schema validation does not verify those records or authorize real-eval use. GoldenManifest annotation_mode remains document-level; only flattened raw score mappings receive mode stamps.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["occluders", "visibility", "annotation_tier", "exhaustive", "provenance_ref", "rule_id", "observation_ref", "qc_ref"],
+      "properties": {
+        "occluders": {
+          "description": "Face-specific multi-label set represented as an array (repeated members have no extra meaning). [] explicitly means no external occluder; null means unknown. mask includes lower-face masks/respirators; sunglasses includes opaque/tinted/reflective eyewear. Self-occlusion and out-of-frame belong in visibility, never in this set. mixed retains the S7 coarse label when individual components are unresolved.",
+          "type": ["array", "null"],
+          "items": {"enum": ["mask", "sunglasses", "clear_glasses", "hand", "phone", "hair", "other_object", "mixed"]}
+        },
+        "visibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left_eye", "right_eye", "nose", "mouth"],
+          "properties": {
+            "left_eye": {"$ref": "#/$defs/region_visibility"},
+            "right_eye": {"$ref": "#/$defs/region_visibility"},
+            "nose": {"$ref": "#/$defs/region_visibility"},
+            "mouth": {"$ref": "#/$defs/region_visibility"}
+          }
+        },
+        "annotation_tier": {
+          "description": "a: occluder labels with missed-face additions; b: exhaustive pixel-labelling workflow; null: unknown. A tier alone proves neither label completeness nor box coverage.",
+          "enum": ["a", "b", null]
+        },
+        "exhaustive": {
+          "description": "Completeness of this face's pixel labels, independent of frame-level face-box exhaustiveness. True requires tier b; tier a or unknown tier permits only false/null. Tier b never implies true. Null means unestablished, not false or clear.",
+          "type": ["boolean", "null"]
+        },
+        "provenance_ref": {"$ref": "#/$defs/annotation_reference"},
+        "rule_id": {"$ref": "#/$defs/annotation_reference"},
+        "observation_ref": {"$ref": "#/$defs/annotation_reference"},
+        "qc_ref": {"$ref": "#/$defs/annotation_reference"}
+      },
+      "if": {"properties": {"annotation_tier": {"const": "b"}}, "required": ["annotation_tier"]},
+      "else": {"properties": {"exhaustive": {"enum": [false, null]}}}
+    },
+    "region_visibility": {
+      "description": "Rubric anatomy states; uncertain is an explicit ambiguous assessment, null is unlabelled/unknown. Neither means visible.",
+      "enum": ["visible", "occluded", "self_occluded", "out_of_frame", "uncertain", null]
+    },
+    "annotation_reference": {
+      "description": "Nonempty record/rule reference, or null when unavailable. Presence alone is not verification or human observation evidence.",
+      "type": ["string", "null"],
+      "minLength": 1
+    }
+  }
+}

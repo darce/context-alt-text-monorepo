@@ -1,0 +1,109 @@
+{
+  "ok": true,
+  "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+  "status": "selected",
+  "skip_reason": null,
+  "embeddings_mode": "verified",
+  "semantic_degrade_reason": null,
+  "relevant_lines": [
+    "relevant:",
+    "- Prepare independent whole RAW source gate with …: NewRAW-AUTH-WHOLE-SOURCE-G1 preparedONLY [decision:18074]",
+    "- cdx_raw_source_landing_preflight_capacity_recon…: RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]",
+    "- Qualify narrow native cleanup wave48 and preser…: Wave48ONLYterminal0clean C9wholeG3/rawauthresearch/trustHIGHsourceclones:3base.commit+delta.bundle [decision:17920]",
+    "- cdx_decision_bakerounds_c8_whole_planning_pass_…: Independent C8-WHOLE-PLAN-G2 rawPASS0: exactproposala0ffa083/blob71b98eb8/SHAa1966eda, [decision:17841]",
+    "- Raw authenticated route characterization comple…: QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]",
+    "- RAW-AUTH-TEST-G1-02: Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]",
+    "- WorkBay next-wave DAG compiled10nodes/9realdata…: GRPH06 partitions disjoint artifact ownership; GRPH32 edges name packet fields. Integration consumes [decision:17650]",
+    "- P2 third declaration map terminal0, exact singl…: NativeP2R3exec89309exit0/custodye7ccf11b79395c5ca02f5ff9a4c10afde57cfbe0; [decision:17973]"
+  ],
+  "semantic_reinjection": {
+    "anchor_sources": [
+      "visible_text"
+    ],
+    "chars_budget": 3400,
+    "chars_used": 1228,
+    "effective_config": {
+      "candidate_pool": 32,
+      "max_concepts": 8,
+      "max_redundancy": 0.92,
+      "max_score_drop": 0.2,
+      "min_score": 0.35,
+      "mmr_relevance_weight": 0.7,
+      "notify_allowance_chars": 220,
+      "refresh_budget_chars": 1500,
+      "snippet_chars": 120
+    },
+    "fallback_scope": null,
+    "model_id": "gte-base-en-v1.5",
+    "score_hi": 0.6958117485046387,
+    "score_lo": 0.5893851518630981,
+    "selected": [
+      {
+        "emitted_chars": 119,
+        "id": "18074",
+        "kind": "decision",
+        "label": "Prepare independent whole RAW source gate with …",
+        "score": 0.6958117485046387,
+        "snippet": "NewRAW-AUTH-WHOLE-SOURCE-G1 preparedONLY [decision:18074]"
+      },
+      {
+        "emitted_chars": 165,
+        "id": "18078",
+        "kind": "decision",
+        "label": "cdx_raw_source_landing_preflight_capacity_recon…",
+        "score": 0.6799198985099792,
+        "snippet": "RAW terminal/custody settled (18073/author test5028), whole SOURCE XHIGH input8ae8c54e prepared [decision:18078]"
+      },
+      {
+        "emitted_chars": 168,
+        "id": "17920",
+        "kind": "decision",
+        "label": "Qualify narrow native cleanup wave48 and preser…",
+        "score": 0.655327558517456,
+        "snippet": "Wave48ONLYterminal0clean C9wholeG3/rawauthresearch/trustHIGHsourceclones:3base.commit+delta.bundle [decision:17920]"
+      },
+      {
+        "emitted_chars": 156,
+        "id": "17841",
+        "kind": "decision",
+        "label": "cdx_decision_bakerounds_c8_whole_planning_pass_…",
+        "score": 0.6313759088516235,
+        "snippet": "Independent C8-WHOLE-PLAN-G2 rawPASS0: exactproposala0ffa083/blob71b98eb8/SHAa1966eda, [decision:17841]"
+      },
+      {
+        "emitted_chars": 168,
+        "id": "17912",
+        "kind": "decision",
+        "label": "Raw authenticated route characterization comple…",
+        "score": 0.6476966142654419,
+        "snippet": "QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]"
+      },
+      {
+        "emitted_chars": 139,
+        "id": "19138",
+        "kind": "finding",
+        "label": "RAW-AUTH-TEST-G1-02",
+        "score": 0.5952989459037781,
+        "snippet": "Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]"
+      },
+      {
+        "emitted_chars": 170,
+        "id": "17650",
+        "kind": "decision",
+        "label": "WorkBay next-wave DAG compiled10nodes/9realdata…",
+        "score": 0.5893851518630981,
+        "snippet": "GRPH06 partitions disjoint artifact ownership; GRPH32 edges name packet fields. Integration consumes [decision:17650]"
+      },
+      {
+        "emitted_chars": 143,
+        "id": "17973",
+        "kind": "decision",
+        "label": "P2 third declaration map terminal0, exact singl…",
+        "score": 0.6598625183105469,
+        "snippet": "NativeP2R3exec89309exit0/custodye7ccf11b79395c5ca02f5ff9a4c10afde57cfbe0; [decision:17973]"
+      }
+    ],
+    "skip_reason": null,
+    "status": "selected"
+  }
+}

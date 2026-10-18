@@ -1,0 +1,109 @@
+flowchart TB
+    %% Updated: 2026-03-28
+
+    subgraph Browser["Browser (React SPA)"]
+        direction TB
+
+        subgraph Pages["Page Components"]
+            WB["WorkbenchPage"]
+            RP["RosterPage"]
+            DP["DashboardPage"]
+            RET["RetentionPage"]
+        end
+
+        subgraph Hooks["Hooks / Page State"]
+            JOB["useJobStateMachine"]
+            SYNC["useSyncStatus"]
+            CONFLICTS["useConflicts / useOutboxOperations"]
+            RETSTATE["useRetentionPageState"]
+            ROSTER["useRosterEntries + cluster hooks"]
+        end
+
+        subgraph APIClient["API Client Layer"]
+            SA["scanApi.ts"]
+            CA["clusterApi.ts"]
+            IA["identityApi.ts"]
+            CFA["conflictApi.ts"]
+            SYA["syncApi.ts"]
+            RTA["retentionApi.ts"]
+            RCA["rosterApi.ts"]
+            CFG["config.ts"]
+        end
+
+        Pages --> Hooks
+        Hooks --> APIClient
+    end
+
+    WPREST[/"WordPress REST API<br/>/wp-json/acx/v1/..."/]
+
+    subgraph WordPress["WordPress PHP Layer"]
+        direction TB
+
+        subgraph Controllers["REST Controllers"]
+            RC["RecognitionController"]
+            CC["ConflictController"]
+            SC["SyncStatusController"]
+            RTC["RetentionController"]
+            ARPC["AbstractRecognitionProxyController"]
+        end
+
+        subgraph Auth["Authentication"]
+            NONCE["WP nonce validation"]
+            APIKEY["API key + tenant headers"]
+        end
+
+        subgraph Transport["HTTP Client"]
+            API["Api class<br/>wp_remote_request()"]
+        end
+
+        RC --> ARPC
+        CC --> ARPC
+        SC --> ARPC
+        RTC --> ARPC
+        RC --> NONCE
+        CC --> NONCE
+        SC --> NONCE
+        RTC --> NONCE
+        ARPC --> APIKEY
+        ARPC --> API
+    end
+
+    BACKEND[/"Recognition Service API<br/>FastAPI /recognition/* + /retention/*"/]
+
+    subgraph RecognitionService["Recognition Service Backend"]
+        direction TB
+
+        subgraph Routers["FastAPI Routers"]
+            AR["Analyze / jobs"]
+            CR["Clusters / clustering jobs"]
+            SR["Suggestions"]
+            MR["Media identities"]
+            RR["Retention policy / audit / export / purge / import"]
+        end
+
+        subgraph Security["Security Layer"]
+            RA["require_auth"]
+            RWA["require_write_access"]
+        end
+
+        subgraph Services["Application Services"]
+            SS["ScanService"]
+            CS["ClusterService"]
+            JS["JobService"]
+            RTS["Retention services"]
+        end
+
+        Routers --> Security
+        Security --> Services
+    end
+
+    APIClient --> WPREST
+    WPREST --> Controllers
+    API --> BACKEND
+    BACKEND --> Routers
+
+    style Browser fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#0d47a1
+    style WordPress fill:#fce4ec,stroke:#ad1457,stroke-width:2px,color:#880e4f
+    style RecognitionService fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+    style WPREST fill:#fff3e0,stroke:#bf360c,stroke-width:3px,color:#bf360c
+    style BACKEND fill:#fff3e0,stroke:#bf360c,stroke-width:3px,color:#bf360c

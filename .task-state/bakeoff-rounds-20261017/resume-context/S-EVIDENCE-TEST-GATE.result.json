@@ -1,0 +1,89 @@
+{
+  "status": "revise",
+  "summary": "Revise: two material test-oracle gaps remain. Independently reproduced 45 expected failures/31 passes and four legacy passes; source implementation remains unauthorized by this review.",
+  "source_sha": "52e7732877ec803cf231ab262911776657f03b6e",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/S-EVIDENCE-TEST-GATE.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/S-EVIDENCE-TEST-GATE.md"
+  ],
+  "commits": [
+    "b566618d3a1f7afc75d3af4b3437d6107ed4712e"
+  ],
+  "findings": [
+    {
+      "id": "S-TEST-G1-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py:1320",
+      "description": "The missing/zero-face refusal oracle accepts reports whose selection axis passes. An unrelated corpus failure can conceal a broken incomplete-versus-supported-empty guard.",
+      "evidence": "Lines 1313-1321 create an empty reported row, then require only exit 5 and the words subject/selection. A fresh real-main witness with a populated legacy subject alias and only the mandatory subject-strata alias omitted exits 5 with selection=pass and satisfies these exact assertions; its matched complete control exits 0. Actual fixtures also retain 99 opposite legacy rows (9 for partial-reflection), so other pairs mask the claimed incomplete/empty precedence. Evidence: /tmp/s-evidence-test-gate/oracle-witness.json, public-controls.json and incomplete-empty-fixture-census.json. No future consumer or source mutant was used.",
+      "fix": "Within the approved selector, assert selection=not_ready and the missing_subject_evidence diagnostic with the relevant role/ordinal. Isolate representative incomplete/empty cases so other legacy pairs cannot supply the target refusal; bind fixtures after final row ordering. Retain the otherwise-ready supported-empty selection exit-0 control and the empty-reported corpus exit-5 control. Preserve all nine selector IDs and every old assertion."
+    },
+    {
+      "id": "S-TEST-G1-02",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py:1328",
+      "description": "The public negative specification omits state_consistency and evidence_conflict refusals and does not pin their error precedence. Strict loader negatives alone cannot protect the raw reported/selection routes.",
+      "evidence": "All 20 public negative cases start from known evidence and assert only outer_version, evidence_version, evidence_shape, source_binding or support_binding. Invalid strict-state cases at test_eval_harness_manifest.py:1700 require only ManifestError. Fresh coherent raw witnesses in both roles, exploratory with allow-foreign, render exit 0 for known/complete=false and a source-rebound supported-empty/person conflict; their valid parents also render 0. A state-plus-source defect likewise renders 0 where the approved precedence requires state_consistency. These are expected current-source failures, but no committed public assertion currently specifies their required 4/code/no-output boundary. Evidence: /tmp/s-evidence-test-gate/public-code-census.json and refusal-gap-witness.json.",
+      "fix": "Extend the same approved public negative selector with paired valid parents, representative invalid state and otherwise-coherent person-conflict records in both roles, and small multi-defect cases that pin the approved precedence. Assert exit 4, the intended stable public code and no output, including exploratory/allow-foreign coverage. Keep support hashes and projected source bindings correct except for the explicitly targeted defect; add no production API or implementation stand-in."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py ruff-check .venv/bin/ruff check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "Scoped Ruff lint passes."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py ruff-format-check .venv/bin/ruff format --check apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py",
+      "exit_code": 0,
+      "summary": "All three test files are already formatted."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py ast-census-import .venv/bin/python /tmp/s-evidence-test-gate/census.py",
+      "exit_code": 0,
+      "summary": "Exact nine plan selectors; 161 old selectors present; actual current report import and SHA verified."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py legacy-four .venv/bin/python -m pytest -q -c /tmp/s-evidence-test-gate/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service/scene/tests --basetemp=/tmp/s-evidence-test-gate/legacy-four-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_bakeoff_gate_rejects_selection_subject_or_image_overlap apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_matching_manifest_sha_renders_unbadged apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_foreign_manifest_sha_is_fatal_and_writes_nothing apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py::test_manifest_version_as_string_fails_closed",
+      "exit_code": 0,
+      "summary": "Four required existing overlap, matching-digest, foreign-digest and string-version selectors pass."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py all-nine .venv/bin/python -m pytest -q -c /tmp/s-evidence-test-gate/pytest.ini -p no:cacheprovider --confcutdir=apps/prototype-description-service --basetemp=/tmp/s-evidence-test-gate/all-nine-pytest apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py -k subject_evidence --tb=short",
+      "exit_code": 1,
+      "summary": "76 cases: 45 expected failures,31 passes,170 deselected; no collection/setup errors; 41 actual CLI receipts match the imported current source."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py oracle-witness .venv/bin/python /tmp/s-evidence-test-gate/witness.py",
+      "exit_code": 0,
+      "summary": "Real public report exits5 with selection=pass while satisfying the exact missing/zero-only oracle."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py independent-public-controls-r2 .venv/bin/python /tmp/s-evidence-test-gate/public-controls.py",
+      "exit_code": 0,
+      "summary": "Seven matched/orthogonal controls: ready0; subject, ID, SHA, path, corpus-only and missing-baseline5."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py strict-containing-controls-r2 .venv/bin/python /tmp/s-evidence-test-gate/parent-controls.py",
+      "exit_code": 0,
+      "summary": "All32 strict-fixture containing documents load after omitting only subject_evidence; no future nested-validation claim."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py public-refusal-gap .venv/bin/python /tmp/s-evidence-test-gate/refusal-gap-witness.py",
+      "exit_code": 0,
+      "summary": "Ten real public calls: four valid exploratory parents0; six invalid state/conflict/precedence witnesses also0 instead of required4; both roles, allow-foreign. Audit characterization succeeds."
+    },
+    {
+      "command": ".venv/bin/python /tmp/s-evidence-test-gate/run.py verify-precommit .venv/bin/python /tmp/s-evidence-test-gate/verify.py",
+      "exit_code": 0,
+      "summary": "Strict common JSON, current source/plan/import pins, exact nine IDs, 187 old definitions/161 old selectors,41 CLI receipts and complete bounded-run output hashes verify."
+    }
+  ],
+  "limitations": [
+    "Test review only; no source/main adoption, identity truth, metadata, scores, quality or actual bakeoff approval. Root owns the next dispatch and separately authorized HIGH/STANDARD test-author repair; no agents or source/test edits were made.",
+    "The structured consumer is absent. Current strict extra_forbidden passes are characterization; post-acceptance state/support/digest assertions and genuine source mutants remain for the later implementation/review lane. Fixture attestations and run/score markers are synthetic protocol data.",
+    "Native gpt-6.1-sol/xhigh is verified; STANDARD tier is not exposed. Logical input object is unavailable; native base 610cb4b5a59826dbf91b09183a8dc1f81684f36b has exact requested tree 0bdb7c7b1553f958c1fe38871fc2a5d95f779a0c, without an ancestry claim.",
+    "Live graph/handoff tools are unavailable. Used supplied verified subject semantic receipt, exact checkout AST fallback, whole approved plan, six hash-verified Canon 0.26.2 bodies, fired rows/cards and supplied research excerpts; no new ONNX inference or live graph freshness claim.",
+    "Full private audit is retained at /tmp/s-evidence-test-gate, alongside original /tmp/s-evidence-tests. Complete raw outputs/exits/import hashes and intermediate author KeyError/lint failures remain. Reviewer auxiliary SyntaxError, missing-PYTHONPATH attempt and duplicate pytest-current alias count were retained and corrected; final focused checks completed without timeout (maximum 18.20s under 55s/1GiB/0.5CPU duty limit)."
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "ok": true,
+  "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+  "status": "selected",
+  "skip_reason": null,
+  "embeddings_mode": "verified",
+  "semantic_degrade_reason": null,
+  "relevant_lines": [
+    "relevant:",
+    "- Persist concrete replacement and subject audit …: REGRESSION-REPLACE returned actual new37 loader/resolver37/37, retained36 exact metadata/text equality [decision:17799]",
+    "- RAW R3 and OWNER G4 actual model boundaries ver…: RAW R3 nonce98456-d83494d1485a427b sourcee193/treec177/native27e7 afterROOTLOUD18173; OWNER G4 [decision:18178]",
+    "- cdx_decision_bakerounds_r3_composed_plan_two_re…: R3composedsource d3b94813/treecafa8ca5 exactonlyremoteauthoredplanfile,55selectededits6orders, [decision:17705]",
+    "- ROOT LOUD before actual THIRD RAW SOURCE author…: Independent G2 review1522 native4980fd43 REVISE2: actualcredential propertykey reflections leak [decision:18173]",
+    "- Wrap planning session at explicit user request;…: Currentturnprogress: read-onlyfreshnativeCPU18.04/root88/all4PGhealthy and projected3GiBrounded90 [decision:18033]",
+    "- P2 third declaration map terminal0, exact singl…: NativeP2R3exec89309exit0/custodye7ccf11b79395c5ca02f5ff9a4c10afde57cfbe0; [decision:17973]",
+    "- Persist immutable cache-review prior-art packet…: R1–R3 plans/findings, raw third author maps and selection, canon/template and semantic context have [decision:17709]",
+    "- cdx_decision_bakerounds_promote_reviewed_compar…: IndependentCOMPARISONTABLEGATE rawPASS0 XHIGH/31controls/custodyeda99d1c; [decision:17846]"
+  ],
+  "semantic_reinjection": {
+    "anchor_sources": [
+      "visible_text"
+    ],
+    "chars_budget": 5000,
+    "chars_used": 1296,
+    "effective_config": {
+      "candidate_pool": 32,
+      "max_concepts": 8,
+      "max_redundancy": 0.92,
+      "max_score_drop": 0.2,
+      "min_score": 0.35,
+      "mmr_relevance_weight": 0.7,
+      "notify_allowance_chars": 220,
+      "refresh_budget_chars": 1500,
+      "snippet_chars": 120
+    },
+    "fallback_scope": null,
+    "model_id": "gte-base-en-v1.5",
+    "score_hi": 0.7163063883781433,
+    "score_lo": 0.5930728316307068,
+    "selected": [
+      {
+        "emitted_chars": 181,
+        "id": "17799",
+        "kind": "decision",
+        "label": "Persist concrete replacement and subject audit …",
+        "score": 0.7163063883781433,
+        "snippet": "REGRESSION-REPLACE returned actual new37 loader/resolver37/37, retained36 exact metadata/text equality [decision:17799]"
+      },
+      {
+        "emitted_chars": 164,
+        "id": "18178",
+        "kind": "decision",
+        "label": "RAW R3 and OWNER G4 actual model boundaries ver…",
+        "score": 0.6829107999801636,
+        "snippet": "RAW R3 nonce98456-d83494d1485a427b sourcee193/treec177/native27e7 afterROOTLOUD18173; OWNER G4 [decision:18178]"
+      },
+      {
+        "emitted_chars": 164,
+        "id": "17705",
+        "kind": "decision",
+        "label": "cdx_decision_bakerounds_r3_composed_plan_two_re…",
+        "score": 0.6792401075363159,
+        "snippet": "R3composedsource d3b94813/treecafa8ca5 exactonlyremoteauthoredplanfile,55selectededits6orders, [decision:17705]"
+      },
+      {
+        "emitted_chars": 165,
+        "id": "18173",
+        "kind": "decision",
+        "label": "ROOT LOUD before actual THIRD RAW SOURCE author…",
+        "score": 0.6625089645385742,
+        "snippet": "Independent G2 review1522 native4980fd43 REVISE2: actualcredential propertykey reflections leak [decision:18173]"
+      },
+      {
+        "emitted_chars": 167,
+        "id": "18033",
+        "kind": "decision",
+        "label": "Wrap planning session at explicit user request;…",
+        "score": 0.6399152278900146,
+        "snippet": "Currentturnprogress: read-onlyfreshnativeCPU18.04/root88/all4PGhealthy and projected3GiBrounded90 [decision:18033]"
+      },
+      {
+        "emitted_chars": 143,
+        "id": "17973",
+        "kind": "decision",
+        "label": "P2 third declaration map terminal0, exact singl…",
+        "score": 0.6521917581558228,
+        "snippet": "NativeP2R3exec89309exit0/custodye7ccf11b79395c5ca02f5ff9a4c10afde57cfbe0; [decision:17973]"
+      },
+      {
+        "emitted_chars": 169,
+        "id": "17709",
+        "kind": "decision",
+        "label": "Persist immutable cache-review prior-art packet…",
+        "score": 0.5930728316307068,
+        "snippet": "R1–R3 plans/findings, raw third author maps and selection, canon/template and semantic context have [decision:17709]"
+      },
+      {
+        "emitted_chars": 143,
+        "id": "17846",
+        "kind": "decision",
+        "label": "cdx_decision_bakerounds_promote_reviewed_compar…",
+        "score": 0.6085273027420044,
+        "snippet": "IndependentCOMPARISONTABLEGATE rawPASS0 XHIGH/31controls/custodyeda99d1c; [decision:17846]"
+      }
+    ],
+    "skip_reason": null,
+    "status": "selected"
+  }
+}

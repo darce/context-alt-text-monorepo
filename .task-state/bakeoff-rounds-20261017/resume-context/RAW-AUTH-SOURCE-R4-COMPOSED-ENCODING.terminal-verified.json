@@ -1,0 +1,114 @@
+{
+  "at": 1792310634.7942076,
+  "key": "feature-bakerounds-20261017-raw-auth-ini-3255682b",
+  "nonce": "77666-1430f91dc211b9a2",
+  "base": "1f43cc97fcaf71b84ea1b286e2018d1403c02b22",
+  "head": "4ccba83b688d13d294b4ce6d2569b6065a11ee2b",
+  "tree": "8fcfa1a6d47f6d9f2c3de5146e3f936057ebf2a1",
+  "base_tree": "05116f10f5b1b2e9e0f1c9126aeca7404dcaf8f9",
+  "custody_dir": "/home/gate/bakeoff-rounds-20261017-inputs/results/custody/feature-bakerounds-20261017-raw-auth-ini-3255682b/77666-1430f91dc211b9a2-terminal",
+  "changed_paths": [
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.json",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.md",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_composed_encoding.py",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py"
+  ],
+  "anchors": {
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py": {
+      "blob": "43058b1b1f8689a6202f318fe4a5cfd42f434e40",
+      "sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_protocol_fields.py": {
+      "blob": "6c176f05157884ef049243c497628105d75e20dd",
+      "sha256": "7b3321088eb319016780c6b888aab487bfb6140f5cc8782a50425f64c5b9e537"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_reflection.py": {
+      "blob": "4b3efa357e0cd6acd72fecbf88641132e5db0108",
+      "sha256": "0fbd93390befb4e69bc590b041bd07269fc299347c8aa954d518242f9002cfc4"
+    },
+    "apps/prototype-description-service/scripts/eval_harness/remote_client.py": {
+      "blob": "848e6d69d651f922f4afe53d18fb13a06a351423",
+      "sha256": "daefd2156276a5051e6b4d739babad1724a36f29e57061b236d9dbea86a72c53"
+    },
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.json": {
+      "blob": "1c6dce52b7ad1816d3a09aea1bccd77aa101d610",
+      "sha256": "ecceb911dbd9ea96e9f91d72982d59937831d0c26e1c2fd11992f4b823c871a0"
+    },
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.md": {
+      "blob": "f5e3b3270f2c11458bfd612754a01f08969255df",
+      "sha256": "54a96292b2e880b8fe1c34835f1ad8139c243e17cc39082dc059785bf975f91e"
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_composed_encoding.py": {
+      "blob": "9d21d6f8c382a953e7d83b6a299e79a913711075",
+      "sha256": "7c7c6052356060a27ae27159234f723fe50d627ac1bcf7daadca4f5d5f3d9041"
+    },
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py": {
+      "blob": "688bf3fd539537be9d6b4115d0c14fa6633b2986",
+      "sha256": "03c4f94dcbcd89267163d5a4da190d651a3c1707b6b988b5b629ba3827bf616b"
+    }
+  },
+  "ignored": [
+    {
+      "path": ".brief.md",
+      "bytes": 7774,
+      "mode": 33188,
+      "sha256": "0183e5b8de6e8f4abdb39c1dbbca57f3dfc1cb770e384ae6081694bccb6eb5a6"
+    },
+    {
+      "path": ".grok-run.log",
+      "bytes": 0,
+      "mode": 33188,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".schema.json",
+      "bytes": 1070,
+      "mode": 33188,
+      "sha256": "b389e86c02a719cdcd169395f4eac3f37dd38f0224b2999a1b4b6ca0edf692a4"
+    },
+    {
+      "path": ".venv",
+      "bytes": 87,
+      "mode": 41471,
+      "symlink": "/home/gate/workbay-sandbox/.venv-lane-feature-bakerounds-20261017-raw-auth-ini-3255682b"
+    },
+    {
+      "path": ".workbay-lane-sandbox",
+      "bytes": 59,
+      "mode": 33188,
+      "sha256": "be6b2041a048bfda5aa31566463a03716e1c705e67af09d969af2f52087c5259"
+    },
+    {
+      "path": ".workbay-source-provenance",
+      "bytes": 228,
+      "mode": 33188,
+      "sha256": "134ed24011efcbaa5d47126843e4c7bda0bd4ce3e25bbe9279c3f42d79de13ab"
+    }
+  ],
+  "files": {
+    "ignored-run-metadata.tar.gz": {
+      "bytes": 4687,
+      "sha256": "048ad6ac1105c495e1635c6d9dcc206bff4f134499c026a97d2a82ae10e0817d"
+    },
+    "delta.bundle": {
+      "bytes": 15139,
+      "sha256": "bfa9df7a319f0ced65ed41c650d3afc32bcfc7a79300367343c0fa06c6723414"
+    },
+    "base.commit": {
+      "bytes": 269,
+      "sha256": "2ab8f8c7ca05bbdbbc1e3b253b6353c567f622d107e38d206a93c46a7b5105b9"
+    }
+  },
+  "clean": true,
+  "untracked_count": 0,
+  "bundle_verified": true,
+  "remote_full_bundle_not_created": true,
+  "pg_healthy": true,
+  "external_dir": "/Volumes/Butter/WorkBay/custody/raw-auth-source-r4-composed-encoding-77666-1430f91dc211b9a2",
+  "external_full_bundle_bytes": 165672988,
+  "external_full_bundle_sha256": "1f19a1dfcedca3bc93e07ed61859c371d05a7d20504f6147a26d9f8217e9f32c",
+  "native_ref": "refs/remotes/bakeoff/raw-auth-source-r4-composed-encoding-native",
+  "native_ancestry_imported": true,
+  "external_full_hash_verified": true,
+  "product_execution_local": false
+}

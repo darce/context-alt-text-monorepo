@@ -1,0 +1,11 @@
+{
+  "js/guide/main.tsx": {
+    "isEntry": true,
+    "css": ["assets/guide-main.css"],
+    "imports": ["_shared-abc.js"]
+  },
+  "_shared-abc.js": {
+    "file": "assets/shared-abc.js",
+    "css": ["assets/shared-abc.css"]
+  }
+}

@@ -1,0 +1,106 @@
+classDiagram
+%% Roster page & cluster management (current React UI)
+
+class RosterEntry {
+  +id: number
+  +name: string
+  +tags: string[]
+  +cluster_count: number
+  +updated_at: string
+}
+
+class ClusterSummary {
+  +id: string
+  +label: string
+  +identity_count: number
+  +sample_identities: ClusterIdentity[]
+}
+
+class ClusterIdentity {
+  +id: string
+  +media_id: number
+  +similarity: number
+  +confidence: number
+  +thumbnail_url: string?
+}
+
+class RosterPage {
+  <<component>>
+  +tabs: entries|clusters
+  +selectedClusterId: string|null
+}
+
+class ClusterGrid {
+  <<component>>
+  +clusters: ClusterSummary[]
+  +onSelectCluster(id)
+  +onDropFace(targetClusterId)
+}
+
+class ClusterDrawerPanel {
+  <<component>>
+  +cluster: ClusterSummary
+  +identities: ClusterIdentity[]
+  +onRescanCluster()
+  +onCommitCluster()
+  +drag/drop handlers
+}
+
+class useRosterEntries {
+  <<hook>>
+  +data: RosterEntry[]
+  +isLoading: boolean
+  +refetch(): void
+}
+
+class useClusterActions {
+  <<hook>>
+  +reassignMutation()
+  +rescanMutation()
+  +commitMutation()
+  +statusMessage: string|null
+}
+
+class useClusterDragDrop {
+  <<hook>>
+  +dragPayload
+  +dropTarget
+  +handleFaceDragStart()
+  +handleDropFace()
+  +resetDragState()
+}
+
+class useClusterMediaMap {
+  <<hook>>
+  +mediaMap: Map~media_id, url~
+}
+
+class RecognitionApi {
+  <<module>>
+  +listRecognitionClusters()
+  +getRecognitionCluster(id)
+  +reassignClusterIdentity()
+  +scanFaces({clusterId, mediaIds})
+}
+
+class RosterApi {
+  <<module>>
+  +listRosterEntries()
+  +commitClusterToRosterEntry()
+}
+
+RosterPage --> ClusterGrid
+RosterPage --> ClusterDrawerPanel
+RosterPage --> useRosterEntries
+RosterPage --> useClusterDragDrop
+RosterPage --> useClusterActions
+RosterPage --> useClusterMediaMap
+ClusterGrid --> useClusterDragDrop
+ClusterGrid --> RecognitionApi
+ClusterDrawerPanel --> useClusterActions
+ClusterDrawerPanel --> RosterApi
+useClusterActions --> RecognitionApi
+useClusterActions --> RosterApi
+useRosterEntries --> RosterApi
+ClusterSummary --> ClusterIdentity
+RosterPage --> RosterEntry

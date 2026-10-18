@@ -19,4 +19,5 @@ Decision records for durable architecture choices that both agents and humans ma
 - [ADR-015-eval-harness-per-entry-annotation-mode-lattice.md](ADR-015-eval-harness-per-entry-annotation-mode-lattice.md)
 - [ADR-017-description-authority-wordpress-curation-service-generation.md](ADR-017-description-authority-wordpress-curation-service-generation.md)
 - [ADR-019-person-anchored-curation-surfaces.md](ADR-019-person-anchored-curation-surfaces.md)
+- [ADR-018-post-curation-identity-weaving.md](ADR-018-post-curation-identity-weaving.md)
 - [ADR-ARCH-07-opencv-pin-for-face-pipeline-reference.md](ADR-ARCH-07-opencv-pin-for-face-pipeline-reference.md)

@@ -1,10 +1,11 @@
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
-import { saveSettings, testConnection, type SettingsResponse } from '../../api/settingsApi';
+import { useSettingsPageState } from '../settings/useSettingsPageState';
+import { saveSettings, testConnection, type SettingsResponse, type SaveSettingsResponse } from '../../api/settingsApi';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 type SettingsQueryResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
@@ -125,7 +126,202 @@ beforeEach(() => {
   });
 });
 
+describe('SettingsPage draft revision acknowledgements', () => {
+  it('retains a newer URL revert until its own acknowledgement, then follows persisted updates', () => {
+    const { result, rerender } = renderHook(({ settings }) => useSettingsPageState(settings), {
+      initialProps: { settings: configuredSettings },
+    });
+    const urlA = 'https://pending.example.com';
+    act(() => { result.current.dispatch({ type: 'setUrl', value: urlA }); });
+    const revisionA = result.current.state.urlRevision;
+    act(() => { result.current.dispatch({ type: 'setUrl', value: configuredSettings.url }); });
+    const revisionRevert = result.current.state.urlRevision;
+    act(() => { result.current.dispatch({ type: 'acknowledgeUrl', revision: revisionA }); });
+    rerender({ settings: { ...configuredSettings, url: urlA, effective_target_url: urlA } });
+    expect(result.current.state.url).toBe(configuredSettings.url);
+    expect(result.current.state.acknowledgedUrlRevision).toBe(revisionA);
+    act(() => { result.current.dispatch({ type: 'acknowledgeUrl', revision: revisionRevert }); });
+    rerender({ settings: { ...configuredSettings } });
+    const externalUrl = 'https://external.example.com';
+    rerender({ settings: { ...configuredSettings, url: externalUrl, effective_target_url: externalUrl } });
+    expect(result.current.state.url).toBe(externalUrl);
+  });
+
+  it('clears a same-value key only for its own edit revision', () => {
+    const { result } = renderHook(() => useSettingsPageState(configuredSettings));
+    act(() => { result.current.dispatch({ type: 'setApiKey', value: 'draft-A' }); });
+    const revisionA = result.current.state.apiKeyRevision;
+    act(() => { result.current.dispatch({ type: 'setApiKey', value: 'draft-B' }); });
+    act(() => { result.current.dispatch({ type: 'setApiKey', value: 'draft-A' }); });
+    const revisionNewA = result.current.state.apiKeyRevision;
+    act(() => { result.current.dispatch({ type: 'acknowledgeApiKey', value: 'draft-A', revision: revisionA }); });
+    expect(result.current.state.apiKey).toBe('draft-A');
+    act(() => { result.current.dispatch({ type: 'acknowledgeApiKey', value: 'draft-A', revision: revisionNewA }); });
+    expect(result.current.state.apiKey).toBe('');
+  });
+});
+
 describe('SettingsPage routing autosave', () => {
+  it.each([
+    ['resolve', 'blur'], ['reject', 'blur'],
+    ['resolve', 'submit'], ['reject', 'submit'],
+  ])('retains and retries B while A is pending: %s / %s', async (outcome, intent) => {
+    let resolveRequest!: (response: SaveSettingsResponse) => void;
+    let rejectRequest!: (error: Error) => void;
+    const request = new Promise<SaveSettingsResponse>((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    let completion: Promise<unknown> | undefined;
+    saveMutate.mockImplementationOnce(() => {
+      saveMutationPending = true;
+      const options = capturedSaveOptions;
+      completion = request.then(
+        (response) => options?.onSuccess?.(response),
+        (error: Error) => options?.onError?.(error),
+      );
+    });
+    renderSettings();
+    const key = screen.getByLabelText('API Key');
+    fireEvent.change(key, { target: { value: 'draft-A' } });
+    fireEvent.blur(key);
+    fireEvent.change(key, { target: { value: 'draft-B' } });
+    if (intent === 'blur') {
+      fireEvent.blur(key);
+    } else {
+      fireEvent.submit(screen.getByRole('button', { name: 'Saving…' }).closest('form')!);
+    }
+    expect(saveMutate).toHaveBeenCalledTimes(1);
+    saveMutationPending = false;
+    await act(async () => {
+      if (outcome === 'resolve') {
+        resolveRequest({ saved: ['api_key'], result: 'ok' });
+      } else {
+        rejectRequest(new Error('save failed'));
+      }
+      await completion;
+    });
+    expect(key).toHaveValue('draft-B');
+    expect(saveMutate).toHaveBeenNthCalledWith(2, { api_key: 'draft-B' });
+  });
+
+  it('preserves a failed secret across partial-save settings readback', async () => {
+    const view = renderSettings();
+    const key = screen.getByLabelText('API Key');
+    fireEvent.change(key, { target: { value: 'unsaved-secret' } });
+    fireEvent.blur(key);
+    saveMutationPending = false;
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: [], failed: ['api_key'], result: 'error' });
+    });
+    mockUseQuery.mockReturnValue(createMockQuery({ data: { ...configuredSettings } }));
+    view.rerender(<SettingsPageWithRouter />);
+    expect(key).toHaveValue('unsaved-secret');
+  });
+
+  it.each(['resolve', 'reject'])('retains URL B and its blur intent across A: %s', async (outcome) => {
+    const urlA = 'https://first.example.com';
+    const urlB = 'https://second.example.com';
+    const readback = { ...configuredSettings, url: urlA, effective_target_url: urlA };
+    mockFetchQuery.mockResolvedValue(readback);
+    const view = renderSettings();
+    const url = screen.getByLabelText('Service API URL');
+    fireEvent.change(url, { target: { value: urlA } });
+    fireEvent.blur(url);
+    fireEvent.change(url, { target: { value: urlB } });
+    fireEvent.blur(url);
+    saveMutationPending = false;
+    await act(async () => {
+      if (outcome === 'resolve') {
+        await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+      } else {
+        capturedSaveOptions?.onError?.(new Error('save failed'));
+      }
+    });
+    mockUseQuery.mockReturnValue(createMockQuery({ data: readback }));
+    view.rerender(<SettingsPageWithRouter />);
+    expect(url).toHaveValue(urlB);
+    expect(saveMutate).toHaveBeenNthCalledWith(2, { url: urlB });
+  });
+
+  it.each(['blur', 'submit'])('clears only the exact acknowledged key from %s', async (intent) => {
+    renderSettings();
+    const key = screen.getByLabelText('API Key');
+    fireEvent.change(key, { target: { value: 'draft-A' } });
+    if (intent === 'blur') {
+      fireEvent.blur(key);
+    } else {
+      fireEvent.submit(screen.getByRole('button', { name: 'Save Settings' }).closest('form')!);
+    }
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['api_key'], result: 'ok' });
+    });
+    expect(key).toHaveValue('');
+    expect(saveMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains an uncommitted newer key when the older draft succeeds', async () => {
+    renderSettings();
+    const key = screen.getByLabelText('API Key');
+    fireEvent.change(key, { target: { value: 'draft-A' } });
+    fireEvent.blur(key);
+    fireEvent.change(key, { target: { value: 'draft-B' } });
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['api_key'], result: 'ok' });
+    });
+    expect(key).toHaveValue('draft-B');
+    expect(saveMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains a secret on transport failure and allows retry', async () => {
+    renderSettings();
+    const key = screen.getByLabelText('API Key');
+    fireEvent.change(key, { target: { value: 'draft-A' } });
+    fireEvent.blur(key);
+    saveMutationPending = false;
+    await act(async () => { capturedSaveOptions?.onError?.(new Error('save failed')); });
+    expect(key).toHaveValue('draft-A');
+    fireEvent.blur(key);
+    expect(saveMutate).toHaveBeenNthCalledWith(2, { api_key: 'draft-A' });
+  });
+
+  it('does not probe or lose the failed key when only an unrelated field persists', async () => {
+    const view = renderSettings();
+    testMutate.mockClear();
+    const key = screen.getByLabelText('API Key');
+    fireEvent.change(key, { target: { value: 'draft-A' } });
+    fireEvent.change(screen.getByLabelText('Maximum description attempts'), { target: { value: '4' } });
+    fireEvent.submit(screen.getByRole('button', { name: 'Save Settings' }).closest('form')!);
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['description_budget'], failed: ['api_key'], result: 'partial' });
+    });
+    mockUseQuery.mockReturnValue(createMockQuery({ data: { ...configuredSettings } }));
+    view.rerender(<SettingsPageWithRouter />);
+    expect(key).toHaveValue('draft-A');
+    expect(testMutate).not.toHaveBeenCalled();
+  });
+
+  it('waits for deferred persisted readback before probing', async () => {
+    let release!: (data: SettingsResponse) => void;
+    mockFetchQuery.mockReturnValue(new Promise<SettingsResponse>((resolve) => { release = resolve; }));
+    renderSettings();
+    testMutate.mockClear();
+    const url = screen.getByLabelText('Service API URL');
+    fireEvent.change(url, { target: { value: 'https://new.example.com' } });
+    fireEvent.blur(url);
+    let completion: void | Promise<void> = undefined;
+    await act(async () => {
+      completion = capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+      await Promise.resolve();
+    });
+    expect(testMutate).not.toHaveBeenCalled();
+    await act(async () => {
+      release({ ...configuredSettings, url: 'https://new.example.com', effective_target_url: 'https://new.example.com' });
+      await completion;
+    });
+    expect(testMutate).toHaveBeenCalledTimes(1);
+  });
+
   it('queues a settings submit during a routing save and saves it after the refetch', async () => {
     const savedUrl = 'https://new-api.example.com';
     const refreshedSettings = { ...configuredSettings, url: savedUrl };

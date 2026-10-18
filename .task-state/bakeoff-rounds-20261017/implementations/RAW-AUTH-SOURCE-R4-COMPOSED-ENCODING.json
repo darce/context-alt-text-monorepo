@@ -1,0 +1,142 @@
+{
+  "status": "AUTHOR_GREEN",
+  "summary": "Repaired G3 composed JSON-string credential disclosure.24 genuine RED/GREEN regressions and all85 prior focused cases pass;independent G4 remains root-owned.",
+  "source_sha": "1f43cc97fcaf71b84ea1b286e2018d1403c02b22",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_composed_encoding.py",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.json",
+    ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R4-COMPOSED-ENCODING.md"
+  ],
+  "commits": [],
+  "findings": [
+    {
+      "id": "RAW-AUTH-SOURCE-G3-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:689",
+      "description": "Composed JSON scalar escaping disclosed the actual credential in public alt_text_long and persisted raw passes.",
+      "evidence": "Both original G3 producers exit1 before and0 after;lossless public/CLI recovery and matched response bytes retained under /tmp/raw-auth-source-r4-composed-encoding. New24 fail intended calls before and pass after.",
+      "fix": "Traverse scalar strings and free-form keys with shared depth64/node16384/text1Mi-character budgets;re-encode changed containers;privately refuse excessive work before forwarding or storage. Author verification only."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py context .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/context.py",
+      "exit_code": 0,
+      "summary": "Full prior/context reads, eight Canon/four distillation pins and five source/blob pins verified."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py existing-encoding-red .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/existing_field_encoding_probe.py",
+      "exit_code": 1,
+      "summary": "Unchanged source: real describe/CLI double/triple scalar encoding leaks; healthy/raw/single and distinct-key controls qualify."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py additional-encoding-red .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/additional_encoding_probe.py",
+      "exit_code": 1,
+      "summary": "Unchanged source: same G3 leak in supported extra fields; all clients/observed FDs close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py composed-red .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/pytest_run.py composed-red",
+      "exit_code": 1,
+      "summary": "24 intended call failures; setup/teardown pass. 18 privacy failures, six missing bounded refusals;225 clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py composed-green .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/pytest_run.py composed-green",
+      "exit_code": 0,
+      "summary": "24 pass; identical external privacy-producer response bytes; scalar depths2/3/6, keys/containers/fields, forwarding/records and finite refusals;225 clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py approved .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/pytest_run.py approved",
+      "exit_code": 0,
+      "summary": "50 unchanged approved cases pass;37 clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py protocol-green .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/pytest_run.py new-green",
+      "exit_code": 0,
+      "summary": "12 unchanged protocol cases pass;36 clients close;22/14/36 counters and warmup retained."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py reflection-green .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/pytest_run.py reflection-green",
+      "exit_code": 0,
+      "summary": "Six unchanged R3 privacy cases pass;54 clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py legacy17 .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/pytest_run.py adjacent-final",
+      "exit_code": 0,
+      "summary": "Exact17 legacy selectors pass;17 clients close, including11 audit-closed legacy leftovers."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py g1-public .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/public_probe.py",
+      "exit_code": 0,
+      "summary": "All original public collisions/reflection controls pass;15 exchanges/nine clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py g1-cli .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/cli_collision_green_retry.py",
+      "exit_code": 0,
+      "summary": "All six original CLI controls pass;24 exchanges/12 clients close;warmup/counters/cost arithmetic retained."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py g2-structured .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/final_structured_reflection.py",
+      "exit_code": 0,
+      "summary": "Original G2 property-name and value producers pass public/CLI;12 clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py g2-diagnostic .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/final_diagnostic_reflection.py",
+      "exit_code": 0,
+      "summary": "Original G2 healthy/plain/nested diagnostic producers pass public/CLI;18 clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py g3-existing .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/existing_field_encoding_probe.py",
+      "exit_code": 0,
+      "summary": "Original existing-field G3 probe passes;double/triple private, distinct-key visible;60 exchanges/30 closed clients."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py g3-additional .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/additional_encoding_probe.py",
+      "exit_code": 0,
+      "summary": "Original extra-field G3 probe passes;60 exchanges/30 closed clients."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py files .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/file_faults_retry.py",
+      "exit_code": 0,
+      "summary": "Five file-fault controls pass;metadata-before-content, short reads, safe refusal and held FD/client closure."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py transport .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/transport_controls.py",
+      "exit_code": 0,
+      "summary": "Eight transport controls/32 exchanges pass;typed401/403/307,redirect isolation,429 five attempts,three strikes,configured timeout."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py diagnostic-controls .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/diagnostic_controls.py",
+      "exit_code": 0,
+      "summary": "Typed parser failures plus fenced/reflected-brace success pass;five clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py schema .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/schema_controls_final2.py",
+      "exit_code": 0,
+      "summary": "17 credential spellings,34 observations/136 exchanges pass;68 clients close."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py ruff-check .venv/bin/ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_composed_encoding.py",
+      "exit_code": 0,
+      "summary": "Focused lint passes on owned source/new test;no cache."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py ruff-format .venv/bin/ruff format --check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_auth_composed_encoding.py",
+      "exit_code": 0,
+      "summary": "Focused format check passes on owned source/new test;no cache."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/run.py verify .venv/bin/python -B /tmp/raw-auth-source-r4-composed-encoding/scripts/verify.py",
+      "exit_code": 0,
+      "summary": "RED/GREEN HTTP/import/AST/collection/phase checks and13,674 immutable prior regular files verify."
+    }
+  ],
+  "limitations": [
+    "Logical input9007624e17e3ae37de99f0bdfc127ecdb03a739c is unavailable (git show128). source_sha names the honest native stripped base;both declared/native trees05116f10f5b1b2e9e0f1c9126aeca7404dcaf8f9. Equal trees prove bytes,not ancestry.",
+    "Only four owned paths change. Root owns independent WHOLE SOURCE G4,central disposition,true ancestry adoption,fresh canonical remote validation,close-check and merge. No independent acceptance claimed.",
+    "Supplied five-file215-node913-edge graph pins verify;full changed source/AST/import evidence supplements it. No live MCP/graph/ONNX retrieval or whole-project coverage claimed. Eight supplied Canon bodies/release and four full original distillations verify;these are not primary-book reading claims.",
+    "Synthetic keys,zero-byte fixtures and external MockTransport only. No runtime auth,socket timing,inference,quality,install,broad suite,shared-service,DB/TLS,cloud/GPU/guest,agents or foreign signals.",
+    "All acceptance children have actual reaped exits;all observed FDs/clients close. Initial unwrapped read-only context invocation lacks a retained terminal receipt;its state is UNKNOWN and audit/fence/observer remain. A separate wrapped context attempt failed on unavailable cgroup paths,then corrected verification passed. Old G3 UNKNOWN waits retain original custody;no death/cleanup inferred.",
+    "Requested SolXHIGH/STANDARD/1500s and native1GiB/.25CPU/whole allocation are supplied dispatch context;current sandbox exposes no cgroup files. Private audit /tmp/raw-auth-source-r4-composed-encoding retains scripts,snapshots,HTTP,records,exits and import hashes. commits names the substantive four-path commit;later JSON pointer commit avoids self-reference."
+  ]
+}

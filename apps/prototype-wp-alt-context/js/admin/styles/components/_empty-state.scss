@@ -1,0 +1,111 @@
+@use '../tokens/colors';
+@use '../tokens/spacing';
+@use '../tokens/radius';
+@use '../tokens/typography';
+
+/**
+ * Shared empty-state primitive (DEMO-UX-1-D-6).
+ * sr-004: every colour, size, radius and weight below is a design token.
+ * The two variants differ by glyph as well as colour — a status signal never
+ * leans on colour alone.
+ */
+.acx-empty-state {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--acx-space-12);
+  padding: var(--acx-space-20);
+  border: 1px solid var(--acx-color-border);
+  border-radius: var(--acx-radius-lg);
+  background-color: var(--acx-color-surface-alt);
+  color: var(--acx-color-text);
+
+  &__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: var(--acx-space-32);
+    height: var(--acx-space-32);
+    border-radius: var(--acx-radius-pill);
+    background-color: var(--acx-gray-100);
+    color: var(--acx-color-text-muted);
+
+    svg {
+      width: var(--acx-space-20);
+      height: var(--acx-space-20);
+    }
+  }
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--acx-space-8);
+  }
+
+  &__heading {
+    margin: 0;
+    font-size: var(--acx-text-lg);
+    line-height: var(--acx-leading-tight);
+    font-weight: var(--acx-font-weight-semibold);
+    color: var(--acx-color-text);
+  }
+
+  &__body {
+    margin: 0;
+    font-size: var(--acx-text-sm);
+    color: var(--acx-color-text-muted);
+  }
+
+  &__action {
+    margin-top: var(--acx-space-4);
+  }
+
+  &__action-control {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-6);
+    padding: var(--acx-space-6) var(--acx-space-12);
+    border: 1px solid transparent;
+    border-radius: var(--acx-radius-sm);
+    background-color: var(--acx-color-accent);
+    color: var(--acx-color-accent-contrast);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-medium);
+    text-decoration: none;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--acx-color-accent);
+      color: var(--acx-color-accent-contrast);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--acx-color-accent);
+      outline-offset: 2px;
+    }
+  }
+
+  /* ZERO: nothing here yet. Quiet surface — this is not a problem. */
+  &--empty {
+    background-color: var(--acx-color-surface-alt);
+    border-color: var(--acx-color-border);
+  }
+
+  /* BROKEN: we could not load this. Warning surface + alert glyph, so it can
+     never read as "all caught up" (see 'Face assignments unavailable'). */
+  &--unavailable {
+    background-color: var(--acx-color-warning-bg);
+    border-color: var(--acx-color-warning-border);
+
+    .acx-empty-state__icon {
+      background-color: var(--acx-color-warning-pill-bg);
+      color: var(--acx-color-warning-pill-text);
+    }
+
+    .acx-empty-state__body {
+      color: var(--acx-color-text);
+    }
+  }
+}

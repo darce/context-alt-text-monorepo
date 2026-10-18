@@ -1,0 +1,585 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+	<head>
+		<meta name="dtb:uid" content="urn:uuid:1fe3b23c-4bd5-4c98-b5d9-72a88552910f" />
+		<meta name="dtb:depth" content="4" />
+		<meta name="dtb:totalPageCount" content="0" />
+		<meta name="dtb:maxPageNumber" content="0" />
+	</head>
+	<docTitle>
+		<text>WordPress Plugin Development Cookbook</text>
+	</docTitle>
+	<docAuthor>
+		<text>Yannick Lefebvre</text>
+	</docAuthor>
+	<navMap>
+		<navPoint id="navpoint1" playOrder="1"><navLabel><text>WordPress Plugin Development Cookbook </text></navLabel><content src="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-1" /></navPoint>
+		<navPoint id="navpoint2" playOrder="2"><navLabel><text>Third Edition</text></navLabel><content src="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-2" /></navPoint>
+		<navPoint id="navpoint3" playOrder="3"><navLabel><text>Contributors</text></navLabel><content src="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-3" /></navPoint>
+		<navPoint id="navpoint4" playOrder="4"><navLabel><text>About the author</text></navLabel><content src="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-4" /></navPoint>
+		<navPoint id="navpoint5" playOrder="5"><navLabel><text>About the reviewers</text></navLabel><content src="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-5" /></navPoint>
+		<navPoint id="navpoint6" playOrder="6"><navLabel><text>Preface</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-6" />
+			<navPoint id="navpoint7" playOrder="7"><navLabel><text>Who this book is for</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-7" /></navPoint>
+			<navPoint id="navpoint8" playOrder="8"><navLabel><text>What this book covers</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-8" /></navPoint>
+			<navPoint id="navpoint9" playOrder="9"><navLabel><text>To get the most out of this book</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-9" /></navPoint>
+			<navPoint id="navpoint10" playOrder="10"><navLabel><text>Download the example code files</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-10" /></navPoint>
+			<navPoint id="navpoint11" playOrder="11"><navLabel><text>Download the color images</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-11" /></navPoint>
+			<navPoint id="navpoint12" playOrder="12"><navLabel><text>Conventions used</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-12" /></navPoint>
+			<navPoint id="navpoint13" playOrder="13"><navLabel><text>Sections</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-13" />
+				<navPoint id="navpoint14" playOrder="14"><navLabel><text>Getting ready</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-14" /></navPoint>
+				<navPoint id="navpoint15" playOrder="15"><navLabel><text>How to do it…</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-15" /></navPoint>
+				<navPoint id="navpoint16" playOrder="16"><navLabel><text>How it works…</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-16" /></navPoint>
+				<navPoint id="navpoint17" playOrder="17"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-17" /></navPoint>
+				<navPoint id="navpoint18" playOrder="18"><navLabel><text>See also</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-18" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint19" playOrder="19"><navLabel><text>Get in touch</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-19" /></navPoint>
+			<navPoint id="navpoint20" playOrder="20"><navLabel><text>Share Your Thoughts</text></navLabel><content src="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-20" /></navPoint>
+		</navPoint>
+		<navPoint id="navpoint21" playOrder="21"><navLabel><text>Chapter 1: Preparing a Local Development Environment</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-21" />
+			<navPoint id="navpoint22" playOrder="22"><navLabel><text>Technical requirements</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-22" /></navPoint>
+			<navPoint id="navpoint23" playOrder="23"><navLabel><text>Installing a local web server on your computer</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-23" />
+				<navPoint id="navpoint24" playOrder="24"><navLabel><text>How to do it…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-24" /></navPoint>
+				<navPoint id="navpoint25" playOrder="25"><navLabel><text>How it works…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-25" /></navPoint>
+				<navPoint id="navpoint26" playOrder="26"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-26" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint27" playOrder="27"><navLabel><text>Creating a local version control repository </text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-27" />
+				<navPoint id="navpoint28" playOrder="28"><navLabel><text>How to do it…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-28" /></navPoint>
+				<navPoint id="navpoint29" playOrder="29"><navLabel><text>How it works…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-29" /></navPoint>
+				<navPoint id="navpoint30" playOrder="30"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-30" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint31" playOrder="31"><navLabel><text>Installing a dedicated code editor/text editor</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-31" />
+				<navPoint id="navpoint32" playOrder="32"><navLabel><text>Getting ready</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-32" /></navPoint>
+				<navPoint id="navpoint33" playOrder="33"><navLabel><text>How to do it…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-33" /></navPoint>
+				<navPoint id="navpoint34" playOrder="34"><navLabel><text>How it works…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-34" /></navPoint>
+				<navPoint id="navpoint35" playOrder="35"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_01_Final_PG_ePub.xhtml#_idParaDest-35" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint36" playOrder="36"><navLabel><text>Chapter 2: Plugin Framework Basics</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-36" />
+			<navPoint id="navpoint37" playOrder="37"><navLabel><text>Technical requirements  </text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-37" /></navPoint>
+			<navPoint id="navpoint38" playOrder="38"><navLabel><text>Creating a plugin file and header</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-38" />
+				<navPoint id="navpoint39" playOrder="39"><navLabel><text>Getting ready</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-39" /></navPoint>
+				<navPoint id="navpoint40" playOrder="40"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-40" /></navPoint>
+				<navPoint id="navpoint41" playOrder="41"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-41" /></navPoint>
+				<navPoint id="navpoint42" playOrder="42"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-42" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint43" playOrder="43"><navLabel><text>Adding output content to page headers using plugin actions</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-43" />
+				<navPoint id="navpoint44" playOrder="44"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-44" /></navPoint>
+				<navPoint id="navpoint45" playOrder="45"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-45" /></navPoint>
+				<navPoint id="navpoint46" playOrder="46"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-46" /></navPoint>
+				<navPoint id="navpoint47" playOrder="47"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-47" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint48" playOrder="48"><navLabel><text>Using WordPress path utility functions to load external files and images</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-48" />
+				<navPoint id="navpoint49" playOrder="49"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-49" /></navPoint>
+				<navPoint id="navpoint50" playOrder="50"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-50" /></navPoint>
+				<navPoint id="navpoint51" playOrder="51"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-51" /></navPoint>
+				<navPoint id="navpoint52" playOrder="52"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-52" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint53" playOrder="53"><navLabel><text>Modifying the site generator meta tag using plugin filters</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-53" />
+				<navPoint id="navpoint54" playOrder="54"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-54" /></navPoint>
+				<navPoint id="navpoint55" playOrder="55"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-55" /></navPoint>
+				<navPoint id="navpoint56" playOrder="56"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-56" /></navPoint>
+				<navPoint id="navpoint57" playOrder="57"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-57" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint58" playOrder="58"><navLabel><text>Adding text after each item&#39;s content using plugin filters</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-58" />
+				<navPoint id="navpoint59" playOrder="59"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-59" /></navPoint>
+				<navPoint id="navpoint60" playOrder="60"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-60" /></navPoint>
+				<navPoint id="navpoint61" playOrder="61"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-61" /></navPoint>
+				<navPoint id="navpoint62" playOrder="62"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-62" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint63" playOrder="63"><navLabel><text>Inserting link tracking code in the page body using plugin filters</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-63" />
+				<navPoint id="navpoint64" playOrder="64"><navLabel><text>Getting ready</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-64" /></navPoint>
+				<navPoint id="navpoint65" playOrder="65"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-65" /></navPoint>
+				<navPoint id="navpoint66" playOrder="66"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-66" /></navPoint>
+				<navPoint id="navpoint67" playOrder="67"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-67" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint68" playOrder="68"><navLabel><text>Troubleshooting coding errors and printing variable content</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-68" />
+				<navPoint id="navpoint69" playOrder="69"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-69" /></navPoint>
+				<navPoint id="navpoint70" playOrder="70"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-70" /></navPoint>
+				<navPoint id="navpoint71" playOrder="71"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-71" /></navPoint>
+				<navPoint id="navpoint72" playOrder="72"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-72" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint73" playOrder="73"><navLabel><text>Creating a new simple shortcode</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-73" />
+				<navPoint id="navpoint74" playOrder="74"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-74" /></navPoint>
+				<navPoint id="navpoint75" playOrder="75"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-75" /></navPoint>
+				<navPoint id="navpoint76" playOrder="76"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-76" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint77" playOrder="77"><navLabel><text>Creating a new shortcode with parameters</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-77" />
+				<navPoint id="navpoint78" playOrder="78"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-78" /></navPoint>
+				<navPoint id="navpoint79" playOrder="79"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-79" /></navPoint>
+				<navPoint id="navpoint80" playOrder="80"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-80" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint81" playOrder="81"><navLabel><text>Creating a new enclosing shortcode</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-81" />
+				<navPoint id="navpoint82" playOrder="82"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-82" /></navPoint>
+				<navPoint id="navpoint83" playOrder="83"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-83" /></navPoint>
+				<navPoint id="navpoint84" playOrder="84"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-84" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint85" playOrder="85"><navLabel><text>Loading a style sheet to format plugin output</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-85" />
+				<navPoint id="navpoint86" playOrder="86"><navLabel><text>Getting ready</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-86" /></navPoint>
+				<navPoint id="navpoint87" playOrder="87"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-87" /></navPoint>
+				<navPoint id="navpoint88" playOrder="88"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-88" /></navPoint>
+				<navPoint id="navpoint89" playOrder="89"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-89" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint90" playOrder="90"><navLabel><text>Writing plugins using object-oriented PHP</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-90" />
+				<navPoint id="navpoint91" playOrder="91"><navLabel><text>Getting ready</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-91" /></navPoint>
+				<navPoint id="navpoint92" playOrder="92"><navLabel><text>How to do it...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-92" /></navPoint>
+				<navPoint id="navpoint93" playOrder="93"><navLabel><text>How it works...</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-93" /></navPoint>
+				<navPoint id="navpoint94" playOrder="94"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-94" /></navPoint>
+				<navPoint id="navpoint95" playOrder="95"><navLabel><text>See also</text></navLabel><content src="B17639_02_Final_PG_ePub.xhtml#_idParaDest-95" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint96" playOrder="96"><navLabel><text>Chapter 3: User Settings and Administration Pages</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-96" />
+			<navPoint id="navpoint97" playOrder="97"><navLabel><text>Technical requirements</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-97" /></navPoint>
+			<navPoint id="navpoint98" playOrder="98"><navLabel><text>Creating default user settings on plugin initialization</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-98" />
+				<navPoint id="navpoint99" playOrder="99"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-99" /></navPoint>
+				<navPoint id="navpoint100" playOrder="100"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-100" /></navPoint>
+				<navPoint id="navpoint101" playOrder="101"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-101" /></navPoint>
+				<navPoint id="navpoint102" playOrder="102"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-102" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint103" playOrder="103"><navLabel><text>Storing user settings using arrays</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-103" />
+				<navPoint id="navpoint104" playOrder="104"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-104" /></navPoint>
+				<navPoint id="navpoint105" playOrder="105"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-105" /></navPoint>
+				<navPoint id="navpoint106" playOrder="106"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-106" /></navPoint>
+				<navPoint id="navpoint107" playOrder="107"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-107" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint108" playOrder="108"><navLabel><text>Removing plugin data on deletion</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-108" />
+				<navPoint id="navpoint109" playOrder="109"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-109" /></navPoint>
+				<navPoint id="navpoint110" playOrder="110"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-110" /></navPoint>
+				<navPoint id="navpoint111" playOrder="111"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-111" /></navPoint>
+				<navPoint id="navpoint112" playOrder="112"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-112" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint113" playOrder="113"><navLabel><text>Creating an administration page menu item in the settings menu</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-113" />
+				<navPoint id="navpoint114" playOrder="114"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-114" /></navPoint>
+				<navPoint id="navpoint115" playOrder="115"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-115" /></navPoint>
+				<navPoint id="navpoint116" playOrder="116"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-116" /></navPoint>
+				<navPoint id="navpoint117" playOrder="117"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-117" /></navPoint>
+				<navPoint id="navpoint118" playOrder="118"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-118" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint119" playOrder="119"><navLabel><text>Creating a multi-level administration menu</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-119" />
+				<navPoint id="navpoint120" playOrder="120"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-120" /></navPoint>
+				<navPoint id="navpoint121" playOrder="121"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-121" /></navPoint>
+				<navPoint id="navpoint122" playOrder="122"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-122" /></navPoint>
+				<navPoint id="navpoint123" playOrder="123"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-123" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint124" playOrder="124"><navLabel><text>Rendering the admin page contents using HTML</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-124" />
+				<navPoint id="navpoint125" playOrder="125"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-125" /></navPoint>
+				<navPoint id="navpoint126" playOrder="126"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-126" /></navPoint>
+				<navPoint id="navpoint127" playOrder="127"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-127" /></navPoint>
+				<navPoint id="navpoint128" playOrder="128"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-128" /></navPoint>
+				<navPoint id="navpoint129" playOrder="129"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-129" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint130" playOrder="130"><navLabel><text>Processing and storing plugin configuration data</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-130" />
+				<navPoint id="navpoint131" playOrder="131"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-131" /></navPoint>
+				<navPoint id="navpoint132" playOrder="132"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-132" /></navPoint>
+				<navPoint id="navpoint133" playOrder="133"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-133" /></navPoint>
+				<navPoint id="navpoint134" playOrder="134"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-134" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint135" playOrder="135"><navLabel><text>Displaying a confirmation message when options are saved</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-135" />
+				<navPoint id="navpoint136" playOrder="136"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-136" /></navPoint>
+				<navPoint id="navpoint137" playOrder="137"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-137" /></navPoint>
+				<navPoint id="navpoint138" playOrder="138"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-138" /></navPoint>
+				<navPoint id="navpoint139" playOrder="139"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-139" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint140" playOrder="140"><navLabel><text>Adding custom help pages</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-140" />
+				<navPoint id="navpoint141" playOrder="141"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-141" /></navPoint>
+				<navPoint id="navpoint142" playOrder="142"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-142" /></navPoint>
+				<navPoint id="navpoint143" playOrder="143"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-143" /></navPoint>
+				<navPoint id="navpoint144" playOrder="144"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-144" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint145" playOrder="145"><navLabel><text>Rendering the admin page contents using the Settings API</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-145" />
+				<navPoint id="navpoint146" playOrder="146"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-146" /></navPoint>
+				<navPoint id="navpoint147" playOrder="147"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-147" /></navPoint>
+				<navPoint id="navpoint148" playOrder="148"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-148" /></navPoint>
+				<navPoint id="navpoint149" playOrder="149"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-149" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint150" playOrder="150"><navLabel><text>Accessing user settings from action and filter hooks</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-150" />
+				<navPoint id="navpoint151" playOrder="151"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-151" /></navPoint>
+				<navPoint id="navpoint152" playOrder="152"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-152" /></navPoint>
+				<navPoint id="navpoint153" playOrder="153"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-153" /></navPoint>
+				<navPoint id="navpoint154" playOrder="154"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-154" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint155" playOrder="155"><navLabel><text>Formatting admin pages using meta boxes</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-155" />
+				<navPoint id="navpoint156" playOrder="156"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-156" /></navPoint>
+				<navPoint id="navpoint157" playOrder="157"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-157" /></navPoint>
+				<navPoint id="navpoint158" playOrder="158"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-158" /></navPoint>
+				<navPoint id="navpoint159" playOrder="159"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-159" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint160" playOrder="160"><navLabel><text>Splitting admin code from the main plugin file to optimize site performance</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-160" />
+				<navPoint id="navpoint161" playOrder="161"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-161" /></navPoint>
+				<navPoint id="navpoint162" playOrder="162"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-162" /></navPoint>
+				<navPoint id="navpoint163" playOrder="163"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-163" /></navPoint>
+				<navPoint id="navpoint164" playOrder="164"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-164" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint165" playOrder="165"><navLabel><text>Storing style sheet data in user settings</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-165" />
+				<navPoint id="navpoint166" playOrder="166"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-166" /></navPoint>
+				<navPoint id="navpoint167" playOrder="167"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-167" /></navPoint>
+				<navPoint id="navpoint168" playOrder="168"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-168" /></navPoint>
+				<navPoint id="navpoint169" playOrder="169"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-169" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint170" playOrder="170"><navLabel><text>Managing multiple sets of user settings from a single admin page</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-170" />
+				<navPoint id="navpoint171" playOrder="171"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-171" /></navPoint>
+				<navPoint id="navpoint172" playOrder="172"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-172" /></navPoint>
+				<navPoint id="navpoint173" playOrder="173"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-173" /></navPoint>
+				<navPoint id="navpoint174" playOrder="174"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-174" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint175" playOrder="175"><navLabel><text>Creating a network-level plugin with admin pages</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-175" />
+				<navPoint id="navpoint176" playOrder="176"><navLabel><text>Getting ready</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-176" /></navPoint>
+				<navPoint id="navpoint177" playOrder="177"><navLabel><text>How to do it...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-177" /></navPoint>
+				<navPoint id="navpoint178" playOrder="178"><navLabel><text>How it works...</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-178" /></navPoint>
+				<navPoint id="navpoint179" playOrder="179"><navLabel><text>See also</text></navLabel><content src="B17639_03_Final_PG_ePub.xhtml#_idParaDest-179" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint180" playOrder="180"><navLabel><text>Chapter 4: The Power of Custom Post Types</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-180" />
+			<navPoint id="navpoint181" playOrder="181"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-181" /></navPoint>
+			<navPoint id="navpoint182" playOrder="182"><navLabel><text>Creating a custom post type</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-182" />
+				<navPoint id="navpoint183" playOrder="183"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-183" /></navPoint>
+				<navPoint id="navpoint184" playOrder="184"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-184" /></navPoint>
+				<navPoint id="navpoint185" playOrder="185"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-185" /></navPoint>
+				<navPoint id="navpoint186" playOrder="186"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-186" /></navPoint>
+				<navPoint id="navpoint187" playOrder="187"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-187" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint188" playOrder="188"><navLabel><text>Adding a new section to the custom post type editor</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-188" />
+				<navPoint id="navpoint189" playOrder="189"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-189" /></navPoint>
+				<navPoint id="navpoint190" playOrder="190"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-190" /></navPoint>
+				<navPoint id="navpoint191" playOrder="191"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-191" /></navPoint>
+				<navPoint id="navpoint192" playOrder="192"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-192" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint193" playOrder="193"><navLabel><text>Displaying single custom post type items using a custom layout</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-193" />
+				<navPoint id="navpoint194" playOrder="194"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-194" /></navPoint>
+				<navPoint id="navpoint195" playOrder="195"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-195" /></navPoint>
+				<navPoint id="navpoint196" playOrder="196"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-196" /></navPoint>
+				<navPoint id="navpoint197" playOrder="197"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-197" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint198" playOrder="198"><navLabel><text>Tailoring search output for custom post type items</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-198" />
+				<navPoint id="navpoint199" playOrder="199"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-199" /></navPoint>
+				<navPoint id="navpoint200" playOrder="200"><navLabel><text>How to do it…</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-200" /></navPoint>
+				<navPoint id="navpoint201" playOrder="201"><navLabel><text>How it works…</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-201" /></navPoint>
+				<navPoint id="navpoint202" playOrder="202"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-202" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint203" playOrder="203"><navLabel><text>Displaying custom post type data in shortcodes</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-203" />
+				<navPoint id="navpoint204" playOrder="204"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-204" /></navPoint>
+				<navPoint id="navpoint205" playOrder="205"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-205" /></navPoint>
+				<navPoint id="navpoint206" playOrder="206"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-206" /></navPoint>
+				<navPoint id="navpoint207" playOrder="207"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-207" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint208" playOrder="208"><navLabel><text>Adding custom categories for custom post types</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-208" />
+				<navPoint id="navpoint209" playOrder="209"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-209" /></navPoint>
+				<navPoint id="navpoint210" playOrder="210"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-210" /></navPoint>
+				<navPoint id="navpoint211" playOrder="211"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-211" /></navPoint>
+				<navPoint id="navpoint212" playOrder="212"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-212" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint213" playOrder="213"><navLabel><text>Adding custom fields to categories</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-213" />
+				<navPoint id="navpoint214" playOrder="214"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-214" /></navPoint>
+				<navPoint id="navpoint215" playOrder="215"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-215" /></navPoint>
+				<navPoint id="navpoint216" playOrder="216"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-216" /></navPoint>
+				<navPoint id="navpoint217" playOrder="217"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-217" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint218" playOrder="218"><navLabel><text>Hiding the category editor from the custom post type editor</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-218" />
+				<navPoint id="navpoint219" playOrder="219"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-219" /></navPoint>
+				<navPoint id="navpoint220" playOrder="220"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-220" /></navPoint>
+				<navPoint id="navpoint221" playOrder="221"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-221" /></navPoint>
+				<navPoint id="navpoint222" playOrder="222"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-222" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint223" playOrder="223"><navLabel><text>Displaying additional columns in the custom post list page</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-223" />
+				<navPoint id="navpoint224" playOrder="224"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-224" /></navPoint>
+				<navPoint id="navpoint225" playOrder="225"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-225" /></navPoint>
+				<navPoint id="navpoint226" playOrder="226"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-226" /></navPoint>
+				<navPoint id="navpoint227" playOrder="227"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-227" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint228" playOrder="228"><navLabel><text>Adding filters for custom categories to the custom post list page</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-228" />
+				<navPoint id="navpoint229" playOrder="229"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-229" /></navPoint>
+				<navPoint id="navpoint230" playOrder="230"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-230" /></navPoint>
+				<navPoint id="navpoint231" playOrder="231"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-231" /></navPoint>
+				<navPoint id="navpoint232" playOrder="232"><navLabel><text>See also</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-232" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint233" playOrder="233"><navLabel><text>Adding Quick Edit fields for custom categories</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-233" />
+				<navPoint id="navpoint234" playOrder="234"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-234" /></navPoint>
+				<navPoint id="navpoint235" playOrder="235"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-235" /></navPoint>
+				<navPoint id="navpoint236" playOrder="236"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-236" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint237" playOrder="237"><navLabel><text>Updating the page title to include custom post data using plugin filters</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-237" />
+				<navPoint id="navpoint238" playOrder="238"><navLabel><text>Getting ready</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-238" /></navPoint>
+				<navPoint id="navpoint239" playOrder="239"><navLabel><text>How to do it...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-239" /></navPoint>
+				<navPoint id="navpoint240" playOrder="240"><navLabel><text>How it works...</text></navLabel><content src="B17639_04_Final_PG_ePub.xhtml#_idParaDest-240" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint241" playOrder="241"><navLabel><text>Chapter 5: Customizing Post and Page Editors</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-241" />
+			<navPoint id="navpoint242" playOrder="242"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-242" /></navPoint>
+			<navPoint id="navpoint243" playOrder="243"><navLabel><text>Capturing and displaying information using custom meta boxes</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-243" />
+				<navPoint id="navpoint244" playOrder="244"><navLabel><text>Getting ready</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-244" /></navPoint>
+				<navPoint id="navpoint245" playOrder="245"><navLabel><text>How to do it...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-245" /></navPoint>
+				<navPoint id="navpoint246" playOrder="246"><navLabel><text>How it works...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-246" /></navPoint>
+				<navPoint id="navpoint247" playOrder="247"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-247" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint248" playOrder="248"><navLabel><text>Displaying custom post data using filter functions</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-248" />
+				<navPoint id="navpoint249" playOrder="249"><navLabel><text>Getting ready</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-249" /></navPoint>
+				<navPoint id="navpoint250" playOrder="250"><navLabel><text>How to do it...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-250" /></navPoint>
+				<navPoint id="navpoint251" playOrder="251"><navLabel><text>How it works...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-251" /></navPoint>
+				<navPoint id="navpoint252" playOrder="252"><navLabel><text>See also</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-252" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint253" playOrder="253"><navLabel><text>Hiding the Custom Fields section in the post editor</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-253" />
+				<navPoint id="navpoint254" playOrder="254"><navLabel><text>Getting ready</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-254" /></navPoint>
+				<navPoint id="navpoint255" playOrder="255"><navLabel><text>How to do it...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-255" /></navPoint>
+				<navPoint id="navpoint256" playOrder="256"><navLabel><text>How it works...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-256" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint257" playOrder="257"><navLabel><text>Extending the post editor to attach custom files with the media uploader</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-257" />
+				<navPoint id="navpoint258" playOrder="258"><navLabel><text>Getting ready</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-258" /></navPoint>
+				<navPoint id="navpoint259" playOrder="259"><navLabel><text>How to do it...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-259" /></navPoint>
+				<navPoint id="navpoint260" playOrder="260"><navLabel><text>How it works...</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-260" /></navPoint>
+				<navPoint id="navpoint261" playOrder="261"><navLabel><text>See also</text></navLabel><content src="B17639_05_Final_PG_ePub.xhtml#_idParaDest-261" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint262" playOrder="262"><navLabel><text>Chapter 6: Extending the Block Editor</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-262" />
+			<navPoint id="navpoint263" playOrder="263"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-263" /></navPoint>
+			<navPoint id="navpoint264" playOrder="264"><navLabel><text>Setting up a block development environment and creating a simple block</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-264" />
+				<navPoint id="navpoint265" playOrder="265"><navLabel><text>Getting ready</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-265" /></navPoint>
+				<navPoint id="navpoint266" playOrder="266"><navLabel><text>How to do it...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-266" /></navPoint>
+				<navPoint id="navpoint267" playOrder="267"><navLabel><text>How it works...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-267" /></navPoint>
+				<navPoint id="navpoint268" playOrder="268"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-268" /></navPoint>
+				<navPoint id="navpoint269" playOrder="269"><navLabel><text>See also</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-269" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint270" playOrder="270"><navLabel><text>Creating an editable blockquote block</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-270" />
+				<navPoint id="navpoint271" playOrder="271"><navLabel><text>Getting ready</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-271" /></navPoint>
+				<navPoint id="navpoint272" playOrder="272"><navLabel><text>How to do it...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-272" /></navPoint>
+				<navPoint id="navpoint273" playOrder="273"><navLabel><text>How it works...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-273" /></navPoint>
+				<navPoint id="navpoint274" playOrder="274"><navLabel><text>See also</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-274" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint275" playOrder="275"><navLabel><text>Creating a new WordPress REST endpoint</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-275" />
+				<navPoint id="navpoint276" playOrder="276"><navLabel><text>Getting ready</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-276" /></navPoint>
+				<navPoint id="navpoint277" playOrder="277"><navLabel><text>How to do it...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-277" /></navPoint>
+				<navPoint id="navpoint278" playOrder="278"><navLabel><text>How it works...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-278" /></navPoint>
+				<navPoint id="navpoint279" playOrder="279"><navLabel><text>See also</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-279" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint280" playOrder="280"><navLabel><text>Creating a server-side rendering block that leverages an existing shortcode</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-280" />
+				<navPoint id="navpoint281" playOrder="281"><navLabel><text>Getting ready</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-281" /></navPoint>
+				<navPoint id="navpoint282" playOrder="282"><navLabel><text>How to do it...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-282" /></navPoint>
+				<navPoint id="navpoint283" playOrder="283"><navLabel><text>How it works...</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-283" /></navPoint>
+				<navPoint id="navpoint284" playOrder="284"><navLabel><text>See also</text></navLabel><content src="B17639_06_Final_PG_ePub.xhtml#_idParaDest-284" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint285" playOrder="285"><navLabel><text>Chapter 7: Accepting User Content Submissions</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-285" />
+			<navPoint id="navpoint286" playOrder="286"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-286" /></navPoint>
+			<navPoint id="navpoint287" playOrder="287"><navLabel><text>Creating a client-side content submission form</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-287" />
+				<navPoint id="navpoint288" playOrder="288"><navLabel><text>Getting ready</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-288" /></navPoint>
+				<navPoint id="navpoint289" playOrder="289"><navLabel><text>How to do it...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-289" /></navPoint>
+				<navPoint id="navpoint290" playOrder="290"><navLabel><text>How it works...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-290" /></navPoint>
+				<navPoint id="navpoint291" playOrder="291"><navLabel><text>See also</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-291" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint292" playOrder="292"><navLabel><text>Saving user-submitted content in custom post types</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-292" />
+				<navPoint id="navpoint293" playOrder="293"><navLabel><text>Getting ready</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-293" /></navPoint>
+				<navPoint id="navpoint294" playOrder="294"><navLabel><text>How to do it...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-294" /></navPoint>
+				<navPoint id="navpoint295" playOrder="295"><navLabel><text>How it works...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-295" /></navPoint>
+				<navPoint id="navpoint296" playOrder="296"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-296" /></navPoint>
+				<navPoint id="navpoint297" playOrder="297"><navLabel><text>See also</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-297" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint298" playOrder="298"><navLabel><text>Sending email notifications upon new submissions</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-298" />
+				<navPoint id="navpoint299" playOrder="299"><navLabel><text>Getting ready</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-299" /></navPoint>
+				<navPoint id="navpoint300" playOrder="300"><navLabel><text>How to do it...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-300" /></navPoint>
+				<navPoint id="navpoint301" playOrder="301"><navLabel><text>How it works...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-301" /></navPoint>
+				<navPoint id="navpoint302" playOrder="302"><navLabel><text>See also</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-302" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint303" playOrder="303"><navLabel><text>Implementing a CAPTCHA on user forms using an online service</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-303" />
+				<navPoint id="navpoint304" playOrder="304"><navLabel><text>Getting ready</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-304" /></navPoint>
+				<navPoint id="navpoint305" playOrder="305"><navLabel><text>How to do it...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-305" /></navPoint>
+				<navPoint id="navpoint306" playOrder="306"><navLabel><text>How it works...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-306" /></navPoint>
+				<navPoint id="navpoint307" playOrder="307"><navLabel><text>See also</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-307" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint308" playOrder="308"><navLabel><text>Using a local library to implement a CAPTCHA on user forms</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-308" />
+				<navPoint id="navpoint309" playOrder="309"><navLabel><text>Getting ready</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-309" /></navPoint>
+				<navPoint id="navpoint310" playOrder="310"><navLabel><text>How to do it...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-310" /></navPoint>
+				<navPoint id="navpoint311" playOrder="311"><navLabel><text>How it works...</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-311" /></navPoint>
+				<navPoint id="navpoint312" playOrder="312"><navLabel><text>See also</text></navLabel><content src="B17639_07_Final_PG_ePub.xhtml#_idParaDest-312" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint313" playOrder="313"><navLabel><text>Chapter 8: Customizing User Data</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-313" />
+			<navPoint id="navpoint314" playOrder="314"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-314" /></navPoint>
+			<navPoint id="navpoint315" playOrder="315"><navLabel><text>Adding custom fields to the user editor</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-315" />
+				<navPoint id="navpoint316" playOrder="316"><navLabel><text>Getting ready</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-316" /></navPoint>
+				<navPoint id="navpoint317" playOrder="317"><navLabel><text>How to do it...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-317" /></navPoint>
+				<navPoint id="navpoint318" playOrder="318"><navLabel><text>How it works...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-318" /></navPoint>
+				<navPoint id="navpoint319" playOrder="319"><navLabel><text>See also</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-319" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint320" playOrder="320"><navLabel><text>Processing and storing custom user data</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-320" />
+				<navPoint id="navpoint321" playOrder="321"><navLabel><text>Getting ready</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-321" /></navPoint>
+				<navPoint id="navpoint322" playOrder="322"><navLabel><text>How to do it...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-322" /></navPoint>
+				<navPoint id="navpoint323" playOrder="323"><navLabel><text>How it works...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-323" /></navPoint>
+				<navPoint id="navpoint324" playOrder="324"><navLabel><text>See also</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-324" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint325" playOrder="325"><navLabel><text>Displaying new user data on the user list page</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-325" />
+				<navPoint id="navpoint326" playOrder="326"><navLabel><text>Getting ready</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-326" /></navPoint>
+				<navPoint id="navpoint327" playOrder="327"><navLabel><text>How to do it...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-327" /></navPoint>
+				<navPoint id="navpoint328" playOrder="328"><navLabel><text>How it works...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-328" /></navPoint>
+				<navPoint id="navpoint329" playOrder="329"><navLabel><text>See also</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-329" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint330" playOrder="330"><navLabel><text>Using custom user data in an enclosing shortcode</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-330" />
+				<navPoint id="navpoint331" playOrder="331"><navLabel><text>Getting ready</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-331" /></navPoint>
+				<navPoint id="navpoint332" playOrder="332"><navLabel><text>How to do it...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-332" /></navPoint>
+				<navPoint id="navpoint333" playOrder="333"><navLabel><text>How it works...</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-333" /></navPoint>
+				<navPoint id="navpoint334" playOrder="334"><navLabel><text>See also</text></navLabel><content src="B17639_08_Final_PG_ePub.xhtml#_idParaDest-334" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint335" playOrder="335"><navLabel><text>Chapter 9: Leveraging JavaScript, jQuery, and AJAX Scripts</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-335" />
+			<navPoint id="navpoint336" playOrder="336"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-336" /></navPoint>
+			<navPoint id="navpoint337" playOrder="337"><navLabel><text>Safely loading jQuery onto WordPress web pages</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-337" />
+				<navPoint id="navpoint338" playOrder="338"><navLabel><text>Getting ready</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-338" /></navPoint>
+				<navPoint id="navpoint339" playOrder="339"><navLabel><text>How to do it...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-339" /></navPoint>
+				<navPoint id="navpoint340" playOrder="340"><navLabel><text>How it works...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-340" /></navPoint>
+				<navPoint id="navpoint341" playOrder="341"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-341" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint342" playOrder="342"><navLabel><text>Displaying a pop-up dialog using the built-in ThickBox plugin</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-342" />
+				<navPoint id="navpoint343" playOrder="343"><navLabel><text>Getting ready</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-343" /></navPoint>
+				<navPoint id="navpoint344" playOrder="344"><navLabel><text>How to do it...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-344" /></navPoint>
+				<navPoint id="navpoint345" playOrder="345"><navLabel><text>How it works...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-345" /></navPoint>
+				<navPoint id="navpoint346" playOrder="346"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-346" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint347" playOrder="347"><navLabel><text>Controlling pop-up dialog display using shortcodes</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-347" />
+				<navPoint id="navpoint348" playOrder="348"><navLabel><text>Getting ready</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-348" /></navPoint>
+				<navPoint id="navpoint349" playOrder="349"><navLabel><text>How to do it...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-349" /></navPoint>
+				<navPoint id="navpoint350" playOrder="350"><navLabel><text>How it works...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-350" /></navPoint>
+				<navPoint id="navpoint351" playOrder="351"><navLabel><text>See also</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-351" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint352" playOrder="352"><navLabel><text>Displaying a calendar day selector using the Datepicker plugin</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-352" />
+				<navPoint id="navpoint353" playOrder="353"><navLabel><text>Getting ready</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-353" /></navPoint>
+				<navPoint id="navpoint354" playOrder="354"><navLabel><text>How to do it...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-354" /></navPoint>
+				<navPoint id="navpoint355" playOrder="355"><navLabel><text>How it works...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-355" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint356" playOrder="356"><navLabel><text>Adding tooltips to admin page form fields using the TipTip plugin</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-356" />
+				<navPoint id="navpoint357" playOrder="357"><navLabel><text>Getting ready</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-357" /></navPoint>
+				<navPoint id="navpoint358" playOrder="358"><navLabel><text>How to do it...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-358" /></navPoint>
+				<navPoint id="navpoint359" playOrder="359"><navLabel><text>How it works...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-359" /></navPoint>
+				<navPoint id="navpoint360" playOrder="360"><navLabel><text>See also</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-360" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint361" playOrder="361"><navLabel><text>Using AJAX to dynamically update partial page contents</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-361" />
+				<navPoint id="navpoint362" playOrder="362"><navLabel><text>Getting ready</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-362" /></navPoint>
+				<navPoint id="navpoint363" playOrder="363"><navLabel><text>How to do it...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-363" /></navPoint>
+				<navPoint id="navpoint364" playOrder="364"><navLabel><text>How it works...</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-364" /></navPoint>
+				<navPoint id="navpoint365" playOrder="365"><navLabel><text>See also</text></navLabel><content src="B17639_09_Final_PG_ePub.xhtml#_idParaDest-365" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint366" playOrder="366"><navLabel><text>Chapter 10: Adding New Widgets to the WordPress Library</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-366" />
+			<navPoint id="navpoint367" playOrder="367"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-367" /></navPoint>
+			<navPoint id="navpoint368" playOrder="368"><navLabel><text>Creating a new widget in WordPress</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-368" />
+				<navPoint id="navpoint369" playOrder="369"><navLabel><text>Getting ready</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-369" /></navPoint>
+				<navPoint id="navpoint370" playOrder="370"><navLabel><text>How to do it...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-370" /></navPoint>
+				<navPoint id="navpoint371" playOrder="371"><navLabel><text>How it works...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-371" /></navPoint>
+				<navPoint id="navpoint372" playOrder="372"><navLabel><text>See also</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-372" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint373" playOrder="373"><navLabel><text>Displaying widget configuration options</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-373" />
+				<navPoint id="navpoint374" playOrder="374"><navLabel><text>Getting ready</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-374" /></navPoint>
+				<navPoint id="navpoint375" playOrder="375"><navLabel><text>How to do it...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-375" /></navPoint>
+				<navPoint id="navpoint376" playOrder="376"><navLabel><text>How it works...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-376" /></navPoint>
+				<navPoint id="navpoint377" playOrder="377"><navLabel><text>See also</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-377" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint378" playOrder="378"><navLabel><text>Validating widget configuration options</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-378" />
+				<navPoint id="navpoint379" playOrder="379"><navLabel><text>Getting ready</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-379" /></navPoint>
+				<navPoint id="navpoint380" playOrder="380"><navLabel><text>How to do it...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-380" /></navPoint>
+				<navPoint id="navpoint381" playOrder="381"><navLabel><text>How it works...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-381" /></navPoint>
+				<navPoint id="navpoint382" playOrder="382"><navLabel><text>See also</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-382" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint383" playOrder="383"><navLabel><text>Adding a custom dashboard widget</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-383" />
+				<navPoint id="navpoint384" playOrder="384"><navLabel><text>Getting ready</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-384" /></navPoint>
+				<navPoint id="navpoint385" playOrder="385"><navLabel><text>How to do it...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-385" /></navPoint>
+				<navPoint id="navpoint386" playOrder="386"><navLabel><text>How it works...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-386" /></navPoint>
+				<navPoint id="navpoint387" playOrder="387"><navLabel><text>See also</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-387" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint388" playOrder="388"><navLabel><text>Adding a custom widget to the network dashboard</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-388" />
+				<navPoint id="navpoint389" playOrder="389"><navLabel><text>Getting ready</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-389" /></navPoint>
+				<navPoint id="navpoint390" playOrder="390"><navLabel><text>How to do it...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-390" /></navPoint>
+				<navPoint id="navpoint391" playOrder="391"><navLabel><text>How it works...</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-391" /></navPoint>
+				<navPoint id="navpoint392" playOrder="392"><navLabel><text>See also</text></navLabel><content src="B17639_10_Final_PG_ePub.xhtml#_idParaDest-392" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint393" playOrder="393"><navLabel><text>Chapter 11: Fetching, Caching, and Regularly Updating External Site Data</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-393" />
+			<navPoint id="navpoint394" playOrder="394"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-394" /></navPoint>
+			<navPoint id="navpoint395" playOrder="395"><navLabel><text>Displaying RSS items from an external feed</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-395" />
+				<navPoint id="navpoint396" playOrder="396"><navLabel><text>Getting ready</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-396" /></navPoint>
+				<navPoint id="navpoint397" playOrder="397"><navLabel><text>How to do it…</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-397" /></navPoint>
+				<navPoint id="navpoint398" playOrder="398"><navLabel><text>How it works...</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-398" /></navPoint>
+				<navPoint id="navpoint399" playOrder="399"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-399" /></navPoint>
+				<navPoint id="navpoint400" playOrder="400"><navLabel><text>See also</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-400" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint401" playOrder="401"><navLabel><text>Optimizing plugin performance by storing external data using transients</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-401" />
+				<navPoint id="navpoint402" playOrder="402"><navLabel><text>Getting ready</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-402" /></navPoint>
+				<navPoint id="navpoint403" playOrder="403"><navLabel><text>How to do it...</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-403" /></navPoint>
+				<navPoint id="navpoint404" playOrder="404"><navLabel><text>How it works...</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-404" /></navPoint>
+				<navPoint id="navpoint405" playOrder="405"><navLabel><text>See also</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-405" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint406" playOrder="406"><navLabel><text>Scheduling plugin data updates using WP-Cron</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-406" />
+				<navPoint id="navpoint407" playOrder="407"><navLabel><text>Getting ready</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-407" /></navPoint>
+				<navPoint id="navpoint408" playOrder="408"><navLabel><text>How to do it...</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-408" /></navPoint>
+				<navPoint id="navpoint409" playOrder="409"><navLabel><text>There&#39;s more…</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-409" /></navPoint>
+				<navPoint id="navpoint410" playOrder="410"><navLabel><text>See also</text></navLabel><content src="B17639_11_Final_PG_ePub.xhtml#_idParaDest-410" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint411" playOrder="411"><navLabel><text>Chapter 12: Enabling Plugin Internationalization</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-411" />
+			<navPoint id="navpoint412" playOrder="412"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-412" /></navPoint>
+			<navPoint id="navpoint413" playOrder="413"><navLabel><text>Changing the WordPress site language configuration</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-413" />
+				<navPoint id="navpoint414" playOrder="414"><navLabel><text>Getting ready</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-414" /></navPoint>
+				<navPoint id="navpoint415" playOrder="415"><navLabel><text>How to do it...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-415" /></navPoint>
+				<navPoint id="navpoint416" playOrder="416"><navLabel><text>How it works...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-416" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint417" playOrder="417"><navLabel><text>Adapting default user settings for translation</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-417" />
+				<navPoint id="navpoint418" playOrder="418"><navLabel><text>Getting ready</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-418" /></navPoint>
+				<navPoint id="navpoint419" playOrder="419"><navLabel><text>How to do it...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-419" /></navPoint>
+				<navPoint id="navpoint420" playOrder="420"><navLabel><text>How it works...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-420" /></navPoint>
+				<navPoint id="navpoint421" playOrder="421"><navLabel><text>See also</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-421" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint422" playOrder="422"><navLabel><text>Making admin page code ready for translation</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-422" />
+				<navPoint id="navpoint423" playOrder="423"><navLabel><text>Getting ready</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-423" /></navPoint>
+				<navPoint id="navpoint424" playOrder="424"><navLabel><text>How to do it...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-424" /></navPoint>
+				<navPoint id="navpoint425" playOrder="425"><navLabel><text>How it works...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-425" /></navPoint>
+				<navPoint id="navpoint426" playOrder="426"><navLabel><text>See also</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-426" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint427" playOrder="427"><navLabel><text>Modifying shortcode output for translation</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-427" />
+				<navPoint id="navpoint428" playOrder="428"><navLabel><text>Getting ready</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-428" /></navPoint>
+				<navPoint id="navpoint429" playOrder="429"><navLabel><text>How to do it...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-429" /></navPoint>
+				<navPoint id="navpoint430" playOrder="430"><navLabel><text>How it works...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-430" /></navPoint>
+				<navPoint id="navpoint431" playOrder="431"><navLabel><text>See also</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-431" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint432" playOrder="432"><navLabel><text>Translating text strings using Poedit</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-432" />
+				<navPoint id="navpoint433" playOrder="433"><navLabel><text>Getting ready</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-433" /></navPoint>
+				<navPoint id="navpoint434" playOrder="434"><navLabel><text>How to do it...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-434" /></navPoint>
+				<navPoint id="navpoint435" playOrder="435"><navLabel><text>How it works...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-435" /></navPoint>
+				<navPoint id="navpoint436" playOrder="436"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-436" /></navPoint>
+				<navPoint id="navpoint437" playOrder="437"><navLabel><text>See also</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-437" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint438" playOrder="438"><navLabel><text>Loading a language file in the plugin initialization</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-438" />
+				<navPoint id="navpoint439" playOrder="439"><navLabel><text>Getting ready</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-439" /></navPoint>
+				<navPoint id="navpoint440" playOrder="440"><navLabel><text>How to do it...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-440" /></navPoint>
+				<navPoint id="navpoint441" playOrder="441"><navLabel><text>How it works...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-441" /></navPoint>
+				<navPoint id="navpoint442" playOrder="442"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-442" /></navPoint>
+				<navPoint id="navpoint443" playOrder="443"><navLabel><text>See also</text></navLabel><content src="B17639_12_Final_PG_ePub.xhtml#_idParaDest-443" /></navPoint>
+			</navPoint>
+		</navPoint>
+		<navPoint id="navpoint444" playOrder="444"><navLabel><text>Chapter 13: Distributing Your Plugin on WordPress.org</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-444" />
+			<navPoint id="navpoint445" playOrder="445"><navLabel><text>Technical requirements </text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-445" /></navPoint>
+			<navPoint id="navpoint446" playOrder="446"><navLabel><text>Creating a README file for your plugin</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-446" />
+				<navPoint id="navpoint447" playOrder="447"><navLabel><text>Getting ready</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-447" /></navPoint>
+				<navPoint id="navpoint448" playOrder="448"><navLabel><text>How to do it...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-448" /></navPoint>
+				<navPoint id="navpoint449" playOrder="449"><navLabel><text>How it works...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-449" /></navPoint>
+				<navPoint id="navpoint450" playOrder="450"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-450" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint451" playOrder="451"><navLabel><text>Applying for your plugin to be hosted on WordPress.org</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-451" />
+				<navPoint id="navpoint452" playOrder="452"><navLabel><text>How to do it...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-452" /></navPoint>
+				<navPoint id="navpoint453" playOrder="453"><navLabel><text>How it works...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-453" /></navPoint>
+				<navPoint id="navpoint454" playOrder="454"><navLabel><text>See also</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-454" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint455" playOrder="455"><navLabel><text>Uploading your plugin using Subversion</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-455" />
+				<navPoint id="navpoint456" playOrder="456"><navLabel><text>Getting ready</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-456" /></navPoint>
+				<navPoint id="navpoint457" playOrder="457"><navLabel><text>How to do it...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-457" /></navPoint>
+				<navPoint id="navpoint458" playOrder="458"><navLabel><text>How it works...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-458" /></navPoint>
+				<navPoint id="navpoint459" playOrder="459"><navLabel><text>There&#39;s more...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-459" /></navPoint>
+				<navPoint id="navpoint460" playOrder="460"><navLabel><text>See also</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-460" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint461" playOrder="461"><navLabel><text>Providing plugin banner and thumbnail images</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-461" />
+				<navPoint id="navpoint462" playOrder="462"><navLabel><text>Getting ready</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-462" /></navPoint>
+				<navPoint id="navpoint463" playOrder="463"><navLabel><text>How to do it...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-463" /></navPoint>
+				<navPoint id="navpoint464" playOrder="464"><navLabel><text>How it works...</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-464" /></navPoint>
+				<navPoint id="navpoint465" playOrder="465"><navLabel><text>See also</text></navLabel><content src="B17639_13_Final_PG_ePub.xhtml#_idParaDest-465" /></navPoint>
+			</navPoint>
+			<navPoint id="navpoint466" playOrder="466"><navLabel><text>Why subscribe?</text></navLabel><content src="B17639_Backmatter_Final_PG_ePub.xhtml#_idParaDest-466" /></navPoint>
+		</navPoint>
+		<navPoint id="navpoint467" playOrder="467"><navLabel><text>Other Books You May Enjoy</text></navLabel><content src="B17639_Backmatter_Final_PG_ePub.xhtml#_idParaDest-467" />
+			<navPoint id="navpoint468" playOrder="468"><navLabel><text>Packt is searching for authors like you</text></navLabel><content src="B17639_Backmatter_Final_PG_ePub.xhtml#_idParaDest-468" /></navPoint>
+		</navPoint>
+	</navMap>
+</ncx>

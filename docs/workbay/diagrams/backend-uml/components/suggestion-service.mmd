@@ -1,0 +1,95 @@
+flowchart TB
+    %% =======================================================================
+    %% SUGGESTION SERVICE: Identity assignment suggestions
+    %% Layer: application (recognition/application/suggestions/*)
+    %% =======================================================================
+
+    subgraph Legend["Legend"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendDashed["Dashed arrow = optional"]
+    end
+
+    subgraph HTTP["HTTP Boundary"]
+        ListPending["ENTRY: GET /recognition/suggestions\nList pending suggestions"]
+        AcceptSugg["ENTRY: POST /suggestions/{id}/accept\nAccept suggestion"]
+        RejectSugg["ENTRY: POST /suggestions/{id}/reject\nReject suggestion"]
+        ListMerge["ENTRY: GET /suggestions/merge\nList merge suggestions"]
+        AcceptMerge["ENTRY: POST /suggestions/merge/{id}/accept\nAccept merge"]
+    end
+
+    subgraph SuggService["SuggestionService"]
+        direction TB
+        Create["create(candidate, confidence)\nPersist new suggestion"]
+        UpdateScores["update_scores()\nRefresh similarity metrics"]
+        ResolveExclusive["resolve_for_identity_exclusive()\nAccept one, reject others"]
+        BindContext["bind_run_context()\nAttach observability context"]
+    end
+
+    subgraph RefreshSvc["SuggestionRefreshService"]
+        direction TB
+        RefreshCluster["refresh_for_cluster(cluster_id)\nRecompute all suggestions for cluster"]
+        RefreshIdentity["refresh_for_identity(identity_id)\nFind new matches for identity"]
+        SurfaceNewLabeled["surface_for_newly_labeled_cluster()\nGenerate suggestions when cluster labeled"]
+    end
+
+    subgraph MergeSvc["MergeSuggestionService"]
+        direction TB
+        GenerateMerge["generate_for_tenant()\nFind similar cluster pairs"]
+        GenerateSingleton["generate_singleton_merge_suggestions()\nHAC refinement for singletons"]
+        DeleteByCluster["delete_by_cluster()\nCleanup on cluster delete"]
+    end
+
+    subgraph Eligibility["Eligibility Checks"]
+        direction TB
+        IsEligible["is_eligible_cluster()\nCheck if cluster can receive suggestions"]
+    end
+
+    subgraph Repos["Repositories"]
+        direction TB
+        SuggRepo["SuggestionRepository"]
+        MergeRepo["MergeSuggestionRepository"]
+        ClusterRepo["ClusterRepository"]
+    end
+
+    subgraph DB["PostgreSQL"]
+        SuggTable["identity_suggestions"]
+        MergeTable["cluster_merge_suggestions"]
+        ClusterTable["identity_clusters"]
+    end
+
+    %% HTTP -> Services
+    ListPending --> SuggRepo --> SuggTable
+    AcceptSugg --> ResolveExclusive
+    RejectSugg --> SuggRepo
+    ListMerge --> MergeRepo --> MergeTable
+    AcceptMerge --> MergeSvc
+
+    %% SuggestionService flows
+    Create --> IsEligible
+    IsEligible --> ClusterRepo
+    Create --> SuggRepo --> SuggTable
+    UpdateScores --> SuggRepo
+    ResolveExclusive --> SuggRepo
+
+    %% Refresh service flows
+    RefreshCluster --> SuggRepo
+    RefreshIdentity --> SuggRepo
+    SurfaceNewLabeled --> Create
+
+    %% Merge service flows
+    GenerateMerge --> MergeRepo --> MergeTable
+    GenerateSingleton --> MergeRepo
+    DeleteByCluster --> MergeRepo
+
+    %% Accept triggers refresh
+    AcceptSugg -.-> RefreshCluster
+
+    CodeAnchors["Code anchors:\nrecognition/application/suggestions/service.py\nrecognition/application/suggestions/refresh_service.py\nrecognition/application/suggestions/merge_suggestions.py\nrecognition/application/suggestions/eligibility.py\nrecognition/infrastructure/repositories/suggestion_repository.py\nrecognition/infrastructure/repositories/merge_suggestion_repository.py"]
+    SuggService -.-> CodeAnchors
+
+    %% Styling
+    style SuggService fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style RefreshSvc fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style MergeSvc fill:#fff3e0,stroke:#ef6c00,color:#e65100
+    style Eligibility fill:#fce4ec,stroke:#c2185b,color:#880e4f

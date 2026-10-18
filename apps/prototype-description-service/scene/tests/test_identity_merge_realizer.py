@@ -1,0 +1,294 @@
+"""Slice 2: reflow realizers behind the ReflowRealizer seam (PA-03).
+
+One test per enumerated rule R1–R4, the positional fallback, n==1 NP
+substitution without phrase boxes, and a seam-swap test proving
+merge_identities has no inline mode ladder.
+"""
+
+import pytest
+
+from scene.application.identity_merge import (
+    ConfirmedFace,
+    DeterministicNlgRealizer,
+    NormalizedBox,
+    PhraseBox,
+    PositionalFallbackRealizer,
+    ReflowRealizer,
+    merge_identities,
+)
+from scene.application.identity_merge.merge import IdentityAssociation
+from scene.application.identity_merge.realizer import (
+    N1SubstitutionRealizer,
+    find_generic_person_nps,
+    leading_generic_person_np,
+)
+from scene.tests.identity_merge_helpers import make_face, make_phrase_box
+
+
+def _face(label: str, *, x: float = 0.4) -> ConfirmedFace:
+    return make_face(label, x=x, roster_id=f"roster-{label}")
+
+
+def _assoc(caption: str, phrase: str, label: str, *, occurrence: int = 0, x: float = 0.4) -> IdentityAssociation:
+    return IdentityAssociation(
+        face=_face(label, x=x),
+        phrase_box=make_phrase_box(
+            phrase,
+            caption,
+            box=NormalizedBox(x=x - 0.1, y=0.1, width=0.3, height=0.7),
+            occurrence=occurrence,
+        ),
+    )
+
+
+class TestDeterministicNlgRealizer:
+    def test_r1_article_elision_and_case(self):
+        realizer = DeterministicNlgRealizer()
+        caption = "A man stands by the window."
+        named = realizer.realize(
+            caption=caption,
+            associations=[_assoc(caption, "A man", "Daniel")],
+            confirmed_faces=[],
+        )
+        assert named == "Daniel stands by the window."
+
+    def test_r1_mid_sentence_article_elision(self):
+        realizer = DeterministicNlgRealizer()
+        caption = "A dog sits near a woman."
+        named = realizer.realize(
+            caption=caption,
+            associations=[_assoc(caption, "a woman", "Sarah")],
+            confirmed_faces=[],
+        )
+        assert named == "A dog sits near Sarah."
+
+    def test_r2_possessive_form_preserved(self):
+        realizer = DeterministicNlgRealizer()
+        caption = "A man's hat lies on the table."
+        named = realizer.realize(
+            caption=caption,
+            associations=[_assoc(caption, "A man's hat", "Daniel")],
+            confirmed_faces=[],
+        )
+        assert named == "Daniel's hat lies on the table."
+
+    def test_r3_list_aggregation(self):
+        realizer = DeterministicNlgRealizer()
+        assert realizer.aggregate_names(["Daniel"]) == "Daniel"
+        assert realizer.aggregate_names(["Daniel", "Sarah"]) == "Daniel and Sarah"
+        assert realizer.aggregate_names(["Daniel", "Sarah", "Tom"]) == "Daniel, Sarah and Tom"
+
+    def test_r4_repeated_mention_coreference(self):
+        realizer = DeterministicNlgRealizer()
+        caption = "A man opens the door. A man waves."
+        named = realizer.realize(
+            caption=caption,
+            associations=[
+                _assoc(caption, "A man", "Daniel", occurrence=0),
+                _assoc(caption, "A man", "Daniel", occurrence=1),
+            ],
+            confirmed_faces=[],
+        )
+        assert named == "Daniel opens the door. They wave."
+
+
+class TestPositionalFallbackRealizer:
+    def test_orders_faces_left_to_right_and_appends(self):
+        realizer = PositionalFallbackRealizer()
+        caption = "Two people sit at a table."
+        named = realizer.realize(
+            caption=caption,
+            associations=[],
+            confirmed_faces=[_face("Sarah", x=0.7), _face("Daniel", x=0.2)],
+        )
+        assert named == "Two people sit at a table. Pictured from left: Daniel and Sarah."
+
+
+class _UpperCaseFakeRealizer:
+    """Seam-swap fake: proves the realizer is injected, not hardcoded."""
+
+    def realize(self, *, caption, associations, confirmed_faces):
+        return caption.upper()
+
+
+class TestSeamSelection:
+    def test_merge_uses_injected_realizer(self):
+        caption = "A man stands by the window."
+        assoc = _assoc(caption, "A man", "Daniel")
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[assoc.phrase_box],
+            confirmed_faces=[assoc.face],
+            realizer=_UpperCaseFakeRealizer(),
+        )
+        assert result.named_draft == caption.upper()
+        assert isinstance(_UpperCaseFakeRealizer(), ReflowRealizer)
+
+    def test_default_realizer_produces_named_draft(self):
+        caption = "A man stands by the window."
+        assoc = _assoc(caption, "A man", "Daniel")
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[assoc.phrase_box],
+            confirmed_faces=[assoc.face],
+        )
+        assert result.named_draft == "Daniel stands by the window."
+        assert result.generic_draft == caption
+
+    def test_no_phrase_boxes_two_people_abstain(self):
+        caption = "Two people sit at a table."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Sarah", x=0.7), _face("Daniel", x=0.2)],
+        )
+        assert result.named_draft == caption
+
+    def test_ambiguous_grounding_stays_generic(self):
+        # Phrase boxes exist but two faces land in the same box: no fallback,
+        # no names — ambiguity degrades to generic.
+        caption = "A person stands by the window."
+        box = PhraseBox(
+            phrase="A person",
+            span_start=0,
+            span_end=8,
+            box=NormalizedBox(x=0.1, y=0.1, width=0.6, height=0.8),
+        )
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[box],
+            confirmed_faces=[_face("Daniel", x=0.3), _face("Sarah", x=0.5)],
+        )
+        assert result.named_draft == caption
+
+
+class TestN1Substitution:
+    """n==1: one confirmed face + one leading generic person NP, no boxes."""
+
+    def test_weaves_name_into_leading_generic_phrase_without_boxes(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Keanu Reeves stands by the window."
+        assert result.generic_draft == caption
+        assert result.associations == ()
+
+    def test_closed_list_includes_young_man(self):
+        caption = "A young man waves from the steps."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Keanu Reeves waves from the steps."
+        assert result.associations == ()
+
+    def test_two_faces_ungrounded_abstain(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Sarah", x=0.7), _face("Daniel", x=0.2)],
+        )
+        assert result.named_draft == caption
+
+    def test_two_generic_nps_abstain(self):
+        caption = "A man stands next to a woman."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == caption
+        assert result.associations == ()
+
+    def test_no_generic_np_keeps_positional_fallback(self):
+        caption = "Two people sit at a table."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Two people sit at a table. Pictured from left: Keanu Reeves."
+
+    def test_non_leading_unique_np_keeps_positional_fallback(self):
+        caption = "In the park a man stands."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "In the park a man stands. Pictured from left: Keanu Reeves."
+
+    def test_realizer_weaves_and_abstains_on_count(self):
+        realizer = N1SubstitutionRealizer()
+        assert isinstance(realizer, ReflowRealizer)
+        one = realizer.realize(
+            caption="A woman stands by the window.",
+            associations=[],
+            confirmed_faces=[_face("Sarah")],
+        )
+        assert one == "Sarah stands by the window."
+        two_nps = realizer.realize(
+            caption="A man stands next to a woman.",
+            associations=[],
+            confirmed_faces=[_face("Sarah")],
+        )
+        assert two_nps == "A man stands next to a woman."
+        two_faces = realizer.realize(
+            caption="A woman stands by the window.",
+            associations=[],
+            confirmed_faces=[_face("Sarah", x=0.2), _face("Daniel", x=0.7)],
+        )
+        assert two_faces == "A woman stands by the window."
+
+    @pytest.mark.parametrize(
+        "caption",
+        [
+            "A man-made sculpture stands in the plaza.",
+            "A man/woman sign hangs on the wall.",
+            "The man-eating plant sits in the corner.",
+            "A man\u2011made sculpture stands in the plaza.",
+        ],
+        ids=["hyphen", "slash", "man-eating", "nonbreaking-hyphen"],
+    )
+    def test_hyphen_and_slash_compounds_stay_generic(self, caption: str):
+        realizer = N1SubstitutionRealizer()
+        named = realizer.realize(
+            caption=caption,
+            associations=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert named == caption
+        assert find_generic_person_nps(caption) == ()
+        assert leading_generic_person_np(caption) is None
+
+    def test_possessive_still_weaves_name(self):
+        caption = "A man's hat lies on the bench."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Keanu Reeves's hat lies on the bench."
+        assert result.generic_draft == caption
+        assert result.associations == ()
+
+    def test_compound_plus_later_np_counts_only_terminated_np(self):
+        caption = "A man-made statue beside a woman."
+        nps = find_generic_person_nps(caption)
+        assert len(nps) == 1
+        assert nps[0][2].lower() == "a woman"
+        assert leading_generic_person_np(caption) is None
+        realizer = N1SubstitutionRealizer()
+        assert (
+            realizer.realize(
+                caption=caption,
+                associations=[],
+                confirmed_faces=[_face("Keanu Reeves")],
+            )
+            == caption
+        )

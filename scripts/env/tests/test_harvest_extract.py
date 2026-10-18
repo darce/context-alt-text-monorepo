@@ -1,0 +1,326 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from urllib.parse import parse_qsl
+
+import pytest
+
+from conftest import load_module
+
+
+def _var(
+    name: str,
+    *,
+    cls: str = "config",
+    source: str = 'values = { prod = "manifest-value" }',
+    derive_vault_map: bool = False,
+) -> str:
+    derive_option = "derive_vault_map = true\n" if derive_vault_map else ""
+    return f'''[[var]]
+name = "{name}"
+class = "{cls}"
+targets = ["t"]
+section = "Runtime"
+example = "safe-example"
+{derive_option}{source}
+'''
+
+
+def _root(write_manifest, *variables: str, remote_path: bool = True) -> Path:
+    remote = 'remote_paths = { prod = "/opt/acx-backend/prod/.env" }\n' if remote_path else ""
+    targets = f'''version = 1
+
+[targets.t]
+audience = "backend"
+envs = ["prod"]
+{remote}sections = ["Runtime"]
+'''
+    return write_manifest(targets, **{"10-harvest": "version = 1\n" + "\n".join(variables)})
+
+
+def _invoke(module, root: Path, fs_root: Path) -> int:
+    return module.main([
+        "--root", str(root), "--target", "t", "--env", "prod", "--fs-root", str(fs_root),
+    ])
+
+
+def test_extracts_safe_values_and_withholds_secret_material(write_manifest, tmp_path: Path, capsys):
+    module = load_module("harvest_extract")
+    root = _root(
+        write_manifest,
+        _var("LOG_LEVEL"),
+        _var("DB_PASSWORD", cls="secret", source='secret = { prod = "host:" }'),
+        _var("PUBLIC_NOTICE", cls="public"),
+        _var("PUBLIC_ASSET"),
+        _var("SERVICE_DSN"),
+        _var("PLACEHOLDER"),
+        _var("DERIVED_CONFIG", source='derive = "${LOG_LEVEL}"'),
+        _var("DERIVED_MAP", source="", derive_vault_map=True),
+        _var("DUPLICATE"),
+        _var("MULTI"),
+        _var("MISSING"),
+        _var("PUBLISHABLE_KEY"),
+        _var("PUBLISHABLE_KEY_PASSWORD"),
+    )
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(
+        "LOG_LEVEL=\"info level\"\n"
+        "DB_PASSWORD=fake-secret-value\n"
+        "PUBLIC_NOTICE=public-value\n"
+        "PUBLIC_ASSET=sk_live_fake-value\n"
+        "SERVICE_DSN=postgres://u:pw@h/db\n"
+        "PLACEHOLDER=${OTHER}\n"
+        "DERIVED_CONFIG=derived-source-value\n"
+        "DERIVED_MAP=derived-map-value\n"
+        "DUPLICATE=one\nDUPLICATE=two\n"
+        "MULTI=one two\n"
+        "PUBLISHABLE_KEY=pk_example\n"
+        "PUBLISHABLE_KEY_PASSWORD=safe-name-sensitive\n"
+        "EXTRA=unmanaged-value\n",
+        encoding="utf-8",
+    )
+
+    assert _invoke(module, root, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert captured.err == ""
+    assert result == {
+        "version": 1,
+        "target": "t",
+        "env": "prod",
+        "values": {
+            "LOG_LEVEL": "info level",
+            "PLACEHOLDER": "${OTHER}",
+            "PUBLISHABLE_KEY": "pk_example",
+            "PUBLIC_NOTICE": "public-value",
+        },
+        "withheld": {
+            "secret": ["DB_PASSWORD"],
+            "derived": ["DERIVED_CONFIG", "DERIVED_MAP"],
+            "unmanaged": ["EXTRA"],
+            "missing": ["MISSING"],
+            "secret_looking": ["PUBLIC_ASSET", "PUBLISHABLE_KEY_PASSWORD", "SERVICE_DSN"],
+            "unparsed": ["DUPLICATE", "MULTI"],
+        },
+    }
+    for fake_secret in (
+        "fake-secret-value", "sk_live_fake-value", "postgres://u:pw@h/db", "safe-name-sensitive",
+        "derived-source-value", "derived-map-value", "unmanaged-value", "one", "two",
+    ):
+        assert fake_secret not in captured.out + captured.err
+
+
+def test_missing_remote_path_fails_with_names_only(write_manifest, tmp_path: Path, capsys):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("LOG_LEVEL"), remote_path=False)
+
+    assert _invoke(module, root, tmp_path) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "t" in captured.err and "prod" in captured.err
+    assert "manifest-value" not in captured.err
+
+
+@pytest.mark.parametrize(("name", "raw", "expected"), [
+    ("ACX_GPU_ENDPOINT_ALLOWLIST", "", ""),
+    ("NAME", '""', ""),
+    ("SERVICE_URL", "https://example.test # endpoint", "https://example.test"),
+    ("NAME", '"a # b"', "a # b"),
+    ("NAME", "a#b", "a#b"),
+    ("X", "https://h/x #token=fake", "https://h/x"),
+    ("NAME", "# comment only", ""),
+    ("NAME", r"a\#b # comment", "a#b"),
+    ("NAME", '"a"#b # comment', "a#b"),
+])
+def test_extracts_empty_and_commented_values(write_manifest, tmp_path, capsys, name, raw, expected):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var(name))
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(f"{name}={raw}\n", encoding="utf-8")
+
+    assert _invoke(module, root, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["values"] == {name: expected}
+    assert result["withheld"]["unparsed"] == []
+    assert result["withheld"]["secret_looking"] == []
+    assert captured.err == ""
+    for comment in ("endpoint", "token=fake", "comment"):
+        assert comment not in captured.out + captured.err
+
+
+def test_multiple_words_with_inline_comment_remain_unparsed(write_manifest):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("NAME"))
+    result = module.extract(module.load_manifest(root), "t", "prod", "NAME=one two # comment\n")
+    assert result["values"] == {}
+    assert result["withheld"]["unparsed"] == ["NAME"]
+
+
+@pytest.mark.parametrize("quote", ["'", '"'])
+@pytest.mark.parametrize("cls", ["secret", "config"])
+def test_multiline_quotes_never_extract_inner_assignments(write_manifest, tmp_path, capsys, quote, cls):
+    module = load_module("harvest_extract")
+    name = "DB_PASSWORD" if cls == "secret" else "PUBLIC_NOTICE"
+    source = 'secret = { prod = "host:" }' if cls == "secret" else 'values = { prod = "notice" }'
+    root = _root(write_manifest, _var(name, cls=cls, source=source), _var("LOG_LEVEL"), _var("AFTER"))
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(
+        f"{name}={quote}first\nLOG_LEVEL=private-fragment\nlast{quote}\nAFTER=visible\n",
+        encoding="utf-8",
+    )
+
+    assert _invoke(module, root, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["values"] == {"AFTER": "visible"}
+    assert result["withheld"]["missing"] == ["LOG_LEVEL"]
+    assert name in result["withheld"]["unparsed"]
+    if cls == "secret":
+        assert result["withheld"]["secret"] == [name]
+    assert "private-fragment" not in captured.out + captured.err
+    assert captured.err == ""
+
+
+def test_missing_env_file_fails_with_names_only(write_manifest, tmp_path: Path, capsys):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("LOG_LEVEL"))
+
+    assert _invoke(module, root, tmp_path) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "t" in captured.err and "prod" in captured.err
+    assert "manifest-value" not in captured.err
+
+
+_WITHHELD_QUERY_VALUES = [
+    "postgresql://db/app?password=pw",
+    "https://h/x?token=abc",
+    "https://h/x?API-KEY=abc",
+    "https://h/x?client_secret=",
+    "https://h/x?%70assword=pw",
+    "https://h/x#access_token=abc",
+    " https://h/x?token=abc",
+    "\thttps://h/x?token=abc",
+    "https://h/x?token=abc ",
+    "https://a/x?q=1,https://b/y?token=abc",
+    "see https://h/x?api_key=abc",
+    "https://a/x?q=1 https://b/y#access_token=abc",
+    "https://h/a,b?token=abc",
+    "https://h/x?q=a,b&api_key=abc",
+    "https://h/x#a=1,b=2&access_token=abc",
+    "https://a/x,https://b/y?q=1,2&token=abc",
+    "https://h/x?q=hello world&token=abc",
+    "https://h/x#a b&access_token=abc",
+]
+
+
+@pytest.mark.parametrize("value", _WITHHELD_QUERY_VALUES)
+def test_query_credentials_are_withheld(write_manifest, tmp_path: Path, capsys, value):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("SERVICE_DSN"))
+    env_path = tmp_path / "opt/acx-backend/prod/.env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text(f'SERVICE_DSN="{value}"\n', encoding="utf-8")
+
+    assert _invoke(module, root, tmp_path) == 0
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["values"] == {}
+    assert result["withheld"]["secret_looking"] == ["SERVICE_DSN"]
+    assert value not in captured.out + captured.err
+    assert captured.err == ""
+
+
+_BENIGN_QUERY_VALUES = [
+    "postgresql://db/app?sslmode=require",
+    "https://h/x?key_id=example",
+    "password=pw",
+    " https://h/x?sslmode=require",
+    "https://a/x,https://b/y",
+    "https://h/x?sslmode=require,token=abc",
+    "https://h/x?sslmode=require token=abc",
+    "https://h/a,b?q=1,2",
+]
+
+
+@pytest.mark.parametrize("value", _BENIGN_QUERY_VALUES)
+def test_benign_query_values_are_extracted(write_manifest, value):
+    module = load_module("harvest_extract")
+    root = _root(write_manifest, _var("SERVICE_DSN"))
+    result = module.extract(module.load_manifest(root), "t", "prod", f'SERVICE_DSN="{value}"\n')
+    assert result["values"] == {"SERVICE_DSN": value}
+    assert result["withheld"]["secret_looking"] == []
+
+
+def _base_url_query_credential(value: str) -> bool:
+    if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value):
+        return False
+    url, _, fragment = value.partition("#")
+    _, _, query = url.partition("?")
+    return any(
+        key.lower().replace("-", "_").endswith((
+            "password", "passwd", "pwd", "pass", "secret", "token", "access_token",
+            "api_key", "apikey", "key", "sig", "signature", "auth", "credential", "credentials",
+        ))
+        for component in (query, fragment)
+        for key, _ in parse_qsl(component, keep_blank_values=True)
+    )
+
+
+@pytest.mark.parametrize("value", _WITHHELD_QUERY_VALUES + _BENIGN_QUERY_VALUES + [
+    "https://h/x?q=hello\nworld&token=fake",
+    "https://h/x#a\nb&access_token=fake",
+    "see https://h/x?q=hello world&token=fake",
+    "https://a/x?q=1,https://b/y#x=hello world&api_key=fake",
+    "https://h/x?sslmode=require#section with spaces",
+])
+def test_query_credential_detection_preserves_base(value):
+    module = load_module("manifest")
+    if _base_url_query_credential(value):
+        assert module._url_query_credential(value)
+
+
+@pytest.mark.parametrize("location", ["example", "values", "override"])
+@pytest.mark.parametrize("value", [
+    "https://h/x?api_key=abc",
+    " https://h/x?api_key=abc",
+    "https://a/x?q=1,https://b/y?api_key=abc",
+    "https://h/x?q=a,b&api_key=abc",
+    "https://h/x?q=hello world&token=abc",
+])
+def test_public_build_query_credentials_are_rejected(write_manifest, location, value):
+    module = load_module("harvest_extract")
+    variable = _var("VITE_SERVICE_URL", cls="public")
+    if location == "example":
+        variable = variable.replace("safe-example", value)
+    elif location == "values":
+        variable = variable.replace("manifest-value", value)
+    else:
+        variable += f'''\n[[override]]
+name = "VITE_SERVICE_URL"
+target = "t"
+example = "{value}"
+'''
+    root = write_manifest('''version = 1
+[targets.t]
+audience = "public_build"
+envs = ["prod"]
+sections = ["Runtime"]
+''', **{"10-harvest": "version = 1\n" + variable})
+
+    with pytest.raises(module.ManifestError, match="URL credentials") as exc:
+        module.load_manifest(root)
+    assert "VITE_SERVICE_URL" in str(exc.value)
+    assert value not in str(exc.value)

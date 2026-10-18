@@ -1,0 +1,28 @@
+# Copy to terraform.tfvars (local only, do not commit)
+
+# OCI auth
+# tenancy_ocid, user_ocid, and fingerprint values are available in ~/.oci/config
+tenancy_ocid     = "ocid1.tenancy.oc1..<replace>"
+user_ocid        = "ocid1.user.oc1..<replace>"
+fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+private_key_path = "~/.oci/oci_api_key.pem"
+region           = "us-ashburn-1"
+
+# Placement
+compartment_ocid    = "ocid1.compartment.oc1..<replace>"
+availability_domain = "saEG:US-ASHBURN-AD-1"
+ubuntu_image_ocid   = "ocid1.image.oc1.iad..<replace>"
+
+# SSH access (restrict to your own IP/CIDR)
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+ssh_allowed_cidrs   = ["203.0.113.10/32"]
+
+# Debug app port defaults to closed
+enable_app_port = false
+# app_port = 8000
+# app_allowed_cidrs = ["203.0.113.10/32"]
+
+freeform_tags = {
+  project = "acx"
+  env     = "production"
+}

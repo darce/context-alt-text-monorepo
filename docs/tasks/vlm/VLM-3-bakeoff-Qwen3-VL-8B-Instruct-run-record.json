@@ -1,0 +1,152 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with her eyes closed and a serene smile stands on a windswept Antarctic shoreline, wearing a black hooded jacket and a white hydration vest. Behind her, a calm turquoise lake reflects the overcast sky, with snow-dusted hills rising in the distance.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.544,
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A young woman with long blonde hair takes a playful mirror selfie in a bathroom, sticking her tongue out and wearing a sparkly \"Happy Birthday\" tiara. She holds a glitter-covered phone and wears a light blue crop top and white pants. The background shows a tiled bathroom with a shower and towel rack.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.803,
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A group of friends, including Caitlin Weaver and Erika Hansen Miller, are captured in a playful, upside-down selfie in a warmly lit indoor setting. Their reflections are visible in a mirror, showing them smiling and holding phones, while a bright lamp casts a golden glow nearby.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 9.198,
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with blonde hair wearing a tan \"NY\" cap and sunglasses lies beside a man with graying hair and sunglasses, both relaxing on a blue and purple checkered towel. The woman, in a black bikini top, has tattoos on her arm and wears a pearl bracelet. They are sunbathing together on a beach towel.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 9.51,
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A group of women in pink satin pajamas celebrate at a party, posing in front of a glittery pink backdrop with a large \u201c2\u201d balloon. One woman in the center raises a red candle, while another holds a champagne flute. A lit lamp sits in the foreground, and the festive atmosphere suggests a birthday celebration.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.166,
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman smiles and flashes a peace sign while lounging on a glittery, transparent shark-shaped float in a bright blue hotel pool. She wears a red and navy bikini and rests her hand on the float\u2019s tail, which has \u201cSUNNYLIFE\u201d printed on it.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.403,
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A framed, stylized portrait of a man with dark hair and a mustache, rendered in monochrome with expressive, angular features. He wears a collared shirt with pockets and looks off to the side. The artwork is signed \u201cLiam\u201d in the lower right corner and hangs in a gold-colored frame against a light wall.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.172,
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with blonde hair stands at a bar, holding a drink with a lemon slice, under pink lighting. She wears a black crop top and patterned sheer pants, leaning against an ornate radiator. A poster of a cartoon panther and a lit candle are visible on the bar counter.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.222,
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long brown hair sits inside the broken fuselage of a wrecked airplane, looking toward the camera. The aircraft\u2019s metal frame is damaged and rusted, set against a backdrop of dark, volcanic sand under an overcast sky.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 9.506,
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A black dog on a leash stands in the foreground, looking down a quiet alleyway lined with brick townhouses and white garage doors. The scene is bathed in the warm glow of a setting sun, casting long shadows and illuminating the sky with soft orange and pink hues.",
+        "model_id": "Qwen3-VL-8B-Instruct",
+        "model_version": "F16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.378,
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "http://localhost:18000",
+    "head_sha": "2cf7898a449e5ecb3275e89ef868193680f38a7d",
+    "manifest_sha256": "670e257aef0c4eabb6480241be8c38521a494ae24d356e1fdcaa1bb49601b6ca",
+    "started_at": "2026-07-14T08:05:34Z"
+  },
+  "schema": "acx-eval/v1"
+}

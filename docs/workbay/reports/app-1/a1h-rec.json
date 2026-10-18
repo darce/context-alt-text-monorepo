@@ -1,0 +1,31 @@
+{
+  "lane": "a1h-rec",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_curation_sync_admission.py recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_curation_sync_router.py",
+      "result": "not_run",
+      "detail": "uv failed before pytest could start: could not remove site-packages/../../../bin/alembic (Read-only file system, os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_curation_sync_admission.py recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_curation_sync_router.py",
+      "result": "not_run",
+      "detail": "Emitted 17 passing dots, then stalled; pytest printed `Timeout (0:04:00)!` with the event loop waiting in selectors.select (asyncio/base_events.py:1948). Interrupted after the timeout diagnostic (exit 130); no suite summary was produced."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/roster/interface_adapters/http/curation_router.py",
+      "line": 62,
+      "title": "Curation sync preflight still trusts the tenant header",
+      "defect": "At curation_router.py:62, `job_service=Depends(get_persisted_cluster_job_service)` is resolved before the handler. services.py:552 sources its tenant from get_tenant_id_optional and services.py:512 builds a cluster service for that tenant; build_cluster_service then calls require_tenant_record. The handler only resets RLS to the authenticated tenant at curation_router.py:69. A caller-controlled header or query tenant therefore controls a pre-handler tenant lookup even though the curation operation uses the authenticated tenant.",
+      "failure_scenario": "A valid tenant A API key submits a curation operation with X-Tenant-ID or tenant_id set to B. The dependency checks whether B is provisioned before the handler: an unprovisioned B returns 403, while a provisioned B proceeds to operate on A. This exposes B's provisioned state and can reject A's request based on the spoofed tenant value.",
+      "fix": "Make this route's job-service dependency tenant-neutral or pass it the authenticated tenant, avoiding get_tenant_id_optional and cluster-service construction from request-supplied tenant data. Add a test with tenant A credentials and a spoofed B header/query that proves dependency resolution neither queries B nor changes the response based on B's provisioning state.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_app1_curation_sync_admission.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The operator entitlement checks precede the clustering, recovery, and receipt-revert mutations, and curation sync now binds its operation and usage admission to the authenticated tenant. Curation service construction still performs a tenant-record preflight from the client-supplied optional tenant value before the handler resets RLS; the lane suite stalled after 17 passing dots and did not complete."
+}

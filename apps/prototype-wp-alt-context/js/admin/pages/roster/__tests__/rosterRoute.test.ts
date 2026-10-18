@@ -1,0 +1,140 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { DEFAULT_QUEUE_STATE, parseQueueState } from '../../../hooks/workbenchQueueUrl';
+import type { RosterEntry } from '../../../api/rosterApi';
+import {
+  ROSTER_SURFACE,
+  getEntryPersonUuid,
+  parseRosterRoute,
+  selectDeterministicDefaultWorkspaceEntry,
+  workbenchReviewQueueUrl,
+  writeRosterFaceParam,
+} from '../rosterRoute';
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+}));
+
+const projectionEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
+  id: 1,
+  person_uuid: 'person-uuid-1',
+  name: 'Alice',
+  tags: [],
+  cluster_count: 2,
+  clusters: [],
+  queue_memberships: [],
+  updated_at: '2026-05-07T12:00:00Z',
+  source_version: 11,
+  projection_status: 'current',
+  projection_refreshed_at: '2026-05-07T12:00:00Z',
+  ...overrides,
+});
+
+describe('getEntryPersonUuid', () => {
+  it('rejects whitespace-only person UUIDs', () => {
+    expect(getEntryPersonUuid(projectionEntry({ person_uuid: '   ' }))).toBeNull();
+  });
+
+  it('trims surrounding whitespace from person UUIDs', () => {
+    expect(getEntryPersonUuid(projectionEntry({ person_uuid: ' abc ' }))).toBe('abc');
+  });
+});
+
+describe('selectDeterministicDefaultWorkspaceEntry', () => {
+  it('falls back to person UUID when names are identical', () => {
+    const selected = selectDeterministicDefaultWorkspaceEntry([
+      projectionEntry({ id: 2, person_uuid: 'person-uuid-2', name: 'Alex' }),
+      projectionEntry({ id: 1, person_uuid: 'person-uuid-1', name: 'Alex' }),
+    ]);
+
+    expect(selected?.person_uuid).toBe('person-uuid-1');
+  });
+
+  it('falls back to numeric row id when name and person UUID are identical', () => {
+    const selected = selectDeterministicDefaultWorkspaceEntry([
+      projectionEntry({ id: 10, person_uuid: 'person-uuid-1', name: 'Alex' }),
+      projectionEntry({ id: 2, person_uuid: 'person-uuid-1', name: 'Alex' }),
+    ]);
+
+    expect(selected?.id).toBe(2);
+  });
+});
+
+describe('ROSTER_SURFACE (E21-9 Slice 5a — clusters tab retired)', () => {
+  it('exposes only the people surface label (no clusters tab symbol)', async () => {
+    expect(ROSTER_SURFACE.id).toBe('people');
+    expect(ROSTER_SURFACE.label).toBe('People');
+    // Export-level retirement: ROSTER_TABS must not reappear.
+    const mod = await import('../rosterRoute');
+    expect('ROSTER_TABS' in mod).toBe(false);
+  });
+});
+
+describe('parseRosterRoute route compat (E21-9 Slice 5a + E21-10 lands-second)', () => {
+  it('lands legacy tab=clusters on the single surface without selecting a cluster', () => {
+    const parsed = parseRosterRoute(new URLSearchParams('tab=clusters'));
+    expect(parsed.selectedClusterId).toBeNull();
+    expect(parsed.requiresProjectionGateNotice).toBe(false);
+  });
+
+  it('opens the drawer for cluster= deep links (in place on the single surface)', () => {
+    const parsed = parseRosterRoute(new URLSearchParams('cluster=cluster-abc'));
+    expect(parsed.selectedClusterId).toBe('cluster-abc');
+    expect(parsed.requiresProjectionGateNotice).toBe(false);
+  });
+
+  it('ignores tab=clusters when cluster= is also present (drawer still opens)', () => {
+    const parsed = parseRosterRoute(new URLSearchParams('tab=clusters&cluster=cluster-1'));
+    expect(parsed.selectedClusterId).toBe('cluster-1');
+  });
+
+  it('keeps person/queue/face routes on the person surface with projection gate', () => {
+    const person = parseRosterRoute(new URLSearchParams('person=p1&tab=clusters'));
+    expect(person.selectedClusterId).toBeNull();
+    expect(person.requiresProjectionGateNotice).toBe(true);
+
+    const queue = parseRosterRoute(new URLSearchParams('queue=needs-review&tab=clusters'));
+    expect(queue.requiresProjectionGateNotice).toBe(true);
+  });
+
+  it('reads the face= cursor from person workspace deep links', () => {
+    const parsed = parseRosterRoute(new URLSearchParams('person=p1&face=identity-2'));
+    expect(parsed.selectedFaceId).toBe('identity-2');
+    expect(parsed.requiresProjectionGateNotice).toBe(true);
+  });
+
+  it('writes face= with replace-style params and keeps person=', () => {
+    const next = writeRosterFaceParam(new URLSearchParams('person=p1'), 'identity-2', 'p1');
+    expect(next.get('person')).toBe('p1');
+    expect(next.get('face')).toBe('identity-2');
+  });
+
+  // E21-10 Slice 4 lands-second: getLegacyTab retired (E21-9); no tab rewrite, no Clusters tab.
+  it('does not export getLegacyTab (legacy roster tab parser retired)', async () => {
+    const mod = await import('../rosterRoute');
+    expect('getLegacyTab' in mod).toBe(false);
+    expect('ROSTER_TABS' in mod).toBe(false);
+  });
+});
+
+describe('workbench deep link (E21-9 Slice 5b contract; UXW2-4 rail retired)', () => {
+  it('does not export isUnlabeledCluster (client-side rail predicate retired with the rail)', async () => {
+    const mod = await import('../rosterRoute');
+    expect('isUnlabeledCluster' in mod).toBe(false);
+  });
+
+  it('deep-links unlabeled clusters into the workbench review queue', () => {
+    const href = workbenchReviewQueueUrl();
+    expect(href).not.toContain('cluster=');
+    const q = href.indexOf('?');
+    const params = new URLSearchParams(q === -1 ? '' : href.slice(q + 1));
+    expect(parseQueueState(params.get('rq'))).toEqual(DEFAULT_QUEUE_STATE);
+  });
+
+  it('encodes rq from the shared queue vocabulary (REF-09, no hand-coded token)', () => {
+    // UXW2-1 REF-09 forbids a literal token; UXW2-4 R1-21 pins the value to the
+    // default queue state so the CTA lands where parseQueueState says it lands.
+    const encoded = `${DEFAULT_QUEUE_STATE.kind}.${DEFAULT_QUEUE_STATE.band}.${DEFAULT_QUEUE_STATE.index}`;
+    expect(workbenchReviewQueueUrl()).toBe(`#/workbench?tab=scan&rq=${encoded}`);
+  });
+});

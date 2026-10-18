@@ -1,0 +1,29 @@
+{
+  "lane": "a1h-contract",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_admission_contract.py scene/tests/test_describe_route.py scene/tests/test_shared_schema_documents.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: failed to remove the shared environment's alembic executable because the filesystem is read-only (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_admission_contract.py scene/tests/test_describe_route.py scene/tests/test_shared_schema_documents.py",
+      "result": "not_run",
+      "detail": "The run emitted one passing test, then scene/tests/test_describe_route.py::test_happy_path_returns_15_fields_then_cached timed out in _make_db at scene/tests/test_describe_route.py:195; timeout stack: aiosqlite/core.py:59 in _connection_worker_thread. The aiosqlite fixture timeout is a sandbox limit."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_admission_contract.py",
+      "result": "pass",
+      "detail": "1 passed in 2.71s. The fixture rows, API table, raised HTTP errors, rollback behavior, and no-release behavior agree."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_shared_schema_documents.py",
+      "result": "pass",
+      "detail": "42 passed in 0.93s, including typed multipart error schema validation."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [],
+  "summary": "No listed findings were supplied for recheck and no new contract mismatch was found. Usage admission docs and fixture align with the dependency error mapping; metered operation ID statuses and typed bodies align with the route and schema. The recognition upload 408 timeout note matches the route's 10-second idle and 300-second total limits. Contract and schema tests pass; the full route suite is not verified because its aiosqlite fixture timed out in the sandbox."
+}

@@ -1,0 +1,43 @@
+{
+  "status": "COMMITTED_PARTIAL_PENDING_PARENT",
+  "lane_id": "c92-wbtrust0-curation-plan-adj2",
+  "source_verdict": "REVISED_OWNED_F5_PENDING_PARENT_ALIGNMENT",
+  "summary": "Committed owned F5 documentation revision: contextual Accept counts, source resolution, named deep-link/reload and preserved semantics. Checks: 6/6 links, 23/23 existing path references, 8/8 preservation/table assertions, 11/11 UX-map artifacts and 1/1 Unicode-width check. Partial pending umbrella alignment and unavailable task-plan guard; no task/E2E/quality PASS or MERGE claim.",
+  "source_identity": "Requested source 55cb4113b0327074a7a293ee49de2f65227393c7 / tree af531f783e555cdf84a5891efabae0fe351394e3; executed initial git rev-parse observed synthetic HEAD fb5c65925a6479ee5f875a90e75049ebdbbbd210 and exact matching tree af531f783e555cdf84a5891efabae0fe351394e3. Initial git status --short was empty.",
+  "evidence": [
+    "EXECUTED: initial git status was clean; git rev-parse HEAD HEAD^{tree} returned synthetic HEAD fb5c65925a6479ee5f875a90e75049ebdbbbd210 and tree af531f783e555cdf84a5891efabae0fe351394e3, exactly matching the supplied source tree. Requested sourceSHA is supplied provenance, not claimed as a loaded commit object.",
+    "COMMITTED: early plan checkpoint 505470d; report custody checkpoint e921de0. The ignored report was explicitly force-added at its sole owned path. No Co-Authored-By trailers.",
+    "EXECUTED: owned-plan local Markdown link audit resolved 6/6 targets; literal-path audit resolved 23/23 existing references via direct/suffix filename lookup and separately classified 3 planned new paths (ClusterLabelingPanel.curation.test.tsx, useClusterExclusions.ts, useCurationCommit.ts). Those planned paths are not claimed present or executed.",
+    "EXECUTED: 8/8 documentation assertions: S2/S3/S6 unchanged, executor/dependencies/base metadata unchanged, canon v0.26.2 retained, contextual count rows present. These are document checks, not product tests or causal RED.",
+    "EXECUTED: existing render_ux_maps.py --check exit 0: all UX-map artifacts current, 11 checked. Existing sync_unicode_width.py --check exit 0: fixture property ranges match interpreter Unicode 15.0.0. Available in-sandbox .venv/bin/python reports Python 3.12.7; both commands used OMP/MKL/OPENBLAS=1 and bounded outer timeouts.",
+    "EXECUTED: task-plan guard invocation exit 2 because scripts/hooks/guard-task-plan-findings.py does not exist. This is missing tooling, not a failed product assertion or causal RED.",
+    "SOURCE-READ: existing ClusterPanelContext.tsx route/panel cluster state, ScanTabContent.tsx selection/return flow, PersonCommitControl.tsx loading/pending gates, ClusterLabelingPanel.tsx and existing confirm/label hooks. No production behavior, existing test, source, map, config, other plan or benchmark changed.",
+    "UNRUN: product unit/flow suites, causal RED, browser/E2E, quality review, live deployments, DB/network/email/key/credential/GPU/OCI operations and MCP writes. Causal RED count: 0 executed; product fixture/setup error count: 0 executed. No tests or expected pins were backfilled as observations."
+  ],
+  "findings": [
+    "F5 owned correction: PendingSuggestionAccept uses K exclusion reassign requests plus ONE existing confirm commit even K=0; valid unnamed naming retains its existing commit. Named group without pending suggestion uses K exclusion writes then close, NO commit, including deep-link/reload; K=0 is zero writes then close. K=3 totals 4 versus 3; K=0 totals 1 versus 0.",
+    "Outcome table, terminology, unit/flow cases, S1 mapping, contextual S4 heading/acceptance and S5 entry acceptance agree. Existing route/selection and loaded group data resolve context; loading/unknown state cannot invent a commit. Return path, dirty/pending, keyboard/focus, stop-on-first-failure/error and existing NamedGroupUI semantics remain binding. No new mutation/global batch API/backend contract/UI approval required.",
+    "OUT_OF_SCOPE_HIGH: umbrella success criterion 3 at docs/scopes/workbench-curation-trust-scope.md still mandates unconditional K+1; explicit typed scope proposal below is required before joined-plan landing.",
+    "TOOLING_UNAVAILABLE: missing task-plan guard is reported separately from causal RED and fixture errors. Existing source and tests remain immutable in this documentation-only adjudication."
+  ],
+  "commands": [
+    "git rev-parse --show-toplevel; git status --short; git rev-parse HEAD HEAD^{tree}",
+    "Explicit in-worktree reads of owned plan, umbrella criterion, named current frontend files, Makefile and documentation check scripts; no home-wide or other-sandbox scan.",
+    "Python standard-library local Markdown link, tracked source-path reference, baseline-section preservation and contextual-table audits: 6/6, 23/23 plus 3 planned-new, 8/8 respectively.",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 180s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py --check (exit 0; 11 artifacts)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 120s .venv/bin/python apps/prototype-wp-alt-context/docs/ux-maps/sync_unicode_width.py --check (exit 0)",
+    "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 60s .venv/bin/python scripts/hooks/guard-task-plan-findings.py --scan-repo (exit 2; missing script)",
+    "git diff --check; explicit owned-path git add and git add -f for ignored report; git commit without attribution trailers."
+  ],
+  "blockers": [
+    "SCOPE: required umbrella criterion alignment is outside OWNEDPATHS. The owner must apply the frozen contextual mapping before five-document integration review.",
+    "TOOLING: required task-plan guard absent (exit 2); no task-plan-guard PASS claim. make plan-analyze is UNRUN; no substitute or fabricated result.",
+    "PARENT_GATE: fresh Sol xhigh R2 after the five disjoint documentation changes join remains required for actual main landing; author has not merged or claimed task/E2E/quality PASS."
+  ],
+  "next_actions": [
+    "SCOPE_PROPOSAL {\"type\":\"owned_scope_extension\",\"owner\":\"umbrella integration owner\",\"path\":\"docs/scopes/workbench-curation-trust-scope.md\",\"location\":\"Success criteria item 3\",\"change\":\"Partition by existing context: PendingSuggestionAccept and valid unnamed name commit use K reassigns plus ONE existing commit even K=0; named group without pending suggestion uses K reassigns then close with NO commit, including deep-link/reload and K=0 zero writes. K=3 totals 4 versus 3; K=0 totals 1 versus 0. Preserve loading/unknown gates and existing behavior.\"}",
+    "TOOLING_PROPOSAL {\"type\":\"restore_existing_guard\",\"owner\":\"task-plan tooling owner\",\"path\":\"scripts/hooks/guard-task-plan-findings.py\",\"action\":\"Restore the missing guard through its authorized lane and run the existing task-plan gate; do not treat exit 2 as causal RED.\"}",
+    "Join the five disjoint documentation revisions, align the umbrella criterion, then obtain fresh Sol xhigh R2 before any main landing. Preserve Haiku xhigh implementation, Sol HIGH standard and existing LOUD odd Opus/even Sol xhigh loop roles. GTMSMOKE-1 remains ACTIVE; no native MCP completion receipt is claimed.",
+    "Later separately dispatched product S1 owns real causal RED and canonical MCP recording; this docs-only lane adds no unit tests, changes no existing tests and makes no runtime claim."
+  ]
+}

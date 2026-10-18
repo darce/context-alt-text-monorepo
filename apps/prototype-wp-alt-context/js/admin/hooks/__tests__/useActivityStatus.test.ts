@@ -1,0 +1,1011 @@
+// @vitest-environment jsdom
+import { QueryClient } from '@tanstack/react-query';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { registerConfig, resetConfigCache } from '../../api/config';
+import {
+  DESCRIBE_RUN_PHASE,
+  DESCRIBE_RUN_STATUS,
+  DESCRIBE_RUN_TERMINAL_CODE,
+  GPU_STATE,
+  type DescribeRunItem,
+  type DescribeRunItemsResponse,
+  type DescribeRunResponse,
+} from '../../api/describeApi';
+import type { GpuState } from '../../api/describeApi';
+import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../api/gpuApi';
+import * as gpuApi from '../../api/gpuApi';
+import * as describeApi from '../../api/describeApi';
+import {
+  _resetDescribeOperationStoreForTests,
+  DESCRIBE_OPERATION_CONTEXT_VERSION,
+  DESCRIBE_OPERATION_KIND,
+  DESCRIBE_RUN_RESUME_STATUS,
+  DESCRIBE_RUN_SETTLE_OUTCOME,
+  getDescribeRunContext,
+  getLastSettledRun,
+  pendingTerminalRuns,
+  putDescribeOperationContext,
+} from '../describeOperationStore';
+import type { DescribeRunProgress } from '../useDescribeRunProgress';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
+import {
+  ACTIVITY_KIND,
+  ACTIVITY_REASON,
+  resolveActivityStatus,
+  useActivityStatus,
+  type DescribeActivityInput,
+  type GpuActivityInput,
+  type ScanActivityInput,
+} from '../useActivityStatus';
+
+vi.mock('../../api/gpuApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof gpuApi>();
+  return { ...actual, fetchGpuStatus: vi.fn() };
+});
+
+vi.mock('../../api/describeApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof describeApi>();
+  return {
+    ...actual,
+    fetchBulkDescribeRun: vi.fn(),
+    cancelBulkDescribeRun: vi.fn(),
+    fetchDescribeRunItems: vi.fn(),
+    submitBulkDescribeRun: vi.fn(),
+  };
+});
+
+const fetchGpuStatusMock = vi.mocked(gpuApi.fetchGpuStatus);
+const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
+const fetchDescribeRunItemsMock = vi.mocked(describeApi.fetchDescribeRunItems);
+const submitBulkDescribeRunMock = vi.mocked(describeApi.submitBulkDescribeRun);
+
+const TENANT = 'tenant-a';
+
+const idleScan = (overrides: Partial<ScanActivityInput> = {}): ScanActivityInput => ({
+  isScanning: false,
+  isCancelling: false,
+  progressFraction: null,
+  etaSeconds: null,
+  errorMessage: null,
+  jobId: null,
+  ...overrides,
+});
+
+const describeRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
+  tenant_id: TENANT,
+  run_id: 'run-1',
+  status: DESCRIBE_RUN_STATUS.RUNNING,
+  phase: DESCRIBE_RUN_PHASE.DESCRIBING,
+  completed: 1,
+  failed: 0,
+  skipped: 0,
+  total: 4,
+  cancel_requested: false,
+  eta_seconds: 40,
+  gpu_state: GPU_STATE.READY,
+  recognition_enabled: true,
+  ...overrides,
+});
+
+const describeProgress = (
+  overrides: Partial<DescribeRunProgress> = {},
+  runOverrides: Partial<DescribeRunResponse> = {},
+): DescribeRunProgress => {
+  const run = overrides.run === null ? null : describeRun({ ...runOverrides, ...overrides.run });
+  return {
+    run,
+    status: run?.status ?? null,
+    progressFraction: run !== null && run.total > 0 ? (run.completed + run.failed + run.skipped) / run.total : null,
+    etaSeconds: run?.eta_seconds ?? null,
+    gpuState: (run?.gpu_state as GpuState | null | undefined) ?? GPU_STATE.UNKNOWN,
+    isWarming: run?.phase === DESCRIBE_RUN_PHASE.WARMING,
+    isTerminal: run !== null && (run.status === DESCRIBE_RUN_STATUS.COMPLETED ||
+      run.status === DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS ||
+      run.status === DESCRIBE_RUN_STATUS.FAILED ||
+      run.status === DESCRIBE_RUN_STATUS.CANCELLED),
+    stalledForSeconds: null,
+    isPolling: run !== null,
+    isFrozen: false,
+    isError: false,
+    error: null,
+    retry: vi.fn(),
+    ...overrides,
+  };
+};
+
+const idleDescribe = (): DescribeActivityInput => ({
+  runId: null,
+  progress: describeProgress({ run: null, status: null, progressFraction: null, etaSeconds: null, isPolling: false }),
+});
+
+const gpuInput = (overrides: Partial<GpuActivityInput> = {}): GpuActivityInput => ({
+  gpuState: GPU_STATE.STOPPED,
+  reason: null,
+  isError: false,
+  isRunPending: false,
+  ...overrides,
+});
+
+const statusResponse = (state: GpuState = GPU_STATE.STOPPED): GpuStatusResponse => ({
+  gpu_state: {
+    state,
+    instance_id: null,
+    written_at: 1_700_000_000,
+    reason: null,
+    since: null,
+    intent: GPU_INTENT_ACTION.AUTO,
+    intent_expires_at: null,
+    intent_status: GPU_INTENT_STATUS.NONE,
+    honoured_nonce: null,
+    lease_expires_at: null,
+    instance_running_since: null,
+    last_transition_reason: 'unknown',
+  },
+  snapshot_age_seconds: 12,
+  snapshot_fresh: true,
+  intent: null,
+  load: { has_work: false, written_at: 1_700_000_004, fresh: true },
+  server_time: '2026-09-07T12:00:00Z',
+});
+
+let queryClient: QueryClient;
+
+const installTenant = (): void => {
+  resetConfigCache();
+  registerConfig({
+    nonce: 'test-nonce',
+    ajaxUrl: '/wp-admin/admin-ajax.php',
+    endpoints: {},
+    tenant_id: TENANT,
+  });
+};
+
+const describeItem = (mediaId: number, status: string): DescribeRunItem => ({
+  media_id: mediaId,
+  status,
+  alt_text_draft: null,
+  caption: null,
+  provenance: null,
+  tier: null,
+  result_generation: 0,
+  existing_alt: false,
+});
+
+const itemsResponse = (
+  runId: string,
+  items: DescribeRunItem[],
+): DescribeRunItemsResponse => ({
+  run_id: runId,
+  items,
+});
+
+const warmupTimeoutRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse =>
+  Object.assign(
+    describeRun({
+      status: DESCRIBE_RUN_STATUS.FAILED,
+      phase: DESCRIBE_RUN_PHASE.FAILED,
+      completed: 1,
+      failed: 1,
+      skipped: 0,
+      total: 3,
+      eta_seconds: null,
+      gpu_state: GPU_STATE.STOPPED,
+      ...overrides,
+    }),
+    {
+      terminal: {
+        code: DESCRIBE_RUN_TERMINAL_CODE.GPU_WARMUP_TIMEOUT,
+        retryable: true,
+        startup_budget_seconds: 510,
+      },
+    },
+  );
+
+const seedWarmupTimeoutRun = (runId = 'run-1'): void => {
+  putDescribeOperationContext({
+    version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+    kind: DESCRIBE_OPERATION_KIND.RUN,
+    id: runId,
+    startup_id: null,
+    started_at: Date.now(),
+    request: { writeAlt: false, force: false },
+  });
+  fetchBulkDescribeRunMock.mockImplementation(async (id: string) => {
+    if (id === runId) {
+      return warmupTimeoutRun({ run_id: runId });
+    }
+    return describeRun({
+      run_id: id,
+      status: DESCRIBE_RUN_STATUS.PENDING,
+      phase: DESCRIBE_RUN_PHASE.WARMING,
+      completed: 0,
+      eta_seconds: 90,
+      gpu_state: GPU_STATE.WARMING,
+    });
+  });
+};
+
+describe('resolveActivityStatus', () => {
+  it('returns idle when scan, describe, and GPU are quiet', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: idleDescribe(),
+      gpu: gpuInput(),
+    });
+    expect(status).toMatchObject({
+      kind: ACTIVITY_KIND.IDLE,
+      progress: null,
+      etaSeconds: null,
+      reason: null,
+      canCancel: false,
+    });
+  });
+
+  it('prefers scanning over describe and GPU warm-up', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan({
+        isScanning: true,
+        progressFraction: 0.5,
+        etaSeconds: 12,
+        jobId: 'job-1',
+      }),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress({ isWarming: true }, { phase: DESCRIBE_RUN_PHASE.WARMING }),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.WARMING, isRunPending: true }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.SCANNING);
+    expect(status.progress).toBe(0.5);
+    expect(status.etaSeconds).toBe(12);
+    expect(status.canCancel).toBe(true);
+  });
+
+  it('maps a live warming describe run to warming with cancel', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress(
+          { isWarming: true, progressFraction: 0, etaSeconds: 180 },
+          { phase: DESCRIBE_RUN_PHASE.WARMING, gpu_state: GPU_STATE.READY, eta_seconds: 180, completed: 0 },
+        ),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.READY, isRunPending: true }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(status.etaSeconds).toBe(180);
+    expect(status.canCancel).toBe(true);
+    expect(status.gpuState).toBe(GPU_STATE.READY);
+    expect(status.warmingObservation?.status).toBe('unknown');
+  });
+
+  it('does not relabel a queued live run as warming when the GPU is warming', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-queued',
+        progress: describeProgress(
+          { progressFraction: 0, etaSeconds: 60 },
+          {
+            phase: DESCRIBE_RUN_PHASE.QUEUED,
+            gpu_state: GPU_STATE.WARMING,
+            eta_seconds: 60,
+            completed: 0,
+            status: DESCRIBE_RUN_STATUS.PENDING,
+          },
+        ),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.WARMING, isRunPending: true }),
+    });
+
+    expect(status.kind).toBe(ACTIVITY_KIND.DESCRIBING);
+    expect(status.retryable).toBe(false);
+    expect(status.warmingObservation).toBeUndefined();
+  });
+
+  it('keeps a describing live run on the describing watchdog when the GPU is warming', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-describing',
+        progress: describeProgress(
+          { progressFraction: 0.25, etaSeconds: 40 },
+          {
+            phase: DESCRIBE_RUN_PHASE.DESCRIBING,
+            gpu_state: GPU_STATE.WARMING,
+            eta_seconds: 40,
+          },
+        ),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.WARMING, isRunPending: true }),
+    });
+
+    expect(status.kind).toBe(ACTIVITY_KIND.DESCRIBING);
+    expect(status.canCancel).toBe(true);
+    expect(status.retryable).toBe(false);
+    expect(status.warmingObservation).toBeUndefined();
+  });
+
+  it('keeps fresh stopped evidence provisional and preserves unknown stale evidence', () => {
+    const freshStoppedStatus = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-fresh-stopped',
+        progress: describeProgress(
+          { isWarming: true },
+          {
+            run_id: 'run-fresh-stopped',
+            startup_id: 'startup-fresh-stopped',
+            phase: DESCRIBE_RUN_PHASE.WARMING,
+            gpu_state: GPU_STATE.STARTING,
+          },
+        ),
+      },
+      gpu: gpuInput({
+        gpuState: GPU_STATE.STOPPED,
+        isRunPending: true,
+        snapshotFresh: true,
+        data: statusResponse(GPU_STATE.STOPPED),
+      }),
+    });
+    expect(freshStoppedStatus.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(freshStoppedStatus.warmingObservation?.status).toBe('waiting');
+    expect(freshStoppedStatus.warmingObservation?.evidence).toBe('stopped');
+
+    const staleStatus = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-stale-status',
+        progress: describeProgress(
+          { isWarming: true },
+          {
+            run_id: 'run-stale-status',
+            startup_id: 'startup-stale-status',
+            phase: DESCRIBE_RUN_PHASE.WARMING,
+            gpu_state: GPU_STATE.WARMING,
+          },
+        ),
+      },
+      gpu: gpuInput({
+        gpuState: GPU_STATE.WARMING,
+        isRunPending: true,
+        snapshotFresh: false,
+        data: { ...statusResponse(GPU_STATE.WARMING), snapshot_fresh: false },
+      }),
+    });
+    expect(staleStatus.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(staleStatus.warmingObservation?.status).toBe('unknown');
+  });
+
+  it('maps describing progress to describing', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress(),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.READY, isRunPending: true }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.DESCRIBING);
+    expect(status.progress).toBe(0.25);
+    expect(status.etaSeconds).toBe(40);
+    expect(status.canCancel).toBe(true);
+    expect(status.draftCount).toBe(1);
+  });
+
+  it('maps completed describe to done with draft count', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress(
+          { isTerminal: true, isPolling: false },
+          {
+            status: DESCRIBE_RUN_STATUS.COMPLETED,
+            phase: DESCRIBE_RUN_PHASE.COMPLETE,
+            completed: 3,
+            failed: 0,
+            eta_seconds: null,
+          },
+        ),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.READY }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.DONE);
+    expect(status.canCancel).toBe(false);
+    expect(status.draftCount).toBe(3);
+    expect(status.retryable).toBe(false);
+  });
+
+  it('maps C2 gpu_warmup_timeout as failed and retryable', () => {
+    const failedRun = Object.assign(
+      describeRun({
+        status: DESCRIBE_RUN_STATUS.FAILED,
+        phase: DESCRIBE_RUN_PHASE.FAILED,
+        completed: 0,
+        eta_seconds: null,
+        gpu_state: GPU_STATE.STOPPED,
+      }),
+      { terminal: { code: 'gpu_warmup_timeout', retryable: true, startup_budget_seconds: 510 } },
+    );
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress({ isTerminal: true, isPolling: false, run: failedRun }),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.STOPPED }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT);
+    expect(status.retryable).toBe(true);
+    expect(status.canCancel).toBe(false);
+  });
+
+  it('treats a describe poll error as failed and retryable', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress({
+          isError: true,
+          isPolling: false,
+          error: new Error('timeout'),
+        }),
+      },
+      gpu: gpuInput({ isRunPending: true }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(status.reason).toBe(ACTIVITY_REASON.DESCRIBE_POLL_ERROR);
+    expect(status.retryable).toBe(true);
+  });
+
+  it.each(['first read', 'later poll'] as const)(
+    'retains Cancel and Retry for an accepted unresolved run after a failed %s',
+    (failureAt) => {
+      const status = resolveActivityStatus({
+        scan: idleScan(),
+        describe: {
+          runId: 'run-accepted',
+          progress: describeProgress(
+            {
+              ...(failureAt === 'first read' ? { run: null } : {}),
+              isError: true,
+              isPolling: false,
+              error: new Error('run status unavailable'),
+            },
+            { run_id: 'run-accepted' },
+          ),
+        },
+        gpu: gpuInput({ isRunPending: true }),
+      });
+
+      expect(status.runId).toBe('run-accepted');
+      expect(status.reason).toBe(ACTIVITY_REASON.DESCRIBE_POLL_ERROR);
+      expect(status.retryable).toBe(true);
+      expect(status.canCancel).toBe(true);
+    },
+  );
+
+  it('keeps idle GPU warming presentation without a live run', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: idleDescribe(),
+      gpu: gpuInput({ gpuState: GPU_STATE.WARMING }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(status.canCancel).toBe(false);
+  });
+
+  it.each([
+    { runId: null, run: null },
+    { runId: 'run-1', run: describeRun({ cancel_requested: true }) },
+  ])('does not offer poll-error Cancel without an eligible accepted run: %j', ({ runId, run }) => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: { runId, progress: describeProgress({ run, isError: true }) },
+      gpu: gpuInput(),
+    });
+    expect(status.canCancel).toBe(false);
+  });
+
+  it('prefers authoritative terminal evidence over a subsequent poll failure', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-1',
+        progress: describeProgress({ isError: true }, {
+          status: DESCRIBE_RUN_STATUS.COMPLETED,
+          phase: DESCRIBE_RUN_PHASE.COMPLETE,
+          completed: 4,
+        }),
+      },
+      gpu: gpuInput(),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.DONE);
+    expect(status.canCancel).toBe(false);
+    expect(status.retryable).toBe(false);
+  });
+
+  it('maps idle GPU status errors to idle with unknown GPU state and no retry', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: idleDescribe(),
+      gpu: gpuInput({ isError: true, gpuState: GPU_STATE.UNKNOWN }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.IDLE);
+    expect(status.gpuState).toBe(GPU_STATE.UNKNOWN);
+    expect(status.reason).toBeNull();
+    expect(status.retryable).toBe(false);
+  });
+
+  it('maps a scan error to failed when nothing else is live', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan({ errorMessage: 'People identification failed.' }),
+      describe: idleDescribe(),
+      gpu: gpuInput(),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(status.reason).toBe(ACTIVITY_REASON.SCAN_FAILED);
+    expect(status.retryable).toBe(true);
+  });
+
+  it('does not treat degraded GPU as a failed run', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: idleDescribe(),
+      gpu: gpuInput({ gpuState: GPU_STATE.DEGRADED, reason: 'probe_failed' }),
+    });
+    expect(status.kind).toBe(ACTIVITY_KIND.IDLE);
+    expect(status.gpuState).toBe(GPU_STATE.DEGRADED);
+    expect(status.canCancel).toBe(false);
+  });
+});
+
+describe('useActivityStatus', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    installTenant();
+    _resetDescribeOperationStoreForTests();
+    sessionStorage.clear();
+    fetchGpuStatusMock.mockResolvedValue(statusResponse());
+    fetchBulkDescribeRunMock.mockResolvedValue(describeRun());
+    fetchDescribeRunItemsMock.mockResolvedValue(itemsResponse('run-1', []));
+    submitBulkDescribeRunMock.mockResolvedValue(
+      describeRun({
+        run_id: 'run-2',
+        status: DESCRIBE_RUN_STATUS.PENDING,
+        phase: DESCRIBE_RUN_PHASE.WARMING,
+      }),
+    );
+  });
+
+  afterEach(async () => {
+    await queryClient?.cancelQueries();
+    queryClient?.clear();
+    _resetDescribeOperationStoreForTests();
+    sessionStorage.clear();
+    resetConfigCache();
+    cleanup();
+  });
+
+  it('owns one idle GPU status poll while no describe run is live', async () => {
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(fetchGpuStatusMock).toHaveBeenCalledTimes(1));
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE);
+    expect(fetchBulkDescribeRunMock).not.toHaveBeenCalled();
+  });
+
+  it('pauses the GPU poll while a describe run is in flight', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-1',
+      startup_id: null,
+      started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      describeRun({ phase: DESCRIBE_RUN_PHASE.WARMING, gpu_state: GPU_STATE.WARMING, eta_seconds: 90, completed: 0 }),
+    );
+
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.WARMING));
+    expect(fetchGpuStatusMock).not.toHaveBeenCalled();
+    expect(fetchBulkDescribeRunMock).toHaveBeenCalled();
+    expect(result.current.status.canCancel).toBe(true);
+    expect(result.current.status.etaSeconds).toBe(90);
+    expect(result.current.actions.onRetry).not.toBeNull();
+  });
+
+  it('composes an injected scan source as scanning', () => {
+    const cancelScan = vi.fn();
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(
+      () =>
+        useActivityStatus({
+          scan: {
+            isScanning: true,
+            progress: { completed: 2, total: 8 },
+            etaSeconds: 20,
+            jobId: 'job-9',
+            cancelScan,
+          },
+        }),
+      { wrapper: createQueryWrapper(queryClient) },
+    );
+
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.SCANNING);
+    expect(result.current.status.progress).toBe(0.25);
+    expect(result.current.status.canCancel).toBe(true);
+    result.current.actions.onCancel?.();
+    expect(cancelScan).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles a pending terminal run from the describe poll outcome', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-settle',
+      startup_id: null,
+      started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+      status: DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK,
+    });
+    expect(pendingTerminalRuns()[0]?.id).toBe('run-settle');
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      describeRun({
+        run_id: 'run-settle',
+        status: DESCRIBE_RUN_STATUS.COMPLETED,
+        phase: DESCRIBE_RUN_PHASE.COMPLETE,
+        completed: 4,
+        eta_seconds: null,
+      }),
+    );
+
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(getLastSettledRun()?.outcome).toBe(DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED));
+    expect(pendingTerminalRuns()).toEqual([]);
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.DONE);
+    expect(result.current.status.draftCount).toBe(4);
+    expect(result.current.actions.reviewDraftsHref).toContain('run-settle');
+  });
+
+  it('keeps a resumed unresolved identity after a failed first read, and retries that identity', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-resume', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+      status: DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK,
+    });
+    fetchBulkDescribeRunMock.mockRejectedValue(new Error('lost status'));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.DESCRIBE_POLL_ERROR));
+    expect(pendingTerminalRuns().map(({ id }) => id)).toEqual(['run-resume']);
+    expect(result.current.actions.onCancel).not.toBeNull();
+    expect(result.current.actions.onRetry).not.toBeNull();
+    fetchBulkDescribeRunMock.mockResolvedValue(describeRun({
+      run_id: 'run-resume', status: DESCRIBE_RUN_STATUS.COMPLETED,
+      phase: DESCRIBE_RUN_PHASE.COMPLETE, completed: 4,
+    }));
+    act(() => result.current.actions.onRetry?.());
+    await waitFor(() => expect(getLastSettledRun()?.outcome).toBe(DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED));
+    expect(fetchBulkDescribeRunMock.mock.calls.every(([id]) => id === 'run-resume')).toBe(true);
+    expect(pendingTerminalRuns()).toEqual([]);
+  });
+
+  it('sends only one recovery Cancel in flight and permits another attempt after rejection', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-1', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    fetchBulkDescribeRunMock.mockRejectedValue(new Error('lost status'));
+    let rejectCancel!: (error: Error) => void;
+    const cancel = vi.mocked(describeApi.cancelBulkDescribeRun);
+    cancel.mockReturnValue(new Promise((_resolve, reject) => { rejectCancel = reject; }));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.DESCRIBE_POLL_ERROR));
+    expect(result.current.actions.onCancel).not.toBeNull();
+    const onCancel = result.current.actions.onCancel!;
+    act(() => { onCancel(); onCancel(); });
+    await waitFor(() => expect(cancel).toHaveBeenCalledExactlyOnceWith('run-1'));
+    expect(result.current.isCancelling).toBe(true);
+    expect(result.current.actions.onCancel).toBeNull();
+    expect(getDescribeRunContext()?.id).toBe('run-1');
+    act(() => rejectCancel(new Error('cancel request lost')));
+    await waitFor(() => expect(result.current.actions.onCancel).not.toBeNull());
+    cancel.mockResolvedValue(describeRun({ cancel_requested: true }));
+    act(() => result.current.actions.onCancel?.());
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.isCancelling).toBe(false));
+    expect(getDescribeRunContext()?.id).toBe('run-1');
+    expect(result.current.actions.onCancel).toBeNull();
+  });
+
+  it('shares the one-Cancel-in-flight guard across consumers of a recovered run', async () => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-1', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    const cancel = vi.mocked(describeApi.cancelBulkDescribeRun);
+    let rejectCancel!: (error: Error) => void;
+    cancel.mockReturnValue(new Promise((_resolve, reject) => { rejectCancel = reject; }));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => ({
+      strip: useActivityStatus(),
+      recovery: useActivityStatus({ describeRunId: 'run-1' }),
+    }), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.recovery.actions.onCancel).not.toBeNull());
+    act(() => {
+      result.current.strip.actions.onCancel?.();
+      result.current.recovery.actions.onCancel?.();
+    });
+    await waitFor(() => expect(cancel).toHaveBeenCalledExactlyOnceWith('run-1'));
+    await waitFor(() => expect(result.current.recovery.isCancelling).toBe(true));
+    expect(result.current.strip.actions.onCancel).toBeNull();
+    expect(result.current.recovery.actions.onCancel).toBeNull();
+    act(() => rejectCancel(new Error('cancel request lost')));
+    await waitFor(() => expect(result.current.recovery.actions.onCancel).not.toBeNull());
+  });
+
+  it.each([false, true])('does not let an older in-flight poll overwrite Cancel evidence (terminal: %s)', async (terminal) => {
+    putDescribeOperationContext({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-1', startup_id: null, started_at: Date.now(),
+      request: { writeAlt: false, force: false },
+    });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.actions.onCancel).not.toBeNull());
+    let resolvePoll!: (response: DescribeRunResponse) => void;
+    fetchBulkDescribeRunMock.mockReturnValue(new Promise((resolve) => { resolvePoll = resolve; }));
+    let pendingPoll!: Promise<void>;
+    act(() => {
+      pendingPoll = queryClient.refetchQueries({ queryKey: ['bulkDescribeRun', 'run-1'], exact: true });
+    });
+    await waitFor(() => expect(fetchBulkDescribeRunMock).toHaveBeenCalledTimes(2));
+    const acknowledgement = describeRun({
+      cancel_requested: true,
+      ...(terminal ? { status: DESCRIBE_RUN_STATUS.CANCELLED, phase: DESCRIBE_RUN_PHASE.CANCELLED } : {}),
+    });
+    vi.mocked(describeApi.cancelBulkDescribeRun).mockResolvedValue(acknowledgement);
+    act(() => result.current.actions.onCancel?.());
+    await waitFor(() => expect(result.current.isCancelling).toBe(false));
+    await waitFor(() => expect(queryClient.getQueryData(['bulkDescribeRun', 'run-1'])).toEqual(acknowledgement));
+    await act(async () => {
+      resolvePoll(describeRun({ cancel_requested: false }));
+      await pendingPoll;
+    });
+    expect(queryClient.getQueryData(['bulkDescribeRun', 'run-1'])).toEqual(acknowledgement);
+    expect(result.current.actions.onCancel).toBeNull();
+  });
+
+  it('resubmits unfinished items on GPU warmup-timeout Retry and persists the new run', async () => {
+    seedWarmupTimeoutRun('run-old');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-old', [
+        describeItem(11, 'completed'),
+        describeItem(12, 'skipped'),
+        describeItem(13, 'failed'),
+        describeItem(14, 'pending'),
+      ]),
+    );
+    submitBulkDescribeRunMock.mockResolvedValue(
+      describeRun({
+        run_id: 'run-new',
+        status: DESCRIBE_RUN_STATUS.PENDING,
+        phase: DESCRIBE_RUN_PHASE.WARMING,
+        gpu_state: GPU_STATE.WARMING,
+        eta_seconds: 80,
+        completed: 0,
+      }),
+    );
+
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(result.current.actions.onRetry).not.toBeNull();
+
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledWith('run-old');
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith(
+      [13, 14],
+      expect.stringMatching(/^[A-Za-z0-9_-]{16,128}$/),
+    );
+    await waitFor(() => expect(getDescribeRunContext()?.id).toBe('run-new'));
+    await waitFor(() => expect(result.current.status.runId).toBe('run-new'));
+  });
+
+  it('does not submit a second warmup-timeout resubmit while the first is pending', async () => {
+    seedWarmupTimeoutRun('run-1');
+    let resolveItems: ((value: DescribeRunItemsResponse) => void) | undefined;
+    fetchDescribeRunItemsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveItems = resolve;
+      }),
+    );
+
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
+    act(() => {
+      result.current.actions.onRetry?.();
+      result.current.actions.onRetry?.();
+    });
+
+    // mutate() schedules mutationFn asynchronously; the in-flight ref must still drop the second click.
+    await waitFor(() => expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1));
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.actions.onRetry).toBeNull());
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      resolveItems?.(
+        itemsResponse('run-1', [describeItem(21, 'failed'), describeItem(22, 'completed')]),
+      );
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith(
+      [21],
+      expect.stringMatching(/^[A-Za-z0-9_-]{16,128}$/),
+    );
+  });
+
+  it('reuses the key and unfinished-media snapshot after an ambiguous Retry failure', async () => {
+    seedWarmupTimeoutRun('run-1');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-1', [describeItem(51, 'failed')]),
+    );
+    submitBulkDescribeRunMock
+      .mockRejectedValueOnce(new Error('temporary submit failure'))
+      .mockRejectedValueOnce(new Error('temporary submit failure'))
+      .mockResolvedValue(describeRun({ run_id: 'run-new', status: DESCRIBE_RUN_STATUS.PENDING }));
+
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: 1, retryDelay: 0 },
+      },
+    });
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(2));
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+    expect(submitBulkDescribeRunMock.mock.calls[0]?.[0]).toEqual([51]);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[0]).toEqual([51]);
+    const firstActionKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
+    expect(firstActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstActionKey);
+    await waitFor(() => {
+      const mutations = queryClient.getMutationCache().getAll();
+      expect(mutations[mutations.length - 1]?.state.status).toBe('error');
+    });
+
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(3));
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[0]).toEqual([51]);
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[1]).toBe(firstActionKey);
+  });
+
+  it('keeps Retry available after a warmup-timeout resubmit failure', async () => {
+    seedWarmupTimeoutRun('run-1');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-1', [describeItem(31, 'failed')]),
+    );
+    submitBulkDescribeRunMock.mockRejectedValue(new Error('could not start run'));
+
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT);
+    expect(getDescribeRunContext()?.id).toBe('run-1');
+  });
+
+  it('does not submit when warmup-timeout items are already finished and hides Retry', async () => {
+    seedWarmupTimeoutRun('run-1');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-1', [describeItem(41, 'completed'), describeItem(42, 'skipped')]),
+    );
+
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(fetchDescribeRunItemsMock).toHaveBeenCalledWith('run-1'));
+    await waitFor(() => expect(result.current.actions.onRetry).toBeNull());
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT);
+  });
+
+  it('retries SCAN_FAILED via the scan source without submitting a describe run', async () => {
+    const retryScan = vi.fn();
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(
+      () =>
+        useActivityStatus({
+          scan: {
+            isScanning: false,
+            errorMessage: 'People identification failed.',
+            retryScan,
+          },
+        }),
+      { wrapper: createQueryWrapper(queryClient) },
+    );
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.SCAN_FAILED));
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+    expect(retryScan).toHaveBeenCalledTimes(1);
+    expect(fetchDescribeRunItemsMock).not.toHaveBeenCalled();
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+  });
+
+  it('does not retry an idle GPU status error or submit a describe run', async () => {
+    const { queryKeys } = await import('../../api/queryKeys');
+    fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error'));
+    await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE));
+    expect(result.current.status.gpuState).toBe(GPU_STATE.UNKNOWN);
+    expect(result.current.status.reason).toBeNull();
+    expect(result.current.status.retryable).toBe(false);
+    expect(result.current.actions.onRetry).toBeNull();
+    const callsBefore = fetchGpuStatusMock.mock.calls.length;
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+    await waitFor(() => expect(fetchGpuStatusMock.mock.calls.length).toBe(callsBefore));
+    expect(fetchDescribeRunItemsMock).not.toHaveBeenCalled();
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+  });
+});

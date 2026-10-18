@@ -1,0 +1,101 @@
+/**
+ * FaceThumbnail component styles
+ * CSS-based face cropping from source images
+ *
+ * @see js/components/ui/FaceThumbnail.tsx
+ * @see docs/tasks/4.0/4.2.5/OFFLINE_FIRST_THUMBNAILS.md
+ */
+
+@use '../tokens/colors';
+
+.acx-face-thumbnail {
+  display: inline-block;
+  border-radius: var(--acx-radius-circle);
+  overflow: hidden;
+  background-color: var(--acx-color-data-placeholder);
+  position: relative;
+  flex-shrink: 0;
+
+  // Size variants
+  &--sm {
+    width: 32px;
+    height: 32px;
+  }
+
+  &--md {
+    width: 48px;
+    height: 48px;
+  }
+
+  &--lg {
+    width: 64px;
+    height: 64px;
+  }
+
+  // Loading state - pulsing animation
+  &--loading {
+    animation: acx-face-thumbnail-pulse 1.5s ease-in-out infinite;
+  }
+
+  // Error state — icon + text, never colour alone (sr-004)
+  &--error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--acx-space-2);
+    padding: var(--acx-space-4);
+    box-sizing: border-box;
+    background-color: var(--acx-gray-200);
+    color: var(--acx-color-warning-border);
+    box-shadow: var(--acx-shadow-inset-danger);
+  }
+
+  &__error {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--acx-space-2);
+  }
+
+  &__error-label {
+    font-size: var(--acx-text-2xs);
+    font-weight: var(--acx-font-weight-medium);
+    line-height: var(--acx-leading-tight);
+    text-align: center;
+    color: var(--acx-color-warning-border);
+    overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+
+  &__warning-icon,
+  &__broken-icon {
+    flex-shrink: 0;
+  }
+
+  // Internal placeholder (shown while loading)
+  &__placeholder {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--acx-radius-circle);
+    background-color: var(--acx-color-data-placeholder);
+  }
+
+  // The actual image
+  img {
+    display: block;
+    position: relative;
+  }
+}
+
+@keyframes acx-face-thumbnail-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "task_ref": "GPUFLOW-2",
+  "lanes": {
+    "plan-review": {
+      "branch": "review/gpuflow-2-plan-review",
+      "worktree_path": "/Users/daniel/Development/context-alt-text-monorepo-gpuflow-2-plan-review",
+      "title": "Plan Review",
+      "objective": "Adversarial review of the GPUFLOW-2 task plan against the heuristics canon and FIR verdicts before lane materialization.",
+      "owned_paths": [
+        ".review/CHANGE.diff",
+        ".review/COMMITS.txt",
+        ".review/CONTEXT.md",
+        ".review/DIFFSTAT.txt"
+      ],
+      "required_docs": [
+        "docs/workbay/instructions.md",
+        "docs/tasks/v0.5.0/GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md"
+      ],
+      "test_commands": [],
+      "capability_tags": [],
+      "preflight_commands": [],
+      "non_goals": [
+        "No file edits outside .review/",
+        "No implementation of any slice"
+      ],
+      "commit_paths": [],
+      "commit_subject": "update plan-review",
+      "route_hints": [
+        "plan-review",
+        "plan review",
+        "Plan Review"
+      ],
+      "guidance_fallbacks": [],
+      "tooling_paths": [],
+      "grants": {
+        "worktree": "read_write",
+        "primary_repo": "read_only",
+        "extra_write_paths": []
+      },
+      "preferred_backend": "codex-remote",
+      "preferred_model": "gpt-6-astra",
+      "preferred_reasoning_effort": "high",
+      "base_sha": "ab9cee1d500fbf3b38b62d341842e1464e343a07"
+    }
+  },
+  "depends_on": {},
+  "downstream": {},
+  "merge_order": [
+    "plan-review"
+  ],
+  "routing": [],
+  "default_done_definition": "Adversarial plan review findings recorded in handoff; implementation lanes materialized only after the plan is frozen."
+}

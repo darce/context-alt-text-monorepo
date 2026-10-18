@@ -1,0 +1,135 @@
+{
+  "status": "completed",
+  "summary": "DESCBAKE-1 B3 second dispatch: confirmed and fixed DG1-06, DG1-07 and DG1-08. Committed behavioral RED (12 failed, 40 passed), then the scoped GREEN fix (52 passed). Version 2 binds each image to its own declared caption digest and generation/reweave IDs, requires explicit gold and prediction bindings, and preserves existing reports with a temporary sibling plus atomic replacement. Synthetic binding outcomes and all arm diagnostics are unchanged. No empirical quality or acceptance claim.",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+    "apps/prototype-description-service/scene/tests/test_name_binding_eval.py",
+    "apps/prototype-description-service/scripts/eval_harness/name_binding_example.json",
+    ".task-state/descbake-1/reports/B3-A2.json"
+  ],
+  "commits": [
+    "274fe4f82f4364c8967ec87e56f4a078b099c0d3",
+    "708a9569e073396e39b04aab225afe81dba4cac2"
+  ],
+  "tests": [
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b3-a2-baseline scene/tests/test_name_binding_eval.py -q",
+      "exit_code": 0,
+      "summary": "Original source: 37 passed in 0.93s. Only the owner test module ran."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b3-a2-red scene/tests/test_name_binding_eval.py -q --tb=short",
+      "exit_code": 1,
+      "summary": "First new behavioral RED: 12 failed, 40 passed in 1.74s, with executed test bodies (no collection error). Predicted and observed: legacy global source and omitted gold/bindings DID NOT RAISE NameBindingEvalError; valid v2 input rejected with input schema violation; field-swap probes got schema errors instead of expected field-specific errors; missing output parent raised FileNotFoundError; both interrupted writes raised OSError(simulated-full-disk); replace probe failed assert 0 == 1. Prior report on disk became the first 20 report characters. No production code had changed."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b3-a2-red-confirm scene/tests/test_name_binding_eval.py -q --tb=no",
+      "exit_code": 1,
+      "summary": "RED strengthened to use two images with the same local phrase and person IDs under one v1 global source; same 12 failed, 40 passed in 1.12s. Tests-only commit 274fe4f records this state. The v2 swap regex failures were expected consequences of v1 schema rejection, not proof the semantic comparison body ran. Unsafe v1 global acceptance, missing evidence acceptance and destructive write behavior were directly reproduced."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b3-a2-green scene/tests/test_name_binding_eval.py -q --tb=short",
+      "exit_code": 0,
+      "summary": "First GREEN: 52 passed in 1.11s. Existing tests migrated only for required per-image v2 source fields and report schema; all scoring assertions retained."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py apps/prototype-description-service/scene/tests/test_name_binding_eval.py",
+      "exit_code": 0,
+      "summary": "All checks passed on both owned Python files."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff format --check apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py apps/prototype-description-service/scene/tests/test_name_binding_eval.py",
+      "exit_code": 0,
+      "summary": "2 files already formatted. Earlier tests-only format check also passed. Generated local Ruff caches were removed; no shared environment changed."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python - (inline private-/tmp mutation runner; importlib loads each mutated full evaluator under scripts.eval_harness.name_binding_eval; pytest.main runs only scene/tests/test_name_binding_eval.py with --noconftest -o required_plugins= -p no:cacheprovider -q --tb=no)",
+      "exit_code": 0,
+      "summary": "Runner succeeded, 4/4 mutants caught with child pytest exit 1: skip lineage comparisons -> 6 failed/46 passed; gold default [] -> 1 failed/51 passed; prediction bindings default [] -> 1 failed/51 passed; direct output write -> 3 failed/49 passed. Copies were made only in /tmp and deleted. Source module equality verified afterward. Tests exercise the real evaluator and real filesystem with injected boundary failures; no simplified replacement evaluator. TEST-15 sensitivity check (private snapshots, not a separate git branch): https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md"
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - (first inline before/after comparison and CLI probe)",
+      "exit_code": 1,
+      "summary": "FAILED auxiliary Python probe before comparison or CLI execution: PydanticUserError: NameBindingInput is not fully defined; define Literal then call model_rebuild. Cause: probe importlib helper omitted sys.modules registration for the old source module. The enclosing multi-command shell returned 0 because subsequent git status succeeded; this entry preserves the actual Python process exit 1. Corrected helper in the next recorded run; no implementation change."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - (corrected inline before/after comparison: register old source module in sys.modules before exec_module; run real CLI subprocesses with timeout=60)",
+      "exit_code": 0,
+      "summary": "Old evaluator and example loaded from authoritative sandbox-base tree. New v2 example has identical image gold/roles/phrases and prediction bindings; report arms compare equal in full. Three distinct synthetic image sources. Real CLI atomically replaced a prior report (exit 0, v2 output equal to evaluate_file), with no sibling residue. Missing-parent CLI exited 1 with cannot write report, no traceback and no output. Temporary files only."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b3-a2-final scene/tests/test_name_binding_eval.py -q",
+      "exit_code": 0,
+      "summary": "Committed GREEN tree 708a956: 52 passed in 1.13s. Three unknown-config warnings (collection_scope_receipt, timeout, timeout_method) under isolated plugin loading. Independent outer timeout 300s enforced; no conftest/database fixtures ran."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python /tmp/descbake-b3-a2-report.py",
+      "exit_code": 0,
+      "summary": "Draft202012Validator.check_schema plus report validation against .schema.json: 0 errors; additionalProperties=false and every required report/test/finding field satisfied."
+    }
+  ],
+  "findings": [
+    {
+      "id": "DG1-06",
+      "owner": "B3",
+      "status": "confirmed_fixed",
+      "description": "Original criticism: All predictions are checked against one fixture-global anonymous-base digest and generation/reweave identity. FrozenImage carries no individual base lineage. A normal multi-image run with distinct caption bases cannot be represented truthfully, and reusing the global digest lets unrelated image records satisfy the provenance check.",
+      "evidence": "Original source apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py:93-99,113-121,233-237 has global source and no per-image lineage; predictions have no generation/reweave fields. Real producers bind spans to a caption: scene/infrastructure/vlm/florence_local_adapter.py:128-173 searches the supplied caption; scene/infrastructure/vlm/gpu_remote_adapter.py:1049-1061 computes spans then calls span_replaceable; scene/application/identity_merge/merge.py:59-65,119-125,293 verifies exact caption spans. These producers do not currently emit this standalone evaluator contract; no producer adapter is claimed. RED legacy two-image/global-source test observed DID NOT RAISE. Fixed FrozenImage.source at current module:109-116, required prediction lineage at119-129, image-specific comparisons at258-276, image_sources report at298-306. v2 distinct-bases/reused-local-ID positive test and isolated digest/generation/reweave swaps pass; bypass-lineage mutant yields 6 failures. V1 is deliberately refused. Canon PROV-01 https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#prov-01 ; GRPH-14 https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-14"
+    },
+    {
+      "id": "DG1-07",
+      "owner": "B3",
+      "status": "confirmed_fixed",
+      "description": "Original criticism: Missing evidence is silently converted into explicit empty data. Omitting gold_bindings defaults to [] and is indistinguishable from an intentional negative-control annotation. Omitting a prediction bindings field also defaults to [] and is scored as measured all-abstain with complete coverage.",
+      "evidence": "Original apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py:99,110 defaults both fields with Field(default_factory=list). Both omission RED cases observed DID NOT RAISE. Current module:116,129 requires both lists. Explicit [] remains valid; omitted gold or per-record bindings is refused. Existing missing arm-image records remain partial/no_records, missing_record outcomes, frozen denominators and null rates when no records exist. New negative-control test distinguishes missing prediction (coverage 0, no_records, all_abstain=None) from explicit [] (coverage 1, complete, all_abstain counted). Restoring either empty default independently makes its regression fail. No zero-error PASS or acceptance field is added. Canon CAL-02/CARD-03 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md ; CARD-11/Principle15 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md ; Principle18 enforced by the versioned Pydantic contract."
+    },
+    {
+      "id": "DG1-08",
+      "owner": "B3",
+      "status": "confirmed_fixed",
+      "description": "Original criticism: The report write is outside the OSError handler and directly truncates the destination. Routine output-path failures escape as raw tracebacks; a mid-write failure destroys a previous complete report.",
+      "evidence": "Original apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py:150-157 catches only evaluation errors, then calls output.write_text. RED observed raw FileNotFoundError and OSError(simulated-full-disk); prior /tmp report became the first 20 characters. Current module:170-195 validates and serializes before output creation, writes a tempfile.mkstemp sibling, closes its descriptor, writes complete UTF-8 text, calls os.replace, and cleans the temporary path in finally. Output OSError returns 1 with cannot write report. Owner tests cover missing parent, partial writes with and without a prior report, failed replacement, invalid input before any output, preservation of prior bytes and temporary cleanup. Real subprocess CLI also verified successful replacement and missing-parent error. Direct-write mutant causes 3 regression failures. CARD-03 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md"
+    },
+    {
+      "id": "B3-F1",
+      "owner": "B3",
+      "status": "modified_diagnostic_boundary_retained",
+      "description": "Retained first-attempt criticism: ADR-018 section 13 requires the wrong-binding ledger to be zero on fixtures, but the report has no single gate total. Stranger-name events are counted as unbound_phrase_bindings, prohibited additions separately, and gold wrong_person overlaps both.",
+      "evidence": "Original .task-state/descbake-1/reports/B3.json retained unchanged. Independent gate explicitly rejected requiring a single scalar for standalone diagnostic plumbing. Current module docstring:40-42 states that raw categories overlap and any future acceptance gate needs a deduplicated event union plus complete gold/prediction coverage. No gate consumer, new scalar, PASS field or acceptance claim is introduced. Required omissions and missing records remain separate diagnostics; raw counters must not be summed into an acceptance gate."
+    },
+    {
+      "id": "B3-F2",
+      "owner": "B3",
+      "status": "modified_explicit_negative_is_valid_omission_refused",
+      "description": "Retained first-attempt criticism: ADR-018 section 13 requires gold associations for every fixture, but the brief asked for empty-gold validation. The evaluator accepts zero gold bindings and returns null rates.",
+      "evidence": "Original B3 report retained unchanged. User and independent gate clarify that explicitly annotated gold_bindings=[] is a legitimate negative control; omission is UNKNOWN, not an empty annotation. DG1-07 now refuses omission and preserves explicit [] with null gold rates. Required identities still need gold associations under unchanged _check_image. No rates, frame or thresholds manipulated to pass."
+    },
+    {
+      "id": "B3-F3",
+      "owner": "B3",
+      "status": "retained_future_adoption_requirement",
+      "description": "Retained first-attempt criticism: ADR-018 section 13 lists no-naming and presence-appendix baselines; the evaluator does not generate them. A fixture must declare an all-abstain arm as the no-naming reference.",
+      "evidence": "Original B3 report and example arm/gold content remain unchanged except v2 lineage migration. This dispatch fixes only DG1-06 through DG1-08; it generates no captions or baselines. ranking remains null. Supplied gate_rejected_concerns treats baseline/paired context-obedience adoption requirements as prospective before any quality/ranking claim. EVAL-01 https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#eval-01 ; CARD-23 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/context-obedience-is-a-separate-capability.md"
+    },
+    {
+      "id": "B3-F4",
+      "owner": "B3",
+      "status": "corrected_source_identity_for_second_dispatch",
+      "description": "Retained first-attempt source criticism: pinned 98b228aa did not resolve in the stripped clone and the first report recorded synthetic sandbox base bfe4c84 as source_sha.",
+      "evidence": "Historical B3 report retained byte-identical. This dispatch uses source_sha 69e73d648bcad3144a23c82dbbb8847a4fad77f1 as requested. .workbay-source-provenance records source_tree 8bd578b568b5eedcefc8418d177ec3c3eb5c7079, exactly equal to initial HEAD 41eb2a65047fa249deda45465f15260fa94ae22f tree. History stripping does not replace source identity. New RED commit 274fe4f and GREEN 708a956 descend from that exact source tree."
+    }
+  ],
+  "limitations": [
+    "Only the three owned implementation/example/test paths plus B3-A2.json changed. DG1-01 through DG1-05 and DG1-09 belong to B1/B2 and are supplied global context, not adjudicated or edited in this B3 dispatch. No outside-scope change or blocker was needed.",
+    "Intentional minimal versioned contract migration: input name_binding_eval/v2 and report name_binding_eval_report/v2. Move global source to each frozen_images[].source; add source_generation_id/source_reweave_id to predictions; replace report source with image_sources. V1 cannot truthfully recover per-image provenance and is refused; no automatic global-source migration or fallback.",
+    "Synthetic fixtures only. Example digests are SHA-256 of synthetic-anonymous-caption-{image_id}-v2 marker bytes, not checksums of a real model-produced caption. Synthetic generation/reweave IDs are labels, not immutable model pins. Evaluator checks agreement of declared lineage; it cannot establish external evidence authenticity without original artifacts. No model or production-output integration is claimed.",
+    "No empirical quality claim, winner, ranking, deployment readiness or zero-error acceptance verdict. Raw diagnostic categories can overlap; future zero-error acceptance requires a deduplicated event union and complete gold/prediction coverage. CLI exit 0 means a valid diagnostic report was emitted.",
+    "Only owner-module tests and owner-module offline probes ran, each under an outer timeout300s (subprocess probes timeout60s). Conftest and plugin autoload disabled, required_plugins overridden to isolate from private DB and shared fixtures. Three unknown pytest configuration warnings are preserved; no collection failure is counted as behavioral RED.",
+    "Historical first-attempt B3.json remains unchanged, including its collection ModuleNotFoundError RED with zero executed tests, 37-pass GREEN and previous findings. Supplied B1/B2 first attempts and all historical paths remain untouched. Their historical collection REDs are not causal behavior proof; current RED is 12 executed failures.",
+    "Canon v0.26.2 matched rows/cards were read from the supplied packet and cited at use time; no GitHub or other network fetch. TEST-06 initial failure prediction https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-06 ; CARD-06 evidence before commitment https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/evidence-before-commitment.md ; CARD-08 reproduce and falsify https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/falsification-disconfirmers.md . Irrelevant adaptation, embedding, runtime, occlusion and unrelated VLM-6 semantic neighbors did not drive changes.",
+    "The lane .venv was used read-only; no install or shared environment mutation, subagents, GPU, private DB, deployment, network/model call, or production routing. Mutation checks used private /tmp full-module copies and the owner test file; no alternate branch or repository source mutations were made for those checks.",
+    "Atomic report replacement protects against write/replace failures tested here; it is not a claim of power-loss durability or concurrent-writer arbitration. Temporary-file cleanup can itself fail if the filesystem refuses unlink; such OSError returns the same deliberate CLI error. No fsync durability promise added.",
+    "Report commits list the RED and GREEN commits; the report-only commit cannot contain its own hash. The final response supplies it. Git hooks were disabled per command to avoid launching tests outside the authorized owner module. Commits have no author or coauthor trailers."
+  ],
+  "source_sha": "69e73d648bcad3144a23c82dbbb8847a4fad77f1"
+}

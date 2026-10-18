@@ -1,0 +1,33 @@
+{
+  "lane": "hrev-eval-manifest",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/eval_harness/tests",
+      "result": "fail",
+      "detail": "uv failed before pytest started: read-only file system while removing the provisioned environment's alembic executable."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scripts/eval_harness/tests",
+      "result": "fail",
+      "detail": "First failing test: scripts/eval_harness/tests/test_cli_exit_gates.py::test_fusion_runner_exits_3_on_roster_only_bakeoff; first error line: Timeout (0:04:00)!; traceback points to asyncio.run shutdown from fusion_runner.py:548. test_fusion_runner_allow_refused_detection_does_not_consent_to_identification timed out the same way. Interrupted after the second timeout (exit 130)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_eval_harness_face_metrics.py -k test_detection_pr_strict_derives_pairs_from_geometry_not_counts",
+      "result": "pass",
+      "detail": "3 passed, 112 deselected in 4.86s."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17012,
+      "finding_id": "FXBSD-a32360cf0064fce6-M-4fa21f71ac9f965adb932ad8",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/manifest.py:515 - FaceBoxSource declares OPERATOR = \"operator\"; FaceBox.source uses FaceBoxSource at line 948. scene/tests/test_eval_harness_face_metrics.py::test_detection_pr_strict_derives_pairs_from_geometry_not_counts constructs operator boxes and asserts TP/FP/FN counts.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py::test_detection_pr_strict_derives_pairs_from_geometry_not_counts"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The operator source regression is fixed and its focused guard passed all 3 cases; no new defects were confirmed in this lane. The full eval harness command remains unverified because two fusion runner tests timed out during asyncio shutdown."
+}

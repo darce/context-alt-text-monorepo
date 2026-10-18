@@ -1,0 +1,113 @@
+{
+  "content": [],
+  "structuredContent": {
+    "ok": true,
+    "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+    "status": "selected",
+    "skip_reason": null,
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "relevant_lines": [
+      "relevant:",
+      "- Intake subject whole-source PASS, authority map…: SwholeG2 terminal0 rawPASS0 [decision:17928]",
+      "- Raw authenticated route characterization comple…: QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]",
+      "- Prepare source navigation evidence without bypa…: Freshcodegraphsearch/get_code_snippet currentcanonical92c21115 [decision:18003]",
+      "- cdx_decision_bakerounds_initial_subject_source_…: SubjectWHOLEtest1486PASS0 [decision:17847]",
+      "- RAW-AUTH-TEST-G1-02: Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]",
+      "- RAW-AUTH-TEST-G1-03: At the real CLI boundary, make attempted credential reads observable for the existing [finding:19139]",
+      "- bakeoff_native_admission_preserves_co_tenants: First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]",
+      "- RAW-AUTH-TEST-G1-02: Five malformed-file privacy checks track KEY after replacing the file with unrelated bytes, so [finding:19138]"
+    ],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 10000,
+      "chars_used": 1063,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": 0.7213011980056763,
+      "score_lo": 0.6215731501579285,
+      "selected": [
+        {
+          "emitted_chars": 106,
+          "id": "17928",
+          "kind": "decision",
+          "label": "Intake subject whole-source PASS, authority map…",
+          "score": 0.6902782917022705,
+          "snippet": "SwholeG2 terminal0 rawPASS0 [decision:17928]"
+        },
+        {
+          "emitted_chars": 168,
+          "id": "17912",
+          "kind": "decision",
+          "label": "Raw authenticated route characterization comple…",
+          "score": 0.7213011980056763,
+          "snippet": "QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]"
+        },
+        {
+          "emitted_chars": 132,
+          "id": "18003",
+          "kind": "decision",
+          "label": "Prepare source navigation evidence without bypa…",
+          "score": 0.7089691162109375,
+          "snippet": "Freshcodegraphsearch/get_code_snippet currentcanonical92c21115 [decision:18003]"
+        },
+        {
+          "emitted_chars": 95,
+          "id": "17847",
+          "kind": "decision",
+          "label": "cdx_decision_bakerounds_initial_subject_source_…",
+          "score": 0.6809666156768799,
+          "snippet": "SubjectWHOLEtest1486PASS0 [decision:17847]"
+        },
+        {
+          "emitted_chars": 139,
+          "id": "19138",
+          "kind": "finding",
+          "label": "RAW-AUTH-TEST-G1-02",
+          "score": 0.6645743250846863,
+          "snippet": "Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]"
+        },
+        {
+          "emitted_chars": 125,
+          "id": "19139",
+          "kind": "finding",
+          "label": "RAW-AUTH-TEST-G1-03",
+          "score": 0.6395329833030701,
+          "snippet": "At the real CLI boundary, make attempted credential reads observable for the existing [finding:19139]"
+        },
+        {
+          "emitted_chars": 164,
+          "id": "17641",
+          "kind": "decision",
+          "label": "bakeoff_native_admission_preserves_co_tenants",
+          "score": 0.6309955716133118,
+          "snippet": "First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]"
+        },
+        {
+          "emitted_chars": 134,
+          "id": "19138",
+          "kind": "finding",
+          "label": "RAW-AUTH-TEST-G1-02",
+          "score": 0.6215731501579285,
+          "snippet": "Five malformed-file privacy checks track KEY after replacing the file with unrelated bytes, so [finding:19138]"
+        }
+      ],
+      "skip_reason": null,
+      "status": "selected"
+    }
+  },
+  "isError": false
+}

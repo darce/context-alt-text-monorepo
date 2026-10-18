@@ -1,0 +1,1539 @@
+"""Integration test for POST /recognition/analyze/multipart (E15-11 Slice 1.4d).
+
+Wires the new route into a minimal FastAPI app with overrides for auth,
+session, scan_queue, settings, and ObjectStore. Verifies the route accepts
+a multipart submission, persists each image part through ObjectStore.put,
+calls scan_queue.create_scan_job_record with the pre-generated job_id,
+and returns 202 with the matching id. Negative paths assert the 422 / 400
+/ 403 boundary checks at the route level.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import tempfile
+import uuid
+from pathlib import Path
+
+import httpx
+import pytest
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from starlette.datastructures import FormData, Headers, UploadFile
+from starlette.requests import ClientDisconnect, Request
+from starlette.testclient import TestClient
+
+from recognition.application.storage import FilesystemObjectStore, ObjectStoreError
+from recognition.config.settings import RecognitionSettings
+from recognition.interface_adapters.http.deps import (
+    get_optional_session,
+    get_scan_queue_service_optional,
+    require_write_access,
+)
+from recognition.interface_adapters.http.deps.auth import AuthContext
+from recognition.interface_adapters.http.deps.object_store import (
+    _settings_default,
+    get_object_store_factory_for_request,
+)
+from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
+from recognition.interface_adapters.http.middleware.correlation import (
+    CORRELATION_ID_HEADER,
+    CorrelationIdMiddleware,
+    generate_correlation_id,
+)
+from recognition.interface_adapters.http.routers.analyze_multipart import (
+    _parse_multipart_form,
+    router,
+)
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes-for-tests"
+
+
+class _FakeScanQueue:
+    """Captures route -> scan_queue calls so tests can assert on them."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self.populate_calls: list[dict] = []
+
+    async def create_scan_job_record(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        total: int,
+        created_by_user_id: int | None = None,
+        job_id: uuid.UUID | None = None,
+    ) -> uuid.UUID:
+        # The multipart route must pass the pre-generated job_id.
+        self.calls.append(
+            {
+                "tenant_id": tenant_id,
+                "total": total,
+                "job_id": job_id,
+                "created_by_user_id": created_by_user_id,
+            }
+        )
+        assert job_id is not None, "multipart route must pre-generate job_id"
+        return job_id
+
+    async def populate_scan_job_items(self, **kwargs) -> int:
+        # Reached via chain_populate_and_process scheduled by the route
+        # (BR-05). Recorded so tests can introspect dispatch shape; returns
+        # the number of items "enqueued" to satisfy the caller's contract.
+        self.populate_calls.append(kwargs)
+        media_items = kwargs.get("media_items") or []
+        return len(list(media_items))
+
+
+class _CommitOnlySession:
+    def __init__(self) -> None:
+        self.commit_calls = 0
+        self.bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+
+    async def execute(self, *args, **kwargs):
+        return None
+
+    async def commit(self) -> None:
+        self.commit_calls += 1
+
+
+def _patch_scan_dispatch_ready(monkeypatch: pytest.MonkeyPatch, *, mod=None) -> None:
+    """Bypass worker/capability intake gate — multipart route tests own other boundaries."""
+    from recognition.application.scan import capability as capability_module
+    from recognition.interface_adapters.http.routers import analyze_multipart as multipart_mod
+
+    async def _ready(_session, *, inline_processing: bool) -> None:
+        return None
+
+    target = mod if mod is not None else multipart_mod
+    monkeypatch.setattr(target, "require_scan_dispatch_ready", _ready)
+    monkeypatch.setattr(capability_module, "require_scan_dispatch_ready", _ready)
+
+
+@pytest.fixture
+def tenant_id() -> str:
+    return str(uuid.uuid4())
+
+
+@pytest.fixture
+def app_with_overrides(tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch):
+    # The repo-wide conftest enables RECOGNITION_ASYNC_ANALYZE_INLINE so the
+    # JSON analyze flow exercises the inline-processor in tests; the multipart
+    # route's BackgroundTask would then try to hit a real DB through
+    # process_scan_job_inline. Force it off here so the route's dispatch can
+    # be exercised against the fake scan queue alone.
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    return fastapi_app, fake_queue, settings
+
+
+def _multipart_submission(tenant_id: str) -> dict:
+    """Build a multipart submission with one image part and a JSON request part."""
+    return {
+        "files": [
+            (
+                "request",
+                ("request.json", json.dumps({"tenant_id": tenant_id}), "application/json"),
+            ),
+            ("image_42", ("a.png", PNG_BYTES, "image/png")),
+        ],
+    }
+
+
+def test_multipart_happy_path_returns_202_and_stores_blob(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifies the route's synchronous behaviour: blob written, scan job
+    record created with pre-generated id, 202 returned. The BackgroundTask
+    is monkeypatched out so the cleanup phase wired in S1.6 does not race
+    the assertions about on-disk state."""
+    app, queue, settings = app_with_overrides
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    body = response.json()
+    job_id = body["id"]
+    assert uuid.UUID(job_id), "response id must be a UUID"
+
+    # scan_queue was called exactly once with the pre-generated job_id
+    assert len(queue.calls) == 1
+    call = queue.calls[0]
+    assert str(call["tenant_id"]) == tenant_id
+    assert call["total"] == 1
+    assert str(call["job_id"]) == job_id
+
+    # Blob landed under <blob_root>/<tenant>/<job_id>/42.bin
+    expected = settings.blob_root / tenant_id / job_id / "42.bin"
+    assert expected.is_file()
+    assert expected.read_bytes() == PNG_BYTES
+
+
+def test_multipart_ensures_tenant_exists_before_blob_writes(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+    fake_session = _CommitOnlySession()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: fake_session
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    require_calls: list[str] = []
+
+    async def _require_tenant_record(session, tenant_uuid):
+        assert session is fake_session
+        require_calls.append(str(tenant_uuid))
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "require_tenant_record", _require_tenant_record)
+    monkeypatch.setattr(mod, "is_postgres", lambda _session: True)
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+    _patch_scan_dispatch_ready(monkeypatch, mod=mod)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+
+    assert response.status_code == 202, response.text
+    assert require_calls == [tenant_id]
+    assert fake_session.commit_calls == 1
+
+
+def test_multipart_gate_failure_writes_no_blobs(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the provisioning gate rejects the tenant, the route must fail BEFORE writing any blob."""
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+    fake_session = _CommitOnlySession()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: fake_session
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _reject_tenant(session, tenant_uuid):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "tenant_not_provisioned"})
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "require_tenant_record", _reject_tenant)
+    monkeypatch.setattr(mod, "is_postgres", lambda _session: True)
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["code"] == "tenant_not_provisioned"
+    # No blob may have been persisted before the gate rejected the request.
+    written = list(settings.blob_root.rglob("*")) if settings.blob_root.exists() else []
+    assert [p for p in written if p.is_file()] == []
+    assert fake_session.commit_calls == 0
+
+
+def test_multipart_admin_key_with_envelope_tenant_succeeds(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admin keys (auth.tenant_claim is None) must reach the multipart route
+    and have their ObjectStore built from the envelope's tenant_id.
+
+    Regression for MAINT-multipart-admin-tenant-20260426: the route used to
+    depend on get_object_store_for_request, which 401'd whenever
+    auth.tenant_claim was empty — making the route unreachable from any
+    deployment whose API key was an admin/dev key (the LocalWP -> remote
+    OCI VM scenario). Tenant binding is still enforced because the
+    factory pins the FilesystemObjectStore to the envelope tenant_id.
+    """
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(
+        token="admin-key", tenant_claim=None, is_admin=True, enabled=True
+    )
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    # Blob landed under the ENVELOPE tenant_id, not auth.tenant_claim.
+    expected = settings.blob_root / tenant_id / job_id / "42.bin"
+    assert expected.is_file()
+    assert expected.read_bytes() == PNG_BYTES
+
+
+def test_multipart_canonicalizes_uppercase_envelope_tenant_uuid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An envelope tenant_id submitted in uppercase must be canonicalized to
+    the lowercase UUID form before binding the ObjectStore.
+
+    Regression for MAINT-multipart-admin-tenant-20260426-BR-01: uuid.UUID()
+    accepts uppercase but str() always returns lowercase canonical, which
+    is the form auth.tenant_claim carries (from the api_keys row) and the
+    form the BackgroundTask rebuilds the store with via str(tenant_uuid).
+    Binding the request-scoped store to the raw uppercase string would
+    write blobs under <root>/ABC.../<job>/<media>.bin while the lowercase-
+    bound store rebuilt in the BackgroundTask (Linux deployment, case-
+    sensitive FS) could neither open the blob_uri nor clean up the orphan.
+
+    The assertion targets the factory call argument directly rather than the
+    on-disk path because macOS APFS is case-insensitive and would mask the
+    bug — the production runtime (OCI VM, ext4) is case-sensitive.
+    """
+    from recognition.interface_adapters.http.deps.object_store import (
+        get_object_store_factory_for_request,
+    )
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    canonical_tenant = str(uuid.uuid4())
+    upper_tenant = canonical_tenant.upper()
+    assert upper_tenant != canonical_tenant, "test premise: upper differs from lower"
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    factory_calls: list[str] = []
+
+    def _spy_factory_provider():
+        def _factory(tenant_id: str):
+            factory_calls.append(tenant_id)
+            return FilesystemObjectStore(root=settings.blob_root, tenant_id=tenant_id)
+
+        return _factory
+
+    fake_queue = _FakeScanQueue()
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(
+        token="admin-key", tenant_claim=None, is_admin=True, enabled=True
+    )
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+    fastapi_app.dependency_overrides[get_object_store_factory_for_request] = _spy_factory_provider
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(upper_tenant))
+    assert response.status_code == 202, response.text
+
+    # The factory must have been called with the canonical (lowercase) form,
+    # never the raw uppercase envelope. Multiple calls are fine; none may
+    # carry the raw casing.
+    assert factory_calls, "object_store_factory must be invoked at least once"
+    assert all(call == canonical_tenant for call in factory_calls), (
+        f"factory must receive canonical tenant id only; got: {factory_calls}"
+    )
+    assert upper_tenant not in factory_calls
+
+    # The scan_queue records the canonical tenant_id too (as a UUID object).
+    assert len(fake_queue.calls) == 1
+    assert str(fake_queue.calls[0]["tenant_id"]) == canonical_tenant
+
+
+def test_multipart_canonicalizes_uppercase_envelope_tenant_for_auth_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tenant-scoped key whose tenant_claim equals the envelope tenant_id
+    in canonical form must NOT be 403'd just because the envelope was
+    submitted in uppercase. Locks in canonical comparison at the auth /
+    envelope mismatch guard alongside the storage canonicalization above.
+    """
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    canonical_tenant = str(uuid.uuid4())
+    upper_tenant = canonical_tenant.upper()
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+    fake_queue = _FakeScanQueue()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    # auth.tenant_claim carries the canonical (lowercase) form from the DB row.
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(
+        token="t", tenant_claim=canonical_tenant
+    )
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(upper_tenant))
+    assert response.status_code == 202, response.text
+
+
+def test_multipart_rejects_when_request_part_missing(app_with_overrides, tenant_id: str) -> None:
+    app, _queue, _settings = app_with_overrides
+    client = TestClient(app)
+
+    response = client.post(
+        "/recognition/analyze/multipart",
+        files=[("image_1", ("a.png", PNG_BYTES, "image/png"))],
+    )
+    assert response.status_code == 400
+
+
+def test_multipart_rejects_when_no_image_parts(app_with_overrides, tenant_id: str) -> None:
+    app, _queue, _settings = app_with_overrides
+    client = TestClient(app)
+
+    response = client.post(
+        "/recognition/analyze/multipart",
+        files=[
+            (
+                "request",
+                ("request.json", json.dumps({"tenant_id": tenant_id}), "application/json"),
+            ),
+        ],
+    )
+    assert response.status_code == 422
+
+
+def test_multipart_rejects_tenant_mismatch(app_with_overrides, tenant_id: str) -> None:
+    """auth.tenant_claim from the override must match the tenant_id in the
+    request envelope. A mismatch is 403 — defends against a token issued
+    for tenant A submitting work that claims to be tenant B's."""
+    app, _queue, _settings = app_with_overrides
+    client = TestClient(app)
+    other_tenant = str(uuid.uuid4())
+
+    response = client.post(
+        "/recognition/analyze/multipart",
+        files=[
+            (
+                "request",
+                ("request.json", json.dumps({"tenant_id": other_tenant}), "application/json"),
+            ),
+            ("image_1", ("a.png", PNG_BYTES, "image/png")),
+        ],
+    )
+    assert response.status_code == 403
+
+
+def test_multipart_rejects_unsupported_mime(app_with_overrides, tenant_id: str) -> None:
+    """The route delegates to multipart_to_media_items which raises 415 for
+    a disallowed MIME type. Verify the error surfaces via the route."""
+    app, _queue, _settings = app_with_overrides
+    client = TestClient(app)
+    response = client.post(
+        "/recognition/analyze/multipart",
+        files=[
+            (
+                "request",
+                ("request.json", json.dumps({"tenant_id": tenant_id}), "application/json"),
+            ),
+            ("image_1", ("a.gif", b"GIF89a-fake", "image/gif")),
+        ],
+    )
+    assert response.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_parse_multipart_form_rejects_sixth_image_part(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEST-15: the image-part bulkhead must fire at ``_MAX_IMAGE_PARTS``."""
+    created_spools = []
+
+    def tracked_spooled_file(*args, **kwargs):
+        spool = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115 - parser owns and closes the spool
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", tracked_spooled_file)
+    encoded_request = httpx.Request(
+        "POST",
+        "http://testserver/recognition/analyze/multipart",
+        files=[(f"image_{media_id}", (f"{media_id}.png", PNG_BYTES, "image/png")) for media_id in range(1, 7)],
+    )
+    request_body = encoded_request.read()
+    delivered = False
+
+    async def receive() -> dict:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": request_body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(key.lower(), value) for key, value in encoded_request.headers.raw],
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _parse_multipart_form(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "multipart submission accepts at most 5 image parts"
+    assert len(created_spools) == 5
+    assert all(spool.closed for spool in created_spools)
+
+
+@pytest.mark.asyncio
+async def test_parse_multipart_form_rejects_seventh_non_image_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEST-15: the total-file bulkhead must also bound non-image uploads."""
+    created_spools = []
+
+    def tracked_spooled_file(*args, **kwargs):
+        spool = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115 - parser owns and closes the spool
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", tracked_spooled_file)
+    encoded_request = httpx.Request(
+        "POST",
+        "http://testserver/recognition/analyze/multipart",
+        files=[
+            (f"attachment_{part_id}", (f"{part_id}.bin", b"metadata", "application/octet-stream"))
+            for part_id in range(1, 8)
+        ],
+    )
+    request_body = encoded_request.read()
+    delivered = False
+
+    async def receive() -> dict:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": request_body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(key.lower(), value) for key, value in encoded_request.headers.raw],
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _parse_multipart_form(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "Too many files. Maximum number of files is 6."
+    assert len(created_spools) == 6
+    assert all(spool.closed for spool in created_spools)
+
+
+@pytest.mark.asyncio
+async def test_multipart_accepts_five_images_and_rejects_six(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, queue, settings = app_with_overrides
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    async def _queue_provider():
+        return queue
+
+    async def _factory_provider():
+        return lambda scoped_tenant: FilesystemObjectStore(root=settings.blob_root, tenant_id=scoped_tenant)
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+
+    def submission(image_count: int) -> dict:
+        files = [
+            (
+                "request",
+                ("request.json", json.dumps({"tenant_id": tenant_id}), "application/json"),
+            )
+        ]
+        files.extend(
+            (f"image_{media_id}", (f"{media_id}.png", PNG_BYTES, "image/png")) for media_id in range(1, image_count + 1)
+        )
+        return {"files": files}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        accepted = await client.post("/recognition/analyze/multipart", **submission(5))
+        rejected = await client.post("/recognition/analyze/multipart", **submission(6))
+
+    assert accepted.status_code == 202, accepted.text
+    assert queue.calls[0]["total"] == 5
+    assert rejected.status_code == 400, rejected.text
+    assert len(queue.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_multipart_storage_failure_uses_opaque_production_error_envelope(
+    tmp_path: Path,
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    correlation_id = generate_correlation_id()
+    secret_path = tmp_path / "private" / "tenant-secret" / "image.png"
+    driver_error = f"permission denied writing {secret_path} with password=secret"
+
+    class _FailingStore:
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            raise ObjectStoreError(driver_error)
+
+        def cleanup(self, *, job_id: str) -> None:
+            return None
+
+        def open(self, uri: str):
+            raise ObjectStoreError("not reached")
+
+    async def _factory_provider():
+        return lambda _tenant_id: _FailingStore()
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    async def _queue_provider():
+        return fake_queue
+
+    fake_queue = _FakeScanQueue()
+    app = FastAPI()
+    app.add_middleware(CorrelationIdMiddleware)
+    app.include_router(router, prefix="/recognition")
+    register_exception_handlers(app)
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+
+    import logging
+
+    from recognition.interface_adapters.http import exception_handlers
+
+    caplog.set_level(logging.ERROR, logger=exception_handlers.logger.name)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze/multipart",
+            headers={CORRELATION_ID_HEADER: correlation_id},
+            **_multipart_submission(tenant_id),
+        )
+
+    body = response.json()
+    assert response.status_code == 500
+    assert body == {
+        "error": "internal_server_error",
+        "path": "http://testserver/recognition/analyze/multipart",
+        "correlation_id": correlation_id,
+    }
+    assert driver_error not in response.text
+    assert str(secret_path) not in response.text
+    records = [record for record in caplog.records if record.name == exception_handlers.logger.name]
+    assert len(records) == 1
+    assert records[0].correlation_id == correlation_id
+    assert records[0].exc_info is not None
+    assert driver_error in str(records[0].exc_info[1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        HTTPException(status_code=400, detail="invalid multipart"),
+        ObjectStoreError("storage failed"),
+        RuntimeError("persistence failed"),
+    ],
+    ids=["success", "validation-error", "storage-error", "persistence-error"],
+)
+async def test_multipart_closes_parsed_form_on_every_exit(
+    tenant_id: str, monkeypatch: pytest.MonkeyPatch, failure: Exception | None
+) -> None:
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    upload = UploadFile(
+        filename="a.png",
+        file=tempfile.SpooledTemporaryFile(),  # noqa: SIM115 - route closure is the behavior under test
+    )
+    upload.headers = Headers({"content-type": "image/png"})
+    upload.file.write(PNG_BYTES)
+    upload.file.seek(0)
+
+    class _CloseSpyForm(FormData):
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+            await super().close()
+
+    form = _CloseSpyForm([("image_1", upload)])
+    expected_result = object()
+
+    async def _fake_parse(_request: Request) -> FormData:
+        return form
+
+    async def _fake_process(**_kwargs):
+        if failure is not None:
+            raise failure
+        return expected_result
+
+    monkeypatch.setattr(mod, "_parse_multipart_form", _fake_parse)
+    monkeypatch.setattr(mod, "_analyze_media_multipart_form", _fake_process)
+    request = Request({"type": "http", "method": "POST", "path": "/recognition/analyze/multipart", "headers": []})
+
+    async def _call_route():
+        return await mod.analyze_media_multipart(
+            request=request,
+            background_tasks=BackgroundTasks(),
+            auth=AuthContext(token="t", tenant_claim=tenant_id),
+            session=None,
+            scan_queue=_FakeScanQueue(),
+            object_store_factory=lambda _tenant: None,
+            _demo_quota=None,
+        )
+
+    if failure is None:
+        assert await _call_route() is expected_result
+    else:
+        with pytest.raises(type(failure)):
+            await _call_route()
+    assert form.closed is True
+    assert upload.file.closed is True
+
+
+@pytest.mark.asyncio
+async def test_multipart_parser_closes_partial_spool_on_client_disconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    boundary = "disconnect-boundary"
+    partial_body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+    ).encode() + PNG_BYTES
+    messages = iter(
+        [
+            {"type": "http.request", "body": partial_body, "more_body": True},
+            {"type": "http.disconnect"},
+        ]
+    )
+
+    async def receive():
+        return next(messages)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+        },
+        receive,
+    )
+
+    with pytest.raises(ClientDisconnect):
+        await mod._parse_multipart_form(request)
+
+    assert opened_spools, "test must reach file-spool allocation before disconnecting"
+    assert all(spool.closed for spool in opened_spools)
+
+
+@pytest.mark.asyncio
+async def test_multipart_parser_closes_boundaryless_trailing_spool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clean EOF must not orphan a file omitted from the returned FormData."""
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    boundary = "missing-terminal-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+    ).encode() + PNG_BYTES
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+        },
+        receive,
+    )
+
+    form = await mod._parse_multipart_form(request)
+    await form.close()
+
+    assert list(form.multi_items()) == []
+    assert len(opened_spools) == 1, "test must reach file-spool allocation before clean EOF"
+    assert opened_spools[0].closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("media_type", "ending", "expected_status", "expected_detail"),
+    [
+        (
+            b"\xa0multipart/form-data",
+            "eof",
+            422,
+            "multipart submission must include at least one image_<media_id> part",
+        ),
+        (b"\xa0multipart/form-data", "malformed", 400, "invalid multipart form"),
+        (b"\t multipart/form-data", "malformed", 400, "invalid multipart form"),
+        (b"MULTIPART/FORM-DATA", "complete", 202, None),
+        (b"application/octet-stream", "complete", 415, "content-type must be multipart/form-data"),
+        (b"multipart/form-data-extra", "complete", 415, "content-type must be multipart/form-data"),
+        (b"application/x-www-form-urlencoded", "complete", 415, "content-type must be multipart/form-data"),
+        (b"", "complete", 415, "content-type must be multipart/form-data"),
+    ],
+)
+async def test_multipart_route_normalizes_content_type_and_owns_spools(
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    media_type: bytes,
+    ending: str,
+    expected_status: int,
+    expected_detail: str | None,
+) -> None:
+    """Exercise parser selection at the HTTP boundary with a disk-backed upload."""
+    import io
+
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    image_data = PNG_BYTES + b"x" * (1024 * 1024)
+
+    class _MemoryStore:
+        def put(self, **_kwargs):
+            return "memory://image"
+
+        def open(self, _uri):
+            return io.BytesIO(image_data)
+
+        def cleanup(self, **_kwargs):
+            pass
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    queue = _FakeScanQueue()
+
+    async def _queue_provider():
+        return queue
+
+    async def _factory_provider():
+        return lambda _tenant_id: _MemoryStore()
+
+    async def _noop_chain(**_kwargs):
+        pass
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+    boundary = "normalized-content-type"
+
+    async def _body():
+        yield (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="request"\r\n\r\n'
+            f"{json.dumps({'tenant_id': tenant_id})}\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+        ).encode() + image_data
+        # Separate chunks ensure the upload reaches disk before the parser
+        # encounters clean EOF or malformed subsequent headers.
+        if ending == "malformed":
+            yield f"\r\n--{boundary}\r\nInvalid Header: value\r\n\r\n".encode()
+        elif ending == "complete":
+            yield f"\r\n--{boundary}--\r\n".encode()
+
+    fd_directory = Path("/proc/self/fd")
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Read the local procfs snapshot without introducing thread-pool activity.
+        before_fds = len(list(fd_directory.iterdir())) if fd_directory.exists() else None  # noqa: ASYNC240
+        try:
+            response = await client.post(
+                "/recognition/analyze/multipart",
+                headers={b"content-type": media_type + f"; boundary={boundary}".encode()},
+                content=_body(),
+            )
+            assert response.status_code == expected_status, response.text
+            if expected_detail is not None:
+                assert response.json() == {"detail": expected_detail}
+            if expected_status == 415:
+                assert opened_spools == [], "unsupported media types must fail before spool allocation"
+            else:
+                assert len(opened_spools) == 1
+                assert opened_spools[0]._rolled, "probe must exercise an upload exceeding the memory limit"
+                assert all(spool.closed for spool in opened_spools)
+            if before_fds is not None:
+                assert len(list(fd_directory.iterdir())) == before_fds  # noqa: ASYNC240
+            assert len(queue.calls) == (1 if expected_status == 202 else 0)
+        finally:
+            # A failing regression must not itself leak descriptors into later tests.
+            for spool in opened_spools:
+                spool.close()
+
+
+@pytest.mark.asyncio
+async def test_multipart_route_rejects_malformed_parser_input_and_closes_spool(
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed bytes after a part boundary are a bounded client error."""
+    from starlette import formparsers
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    async def _queue_provider():
+        return _FakeScanQueue()
+
+    async def _factory_provider():
+        return lambda _tenant_id: None
+
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+    boundary = "malformed-next-part"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="request"; filename="request.json"\r\n'
+        "Content-Type: application/json\r\n\r\n"
+        "{}\r\n"
+        f"--{boundary}\r\n"
+        "Invalid Header: value\r\n\r\n"
+    ).encode()
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze/multipart",
+            headers={"content-type": f"multipart/form-data; boundary={boundary}"},
+            content=body,
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {"detail": "invalid multipart form"}
+    assert len(opened_spools) == 1, "test must allocate a spool before the malformed bytes"
+    assert opened_spools[0].closed is True
+
+
+# ---------------------------------------------------------------------------
+# BR-05 + BR-06 regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_multipart_schedules_chain_populate_and_process(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E15-11-BR-05: a successful multipart submission must enqueue
+    chain_populate_and_process via BackgroundTasks so the scan worker has
+    work to claim. Without this wiring the route would return 202 but no
+    queue items would ever exist for the worker to pick up."""
+    app, _queue, _settings = app_with_overrides
+    calls: list[dict] = []
+
+    async def _fake_chain(**kwargs):
+        calls.append(kwargs)
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _fake_chain)
+
+    client = TestClient(app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    assert len(calls) == 1, "chain_populate_and_process must be scheduled exactly once"
+    kwargs = calls[0]
+    assert kwargs["job_id"] == job_id
+    assert kwargs["tenant_id"] == tenant_id
+    assert kwargs["media_items"] == [(42, kwargs["media_sources"][0])]
+    assert len(kwargs["media_sources"]) == 1
+    assert kwargs["media_sources"][0].startswith("file://")
+
+
+def test_multipart_cleans_up_blobs_when_create_scan_job_record_fails(tmp_path: Path, tenant_id: str) -> None:
+    """E15-11-BR-06: if create_scan_job_record raises after blobs have been
+    written, the route must call object_store.cleanup so the per-job
+    directory does not become an orphaned blob the worker can never find
+    (no DB row exists for it to discover)."""
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    class _RaisingQueue:
+        async def create_scan_job_record(self, **kwargs):
+            raise RuntimeError("simulated DB outage during job creation")
+
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    app.dependency_overrides[get_optional_session] = lambda: None
+    app.dependency_overrides[get_scan_queue_service_optional] = lambda: _RaisingQueue()
+    app.dependency_overrides[_settings_default] = lambda: settings
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code >= 500, response.text
+
+    # The per-tenant directory may or may not exist (cleanup removes the per-job
+    # subdir under it); but no per-job subdirectory must remain — the failed
+    # job's blobs were rolled back.
+    tenant_root = settings.blob_root / tenant_id
+    if tenant_root.exists():
+        assert list(tenant_root.iterdir()) == [], f"per-job subdirectory leaked: {list(tenant_root.iterdir())}"
+
+
+@pytest.mark.asyncio
+async def test_multipart_cleans_up_blobs_when_dispatch_registration_fails(
+    tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A committed job whose BackgroundTask cannot be registered must fail
+    and release the blobs staged for that job through the injected store."""
+
+    class _StatusTrackingQueue(_FakeScanQueue):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled_jobs: list[uuid.UUID] = []
+            self.job_statuses: dict[uuid.UUID, str] = {}
+
+        async def create_scan_job_record(self, **kwargs) -> uuid.UUID:
+            job_id = await super().create_scan_job_record(**kwargs)
+            self.job_statuses[job_id] = "pending"
+            return job_id
+
+        async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
+            self.cancelled_jobs.append(job_id)
+            self.job_statuses[job_id] = "failed"
+            return 0
+
+    class _RecordingStore:
+        def __init__(self) -> None:
+            self.put_jobs: list[str] = []
+            self.cleanup_jobs: list[str] = []
+
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            self.put_jobs.append(job_id)
+            return f"memory://{job_id}/{media_id}"
+
+        def cleanup(self, *, job_id: str) -> None:
+            self.cleanup_jobs.append(job_id)
+
+        def open(self, _uri: str):
+            raise AssertionError("dispatch failure must occur before telemetry reads the blob")
+
+    queue = _StatusTrackingQueue()
+    store = _RecordingStore()
+
+    class _RaisingBackgroundTasks:
+        def add_task(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("simulated BackgroundTasks registration failure")
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    form_data = FormData(
+        [
+            ("request", json.dumps({"tenant_id": tenant_id})),
+            (
+                "image_42",
+                UploadFile(
+                    file=io.BytesIO(PNG_BYTES),
+                    filename="a.png",
+                    headers=Headers({"content-type": "image/png"}),
+                ),
+            ),
+        ]
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await mod._analyze_media_multipart_form(
+            form_data=form_data,
+            background_tasks=_RaisingBackgroundTasks(),
+            auth=AuthContext(token="t", tenant_claim=tenant_id),
+            session=None,
+            scan_queue=queue,
+            object_store_factory=lambda _tenant: store,
+        )
+
+    assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert exc_info.value.detail == "Scan dispatch unavailable"
+    assert len(queue.calls) == 1
+    job_id = queue.calls[0]["job_id"]
+    assert queue.cancelled_jobs == [job_id]
+    assert queue.job_statuses[job_id] == "failed"
+    assert store.put_jobs == [str(job_id)]
+    assert store.cleanup_jobs == [str(job_id)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_kind",
+    ["registration", "store_factory", "non_idempotent_replay", "persisted_replay", "replay_put_failure"],
+)
+async def test_multipart_replay_failure_preserves_original_job(
+    tenant_id: str, monkeypatch: pytest.MonkeyPatch, failure_kind: str, tmp_path: Path
+) -> None:
+    """Replay dispatch preserves the original job, blobs, and reservation on both sinks."""
+    from recognition.application.scan.scan_queue_service import ScanQueueService
+    from recognition.domain.portal_contracts import UsageTicket
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    class _StatusTrackingQueue(_FakeScanQueue):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled_jobs: list[uuid.UUID] = []
+            self.job_statuses: dict[uuid.UUID, str] = {}
+
+        async def create_scan_job_record(self, **kwargs) -> uuid.UUID:
+            job_id = await super().create_scan_job_record(**kwargs)
+            self.job_statuses[job_id] = "pending"
+            return job_id
+
+        async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
+            self.cancelled_jobs.append(job_id)
+            self.job_statuses[job_id] = "failed"
+            return 0
+
+    class _PersistedStatusTrackingQueue(_StatusTrackingQueue, ScanQueueService):
+        """Use the production sink type without executing background dispatch."""
+
+    class _RecordingStore(FilesystemObjectStore):
+        def __init__(self) -> None:
+            super().__init__(root=tmp_path, tenant_id=tenant_id)
+            self.blobs: dict[tuple[str, str], bytes] = {}
+            self.put_jobs: list[str] = []
+            self.cleanup_jobs: list[str] = []
+            self.fail_next_put = False
+
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            self.put_jobs.append(job_id)
+            if self.fail_next_put:
+                self.fail_next_put = False
+                raise OSError("simulated temporary-file creation failure")
+            self.blobs[(job_id, media_id)] = bytes(data)
+            return super().put(job_id=job_id, media_id=media_id, data=data)
+
+        def cleanup(self, *, job_id: str) -> None:
+            self.cleanup_jobs.append(job_id)
+            self.blobs = {key: value for key, value in self.blobs.items() if key[0] != job_id}
+            super().cleanup(job_id=job_id)
+
+    class _ReplayAdmission:
+        def __init__(self) -> None:
+            self.ticket: UsageTicket | None = None
+            self.commits: list[UsageTicket] = []
+            self.releases: list[UsageTicket] = []
+
+        async def reserve(self, tenant_id, *, idempotency_key: str, job_id: str, cost_units: int, **kwargs):
+            if self.ticket is None:
+                self.ticket = UsageTicket(
+                    reservation_id=uuid.uuid4(),
+                    tenant_id=tenant_id,
+                    idempotency_key=idempotency_key,
+                    cost_units=cost_units,
+                    operation_id=kwargs["operation_id"],
+                    request_fingerprint=kwargs["request_fingerprint"],
+                    job_id=job_id,
+                    fence_token="fence-1",
+                )
+            return self.ticket
+
+        async def commit(self, ticket: UsageTicket) -> None:
+            self.commits.append(ticket)
+            return None
+
+        async def release(self, ticket: UsageTicket) -> None:
+            self.releases.append(ticket)
+
+    class _RaisingBackgroundTasks:
+        def add_task(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("simulated replay registration failure")
+
+    def _form_data() -> FormData:
+        return FormData(
+            [
+                ("request", json.dumps({"tenant_id": tenant_id})),
+                (
+                    "image_42",
+                    UploadFile(
+                        file=io.BytesIO(PNG_BYTES),
+                        filename="a.png",
+                        headers=Headers({"content-type": "image/png"}),
+                    ),
+                ),
+            ]
+        )
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+    queue = _StatusTrackingQueue() if failure_kind == "non_idempotent_replay" else _PersistedStatusTrackingQueue()
+    store = _RecordingStore()
+    admission = _ReplayAdmission()
+    background_tasks = BackgroundTasks()
+    common = {
+        "auth": AuthContext(token="t", tenant_claim=tenant_id),
+        "session": None,
+        "scan_queue": queue,
+        "object_store_factory": lambda _tenant: store,
+        "usage_admission_service": admission,
+        "idempotency_key": "multipart-replay-registration-failure",
+    }
+
+    first = await mod._analyze_media_multipart_form(
+        form_data=_form_data(), background_tasks=background_tasks, **common
+    )
+    assert admission.commits == []
+    assert first.id == str(queue.calls[0]["job_id"])
+    original_job_id = queue.calls[0]["job_id"]
+    original_blob = store.blobs[(str(original_job_id), "42")]
+    blob_path = tmp_path / tenant_id / str(original_job_id) / "42.bin"
+    original_inode = blob_path.stat().st_ino
+    if failure_kind == "replay_put_failure":
+        store.fail_next_put = True
+
+    if failure_kind in {"store_factory", "non_idempotent_replay"}:
+        def failing_factory(_tenant):
+            raise RuntimeError("replay store unavailable")
+
+        common["object_store_factory"] = failing_factory
+
+    if failure_kind in {"persisted_replay", "non_idempotent_replay"}:
+        replay_tasks = BackgroundTasks()
+        replay = await mod._analyze_media_multipart_form(
+            form_data=_form_data(), background_tasks=replay_tasks, **common
+        )
+        assert replay.id == first.id
+        assert replay.status == first.status
+        assert replay.progress == first.progress
+        assert replay.message == first.message
+        if failure_kind == "persisted_replay":
+            assert len(replay_tasks.tasks) == 1
+            assert replay_tasks.tasks[0].func is mod._dispatch_multipart_persisted_analysis
+            assert replay_tasks.tasks[0].kwargs["job_id"] == first.id
+            assert blob_path.stat().st_ino != original_inode
+        else:
+            assert replay_tasks.tasks == []
+            assert blob_path.stat().st_ino == original_inode
+        assert admission.commits == []
+    else:
+        expected_error = {
+            "registration": HTTPException,
+            "replay_put_failure": OSError,
+        }.get(failure_kind, RuntimeError)
+        with pytest.raises(expected_error) as exc_info:
+            await mod._analyze_media_multipart_form(
+                form_data=_form_data(), background_tasks=_RaisingBackgroundTasks(), **common
+            )
+        if failure_kind == "registration":
+            assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            assert exc_info.value.detail == "Scan dispatch unavailable"
+        elif failure_kind == "replay_put_failure":
+            assert str(exc_info.value) == "simulated temporary-file creation failure"
+            assert blob_path.stat().st_ino == original_inode
+        else:
+            assert str(exc_info.value) == "replay store unavailable"
+        assert admission.commits == []
+    assert len(queue.calls) == 1
+    assert queue.cancelled_jobs == []
+    assert queue.job_statuses[original_job_id] == "pending"
+    assert store.put_jobs == [str(original_job_id)] * (
+        2 if failure_kind in {"registration", "persisted_replay", "replay_put_failure"} else 1
+    )
+    assert store.cleanup_jobs == []
+    assert store.blobs[(str(original_job_id), "42")] == original_blob
+    assert blob_path.read_bytes() == original_blob
+    assert admission.releases == []
+
+
+@pytest.mark.asyncio
+async def test_multipart_router_rate_limiter_enforces_key_limit_before_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The router-level limiter throttles API keys before its handler parses uploads."""
+    from recognition.interface_adapters.http.deps import rate_limit
+    from recognition.interface_adapters.http.deps.auth import require_auth
+    from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
+    from recognition.interface_adapters.http.routers.analyze_multipart import router as multipart_router
+
+    monkeypatch.setenv("RECOGNITION_RATE_LIMIT_RPM", "1")
+    rate_limit._reset_state_for_tests()
+    try:
+        dependency_calls = [dependency.dependency for dependency in multipart_router.dependencies]
+        assert dependency_calls.index(require_auth) < dependency_calls.index(enforce_rate_limit)
+
+        auth = AuthContext(
+            token="t",
+            tenant_claim="tenant",
+            api_key_id="multipart-rate-key",
+            rate_limit_tier="STANDARD",
+            enabled=True,
+        )
+        await enforce_rate_limit(auth)
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_rate_limit(auth)
+        assert exc_info.value.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert exc_info.value.detail == "rate limit exceeded"
+    finally:
+        rate_limit._reset_state_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# E15-11-BR-14: route must not reach through FilesystemObjectStore.root
+# ---------------------------------------------------------------------------
+
+
+def test_multipart_route_does_not_reach_through_filesystem_protocol(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The multipart route must construct background-task cleanup through
+    the ObjectStore protocol, not by reading FilesystemObjectStore.root.
+    Stub store implements only put/open/cleanup; route must still
+    complete 202 — proving any non-filesystem implementation can swap in
+    unchanged (e.g. Slice B's OCI store)."""
+    from recognition.application.storage import ObjectStore as _ObjectStore
+    from recognition.interface_adapters.http.deps.object_store import (
+        get_object_store_factory_for_request,
+    )
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    class _ProtocolOnlyStore:
+        """Implements only put/open/cleanup; deliberately has NO .root attr."""
+
+        _shared: dict[str, bytes] = {}
+
+        def __init__(self, tenant_id: str) -> None:
+            self._tenant_id = tenant_id
+
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            uri = f"stub://{self._tenant_id}/{job_id}/{media_id}"
+            type(self)._shared[uri] = bytes(data)
+            return uri
+
+        def open(self, uri: str):
+            import io
+
+            return io.BytesIO(type(self)._shared[uri])
+
+        def cleanup(self, *, job_id: str) -> None:
+            type(self)._shared = {k: v for k, v in type(self)._shared.items() if f"/{job_id}/" not in k}
+
+    def _stub_factory_provider():
+        def _factory(tenant: str) -> _ObjectStore:
+            return _ProtocolOnlyStore(tenant_id=tenant)
+
+        return _factory
+
+    fake_queue = _FakeScanQueue()
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[get_object_store_factory_for_request] = _stub_factory_provider
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+
+
+# ---------------------------------------------------------------------------
+# S3.1 — structured log fields on the multipart route
+# ---------------------------------------------------------------------------
+
+
+def test_multipart_route_emits_structured_telemetry_log_line(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """E15-11 S3.1: the multipart route must emit a single structured log
+    line with the diagnostic fields needed to triage transport failures
+    (transport, parts_count, total_bytes, tenant_id, job_id) — no PII."""
+    app, _queue, _settings = app_with_overrides
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    import logging
+
+    caplog.set_level(logging.INFO, logger=mod.logger.name)
+
+    client = TestClient(app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    matching = [
+        rec
+        for rec in caplog.records
+        if rec.name == mod.logger.name and "analyze_media_multipart_dispatch" in rec.getMessage()
+    ]
+    assert len(matching) == 1, f"expected exactly one telemetry log line, got {len(matching)}: " + str(
+        [r.getMessage() for r in caplog.records]
+    )
+    msg = matching[0].getMessage()
+    assert "transport=multipart" in msg
+    assert "parts_count=1" in msg
+    assert f"total_bytes={len(PNG_BYTES)}" in msg
+    assert f"tenant_id={tenant_id}" in msg
+    assert f"job_id={job_id}" in msg

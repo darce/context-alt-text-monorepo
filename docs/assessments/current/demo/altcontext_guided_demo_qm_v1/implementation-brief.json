@@ -1,0 +1,2505 @@
+{
+  "$schema": "./implementation-brief.schema.json",
+  "schema_version": "altcontext-guided-demo-implementation/1.0.0",
+  "document_id": "ACX-QM-GUIDED-DEMO-01",
+  "title": "AltContext guided demo: copy, flow and state-contract review",
+  "prepared_date": "2026-09-07",
+  "timezone": "America/Toronto",
+  "status": "proposal_not_implemented",
+  "target_route": "/wp-admin/admin.php?page=alt-context-dashboard#/guided-prototype",
+  "audiences": {
+    "product_role": "A content editor reviewing alt text for the supplied festival gallery",
+    "review_role": "Quartermaster product/design/engineering hiring reviewers",
+    "constraint": "The reviewer need not know these public figures or operate WordPress beyond reaching the supplied demo."
+  },
+  "recommendation": {
+    "decision": "Retain the scenario; change the story from successful recognition to editorial control over an AI-assisted draft.",
+    "primary_job": "Understand the source, decide which suggested names to use, review text, apply locally, and reverse the application.",
+    "career_value": "Demonstrates product boundaries, uncertainty-aware interaction, accessibility work, and end-to-end craft. It does not by itself demonstrate customer discovery, model accuracy, production adoption or hiring likelihood.",
+    "core_is_recorded": true,
+    "live_is_optional_and_separate": true
+  },
+  "scope_and_limits": {
+    "reviewed": [
+      "Supplied HTML main element",
+      "Current canon interaction, accessibility and selected writing rows",
+      "Earlier user-pasted Quartermaster role"
+    ],
+    "not_reviewed": [
+      "Authenticated browser interaction",
+      "Computed CSS or screenshots",
+      "App event handlers or backend source",
+      "Network requests",
+      "Recorded-run original logs",
+      "Image identity, event metadata or licensing evidence",
+      "Noninitial UI states",
+      "Any user study"
+    ],
+    "snapshot_observations": {
+      "word_count_method": "BeautifulSoup get_text(separator=space, strip=True).split(); includes screen-reader-only text",
+      "word_count": 883,
+      "paragraph_count": 35,
+      "button_count": 12
+    },
+    "priority_meaning": {
+      "P0": "Required state/boundary guard before presenting the revised demo; a risk may require confirmation rather than being a proven runtime bug.",
+      "P1": "Needed for clear, usable review and credible product craft.",
+      "P2": "Useful supporting evidence; not a reason to expand the product before applying."
+    },
+    "prohibited_claims": [
+      "This audit logged in or tested the live demo",
+      "All shown identities or licenses were independently verified",
+      "A successful saved example establishes accuracy",
+      "An assisted confirmation is an independent identity judgment",
+      "Passing tests establishes full accessibility conformance",
+      "This patch improves hiring odds by a numerical amount"
+    ]
+  },
+  "sources": [
+    {
+      "id": "S01",
+      "kind": "user_supplied_html",
+      "file": "source-snapshot.html",
+      "original_filename": "Pasted text.txt",
+      "sha256": "5aad68d0d7b3b3a7b59c27f41dc112a3f04469004928f41ef82fe8d84fc90953",
+      "scope": "One DOM snapshot only; not source code, computed styles, screenshots, event handlers, network traces, or subsequent states."
+    },
+    {
+      "id": "S02",
+      "kind": "user_supplied_role",
+      "scope": "Quartermaster Lead Product Designer posting pasted earlier in this conversation; AI-assisted homeowner tools, R&D, discovery/prototyping/testing, simple experiences from property data, design systems, and design rationale. No assertion that the vacancy is still open."
+    },
+    {
+      "id": "S03",
+      "kind": "canon_lexicon",
+      "repository": "darce/heuristics-canon",
+      "path": "lexicons/interaction-ux.md",
+      "git_blob_sha": "180740093900725559b00833adc1a1e1a95547af",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md"
+    },
+    {
+      "id": "S04",
+      "kind": "canon_lexicon",
+      "repository": "darce/heuristics-canon",
+      "path": "lexicons/accessibility.md",
+      "git_blob_sha": "1c3e80a608da2ee44757e6383d60aea416832659",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md"
+    },
+    {
+      "id": "S05",
+      "kind": "canon_lexicon",
+      "repository": "darce/heuristics-canon",
+      "path": "lexicons/writing.md",
+      "git_blob_sha": "30ea4356833641ce9f3de88fbac812a6063e11f6",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/writing.md",
+      "scope": "Editorial checks, not validated AI-authorship detection. The lexicon itself marks their source basis provisional."
+    },
+    {
+      "id": "S06",
+      "kind": "primary_guidance",
+      "url": "https://www.w3.org/WAI/tutorials/images/decision-tree/",
+      "scope": "Text alternatives depend on image purpose and context, not automatic inclusion of every available name."
+    },
+    {
+      "id": "S07",
+      "kind": "primary_guidance",
+      "url": "https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/",
+      "scope": "Disclosure control behavior; aria-expanded tracks visibility; aria-controls is optional, not a standalone conformance requirement."
+    },
+    {
+      "id": "S08",
+      "kind": "primary_guidance",
+      "url": "https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html",
+      "scope": "Announce appropriate status changes without unnecessary focus movement or excessive announcements."
+    }
+  ],
+  "canon_rules": [
+    {
+      "id": "NAV-08",
+      "source_id": "S03",
+      "title": "Clear entry points",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#nav-08",
+      "application": "Keep the primary task obvious; put supplementary explanations behind disclosure."
+    },
+    {
+      "id": "NAV-09",
+      "source_id": "S03",
+      "title": "Named step progress",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#nav-09",
+      "application": "Expose the ordered steps and the current position without confusing pipeline state with visitor progress."
+    },
+    {
+      "id": "NAV-11",
+      "source_id": "S03",
+      "title": "URL restores place",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#nav-11",
+      "application": "Preserve the hash-router route when navigating within this page; this rule does not select navigation membership."
+    },
+    {
+      "id": "NAV-13",
+      "source_id": "S03",
+      "title": "Consistent vocabulary",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#nav-13",
+      "application": "Use one term per object or action; distinguish alt text, a sample draft, and a separate live description."
+    },
+    {
+      "id": "INT-03",
+      "source_id": "S03",
+      "title": "Group by scope",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-03",
+      "application": "Keep per-face choices with the evidence they affect; separate live experiments from demo application."
+    },
+    {
+      "id": "INT-05",
+      "source_id": "S03",
+      "title": "Clear final action",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-05",
+      "application": "Make the local apply action the unmistakable end of review, adjacent to its preview."
+    },
+    {
+      "id": "INT-06",
+      "source_id": "S03",
+      "title": "Specific action labels",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-06",
+      "application": "Name the target of apply, undo and reset; unavailable actions say why."
+    },
+    {
+      "id": "INT-07",
+      "source_id": "S03",
+      "title": "Preview before commitment",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-07",
+      "application": "The displayed candidate must be exactly the text that the application action writes."
+    },
+    {
+      "id": "INT-08",
+      "source_id": "S03",
+      "title": "Wait state and cancellation",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-08",
+      "application": "Show real progress, bound waiting, and offer an honest stop/cancel action according to actual backend capability."
+    },
+    {
+      "id": "INT-09",
+      "source_id": "S03",
+      "title": "Reversible edits",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-09",
+      "application": "Keep reversible local applications; preserve manual draft revisions before replacement."
+    },
+    {
+      "id": "INT-10",
+      "source_id": "S03",
+      "title": "Predictable automation",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-10",
+      "application": "Expose state and the next effect; an asynchronous result must not silently alter the reviewed candidate."
+    },
+    {
+      "id": "INT-11",
+      "source_id": "S03",
+      "title": "Preserve useful work",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#int-11",
+      "application": "Keep usable edits when a dependency changes or a separate live request fails."
+    },
+    {
+      "id": "HAI-01",
+      "source_id": "S03",
+      "title": "Inspectable supporting evidence",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-01",
+      "application": "Let a reviewer inspect the observations and provenance behind a saved suggestion."
+    },
+    {
+      "id": "HAI-02",
+      "source_id": "S03",
+      "title": "Correction reaches its source",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-02",
+      "application": "A demo choice changes the demo source state, not just a caption; do not imply it trains or changes the server roster."
+    },
+    {
+      "id": "HAI-05",
+      "source_id": "S03",
+      "title": "Disclose automation boundaries",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-05",
+      "application": "Separate recorded recognition, browser-local editing, and live server generation; avoid claims beyond the observed envelope."
+    },
+    {
+      "id": "HAI-11",
+      "source_id": "S03",
+      "title": "Assistance and correction modes",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-11",
+      "application": "Allow omission and wording changes; state whether a task is assisted review rather than independent verification."
+    },
+    {
+      "id": "HAI-12",
+      "source_id": "S03",
+      "title": "Generated output remains a proposal",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-12",
+      "application": "Present sample and live text as drafts subject to editorial review."
+    },
+    {
+      "id": "HAI-13",
+      "source_id": "S03",
+      "title": "Local verification cues",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-13",
+      "application": "Keep evidence and editing beside the risky output instead of repeating generic reassurance throughout the page."
+    },
+    {
+      "id": "HAI-15",
+      "source_id": "S03",
+      "title": "Independent judgment before reveal",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-15",
+      "application": "A confirm-only flow with the answer already displayed cannot be described as independent identity verification."
+    },
+    {
+      "id": "HAI-17",
+      "source_id": "S03",
+      "title": "Reference coverage",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#hai-17",
+      "application": "Make the available reference set inspectable; partial bundled coverage must be disclosed. Current three-reference display is a partial-coverage concern, not the literal single-reference trigger."
+    },
+    {
+      "id": "UXR-01",
+      "source_id": "S03",
+      "title": "Validation level",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#uxr-01",
+      "application": "Separate implementation checks, usability evidence, model accuracy, and job-market fit."
+    },
+    {
+      "id": "UXR-03",
+      "source_id": "S03",
+      "title": "Decision-relevant measurement",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#uxr-03",
+      "application": "Measure whether visitors understand and complete the demo, not whether they click every control."
+    },
+    {
+      "id": "UXR-04",
+      "source_id": "S03",
+      "title": "Predeclared success",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#uxr-04",
+      "application": "Write task pass/fail criteria before participant sessions."
+    },
+    {
+      "id": "UXR-05",
+      "source_id": "S03",
+      "title": "Sampling uncertainty",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#uxr-05",
+      "application": "Report n and uncertainty for headline estimates; do not turn a small-sample count into a population claim."
+    },
+    {
+      "id": "UXR-14",
+      "source_id": "S03",
+      "title": "Sample matches the purpose",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/interaction-ux.md#uxr-14",
+      "application": "Use a small formative round for discovery, never as exhaustive validation."
+    },
+    {
+      "id": "A11Y-02",
+      "source_id": "S04",
+      "title": "Purposeful text alternatives",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-02",
+      "application": "Explain the page-specific reason for alt text; keep the evidence image distinct from the applied demo image."
+    },
+    {
+      "id": "A11Y-03",
+      "source_id": "S04",
+      "title": "Associated input labels",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-03",
+      "application": "Use fieldsets/legends and labels for face choices and the editable draft."
+    },
+    {
+      "id": "A11Y-04",
+      "source_id": "S04",
+      "title": "Named controls",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-04",
+      "application": "Control names must identify what changes and where."
+    },
+    {
+      "id": "A11Y-06",
+      "source_id": "S04",
+      "title": "Non-color state",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-06",
+      "application": "Choice, progress and readiness have text or semantic state beyond color."
+    },
+    {
+      "id": "A11Y-08",
+      "source_id": "S04",
+      "title": "Reflow and resize",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-08",
+      "application": "Verify at narrow widths, zoom and changed text spacing; no visual conformance verdict is possible from this snapshot."
+    },
+    {
+      "id": "A11Y-11",
+      "source_id": "S04",
+      "title": "Keyboard task completion",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-11",
+      "application": "The core demo, dialogs, evidence inspection and undo need complete keyboard paths."
+    },
+    {
+      "id": "A11Y-13",
+      "source_id": "S04",
+      "title": "Unobscured focus",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-13",
+      "application": "Focus and scrolled headings must remain visible below the WordPress toolbar and guide."
+    },
+    {
+      "id": "A11Y-20",
+      "source_id": "S04",
+      "title": "No surprise navigation",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-20",
+      "application": "Changing a face choice must not advance the page or move focus without an explicit navigation action."
+    },
+    {
+      "id": "A11Y-21",
+      "source_id": "S04",
+      "title": "Status announcements",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/accessibility.md#a11y-21",
+      "application": "Announce meaningful updates once; do not make the textarea or full history live."
+    },
+    {
+      "id": "WRIT-02",
+      "source_id": "S05",
+      "title": "Plain terms",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/writing.md#writ-02",
+      "application": "Replace implementation jargon in the visitor path with its observable effect."
+    },
+    {
+      "id": "WRIT-06",
+      "source_id": "S05",
+      "title": "Stable terms",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/writing.md#writ-06",
+      "application": "Do not rename the same saved object across the flow."
+    },
+    {
+      "id": "WRIT-17",
+      "source_id": "S05",
+      "title": "Remove repetition",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/writing.md#writ-17",
+      "application": "Explain the model-to-name sequence once rather than in successive introductions."
+    },
+    {
+      "id": "WRIT-28",
+      "source_id": "S05",
+      "title": "Evidence for effects",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/writing.md#writ-28",
+      "application": "Remove the uninspectable second-photo performance aside from this demo."
+    },
+    {
+      "id": "WRIT-41",
+      "source_id": "S05",
+      "title": "Resolvable evidence",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/writing.md#writ-41",
+      "application": "Preserve actual source and case-study links; an HTTP success alone does not establish relevance or licensing."
+    },
+    {
+      "id": "WRIT-44",
+      "source_id": "S05",
+      "title": "Repair the cause",
+      "url": "https://github.com/darce/heuristics-canon/blob/main/lexicons/writing.md#writ-44",
+      "application": "Fix split state and inflated claims before polishing their wording."
+    }
+  ],
+  "canon_scope_decisions": [
+    {
+      "id": "X01",
+      "rule_id": "HAI-15",
+      "disposition": "explicit_limited_demo_exception",
+      "decision": "Use assisted editorial review rather than adding blind identity testing to this demo.",
+      "rationale": "The supplied case already names the people and shows labelled references. Hiding one label later cannot make the session independent. The visitor chooses whether to use a supplied suggestion in text, not whether to authenticate a person.",
+      "allowed_claim": "Assisted review of saved name suggestions.",
+      "forbidden_claims": [
+        "Independent verification",
+        "Verified identity",
+        "Human confirmation establishes recognition accuracy"
+      ],
+      "scope_limit": "This exception does not approve confirm-only design for a consequential production identity-verification workflow. Such a workflow needs a separate design and evaluation."
+    },
+    {
+      "id": "X02",
+      "rule_id": "HAI-17",
+      "disposition": "partial_coverage_not_literal_single_reference_violation",
+      "decision": "Improve access to existing references and disclose missing bundled coverage.",
+      "rationale": "The snapshot already shows multiple references; do not claim a single-reference failure. Do not demand publication of unlicensed missing assets."
+    },
+    {
+      "id": "X03",
+      "rule_id": "HAI-02",
+      "disposition": "scope_to_demo_authority",
+      "decision": "Choices update the local demo state and survive local re-render; they do not update the server roster.",
+      "rationale": "Do not add training/roster writes just to satisfy a rule intended for production correction loops."
+    },
+    {
+      "id": "X04",
+      "rule_id": "NAV-11",
+      "disposition": "narrow_application",
+      "decision": "Use it for the hash-route risk only.",
+      "rationale": "It does not require a Practice section, determine global navigation, or require sharing private local choices through the URL."
+    },
+    {
+      "id": "X05",
+      "rule_id": "HAI-12",
+      "disposition": "retain_existing_good_behavior",
+      "decision": "Preserve the editable draft and explicit local apply/undo boundary.",
+      "rationale": "Do not replace a useful review path with a read-only slideshow."
+    },
+    {
+      "id": "X06",
+      "rule_id": "A11Y-04",
+      "disposition": "do_not_overstate_missing_aria",
+      "decision": "Missing aria-controls on the current step disclosure is not a standalone WCAG failure.",
+      "rationale": "W3C APG describes aria-controls as optional. Test actual naming, expanded state, focus and reachability."
+    },
+    {
+      "id": "X07",
+      "rule_id": "UXR-01",
+      "disposition": "no_validation_claim",
+      "decision": "All findings are a source-based expert review; every implementation test starts not_run.",
+      "rationale": "HTML analysis cannot prove user comprehension, correctness of handlers, identity accuracy or full conformance."
+    }
+  ],
+  "retain": [
+    "The supplied photo and example page context; no invented homeowner scenario.",
+    "The explicit recorded-recognition disclosure and sample provenance.",
+    "Leave unnamed as a valid choice for each face.",
+    "An editable text draft and a separate explicit local application.",
+    "Undo, reset, local action history, descriptive alternatives, associated labels, and existing status regions.",
+    "The real case-study anchor and image credits.",
+    "The optional live capability only with its own verified boundary."
+  ],
+  "evidence_anchors": [
+    {
+      "id": "E01",
+      "source_id": "S01",
+      "selector": ".acx-guided-entrance__intro",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named, and puts their names in the image description. You choose what gets saved."
+      ],
+      "excerpt": "Follow one photo from start to finish."
+    },
+    {
+      "id": "E02",
+      "source_id": "S01",
+      "selector": ".acx-guided-entrance__status",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Current build This demo uses one saved face-match run. Descriptions can run live on the real GPU."
+      ],
+      "excerpt": "Descriptions can run live on the real GPU."
+    },
+    {
+      "id": "E03",
+      "source_id": "S01",
+      "selector": ".acx-guided-entrance__boundary",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "This is a practice copy. Changes stay in this tab and reset when you reload the page. Live recognition and guest access are still in progress. Read the AltContext case study ."
+      ],
+      "excerpt": "Changes stay in this tab and reset when you reload the page."
+    },
+    {
+      "id": "E04",
+      "source_id": "S01",
+      "selector": ".acx-guided-page__hero",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Saved run How two faces become two names in the description AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Reset practice"
+      ],
+      "excerpt": "You always have the last word."
+    },
+    {
+      "id": "E05",
+      "source_id": "S01",
+      "selector": ".acx-guided-flow ol",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Photo [done] 2 faces found [done] Matched to Justin Trudeau and Katy Perry [done] You confirm each match [now] Names in the description [waiting]"
+      ],
+      "excerpt": "Matched to Justin Trudeau and Katy Perry",
+      "observation": "The match item is data-state=done while both later decision captions are undecided."
+    },
+    {
+      "id": "E06",
+      "source_id": "S01",
+      "selector": ".acx-guided-guide",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Step by step Look at the photo Skip to this step Show steps See the photo and the page it sits on."
+      ],
+      "excerpt": "Show steps",
+      "observation": "The supplied collapsed guide exposes the current label but not an ordinal or the total step count."
+    },
+    {
+      "id": "E07",
+      "source_id": "S01",
+      "selector": ".acx-guided-guide__skip-link",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Skip to this step"
+      ],
+      "excerpt": "Skip to this step",
+      "observation": "href is #guided-section-understand; the supplied application URL uses #/guided-prototype."
+    },
+    {
+      "id": "E08",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__how-it-works",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "AltContext finds every face in the photo. It compares each face to the people you already named. It asks you to confirm each match. Nothing is named without your OK."
+      ],
+      "excerpt": "AltContext finds every face in the photo."
+    },
+    {
+      "id": "E09",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__strength",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "✓ Match strength: strong. This face is close to the 2 saved photos of Justin Trudeau.",
+        "✓ Match strength: strong. This face is close to the 5 saved photos of Katy Perry."
+      ],
+      "excerpt": "Match strength: strong."
+    },
+    {
+      "id": "E10",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__gallery-caption",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "Saved photos of Justin Trudeau: 2 of 2 shown.",
+        "Saved photos of Katy Perry: 3 of 5 shown."
+      ],
+      "excerpt": "Saved photos of Katy Perry: 3 of 5 shown."
+    },
+    {
+      "id": "E11",
+      "source_id": "S01",
+      "selector": "#guided-identity-change-reason",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Changing an answer swaps in a different saved draft. Save or discard your edit first."
+      ],
+      "excerpt": "Save or discard your edit first.",
+      "observation": "Visible message in the snapshot; no Discard control appears in the supplied main element."
+    },
+    {
+      "id": "E12",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__decisions",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Confirm each match Changing an answer swaps in a different saved draft. Save or discard your edit first. Justin Trudeau, face on the left Yes, this is Justin Trudeau Keep this person unnamed Katy Perry, face on the right Yes, this is Katy Perry Keep this person unnamed"
+      ],
+      "excerpt": "Confirm each match",
+      "observation": "Choices are in a separate container after both evidence articles. CSS positions and scrolling behavior are unknown."
+    },
+    {
+      "id": "E13",
+      "source_id": "S01",
+      "selector": ".acx-guided-review__status",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Ready for you to check"
+      ],
+      "excerpt": "Ready for you to check"
+    },
+    {
+      "id": "E14",
+      "source_id": "S01",
+      "selector": "#guided-description-draft",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest."
+      ],
+      "observation": "A label/for association exists. The textarea is enabled in the supplied undecided state."
+    },
+    {
+      "id": "E15",
+      "source_id": "S01",
+      "selector": ".acx-guided-review__actions",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "Save my edit Reject this draft",
+        "Apply to practice copy Undo"
+      ],
+      "excerpt": "Save my edit",
+      "observation": "There are four action-group matches. Save, Reject, Apply and Undo represent different scopes."
+    },
+    {
+      "id": "E16",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-live-additive\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "A live run never changes the draft above, and it never changes what Apply would write."
+      ],
+      "excerpt": "A live run never changes the draft above"
+    },
+    {
+      "id": "E17",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-live-naming\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Names come from your roster on the server, not from this page. You have not confirmed anyone here yet."
+      ],
+      "excerpt": "Names come from your roster on the server, not from this page."
+    },
+    {
+      "id": "E18",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-live-status\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "• Decide each face match first, then you can describe this photo live. That is the lesson's order, not something the run needs."
+      ],
+      "excerpt": "That is the lesson's order, not something the run needs."
+    },
+    {
+      "id": "E19",
+      "source_id": "S01",
+      "selector": "#guided-section-apply",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Apply it yourself The practice copy says Two people at a film festival. . Pressing Apply writes the saved draft to this practice copy only. Apply to practice copy Undo"
+      ],
+      "excerpt": "Pressing Apply writes the saved draft to this practice copy only.",
+      "observation": "Apply is enabled and Undo disabled in this snapshot. No click behavior is observable."
+    },
+    {
+      "id": "E20",
+      "source_id": "S01",
+      "selector": ".acx-guided-history",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "What you did Your decisions Nothing yet. Your next action will show up here."
+      ],
+      "excerpt": "Nothing yet. Your next action will show up here."
+    },
+    {
+      "id": "E21",
+      "source_id": "S01",
+      "selector": ".acx-guided-page__provenance",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Where this example comes from Example Saved from a real run on 2026-09-06, not a live run Page Tribeca Festival 2026: red carpet photos People on file Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos) Photo credit Colleen Sturtevant, CC BY-SA 4.0, resized Also checked A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing."
+      ],
+      "excerpt": "Also checked",
+      "observation": "A second, unbundled photo is mentioned as a successful recognition result; no evidence link accompanies it."
+    },
+    {
+      "id": "E22",
+      "source_id": "S01",
+      "selector": ".acx-guided-page__media-card img",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        ""
+      ],
+      "observation": "The evidence image alt contains the longer unnamed draft, while a caption calls the shorter string current page alt text. They can be different surfaces; this is not itself an alt mismatch defect."
+    },
+    {
+      "id": "E23",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__crop",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "",
+        ""
+      ],
+      "observation": "Each supplied crop wrapper sets width and height to 64px. No enlargement control is present in the supplied markup."
+    },
+    {
+      "id": "E24",
+      "source_id": "S01",
+      "selector": ".acx-guided-review__context-grid",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "What the photo shows Two people stand side by side in front of a white wall of Tribeca Festival logos. The man on the left wears a black tuxedo with a white shirt. The woman on the right wears a white draped gown with her dark hair pinned up. Her hand rests on his chest. Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Alt text on the page right now: Two people at a film festival. The page Tribeca Festival 2026: red carpet photos A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026."
+      ],
+      "excerpt": "Alt text on the page right now:",
+      "observation": "Page context and the same unnamed draft are repeated in several locations."
+    },
+    {
+      "id": "E25",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-page-feedback\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        ""
+      ],
+      "observation": "role=status and aria-live=polite exist; actual update behavior and announcements were not tested."
+    }
+  ],
+  "findings": [
+    {
+      "id": "F01",
+      "priority": "P0",
+      "title": "Separate the recorded demo from the independent live test",
+      "evidence_ids": [
+        "E02",
+        "E03",
+        "E16",
+        "E17",
+        "E18"
+      ],
+      "rule_ids": [
+        "HAI-02",
+        "HAI-05",
+        "INT-03",
+        "INT-10",
+        "WRIT-44"
+      ],
+      "evidence_kind": "observed_copy_and_structure",
+      "problem": "The page promises control over names and local changes, but the live test uses a different server roster and cannot update the draft being applied. Its artificial prerequisite implies a dependency it explicitly denies.",
+      "required_change": "Make the four-step recorded demo complete without live service. Move the live test to a collapsed optional panel after the outcome, label its independent inputs, and remove face-choice prerequisites. Opening the panel must not start a request. Do not connect live output to Apply in this pass.",
+      "acceptance_test_ids": [
+        "T01",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F02",
+      "priority": "P0",
+      "title": "Apply must use the visible reviewed draft",
+      "evidence_ids": [
+        "E11",
+        "E13",
+        "E14",
+        "E15",
+        "E19"
+      ],
+      "rule_ids": [
+        "INT-07",
+        "INT-05",
+        "INT-06",
+        "WRIT-44"
+      ],
+      "evidence_kind": "runtime_risk_from_markup",
+      "problem": "The text says Apply writes a saved draft, but an editable textarea and a separate Save my edit action imply two versions. Apply is enabled before face decisions in this snapshot. This is not proof of an incorrect handler, but the contract is ambiguous.",
+      "required_change": "Remove intermediate Save my edit. Maintain one editable draft, an explicit preview version, and local applied text. The Apply handler must reject invalid/stale/unreviewed states and copy exactly the displayed draft, not an older saved fixture.",
+      "acceptance_test_ids": [
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F03",
+      "priority": "P1",
+      "title": "Do not present suggestions as completed identities",
+      "evidence_ids": [
+        "E05",
+        "E08",
+        "E09",
+        "E12"
+      ],
+      "rule_ids": [
+        "HAI-05",
+        "HAI-11",
+        "HAI-15",
+        "NAV-13"
+      ],
+      "evidence_kind": "observed_copy",
+      "problem": "Matched, done, strong and Yes, this is [name] frame two recorded suggestions as factual answers before the visitor acts. The absolute every face overstates this single example.",
+      "required_change": "Use Saved suggestion and an assisted editorial inclusion task. Keep undecided, include, and leave unnamed distinct. Remove the success tick before a visitor choice and retire every face. Apply the documented HAI-15 scope decision X01; do not call this independent verification.",
+      "acceptance_test_ids": [
+        "T02",
+        "T03",
+        "T09",
+        "T25"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F04",
+      "priority": "P1",
+      "title": "Give the visitor one short entry and a single step model",
+      "evidence_ids": [
+        "E01",
+        "E04",
+        "E05",
+        "E06",
+        "E08"
+      ],
+      "rule_ids": [
+        "NAV-08",
+        "NAV-09",
+        "WRIT-17"
+      ],
+      "evidence_kind": "observed_structure",
+      "problem": "Entrance, workspace hero, pipeline list, face explanation, and guide all restate the sequence. The DOM contains both an entry and workspace; actual initial visibility is unknown. Pipeline progress and visitor progress use different step labels.",
+      "required_change": "Use one h1, one short boundary disclosure and four numbered steps. Start scrolls/focuses Step 1; it is not a second launch layer. Keep sections in document order so readers can inspect them without a modal tour.",
+      "acceptance_test_ids": [
+        "T02",
+        "T10",
+        "T20"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F05",
+      "priority": "P1",
+      "title": "Do not overwrite the hash-router route with an in-page anchor",
+      "evidence_ids": [
+        "E07"
+      ],
+      "rule_ids": [
+        "NAV-11",
+        "A11Y-11",
+        "A11Y-13"
+      ],
+      "evidence_kind": "runtime_risk_from_markup",
+      "problem": "The skip link replaces the fragment used by the supplied #/guided-prototype route. A click handler might intercept this; none was provided.",
+      "required_change": "Use explicit in-page navigation buttons that scroll to and focus the existing section IDs while preserving the router hash. Do not encode editorial choices in the URL.",
+      "acceptance_test_ids": [
+        "T10",
+        "T11"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F06",
+      "priority": "P1",
+      "title": "Keep each face choice next to its evidence",
+      "evidence_ids": [
+        "E12",
+        "E23"
+      ],
+      "rule_ids": [
+        "INT-03",
+        "HAI-01",
+        "A11Y-03",
+        "A11Y-11"
+      ],
+      "evidence_kind": "observed_structure",
+      "problem": "Both decisions occur after both evidence cards. A 64px crop is the only supplied view of each detected region. The spatial cost cannot be measured from HTML, but the markup separates the question from its evidence.",
+      "required_change": "Move one native fieldset into each face article, following its evidence. Provide a keyboard-operable larger comparison using existing licensed images. Keep the source photo available for context.",
+      "acceptance_test_ids": [
+        "T03",
+        "T12",
+        "T20"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F07",
+      "priority": "P1",
+      "title": "Disclose reference coverage without inventing extra assets",
+      "evidence_ids": [
+        "E10"
+      ],
+      "rule_ids": [
+        "HAI-01",
+        "HAI-17",
+        "WRIT-41"
+      ],
+      "evidence_kind": "observed_coverage_limit",
+      "problem": "One person has all 2 reference images shown; the other has 3 of 5, with no supplied route to the other two. This is a partial reference set, not the literal one-reference trigger in HAI-17.",
+      "required_change": "Expose all existing distributable references if they are actually bundled. Otherwise state 3 of 5 references included in this demo and make those three inspectable. Preserve credits; do not download unverified replacements or imply missing references were reviewed.",
+      "acceptance_test_ids": [
+        "T12",
+        "T24"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F08",
+      "priority": "P1",
+      "title": "Handle changes without threatening or losing edits",
+      "evidence_ids": [
+        "E11",
+        "E15"
+      ],
+      "rule_ids": [
+        "INT-09",
+        "INT-11",
+        "INT-06"
+      ],
+      "evidence_kind": "observed_copy_plus_runtime_risk",
+      "problem": "The message tells everyone to save or discard edits before changing an answer; the snapshot contains no discard control and does not establish that an edit exists.",
+      "required_change": "Remove the standing warning. If a name change would replace a manually edited draft, show a focused confirmation with Cancel and an explicit replace action; save the prior revision locally before replacement. Do not change already applied text.",
+      "acceptance_test_ids": [
+        "T07",
+        "T08",
+        "T13"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F09",
+      "priority": "P1",
+      "title": "Make alt-text purpose explicit rather than making naming the goal",
+      "evidence_ids": [
+        "E01",
+        "E04",
+        "E24"
+      ],
+      "rule_ids": [
+        "A11Y-02",
+        "HAI-12",
+        "NAV-13"
+      ],
+      "evidence_kind": "observed_copy",
+      "problem": "The story defines success as two names reaching the description. The example page context is shown but does not explain when names are useful. The words description and alt text are used for different artifacts without a stable distinction.",
+      "required_change": "Frame the job as editing alt text for the supplied festival gallery. State that names are optional editorial context, not proof of a better description. Use Alt text draft for the editable sample and Live description for the separate server output.",
+      "acceptance_test_ids": [
+        "T02",
+        "T09",
+        "T19"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F10",
+      "priority": "P1",
+      "title": "Make apply, undo and completion tangible",
+      "evidence_ids": [
+        "E19",
+        "E20",
+        "E22"
+      ],
+      "rule_ids": [
+        "INT-05",
+        "INT-06",
+        "INT-09",
+        "A11Y-02",
+        "A11Y-21"
+      ],
+      "evidence_kind": "missing_evidence_in_snapshot",
+      "problem": "The initial markup describes local application but gives no evidence of a resulting preview or completion state. The existing photograph is an evidence image, not necessarily the application target.",
+      "required_change": "Add a distinct demo-image preview with alt bound to local applied text, a textual before/after, and Undo last application. Keep the evidence image unchanged. End with an accurate local result, not a production-save message.",
+      "acceptance_test_ids": [
+        "T05",
+        "T06",
+        "T19",
+        "T21",
+        "T22"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F11",
+      "priority": "P1",
+      "title": "Preserve disclosures and use precise, brief wording",
+      "evidence_ids": [
+        "E01",
+        "E02",
+        "E03",
+        "E04",
+        "E08",
+        "E21"
+      ],
+      "rule_ids": [
+        "HAI-05",
+        "WRIT-02",
+        "WRIT-06",
+        "WRIT-17",
+        "WRIT-28"
+      ],
+      "evidence_kind": "observed_copy",
+      "problem": "You already named assumes the visitor owns this roster, real GPU explains infrastructure instead of value, and the unbundled Coachella anecdote adds a performance claim the visitor cannot inspect.",
+      "required_change": "Say this demo's saved people and recorded example. Remove the unbundled-image aside and repeated reassurance. Retain the recorded-run date as fixture provenance, not as a new test performed in this review.",
+      "acceptance_test_ids": [
+        "T02",
+        "T24",
+        "T25"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F12",
+      "priority": "P1",
+      "title": "Test accessible interaction, not just ARIA attributes",
+      "evidence_ids": [
+        "E06",
+        "E14",
+        "E25"
+      ],
+      "rule_ids": [
+        "A11Y-03",
+        "A11Y-04",
+        "A11Y-08",
+        "A11Y-11",
+        "A11Y-13",
+        "A11Y-20",
+        "A11Y-21"
+      ],
+      "evidence_kind": "verification_required",
+      "problem": "Labels, headings, tabindex targets, and live regions are present. This snapshot cannot establish focus behavior, disabled-state feedback, reflow, contrast, or what is spoken after actions.",
+      "required_change": "Retain semantic strengths and add stateful keyboard/screen-reader tests. Use aria-current=step for the active guide item and aria-expanded for disclosures. Add aria-controls where useful, but do not report its current absence as a WCAG failure.",
+      "acceptance_test_ids": [
+        "T10",
+        "T11",
+        "T12",
+        "T20",
+        "T21"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F13",
+      "priority": "P1",
+      "title": "Bound the optional live test and label recovery honestly",
+      "evidence_ids": [
+        "E02",
+        "E16",
+        "E17",
+        "E18"
+      ],
+      "rule_ids": [
+        "INT-08",
+        "INT-10",
+        "HAI-05",
+        "A11Y-21"
+      ],
+      "evidence_kind": "verification_required",
+      "problem": "Only the blocked initial live state is supplied. Endpoint behavior, timeout, cancellation, data transmission, retention and recovery are unknown.",
+      "required_change": "Keep live generation off the core path. Verify the existing endpoint and non-publication boundary before enabling the live action. Use explicit request states, a tested wait bound, and Stop waiting unless actual server cancellation exists. Ignore stale responses after reset or a later request.",
+      "acceptance_test_ids": [
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T23"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F14",
+      "priority": "P2",
+      "title": "Expose design rationale without making another portfolio section",
+      "evidence_ids": [
+        "E01",
+        "E04",
+        "E20"
+      ],
+      "rule_ids": [
+        "NAV-08",
+        "HAI-12",
+        "UXR-01"
+      ],
+      "evidence_kind": "editorial_opportunity",
+      "problem": "The demo explains recognition mechanics repeatedly but gives little compact explanation of the product decisions relevant to the target role.",
+      "required_change": "Add one closed Design notes disclosure after the result, with three short decisions: recorded evidence, optional names, and explicit reversible application. Preserve the existing case-study link. Do not add a Practice route, a hiring pitch in every step, or a speculative homeowner redesign.",
+      "acceptance_test_ids": [
+        "T22",
+        "T24"
+      ],
+      "status": "proposed"
+    },
+    {
+      "id": "F15",
+      "priority": "P2",
+      "title": "Validate comprehension before claiming the demo is effective",
+      "evidence_ids": [
+        "E01",
+        "E16",
+        "E17",
+        "E19"
+      ],
+      "rule_ids": [
+        "UXR-01",
+        "UXR-03",
+        "UXR-04",
+        "UXR-05",
+        "UXR-14"
+      ],
+      "evidence_kind": "evidence_gap",
+      "problem": "No visitor sessions or runtime results accompany this DOM snapshot. A saved match run and HTML lint are not usability or product-market evidence.",
+      "required_change": "Run the short formative protocol after implementation. Assess the difference between saved and live state, the meaning of unnamed, and where Apply writes. Do not measure celebrity recognition accuracy or infer Quartermaster hiring odds.",
+      "acceptance_test_ids": [
+        "T26"
+      ],
+      "status": "proposed"
+    }
+  ],
+  "target_information_architecture": {
+    "pattern": "Single-page guided review with four numbered sections, not an overlay tutorial or an auto-advancing wizard.",
+    "order": [
+      "compact_intro",
+      "guide",
+      "context",
+      "names",
+      "draft",
+      "apply",
+      "outcome",
+      "local_history",
+      "optional_design_notes",
+      "optional_live_test"
+    ],
+    "navigation": "Explicit buttons scroll/focus section headings, preserve #/guided-prototype and leave all state unchanged. Incomplete sections may be inspected; guards prevent unreviewed application.",
+    "primary_action_policy": "One visually dominant next action per section; per-face selection uses neutral native radios. Live generation never competes with Apply.",
+    "section_ids_to_preserve": [
+      "guided-section-understand",
+      "guided-section-face",
+      "guided-section-identity",
+      "guided-section-review",
+      "guided-section-apply"
+    ],
+    "supplementary_content": "Use existing <details>/<summary> or tested disclosure patterns for credits, design notes, earlier drafts and the live test. No new /practice route.",
+    "steps": [
+      {
+        "id": "context",
+        "number": 1,
+        "title_key": "step.context",
+        "existing_anchor_id": "guided-section-understand",
+        "purpose": "Understand the editorial job and the existing alt text.",
+        "ui": [
+          "Photo with its existing descriptive alternative",
+          "Example page title and one sentence of context",
+          "Current alt text once",
+          "Closed provenance/credits disclosure"
+        ],
+        "next_action": "continue_to_names",
+        "completion_condition": "An explicit Continue or navigation to the next step; reading cannot be inferred from scrolling."
+      },
+      {
+        "id": "names",
+        "number": 2,
+        "title_key": "step.names",
+        "existing_anchor_id": "guided-section-identity",
+        "purpose": "Make an editorial choice for each saved face suggestion.",
+        "ui": [
+          "Two face articles, each with crop, reference set and a local radio group",
+          "No default selection",
+          "One include-name option and one leave-unnamed option per face",
+          "A visible readiness sentence and Review the draft button"
+        ],
+        "next_action": "continue_to_draft",
+        "completion_condition": "Both face choices are include or omit. Omit is a valid completion."
+      },
+      {
+        "id": "draft",
+        "number": 3,
+        "title_key": "step.draft",
+        "existing_anchor_id": "guided-section-review",
+        "purpose": "Read and edit the sample alt text.",
+        "ui": [
+          "Origin label beside the candidate",
+          "One labelled editable textarea",
+          "Page context and photo inspectable without navigating away",
+          "Preview the change and Keep current alt text",
+          "Collapsed local Draft history only when revisions exist"
+        ],
+        "next_action": "preview_draft",
+        "completion_condition": "A nonempty current draft has been explicitly previewed, or current alt text was explicitly kept."
+      },
+      {
+        "id": "apply",
+        "number": 4,
+        "title_key": "step.apply",
+        "existing_anchor_id": "guided-section-apply",
+        "purpose": "Commit the reviewed text to a local demo preview and demonstrate reversal.",
+        "ui": [
+          "Current/Will be applied textual comparison",
+          "Apply to demo copy",
+          "Distinct demo image whose alt is appliedAltText",
+          "Undo last application with local history",
+          "Accurate outcome and optional Design notes / Live test disclosures"
+        ],
+        "next_action": "apply_draft",
+        "completion_condition": "Local apply or explicit keep. Trying Undo is encouraged but is not a completion gate."
+      }
+    ]
+  },
+  "copy_catalog": {
+    "page.title": "Review an AI-assisted alt text draft",
+    "page.eyebrow": "AltContext guided demo",
+    "page.intro": "You are editing a photo in a festival gallery. Review two saved name suggestions, edit the alt text, then apply it to a demo copy. You can leave either person unnamed.",
+    "page.scope": "This walkthrough uses recorded face suggestions and sample drafts. Your choices change only the demo copy in this tab and reset when you reload.",
+    "page.live_scope": "An optional live test at the end runs separately on the server.",
+    "page.start": "Start the walkthrough",
+    "page.reset": "Reset demo",
+    "page.case_study": "Read the AltContext case study",
+    "guide.label": "Demo steps",
+    "guide.current": "Step {stepNumber} of 4: {stepTitle}",
+    "guide.show": "Show all steps",
+    "guide.hide": "Hide steps",
+    "step.context": "Understand the page",
+    "step.names": "Choose which names to use",
+    "step.draft": "Edit the alt text",
+    "step.apply": "Apply and undo",
+    "context.intro": "This photo appears in a festival gallery. Review the existing alt text alongside the photo and its page context.",
+    "context.page_label": "Example page",
+    "context.current_label": "Current alt text in the demo copy",
+    "context.purpose": "Names can be useful in this gallery when the editor has enough evidence to include them. Leaving someone unnamed is also a valid choice.",
+    "context.next": "Review name suggestions",
+    "provenance.disclosure": "Saved example and image credits",
+    "provenance.recorded": "Recorded face-match run: 6 September 2026. Recognition is not running during this walkthrough.",
+    "names.intro": "For each face, compare the saved suggestion with the reference photos. Choose whether to include that name in the sample draft.",
+    "names.assisted": "This is an assisted review of saved suggestions, not an independent identity check.",
+    "names.suggestion": "Saved suggestion: {name}",
+    "names.legend": "Name choice for the {position} face",
+    "names.include": "Use {name}",
+    "names.omit": "Leave this person unnamed",
+    "names.pending": "Choose an option for this face.",
+    "names.included": "The sample draft will use {name}.",
+    "names.omitted": "The sample draft will describe this person without a name.",
+    "names.coverage_all": "All {total} reference photos are shown.",
+    "names.coverage_partial": "{shown} of {total} reference photos are included in this demo.",
+    "names.evidence_open": "Compare the {position} face and reference photos",
+    "names.evidence_close": "Close comparison",
+    "names.next": "Review the draft",
+    "names.next_blocked": "Choose an option for both faces. Leaving a person unnamed counts as a choice.",
+    "names.change_title": "Change the name choice?",
+    "names.change_body": "This loads the sample draft for your new choices. Your current edit will remain in Draft history. The demo image will not change until you apply again.",
+    "names.change_confirm": "Change choice and load draft",
+    "names.change_cancel": "Keep editing",
+    "names.change_status": "Name choice changed. Review the updated draft before applying it.",
+    "draft.intro": "Check the wording against the photo and the page context. Edit anything you would not publish.",
+    "draft.label": "Alt text draft",
+    "draft.origin_saved": "Sample draft from the recorded example.",
+    "draft.origin_edited": "Your edit, based on the recorded example.",
+    "draft.effect": "Edits stay in this tab. Nothing is applied until you choose Apply to demo copy.",
+    "draft.blocked": "Choose a name option for both faces to load the sample draft.",
+    "draft.fixture_missing": "The sample draft for these choices is unavailable. Your choices and the current demo copy have not changed.",
+    "draft.fixture_retry": "Retry loading the sample",
+    "draft.empty_error": "Enter alt text before reviewing the change.",
+    "draft.next": "Preview the change",
+    "draft.keep": "Keep current alt text",
+    "draft.history": "Draft history",
+    "draft.history_note": "Earlier edits are kept in this tab until you reset or reload.",
+    "draft.copy_revision": "Copy earlier draft",
+    "draft.restore_revision": "Restore earlier draft",
+    "draft.restore_guard": "This earlier draft uses different name choices. Change those choices first, or copy the text and review it as a new edit.",
+    "apply.intro": "Compare the current alt text with your draft. Applying changes only the demo image below.",
+    "apply.before": "Current alt text",
+    "apply.after": "Will be applied",
+    "apply.preview_title": "Demo image preview",
+    "apply.submit": "Apply to demo copy",
+    "apply.undo": "Undo last application",
+    "apply.undo_unavailable": "There is no application to undo yet.",
+    "apply.stale": "The draft changed. Preview it again before applying.",
+    "apply.no_change": "The demo copy already uses this text.",
+    "apply.success": "Applied to the demo copy in this tab. WordPress media has not been updated.",
+    "apply.undone": "Restored the previous alt text in the demo copy.",
+    "outcome.applied": "Your demo copy is updated",
+    "outcome.kept": "The demo copy is unchanged",
+    "outcome.kept_body": "You kept the current alt text. You can return to the draft or inspect the design notes below.",
+    "outcome.return": "Return to the draft",
+    "history.title": "Your demo actions",
+    "history.empty": "Your choices and changes will appear here.",
+    "history.scope": "This history is local to this tab. It is not a server audit log.",
+    "live.title": "Optional: test live description generation",
+    "live.intro": "Generate a separate description of this photo on the server. It will not replace your draft or change the demo copy.",
+    "live.names": "The server uses its own saved people. Your name choices in the walkthrough do not change this live test.",
+    "live.request_unverified": "Live generation is unavailable in this build. The recorded walkthrough still works.",
+    "live.request_confirmed": "This sends a live description request for the example photo to the configured AltContext service. See Request details before starting.",
+    "live.details": "Request details",
+    "live.submit": "Generate a separate live description",
+    "live.pending": "Waiting for the live description. Your demo copy is unchanged.",
+    "live.complete": "Live description received. Review it separately from the demo draft.",
+    "live.output_label": "Live server result (read-only)",
+    "live.failed": "The live description could not be completed. Your demo copy is unchanged.",
+    "live.timed_out": "The wait limit was reached. The server job may still be running. {keepWaiting} continues this run; {retry} starts a new one. Your demo copy is unchanged.",
+    "live.keep_waiting": "Keep waiting",
+    "live.stop_waiting": "Stop waiting",
+    "live.stopped": "Stopped waiting for this request. This does not confirm that the server job stopped.",
+    "live.retry": "Try live generation again",
+    "live.no_result": "The server returned no description. Your demo copy is unchanged.",
+    "live.elapsed_of_up_to": "{elapsed} of up to {deadline}",
+    "live.budget_local": "No server budget disclosed, so this is how long this page is willing to wait.",
+    "live.budget_disclosed": "The service disclosed {generation} of generation time. This page will wait up to {deadline}, which may add GPU warm-up and a short local slack.",
+    "live.status_label": "Live run status",
+    "reset.title": "Reset this demo?",
+    "reset.body": "This clears name choices, drafts and local history, and restores the original demo alt text.",
+    "reset.active_live_note": "A live server job may continue after this reset.",
+    "reset.confirm": "Reset demo",
+    "reset.cancel": "Keep my work",
+    "reset.status": "Demo reset. WordPress media was not changed.",
+    "notes.title": "Design notes",
+    "notes.recorded": "Recorded recognition keeps the core walkthrough repeatable. Live generation is separate so a slow or unavailable service does not prevent review.",
+    "notes.names": "A suggested identity and permission to use a name are different decisions. Either person can remain unnamed.",
+    "notes.apply": "Drafting and applying are separate actions. The preview shows exactly what will change, and Undo restores the previous demo alt text.",
+    "notes.scope": "This prototype demonstrates the interaction. It does not establish recognition accuracy, user trust, or full accessibility conformance."
+  },
+  "preserved_content": {
+    "example_page_title": "Tribeca Festival 2026: red carpet photos",
+    "example_page_description": "A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.",
+    "original_alt_text": "Two people at a film festival.",
+    "unnamed_sample_text": "A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.",
+    "face_candidates": [
+      {
+        "face_id": "left",
+        "position": "left",
+        "name": "Justin Trudeau",
+        "reported_reference_count": 2,
+        "bundled_image_count_in_snapshot": 2
+      },
+      {
+        "face_id": "right",
+        "position": "right",
+        "name": "Katy Perry",
+        "reported_reference_count": 5,
+        "bundled_image_count_in_snapshot": 3
+      }
+    ],
+    "identity_caveat": "These are names supplied by the example. This review does not identify people from images or independently verify the event, identity or asset licenses.",
+    "case_study_url": "https://darce.xyz/projects/altcontext/",
+    "credit_policy": "Retain the supplied image credits. Resolve original asset/source and licence URLs from existing project metadata before adding links; do not invent URLs or make a legal-compliance claim from this HTML."
+  },
+  "copy_application_notes": [
+    "This catalog is replacement interface prose, not saved model output. Preserve actual recorded sample text and provenance separately.",
+    "Render dynamic placeholders from verified state/metadata; never display unresolved braces.",
+    "Move page.live_scope near the boundary disclosure, but keep it secondary. It announces an optional server feature, not a core dependency.",
+    "The terms demo copy, alt text draft, saved suggestion and live description refer to different objects; do not swap them for stylistic variety.",
+    "Keep the larger visual description only where it supports evidence inspection; remove repeated copies elsewhere.",
+    "The date string is inherited from the supplied page and must agree with the actual fixture before release.",
+    "Do not expose a bare strength score or success tick as proof of identity. Actual raw scores may be in provenance only when their meaning and source are available.",
+    "Do not replace descriptive evidence-image alt with the deliberately weak original demo alt. The separate preview is the application target."
+  ],
+  "state_machine": {
+    "status": "proposed_frontend_contract_not_executed",
+    "state_fields": {
+      "activeStep": {
+        "type": "enum",
+        "values": [
+          "context",
+          "names",
+          "draft",
+          "apply"
+        ],
+        "initial": "context"
+      },
+      "choices": {
+        "type": "object",
+        "keys": [
+          "left",
+          "right"
+        ],
+        "value_enum": [
+          "undecided",
+          "include",
+          "omit"
+        ],
+        "initial": {
+          "left": "undecided",
+          "right": "undecided"
+        }
+      },
+      "draftText": {
+        "type": "string_or_null",
+        "initial": null
+      },
+      "draftOrigin": {
+        "type": "enum",
+        "values": [
+          "none",
+          "recorded_sample",
+          "visitor_edit"
+        ],
+        "initial": "none"
+      },
+      "draftStatus": {
+        "type": "enum",
+        "values": [
+          "blocked",
+          "ready",
+          "fixture_missing"
+        ],
+        "initial": "blocked"
+      },
+      "draftVersion": {
+        "type": "integer",
+        "initial": 0
+      },
+      "previewedVersion": {
+        "type": "integer_or_null",
+        "initial": null
+      },
+      "draftHistory": {
+        "type": "array",
+        "initial": [],
+        "record_fields": [
+          "revisionId",
+          "text",
+          "origin",
+          "choices",
+          "draftVersion"
+        ]
+      },
+      "pendingChoiceChange": {
+        "type": "object_or_null",
+        "initial": null
+      },
+      "appliedAltText": {
+        "type": "string",
+        "initial": "Two people at a film festival."
+      },
+      "applicationUndoStack": {
+        "type": "array",
+        "initial": [],
+        "record_fields": [
+          "previousAltText",
+          "appliedDraftVersion",
+          "sequence"
+        ]
+      },
+      "outcome": {
+        "type": "enum",
+        "values": [
+          "not_finished",
+          "applied",
+          "kept"
+        ],
+        "initial": "not_finished"
+      },
+      "actionHistory": {
+        "type": "array",
+        "initial": [],
+        "record_fields": [
+          "event",
+          "sequence",
+          "scope",
+          "summary"
+        ]
+      },
+      "liveStatus": {
+        "type": "enum",
+        "values": [
+          "unavailable",
+          "idle",
+          "pending",
+          "succeeded",
+          "failed",
+          "timed_out",
+          "stopped"
+        ],
+        "initial": "unavailable"
+      },
+      "liveRequestToken": {
+        "type": "string_or_null",
+        "initial": null
+      },
+      "liveText": {
+        "type": "string_or_null",
+        "initial": null
+      },
+      "liveContractVerified": {
+        "type": "boolean",
+        "initial": false
+      }
+    },
+    "derived_guards": {
+      "namesDecided": "choices.left != undecided AND choices.right != undecided",
+      "canPreview": "namesDecided AND draftStatus == ready AND draftText != null AND trim(draftText).length > 0",
+      "canApply": "canPreview AND previewedVersion == draftVersion AND draftText != appliedAltText AND pendingChoiceChange == null",
+      "canUndo": "applicationUndoStack.length > 0",
+      "canStartLive": "liveContractVerified AND liveStatus != pending",
+      "canRestoreRevision": "revision.choices == choices; otherwise offer copy-only recovery with the stated warning"
+    },
+    "guard_semantics": "Language-neutral logical expressions, not executable JavaScript. Match strings exactly. trim is for emptiness checks only: Apply copies the displayed string verbatim. Compare choices by the left/right enum values, not JavaScript object identity.",
+    "transitions": [
+      {
+        "event": "start_or_select_step",
+        "guard": "Always allowed for inspection",
+        "updates": [
+          "Set activeStep to requested step; scroll/focus its heading without changing router hash"
+        ],
+        "forbidden": [
+          "Do not mutate choices, drafts, applied text, or live state",
+          "Do not mark unperformed decisions as complete"
+        ]
+      },
+      {
+        "event": "choose_name_option",
+        "guard": "Requested choice differs; pendingChoiceChange == null",
+        "updates": [
+          "If draftOrigin == visitor_edit, store only the proposed choice in pendingChoiceChange and ask for confirmation",
+          "Otherwise set the choice; if namesDecided resolve the matching recorded sample, increment draftVersion and invalidate previewedVersion",
+          "When either choice is undecided, candidate remains blocked",
+          "Set outcome=not_finished; do not change appliedAltText"
+        ],
+        "forbidden": [
+          "Never overwrite an edited draft without confirmation",
+          "Never call a roster write or recognition endpoint"
+        ]
+      },
+      {
+        "event": "confirm_choice_replacement",
+        "guard": "pendingChoiceChange != null",
+        "updates": [
+          "Append the current draft with its old choices to draftHistory before any replacement",
+          "Apply pending choice, clear pendingChoiceChange, resolve the matching recorded sample",
+          "Increment draftVersion; clear previewedVersion; set outcome=not_finished",
+          "Keep appliedAltText and applicationUndoStack unchanged"
+        ],
+        "forbidden": [
+          "Never relabel a human-written fallback as a recorded model run"
+        ]
+      },
+      {
+        "event": "cancel_choice_replacement",
+        "guard": "pendingChoiceChange != null",
+        "updates": [
+          "Clear pendingChoiceChange, retain all existing choices and draft text, return focus to the originating control"
+        ],
+        "forbidden": [
+          "No draft version or applied text change"
+        ]
+      },
+      {
+        "event": "edit_draft",
+        "guard": "namesDecided AND draftStatus == ready",
+        "updates": [
+          "Set draftText to the textarea value, draftOrigin=visitor_edit, increment draftVersion, clear previewedVersion; set outcome=not_finished"
+        ],
+        "forbidden": [
+          "No separate hidden savedDraft version",
+          "No word filtering, entity insertion, truncation or automatic save to WordPress"
+        ]
+      },
+      {
+        "event": "preview_draft",
+        "guard": "canPreview",
+        "updates": [
+          "Set previewedVersion=draftVersion; set activeStep=apply; show exact candidate text beside appliedAltText"
+        ],
+        "forbidden": [
+          "No rewriting during preview"
+        ]
+      },
+      {
+        "event": "apply_draft",
+        "guard": "canApply, checked inside handler as well as in the UI",
+        "updates": [
+          "Push previous appliedAltText to applicationUndoStack",
+          "Set appliedAltText=draftText verbatim; bind it to the demo-image alt",
+          "Set outcome=applied; add browser-local history event and one short status announcement"
+        ],
+        "forbidden": [
+          "No WordPress media, roster, settings or user-preference write",
+          "No network or live generation dependency"
+        ]
+      },
+      {
+        "event": "undo_application",
+        "guard": "canUndo",
+        "updates": [
+          "Pop one application record; restore previousAltText; update demo-image alt; announce restoration",
+          "Keep draft/choices; log the undo; derive current completion display from the restored image"
+        ],
+        "forbidden": [
+          "Do not alter the evidence image alternative or a server record"
+        ]
+      },
+      {
+        "event": "keep_current_alt_text",
+        "guard": "Always allowed, including a blocked/missing sample",
+        "updates": [
+          "Set outcome=kept; keep appliedAltText unchanged; preserve draft text; log a local event; show completion summary"
+        ],
+        "forbidden": [
+          "Do not label this as rejection training or send server feedback"
+        ]
+      },
+      {
+        "event": "restore_draft_revision",
+        "guard": "canRestoreRevision",
+        "updates": [
+          "Archive the current manual draft if present; restore revision text as visitor_edit; increment draftVersion; clear previewedVersion; set outcome=not_finished"
+        ],
+        "forbidden": [
+          "Do not restore old choices silently",
+          "Do not apply the restored draft automatically"
+        ]
+      },
+      {
+        "event": "initialize_live_availability",
+        "guard": "The existing adapter contract has been checked, or its status is unknown",
+        "updates": [
+          "Set liveContractVerified only from the verified integration configuration, not a visitor toggle",
+          "Use idle when verified and no request is pending; otherwise unavailable"
+        ],
+        "forbidden": [
+          "Do not probe with a billable request merely to render the panel",
+          "Do not infer capability from old planning documents or the presence of a button"
+        ]
+      },
+      {
+        "event": "open_live_panel",
+        "guard": "Always allowed",
+        "updates": [
+          "Disclose independent live scope and availability"
+        ],
+        "forbidden": [
+          "Do not start requests or provision GPU work"
+        ]
+      },
+      {
+        "event": "start_live_test",
+        "guard": "canStartLive",
+        "updates": [
+          "Assign a new request token; clear previous live text; set pending; call the verified existing description endpoint once"
+        ],
+        "forbidden": [
+          "No dependency on choices or completed steps",
+          "No mutation of draftText, appliedAltText, applicationUndoStack or server roster",
+          "No new endpoint or payload fields invented from this brief"
+        ]
+      },
+      {
+        "event": "live_response",
+        "guard": "Response token equals current token AND liveStatus == pending",
+        "updates": [
+          "Set succeeded only for a nonempty valid result; otherwise failed; set liveText only in the read-only live panel"
+        ],
+        "forbidden": [
+          "Never copy into the demo candidate automatically",
+          "Ignore obsolete responses"
+        ]
+      },
+      {
+        "event": "stop_waiting_or_timeout",
+        "guard": "liveStatus == pending",
+        "updates": [
+          "Stop local polling/request wait; invalidate the request token; use stopped or timed_out state and accurate copy"
+        ],
+        "forbidden": [
+          "Do not claim the server job was cancelled without an acknowledged server cancellation"
+        ]
+      },
+      {
+        "event": "confirm_reset",
+        "guard": "User confirms; no implicit reset on section navigation",
+        "updates": [
+          "Restore core initial state and empty local histories; invalidate request token; stop local waiting; retain only verified live availability configuration"
+        ],
+        "forbidden": [
+          "Never change WordPress media",
+          "Do not claim remote work was stopped merely because local state reset"
+        ]
+      },
+      {
+        "event": "reload_page",
+        "guard": "Browser reload",
+        "updates": [
+          "Core demo state returns to initial values; server data is not changed"
+        ],
+        "forbidden": [
+          "No localStorage/sessionStorage persistence that contradicts the promised reload reset"
+        ]
+      }
+    ],
+    "fixture_contract": {
+      "source": "Locate and preserve existing sample fixtures; only the unnamed text is included in the supplied HTML.",
+      "required_choice_keys": [
+        "include/include",
+        "include/omit",
+        "omit/include",
+        "omit/omit"
+      ],
+      "failure_behavior": "If a required sample does not exist or its provenance cannot support recorded-sample wording, mark that variant fixture_missing. Keep current applied text. Do not invent saved model output. A clearly labelled manually authored variant requires a separately recorded content decision.",
+      "provenance_fields_to_resolve": [
+        "fixture_id",
+        "choice_key",
+        "origin_type",
+        "recorded_at_if_known",
+        "sample_text",
+        "source_record_if_available"
+      ],
+      "manual_edit_boundary": "Name choices select the sample text. A visitor can then rewrite it. Do not promise an identity allowlist on free text or add unsupported name detection to the editor."
+    }
+  },
+  "target_test_hooks": [
+    {
+      "test_id": "guided-demo-root",
+      "state": "add_on_main"
+    },
+    {
+      "test_id": "guided-demo-stepper",
+      "state": "add_on_numbered_guide"
+    },
+    {
+      "test_id": "name-choice-left",
+      "state": "add_on_left_fieldset"
+    },
+    {
+      "test_id": "name-choice-right",
+      "state": "add_on_right_fieldset"
+    },
+    {
+      "test_id": "guided-candidate",
+      "state": "preserve_existing"
+    },
+    {
+      "test_id": "guided-page-feedback",
+      "state": "preserve_existing"
+    },
+    {
+      "test_id": "guided-live",
+      "state": "preserve_existing"
+    },
+    {
+      "test_id": "guided-live-status",
+      "state": "preserve_existing"
+    },
+    {
+      "test_id": "demo-applied-image",
+      "state": "new_distinct_preview_image"
+    },
+    {
+      "test_id": "demo-apply",
+      "state": "add_to_local_apply_button"
+    },
+    {
+      "test_id": "demo-undo",
+      "state": "add_to_undo_button"
+    },
+    {
+      "test_id": "demo-outcome",
+      "state": "new_outcome_container"
+    }
+  ],
+  "work_items": [
+    {
+      "id": "W00",
+      "priority": "P0",
+      "title": "Locate implementation and record actual contracts",
+      "depends_on": [],
+      "finding_ids": [
+        "F01",
+        "F02",
+        "F05",
+        "F13"
+      ],
+      "copy_keys": [],
+      "instructions": [
+        "Search the consumer checkout for acx-guided-page, guided-description-draft, guided-live-additive, and Apply to practice copy. Record actual files and symbols; do not guess a repository path.",
+        "Identify the route owner and whether the fragment link is intercepted.",
+        "Trace existing sample-variant selection, editor/save/apply state, reset/undo, and live adapter.",
+        "Verify whether core actions write server state; identify exactly what the live request sends/stores and whether cancellation is acknowledged.",
+        "Record the checked-out commit SHA, actual test commands, fixture provenance and unresolved blockers in implementation-evidence.json."
+      ],
+      "acceptance_test_ids": [
+        "T18",
+        "T23"
+      ],
+      "definition_of_done": "Actual files/symbols and data boundaries are recorded. Unknown live contracts remain disabled; an inability to inspect the live backend does not block the recorded core."
+    },
+    {
+      "id": "W01",
+      "priority": "P0",
+      "title": "Unify core draft and application state",
+      "depends_on": [
+        "W00"
+      ],
+      "finding_ids": [
+        "F02",
+        "F08",
+        "F10"
+      ],
+      "copy_keys": [
+        "draft.intro",
+        "draft.label",
+        "draft.origin_saved",
+        "draft.origin_edited",
+        "draft.effect",
+        "draft.blocked",
+        "draft.fixture_missing",
+        "draft.fixture_retry",
+        "draft.empty_error",
+        "draft.next",
+        "draft.keep",
+        "draft.history",
+        "draft.history_note",
+        "draft.copy_revision",
+        "draft.restore_revision",
+        "draft.restore_guard",
+        "apply.intro",
+        "apply.before",
+        "apply.after",
+        "apply.preview_title",
+        "apply.submit",
+        "apply.undo",
+        "apply.undo_unavailable",
+        "apply.stale",
+        "apply.no_change",
+        "apply.success",
+        "apply.undone",
+        "reset.title",
+        "reset.body",
+        "reset.active_live_note",
+        "reset.confirm",
+        "reset.cancel",
+        "reset.status"
+      ],
+      "instructions": [
+        "Implement the state contract and handler guards.",
+        "Remove separate Save my edit from the core path.",
+        "Preserve all existing recorded variants, with a transparent missing-fixture state.",
+        "Add local revision history before destructive draft replacement.",
+        "Bind the distinct demo-image alt and textual applied value to the same state; support multiple local apply undos."
+      ],
+      "acceptance_test_ids": [
+        "T01",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T13",
+        "T17",
+        "T19"
+      ],
+      "definition_of_done": "Visible draft, preview and applied copy agree; edits survive replacement/cancel; tests prove no core server mutation."
+    },
+    {
+      "id": "W02",
+      "priority": "P1",
+      "title": "Reflow entry, four steps and face evidence",
+      "depends_on": [
+        "W01"
+      ],
+      "finding_ids": [
+        "F03",
+        "F04",
+        "F05",
+        "F06",
+        "F07",
+        "F09",
+        "F11"
+      ],
+      "copy_keys": [
+        "page.title",
+        "page.eyebrow",
+        "page.intro",
+        "page.scope",
+        "page.live_scope",
+        "page.start",
+        "page.reset",
+        "page.case_study",
+        "guide.label",
+        "guide.current",
+        "guide.show",
+        "guide.hide",
+        "step.context",
+        "step.names",
+        "step.draft",
+        "step.apply",
+        "context.intro",
+        "context.page_label",
+        "context.current_label",
+        "context.purpose",
+        "context.next",
+        "provenance.disclosure",
+        "provenance.recorded",
+        "names.intro",
+        "names.assisted",
+        "names.suggestion",
+        "names.legend",
+        "names.include",
+        "names.omit",
+        "names.pending",
+        "names.included",
+        "names.omitted",
+        "names.coverage_all",
+        "names.coverage_partial",
+        "names.evidence_open",
+        "names.evidence_close",
+        "names.next",
+        "names.next_blocked",
+        "names.change_title",
+        "names.change_body",
+        "names.change_confirm",
+        "names.change_cancel",
+        "names.change_status"
+      ],
+      "instructions": [
+        "Use one compact entry, one numbered guide, and the four sections in the specified order.",
+        "Preserve existing section IDs as focus targets; replace bare fragment navigation with in-page buttons that leave the router route intact.",
+        "Place each native face-choice fieldset inside its evidence article; no preselected name.",
+        "Replace confirm/strong/success language with an assisted inclusion decision; log X01 as the scope decision.",
+        "Provide inspectable bundled references and accurate counts; preserve assets and credits.",
+        "Remove duplicated introductions and the unbundled Coachella aside."
+      ],
+      "acceptance_test_ids": [
+        "T02",
+        "T03",
+        "T09",
+        "T10",
+        "T11",
+        "T12",
+        "T24",
+        "T25"
+      ],
+      "definition_of_done": "A visitor can identify the next action and decide either person should remain unnamed without following a separate explanation track."
+    },
+    {
+      "id": "W03",
+      "priority": "P1",
+      "title": "Isolate and harden optional live generation",
+      "depends_on": [
+        "W00",
+        "W01"
+      ],
+      "finding_ids": [
+        "F01",
+        "F13"
+      ],
+      "copy_keys": [
+        "live.title",
+        "live.intro",
+        "live.names",
+        "live.request_unverified",
+        "live.request_confirmed",
+        "live.details",
+        "live.submit",
+        "live.pending",
+        "live.complete",
+        "live.output_label",
+        "live.failed",
+        "live.timed_out",
+        "live.keep_waiting",
+        "live.stop_waiting",
+        "live.stopped",
+        "live.retry",
+        "live.no_result",
+        "live.elapsed_of_up_to",
+        "live.budget_local",
+        "live.budget_disclosed",
+        "live.status_label"
+      ],
+      "instructions": [
+        "Move the live panel after the core outcome; keep it closed by default but reachable without completing the core.",
+        "Do not use demo face choices as fake prerequisites; disclose the separate server roster.",
+        "Enable the action only after the existing endpoint contract is verified. Do not remove a working live feature solely because it was previously described as offline in older planning documents.",
+        "Use the existing non-publishing adapter. No promotion of live text into the apply flow in this pass.",
+        "Implement pending/error/empty/timeout/stop-waiting and stale-response protection using a request token. Derive actual wait limits from the service contract; never fabricate measured durations."
+      ],
+      "acceptance_test_ids": [
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T23"
+      ],
+      "definition_of_done": "Core works when live fails; live status and side effects are accurately described. If backend proof is unavailable, the optional test is explicitly unavailable, not simulated as live."
+    },
+    {
+      "id": "W04",
+      "priority": "P1",
+      "title": "Complete semantic, keyboard and responsive verification",
+      "depends_on": [
+        "W02",
+        "W03"
+      ],
+      "finding_ids": [
+        "F06",
+        "F10",
+        "F12"
+      ],
+      "copy_keys": [],
+      "instructions": [
+        "Use semantic headings, labelled fieldsets/radios, explicit focus targets and a distinct applied demo image.",
+        "Keep polite status messages short and emitted once; leave full text/history outside live regions.",
+        "Maintain focus after choices, restoration and dialogs; move it only with explicit step navigation.",
+        "Inspect the built page at narrow widths/zoom with the WordPress toolbar present.",
+        "Document manual screen-reader outcomes separately from automated accessibility results."
+      ],
+      "acceptance_test_ids": [
+        "T10",
+        "T11",
+        "T12",
+        "T19",
+        "T20",
+        "T21"
+      ],
+      "definition_of_done": "The specified manual and automated checks have truthful run/not-run results; no full-conformance claim is made from passing DOM checks alone."
+    },
+    {
+      "id": "W05",
+      "priority": "P2",
+      "title": "Add a restrained result and design-note layer",
+      "depends_on": [
+        "W02"
+      ],
+      "finding_ids": [
+        "F10",
+        "F14"
+      ],
+      "copy_keys": [
+        "outcome.applied",
+        "outcome.kept",
+        "outcome.kept_body",
+        "outcome.return",
+        "history.title",
+        "history.empty",
+        "history.scope",
+        "notes.title",
+        "notes.recorded",
+        "notes.names",
+        "notes.apply",
+        "notes.scope"
+      ],
+      "instructions": [
+        "Show Applied or Kept outcome accurately with the visible local history.",
+        "Add one closed Design notes disclosure and retain the case-study link as an actual anchor.",
+        "Do not create a Practice section or new portfolio navigation.",
+        "Use the three notes to explain product decisions; keep recruitment mapping in the case study rather than interrupting the task."
+      ],
+      "acceptance_test_ids": [
+        "T22",
+        "T24",
+        "T25"
+      ],
+      "definition_of_done": "The reviewer can finish the task and then inspect rationale without reading a second sales page."
+    },
+    {
+      "id": "W06",
+      "priority": "P1",
+      "title": "Integrate and hand off evidence",
+      "depends_on": [
+        "W01",
+        "W02",
+        "W03",
+        "W04",
+        "W05"
+      ],
+      "finding_ids": [
+        "F01",
+        "F02",
+        "F03",
+        "F04",
+        "F05",
+        "F06",
+        "F07",
+        "F08",
+        "F09",
+        "F10",
+        "F11",
+        "F12",
+        "F13",
+        "F14"
+      ],
+      "copy_keys": [],
+      "instructions": [
+        "Run relevant unit/component/browser tests and content review from the actual checkout.",
+        "Use stubbed live requests for automated tests; request explicit approval before any paid live smoke run.",
+        "Capture built-page screenshots for the core steps and one failed live state; do not label mockups as runtime captures.",
+        "Return actual changed files, commit/patch references, executed commands, observed results and unrun checks. Follow existing repository workflow; do not push or merge without authorization."
+      ],
+      "acceptance_test_ids": [
+        "T01",
+        "T02",
+        "T03",
+        "T04",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T09",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T19",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24",
+        "T25"
+      ],
+      "definition_of_done": "A reviewer can inspect the changed artifact and evidence. Assertions in the report correspond to actual runs, not intended commands."
+    },
+    {
+      "id": "W07",
+      "priority": "P2",
+      "title": "Run one small formative study",
+      "depends_on": [
+        "W06"
+      ],
+      "finding_ids": [
+        "F15"
+      ],
+      "copy_keys": [],
+      "instructions": [
+        "Use the study protocol and record the actual participant count and backgrounds.",
+        "Collect incorrect mental models before explaining the intended answer.",
+        "Fix at least the high-impact problems observed; report changes only if they actually happened."
+      ],
+      "acceptance_test_ids": [
+        "T26"
+      ],
+      "definition_of_done": "Observed user behavior is documented separately from code-review evidence and any hiring judgment."
+    }
+  ],
+  "acceptance_tests": [
+    {
+      "id": "T01",
+      "title": "Core walkthrough is network-independent",
+      "mode": "integration",
+      "given": "Recorded fixtures available; description endpoint forced offline",
+      "when": "Finish name choices, edit, preview, apply and undo",
+      "then": "Core path succeeds with zero mutating network calls and zero description/recognition requests.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T02",
+      "title": "One coherent entry and four steps",
+      "mode": "dom",
+      "given": "Initial route loaded",
+      "when": "Inspect visible headings, accessible names and step controls",
+      "then": "One main h1 uses page.title; all four step names/ordinals are available; no pipeline item says identities are matched/done before a visitor choice; repeated old hero/how-it-works copy is gone.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T03",
+      "title": "All name-choice combinations and the unresolved state",
+      "mode": "unit_and_component",
+      "given": "Choices initially undecided/undecided",
+      "when": "Exercise all four include/omit combinations and every one-undecided state",
+      "then": "Neither radio starts selected; omit completes a choice; the exact matching sample loads only when both choices exist; preview/apply guards reject unresolved choices; per-face selected state is visible and programmatic.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T04",
+      "title": "Missing sample fails transparently",
+      "mode": "integration",
+      "given": "Remove include/omit sample in a test fixture",
+      "when": "Choose include/omit",
+      "then": "Show fixture-missing copy, keep applied text unchanged, preserve choices, disable preview/apply; no fake fallback and no live call. Keep current alt text remains available.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T05",
+      "title": "Apply copies visible text exactly",
+      "mode": "unit_and_browser",
+      "given": "Both choices made and draft edited to a distinctive test sentence",
+      "when": "Preview then apply",
+      "then": "Applied text, textual preview and demo-image alt equal that sentence byte-for-byte; no stale sample is applied; no WordPress write occurs.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T06",
+      "title": "Repeated apply and undo",
+      "mode": "unit_and_browser",
+      "given": "Apply draft A, then edit/preview/apply B",
+      "when": "Undo once, then again",
+      "then": "First undo restores A; second restores original alt text; controls prevent duplicate no-change applies; draft text remains available; undo disabled only when stack empty.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T07",
+      "title": "Manual draft survives a changed name choice",
+      "mode": "unit_and_browser",
+      "given": "A distinctive manually edited draft exists",
+      "when": "Request a different face option, first cancel; then request again and confirm",
+      "then": "Cancel changes neither choice nor text. Confirm archives the old text/choices, loads the correct sample, invalidates preview, and never changes applied text.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T08",
+      "title": "Old previews cannot be applied",
+      "mode": "unit_and_component",
+      "given": "A draft has been previewed",
+      "when": "Edit it or change its dependent name choices; invoke apply handler directly in a test",
+      "then": "Handler rejects stale preview even if UI is bypassed in the test; applied text unchanged; a fresh preview makes current text eligible.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T09",
+      "title": "Leaving unnamed is an ordinary valid outcome",
+      "mode": "browser",
+      "given": "Both people included in one pass",
+      "when": "Change the right choice to omit, then both to omit, with any edit-replacement confirmation handled",
+      "then": "Correct samples reflect choices; omission is not an error, low score, failed step or server-roster deletion; visitor can finish and undo either branch.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T10",
+      "title": "Guide preserves route and user state",
+      "mode": "browser",
+      "given": "URL includes #/guided-prototype and a draft is partly edited",
+      "when": "Use Start, guide items and back/next controls",
+      "then": "Router remains on guided-prototype; no #guided-section-* replacement hash; draft and choices persist; focus moves only after explicit navigation; guide current-step state is accurate.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T11",
+      "title": "Keyboard and focus visibility",
+      "mode": "manual_and_browser",
+      "given": "Keyboard-only operation; WordPress toolbar and step guide present",
+      "when": "Complete the task, open comparison/history, cancel/reset dialogs, and navigate sections",
+      "then": "No trap; visible focus; selected radios follow native behavior; dialogs return focus to their trigger; focused headings are not obscured; changing a radio does not auto-advance.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T12",
+      "title": "References are inspectable and honestly counted",
+      "mode": "dom_and_browser",
+      "given": "Reference assets as shipped",
+      "when": "Open each comparison using keyboard",
+      "then": "Left coverage says all 2 only if 2 are present; right says 3 of 5 included unless the extra two are actually supplied; no fake Show all 5; image credits persist; enlarged view is usable and dismissible.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T13",
+      "title": "Draft-history restore respects name dependencies",
+      "mode": "unit_and_browser",
+      "given": "Earlier edit has different choices from current",
+      "when": "Attempt to restore it, then copy it; repeat with matching choices",
+      "then": "Mismatched restore is blocked with exact explanatory text, copy is allowed; matching restore invalidates preview and does not apply; previous manual text is retained.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T14",
+      "title": "Live panel is optional and inert when opened",
+      "mode": "integration",
+      "given": "Initial or partially completed recorded walkthrough",
+      "when": "Open live disclosure with no identity decisions",
+      "then": "No request starts; live availability is not gated by face choices. If contract is unverified, live action remains unavailable with explicit explanation.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T15",
+      "title": "Live request is isolated",
+      "mode": "integration",
+      "given": "Verified endpoint adapter stub and distinctive draft/applied values",
+      "when": "Start live generation after declining both names",
+      "then": "Exactly one live request uses the existing verified server contract; it is not represented as honoring demo choices; result appears read-only; draft/applied/undo/core progress unchanged.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T16",
+      "title": "Pending, failure, empty response, timeout and retry",
+      "mode": "integration",
+      "given": "Controlled fake live adapter and fake timers",
+      "when": "Exercise pending, failure, empty payload, time bound and retry",
+      "then": "Real state labels render; duplicate request disabled while pending; no invented percentage; retry creates a new request token; core text and history unchanged; timeout never implies server cancellation.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T17",
+      "title": "Reset and stale results",
+      "mode": "unit_and_integration",
+      "given": "A live request is pending and the core demo has changed",
+      "when": "Confirm reset, then resolve the old request",
+      "then": "Core resets to initial values; no late output overwrites either workspace; local wait is stopped; accurate warning covers potential continuing server job.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T18",
+      "title": "Payload and storage boundary",
+      "mode": "integration_with_network_spy",
+      "given": "Core flow plus isolated live adapter",
+      "when": "Exercise every control",
+      "then": "Capture network destinations/methods and browser storage writes. Core state uses no publishing, roster or storage write. Only explicit live activation may use the allowed existing endpoint. Never log credentials or paste secrets into snapshots.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T19",
+      "title": "Evidence image differs from applied demo image",
+      "mode": "dom_and_browser",
+      "given": "Source photo has a stable descriptive alternative",
+      "when": "Apply and undo",
+      "then": "Only the separate data-testid=demo-applied-image alt tracks appliedAltText. The evidence image remains descriptive; visible current-text output changes with the demo preview. No aria-label overrides the demo image alt.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T20",
+      "title": "Reflow, comparison layout and disclosure",
+      "mode": "manual_and_browser",
+      "given": "320 CSS-pixel width, 200% zoom, text-spacing override and desktop viewport",
+      "when": "Complete the demo and inspect comparisons/disclosures",
+      "then": "No action or text becomes unreachable; evidence and choices remain associated; native control targets are usable; expanded state matches visibility. Measure contrast rather than inferring it from class names.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T21",
+      "title": "Announcements are useful and not duplicated",
+      "mode": "manual_assistive_technology",
+      "given": "Actual screen reader with keyboard",
+      "when": "Change choices, apply, undo, receive live result and reset",
+      "then": "Relevant update is announced once without reading the entire draft or history. Input does not continuously trigger live announcements. A disclosed hidden panel has no stray tabbable controls.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T22",
+      "title": "Completion demonstrates an outcome",
+      "mode": "browser",
+      "given": "A valid draft and an unchanged demo copy",
+      "when": "Finish once by Apply and once by Keep current alt text",
+      "then": "Accurate outcome appears with Return to the draft, local action history, case study and closed optional panels. No forced live test, invented completion time, production-save claim or job-application CTA.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T23",
+      "title": "Live network contract gate",
+      "mode": "code_review",
+      "given": "The live endpoint and existing adapter are located",
+      "when": "Inspect request fields, destination, authentication, response, persistence and cancellation behavior",
+      "then": "Evidence record is completed. If non-publication/data-boundary checks fail or remain unknown, liveContractVerified stays false. No change is made to access controls or backend capabilities to force a green demo.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T24",
+      "title": "Links, provenance and credits survive",
+      "mode": "content_and_dom",
+      "given": "Existing assets and case-study link",
+      "when": "Build the modified page",
+      "then": "The existing case-study anchor remains a real link to the same destination; source/credit links resolve to relevant existing records when available; no invented credits, reference images, IDs or licensing approvals.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T25",
+      "title": "Claims discipline",
+      "mode": "content_review",
+      "given": "New copy rendered in all states",
+      "when": "Search strings and manually read the result",
+      "then": "No every face, real GPU, success claim for the unbundled photo, independent verification claim, or use of strong as proof. Saved example is distinguished from live output. All placeholders resolve before rendering.",
+      "execution_status": "not_run"
+    },
+    {
+      "id": "T26",
+      "title": "Formative comprehension study",
+      "mode": "human_study",
+      "given": "3-5 participants with declared relevant experience; at least one content editor and one design/product reviewer; accessibility coverage reported honestly",
+      "when": "Run the study protocol in the brief without explaining the answers first",
+      "then": "Report raw task outcomes, mistakes and changes made; separate guided completion from unguided understanding; no fabricated percentage improvement or inference about model accuracy/hiring probability.",
+      "execution_status": "not_run"
+    }
+  ],
+  "formative_study": {
+    "status": "planned_not_conducted",
+    "goal": "Determine whether a new visitor understands the three state boundaries and can complete/reverse the editorial task.",
+    "suggested_participants": {
+      "range": [
+        3,
+        5
+      ],
+      "purpose": "Small formative discovery, not inference about a population.",
+      "recruitment": "Relevant content editors and product/design reviewers. Include an actual assistive-technology user when claiming that coverage; otherwise state it was not tested."
+    },
+    "tasks": [
+      {
+        "id": "U01",
+        "prompt": "Before starting, explain what you expect to happen and what is live.",
+        "success": "Distinguishes recorded face suggestions from optional server generation; does not expect recognition to run on Start."
+      },
+      {
+        "id": "U02",
+        "prompt": "Use one suggested name and leave the other person unnamed. Review the resulting text.",
+        "success": "Completes both choices without interpreting unnamed as an error; correctly predicts its effect on the sample draft."
+      },
+      {
+        "id": "U03",
+        "prompt": "Change the wording and apply it. Tell me where you think it was saved.",
+        "success": "The chosen text reaches the local demo copy, and participant correctly says it did not publish WordPress media."
+      },
+      {
+        "id": "U04",
+        "prompt": "Return the demo image to its previous alt text.",
+        "success": "Finds and uses Undo without resetting the whole walkthrough."
+      },
+      {
+        "id": "U05",
+        "prompt": "Open the optional live test. Before starting it, explain whether your earlier name choices control it.",
+        "success": "Recognizes the separate server roster and that live text will not replace the reviewed draft."
+      }
+    ],
+    "record_per_task": [
+      "success_boolean",
+      "assistance_required",
+      "observed_error",
+      "participant_explanation",
+      "post_task_ease",
+      "change_suggested"
+    ],
+    "critical_misunderstandings": [
+      "Believes recorded recognition ran live",
+      "Believes unnamed changes the server roster",
+      "Believes Apply publishes to WordPress",
+      "Believes the live result will be applied automatically"
+    ],
+    "release_use": "Any observed critical misunderstanding triggers a copy/flow review before presenting the revised version. A small all-pass sample does not prove no misunderstandings remain.",
+    "measurement_notes": "Use raw counts and participant context. If publishing headline rates, attach n and a suitable interval. Avoid speed claims from concurrent think-aloud sessions. Never call this a face-recognition accuracy test."
+  },
+  "quartermaster_evidence_mapping": [
+    {
+      "role_need": "Make AI assistance understandable",
+      "demo_evidence": "Saved suggestion, optional naming and separate live result",
+      "limit": "Does not prove model quality or homeowner trust."
+    },
+    {
+      "role_need": "End-to-end product craft",
+      "demo_evidence": "One task with review, preview, local application and undo",
+      "limit": "Still a prototype, not evidence of a shipped production feature."
+    },
+    {
+      "role_need": "Explain design rationale",
+      "demo_evidence": "Three short decision notes linked to the actual interaction",
+      "limit": "Do not present the canon as external user research."
+    },
+    {
+      "role_need": "Accessible interface design",
+      "demo_evidence": "Keyboard-operable decisions and truthful status/preview behavior",
+      "limit": "Conformance requires broader testing than this snapshot."
+    },
+    {
+      "role_need": "R&D through testing",
+      "demo_evidence": "Document a real revision after the proposed study",
+      "limit": "Only add outcomes after the study has happened."
+    }
+  ],
+  "out_of_scope": [
+    "New recognition service",
+    "New roster writes or model training",
+    "Claimed independent identity verification",
+    "Automatic promotion of live output into the core draft",
+    "New React/TypeScript inventory scanner or Canvas product release",
+    "A new Practice portfolio section",
+    "Changing the photograph or inventing another recognition result",
+    "Removing WordPress authentication or altering browser security policy",
+    "Mass visual redesign before the core boundary/flow fixes",
+    "Publishing invented latency, accuracy, user-research or hiring-impact metrics"
+  ],
+  "handoff_contract": {
+    "required_output_fields": [
+      "status",
+      "actual_repo_commit",
+      "changed_files_and_symbols",
+      "fixture_provenance",
+      "network_boundary_evidence",
+      "tests_run_with_results",
+      "tests_not_run_with_reasons",
+      "screenshots_or_recording_paths",
+      "patch_or_commit_ref",
+      "remaining_blockers"
+    ],
+    "allowed_statuses": [
+      "implemented_and_verified",
+      "implemented_partially_verified",
+      "blocked_before_implementation"
+    ],
+    "rules": [
+      "No claim of completion without an inspectable changed artifact.",
+      "Do not report intended commands as executed tests.",
+      "Do not write credentials into the implementation report.",
+      "Keep proposed names and future capability separate from shipped behavior.",
+      "Follow the repository's approved branch workflow; do not alter unrelated work."
+    ]
+  },
+  "implementation_execution_policy": {
+    "default": "Sequential implementation in the current consumer checkout; this brief does not authorize background agent jobs.",
+    "parallelism": "Split only after W00 identifies disjoint files and shared contracts. Do not assign two lanes to the same component or reducer.",
+    "browser_testing": "Use an already authorized browser or local test environment. Do not modify managed browser policies or access controls.",
+    "live_testing": "Automated tests use a stub. A billable real generation needs explicit authorization and a verified non-publication contract.",
+    "change_budget": "Limit changes to this guided route, its local state/helpers, existing live adapter integration, fixtures, relevant tests and case-study link. No new backend feature is required."
+  }
+}

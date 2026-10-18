@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobStateMachineUtils.test.ts::keeps the processed image count monotonic when clustering progress replaces scan progress",
+    "verdict": "kept",
+    "reason": "This test guards that low 3/4 clustering SSE and fallback progress cannot replace a completed 10/10 scan snapshot; the cited covering test instead uses 15/21 SSE progress and a detecting fallback.",
+    "covered_by": null
+  },
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::AuthExpiredError 401 and 403 round-trip exact status (M4)",
+    "verdict": "deleted",
+    "reason": "The retained classifier test constructs both status variants and checks identity, auth_expired tags, and exact 401/403 statuses.",
+    "covered_by": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::classifies AuthExpiredError 401 and 403 as auth_expired"
+  },
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::classifies TimeoutError as timeout and AbortError as abort — distinguishable [FEBT1-W2A-05]",
+    "verdict": "deleted",
+    "reason": "The retained F3 test classifies plain-object TimeoutError as timeout and AbortError as abort, preserving the distinction.",
+    "covered_by": "apps/prototype-wp-alt-context/js/admin/utils/__tests__/appError.test.ts::plain-object AbortError classifies as abort; TimeoutError as timeout (F3)"
+  }
+]

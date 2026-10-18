@@ -35,6 +35,8 @@ from recognition.application.integrations import (
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
 
+from recognition.domain.face_evidence import FaceEvidence
+
 logger = logging.getLogger(__name__)
 
 LandmarkPoint = tuple[float, float]
@@ -142,6 +144,7 @@ class FaceDetection:
     bbox: tuple[int, int, int, int]
     confidence: float
     embedding: np.ndarray | None = None  # unit-normalized face embedding
+    face_evidence: FaceEvidence | None = None
     # Detection metadata
     pose_pitch: float | None = None
     pose_yaw: float | None = None

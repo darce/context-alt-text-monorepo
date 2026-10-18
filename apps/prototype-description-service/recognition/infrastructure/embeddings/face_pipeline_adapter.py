@@ -934,6 +934,9 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
         # Same phash helper as InsightFaceFaceDetector (no forked math) — CR-01.
         image_phash = InsightFaceFaceDetector._compute_phash(image_bytes)
 
+        from recognition.domain.face_evidence import measure_input
+
+        evidence = measure_input(image_bytes, bgr)
         raw_batches = self._runtime.detector.detect([bgr])
         raw_faces: list[RawDetection] = raw_batches[0] if raw_batches else []
         records = getattr(self._call_records, "current", None)
@@ -1036,6 +1039,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                     media_id=media_id,
                     bbox=bbox,
                     confidence=float(face.score),
+                    face_evidence=evidence.for_bbox(bbox),
                     embedding=np.asarray(embedding, dtype=np.float32),
                     pose_pitch=None,
                     pose_yaw=factors.pose_yaw,

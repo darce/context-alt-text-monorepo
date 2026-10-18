@@ -2731,17 +2731,7 @@ def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
         expected += [
             compose
             + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-            [
-                "docker",
-                "compose",
-                "-f",
-                "docker-compose.caddy.yml",
-                "exec",
-                "-T",
-                "caddy",
-                "sha256sum",
-                "/etc/caddy/Caddyfile",
-            ],
+            compose + ["exec", "-T", "caddy", "sha256sum", "/etc/caddy/Caddyfile"],
             ["health-check"],
         ]
         assert "Caddyfile" in result.stdout, "host hash verification must run after readiness"

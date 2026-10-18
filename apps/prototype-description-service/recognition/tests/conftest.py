@@ -136,6 +136,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("clustering_job_reports", Base.metadata),
             Table("assignment_decisions", Base.metadata),
             Table("clustering_feedback", Base.metadata),
+            Table("face_observations", Base.metadata),
             Table("media_identities", Base.metadata),
             Table("identity_constraints", Base.metadata),
             Table("tenants", Base.metadata),

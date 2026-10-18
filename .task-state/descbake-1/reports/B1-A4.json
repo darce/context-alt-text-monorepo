@@ -1,0 +1,98 @@
+{
+  "status": "completed",
+  "summary": "DESCBAKE-1 B1 fourth dispatch: reproduced and fixed only DG2-01-R1 under coordinator decision 17617. Converted the strict xfail to ordinary explicit expectations first; the first RED raised exactly ValueError: Invalid IPv6 URL. Expanded behavioral RED was committed before production changes: 9 failed, 108 passed. The minimum fix adds ValueError only to the existing urlopen/response-read exception tuple and discards its message, yielding existing FetchResult(network_error) and unverified/network_error rows. GREEN: 117 passed, zero xfails/skips; owner Ruff lint/format CHECK and all four supplied independent HTTP probes pass offline. Malformed local proxy configuration deliberately produces 26 unknown rows, never absence or acceptance. Prior reports and gate failures are preserved; the independent combined Sol xhigh gate is still required.",
+  "changed_files": [
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py",
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+    ".task-state/descbake-1/reports/B1-A4.json"
+  ],
+  "commits": [
+    "bf8898d6a183c4368c161e4e22889641e6ffb258",
+    "f380cfb26b7e1c4047c093e59c0cf457024189ba"
+  ],
+  "tests": [
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a4-red-residual scene/tests/test_eval_harness_bakeoff_intake.py -q --tb=short -k malformed_redirect_location",
+      "exit_code": 1,
+      "summary": "First edit removed the strict xfail and required unverified/network_error, null remote fields, all 26 rows and equality of the other 25 audit records to their baseline metadata. Before production changes: 1 failed, 104 deselected, 3 known configuration warnings in 2.11s. Exactly predicted ValueError: Invalid IPv6 URL escaped urllib HTTPRedirectHandler through urlparse/urlsplit. This executed behavioral RED, not collection failure."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a4-red scene/tests/test_eval_harness_bakeoff_intake.py -q --tb=line > /tmp/descbake-b1-a4-red.log 2>&1",
+      "exit_code": 1,
+      "summary": "Before production changes: 9 failed, 108 passed, 3 warnings in 30.22s, matching all predicted counts and messages. Three actual urllib redirect cases raised ValueError: Invalid IPv6 URL; two redirect CLI cases failed with protocol failure escaped the CLI; two actual ProxyHandler cases raised ValueError with proxy URL with no authority; two proxy CLI cases failed with proxy configuration failure escaped the CLI. The proxy URL and credentials in RED are explicit synthetic markers. All existing HTTP/status/Unicode and programming-error controls passed. No xfail or skip remained. Production SHA-256 was still de1322aa5ee61d006f10af7f41aeb7402c9126901f88cefb27b99cc5e7781c18. Tests-only commit bf8898d precedes GREEN commit f380cfb."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a4-green scene/tests/test_eval_harness_bakeoff_intake.py -q --tb=short > /tmp/descbake-b1-a4-green.log 2>&1",
+      "exit_code": 0,
+      "summary": "117 passed, 3 known configuration warnings in 37.90s; zero xfails/skips. Redirect IPv6 at request 12/26 produces one unverified/network_error row with null latest/status/remote metadata, completes all 26 rows and preserves the other 25. JSON and Markdown main() and real subprocess CLI paths pass without traceback or remote-text echo. Actual malformed ProxyHandler configuration executes urllib's parser on all 26 requests and leaves every row unknown; no socket is reached and no credentials/path are echoed. Four urlopen and four response.read guards propagate TypeError, AttributeError, KeyError and RuntimeError. All earlier protocol-family, deep-JSON, HTTP-status, valid/invalid Unicode, atomic-write, docs-link, pin and output-protection tests pass."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+      "exit_code": 0,
+      "summary": "All checks passed on the two owned Python files, both before RED and after GREEN. Read-only; no --fix."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff format --no-cache --check apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+      "exit_code": 0,
+      "summary": "2 files already formatted, both before RED and after GREEN. Formatter CHECK only; no rewrite."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=\"$PWD\" ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a4-original-probes /tmp/descbake-b1-a4-http-protocol/test_final_http_boundary.py -q --tb=short -s > /tmp/descbake-b1-a4-original-probes.log 2>&1",
+      "exit_code": 0,
+      "summary": "4 passed in 10.42s: original BadStatusLine/LineTooLong x JSON/Markdown CLI probes. Each receipt says exit0, fetch_calls=26, expected_rows=26, exception=null, traceback=false, remote_marker_echoed=false. prior_preserved=false is expected because valid diagnostic emission replaces the old report atomically. Supplied child SHA-256 91d266744a1a2178159d130fc1975fc5b7f88d75cbedc74d15d022372113fdb4 and original test SHA-256 d5b13a69572f5d675a5922a44b8201888f0200e627f793f1966588b18b74c8a4 verified exactly before execution. Only ROOT was relocated to /tmp/descbake-b1-a4-http-protocol in the executable test copy; the supplied original copy remains intact in /tmp. These are current passes of the A3-protected shapes, not a reclassification of the earlier independent gate's four expected failures."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "No whitespace errors before RED commit or GREEN commit."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python /tmp/descbake-b1-a4-validate.py",
+      "exit_code": 0,
+      "summary": "New report validates against repository .schema.json with Draft202012Validator. Exact source tree/provenance, RED-before-GREEN parentage, tests-only RED and module-only GREEN, only three allowed paths, no author trailers, unchanged prior report bytes and sealed/intake data, no xfail/skip in owner tests, and AST equality except the added request-boundary ValueError catch verified. Supplied probe hashes and ROOT-only relocation verified. Seven historical reports are preserved byte-identically."
+    }
+  ],
+  "findings": [
+    {
+      "id": "DG2-01-R1",
+      "description": "Confirmed and fixed: a remote 3xx Location with an unbalanced IPv6 literal raised a bare ValueError out of urlopen and aborted the 26-row refresh. Decision 17617 chooses option (b): catch ValueError only within the network request/response-read boundary and map it to the existing unverified/network_error diagnostic without the raw message.",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py:298-313 adds ValueError only to the existing exception tuple at :309; HTTPError and timeout handlers remain earlier, json.loads and its (ValueError, RecursionError) handler stay separate at :316-321. No schema/scoring code enters the catch. apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py:890 adds the actual redirect wire to both renderer matrix cases; :990 extends real CLI subprocess cases; :1087 replaces the strict xfail with explicit ordinary assertions including exact equality of 25 peers. RED first reproduced ValueError: Invalid IPv6 URL through actual urlopen -> OpenerDirector -> HTTPSConnection -> HTTPResponse -> HTTPRedirectHandler -> urlsplit over in-memory sockets. All five redirect regressions now pass with 26 rows and no echo. Canon v0.26.2 CAL-02: https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#cal-02 ; CARD-03: https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md ; TEST-06: https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-06 .",
+      "status": "confirmed_fixed_under_decision_17617",
+      "owner": "B1"
+    },
+    {
+      "id": "B1-A4-A3-INTERPRETATION",
+      "description": "Explicitly modifies B1-A3's interpretation that a scoped ValueError operational catch would violate the no-broad-Exception instruction. That was an author proposal awaiting adjudication; coordinator decision 17617 now accepts this scoped catch and its local configuration tradeoff. B1-A3.json remains verbatim, including its former open finding and 104-pass/1-strict-xfail result.",
+      "evidence": ".task-state/descbake-1/reports/B1-A3.json findings[DG2-01-R1] proposed both options and called option (b) a constraint violation. Its retained SHA-256 is d3c680e49ea4ee2dce857083ae75d7ac97282fddb8e9093417ad35909e104e34. apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py:1107 configures actual ProxyHandler with a malformed local proxy URL and observes its real parser rather than throwing a literal ValueError. :1159 and :1179 exercise JSON/Markdown main() and subprocesses: every attempt yields a typed unknown, all 26 identities/baselines/sources survive, no socket is reached, no proxy markers leak, research remains pending_verification/runnable=false. Eight no-swallow guards keep TypeError/AttributeError/KeyError/RuntimeError visible. This is a deliberate unavailable-metadata classification for invalid local configuration, not repo absence or model acceptance; CLI exit0 certifies valid diagnostic emission only. CAL-02 and CARD-03 (supplied Canon v0.26.2; URLs above).",
+      "status": "prior_author_interpretation_superseded_by_coordinator",
+      "owner": "B1"
+    },
+    {
+      "id": "B1-A4-HISTORY",
+      "description": "All first/A2/A3 author reports and both independent gate FAIL/REVISE outcomes remain historical evidence. Current author tests do not erase earlier failures or constitute the required final combined gate.",
+      "evidence": "Seven base reports remain byte-identical. B1 first collection RED exit2 had zero behavioral tests; first GREEN had 46 passes/1 markdown failure before 47 passes. Its false no-Unsloth-input claim is retained and superseded by A2 DG1-01, not rewritten. A2's 16 failed/56 passed plus two injected-fetch failures and 74-pass GREEN remain. A3's 18 failed/86 passed/1 xfailed RED and 104 passed/1 strict xfail GREEN, plus its reported mutations, remain author history. First independent gate FAIL had 177 passes, 1 skip and nine DG1 findings; second gate REVISE/FAIL had 253 passes, 1 skip and four actual-urllib counterexamples confirming DG2-01. Those four old failures were not recaptured or called passes; the separate current replay is recorded above. Original supplied reports for B2/B3 and their findings are neither re-adjudicated nor changed. CARD-11: https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md ; CARD-06: https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/evidence-before-commitment.md .",
+      "status": "preserved_independent_combined_gate_still_required",
+      "owner": "B1"
+    },
+    {
+      "id": "B1-A4-PROVENANCE",
+      "description": "Exact source tree in .workbay-source-provenance governs this history-stripped dispatch.",
+      "evidence": "source_commit=811d3618be5e5686534b8c6c256b5ff260894c44; source_tree=3743f0211a30fad7b56f918e84d281e4d67429a7 equals sandbox_base_commit=25cac9505ba72a57f7d6f4a082a270cef6e32239 tree. Initial module/test hashes match supplied final-codemap: de1322aa... / 78be8034... . Current module SHA-256 1397cef6df2ef222fe2f69ba05f2d9a7f444cf1a14c8d4b752fe8336a98074c1; test SHA-256 3ce70e6ca15eea80a68b04adcca2d8869f11eda0596f2d9db43785fc043aa8d8. The synthetic base is not substituted for source identity. PROV-01: https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#prov-01 ; GRPH-14: https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-14 .",
+      "status": "verified",
+      "owner": "B1"
+    }
+  ],
+  "limitations": [
+    "Only the two owned Python paths and B1-A4.json changed. Intake JSON, sealed YAML, fixtures, thresholds, pins, other evaluators and all historical reports are unchanged. No source concern outside ownership was fixed or silently waived.",
+    "Intentional exception-scope tradeoff authorized by decision 17617: ValueError from urlopen/response-read, including invalid local URL/proxy configuration, means unavailable metadata. No raw exception detail is exposed. Request construction, schema/scoring and rendering remain outside this catch. JSON ValueError/RecursionError still means error/malformed_json; existing HTTP and timeout distinctions remain. This is not except Exception/BaseException.",
+    "Only the owner test module and four supplied external HTTP probes ran, each under timeout300s; CLI children use timeout60s. No combined/full application/sealed-loader/B2/B3 suite or independent final combined Sol xhigh gate was run. The required independent combined gate remains outstanding; author completion here is not its acceptance verdict.",
+    "The three isolated pytest warnings (collection_scope_receipt, timeout, timeout_method) remain visible. --noconftest, disabled plugin autoload, cleared required_plugins and disabled cache isolate database/global fixtures; the outer timeout300s is independently enforced.",
+    "Synthetic contract probes only: actual urllib, HTTPSConnection, HTTPResponse and redirect/proxy parsers execute over in-memory sockets or fail before a socket. Proxy configuration tests use explicit ProxyHandler configuration and scoped test monkeypatches; production has no new opener, redirect policy, urllib global mutation, enum, schema or adoption framework.",
+    "No network, GPU, private database, model download, deploy, production routing, subagents, dependency install or shared-runtime mutation. Existing lane .venv used read-only with PYTHONDONTWRITEBYTECODE=1; Ruff CHECK only with --no-cache. All temporary probes/logs live under /tmp.",
+    "A valid diagnostic report and CLI exit0 are not a quality PASS, repo-absence proof or model acceptance. All 26 failed-proxy rows remain unverified/network_error, latest and remote metadata null. Research stays pending_verification/runnable=false. No empirical quality, winner or promotion claim is made.",
+    "Earlier author and independent-gate results remain historical, including failures, skips, strict xfail and reported mutations. No new mutation campaign was run; actual behavioral RED on the unchanged A3 module proves the new defect assertions fail without this catch. The broader redirect identity concern mentioned but not examined in A3 is retained there, not newly adjudicated here.",
+    "Canon v0.26.2 matched rules/cards were supplied in the user packet and cited at use; no URLs were fetched. Applied TEST-06/CARD-08 reproduce and predict, CAL-02/CARD-03 designed unknown, CARD-06 evidence before commitment, CARD-11 fixed frame, PROV-01/GRPH-14 source lineage. Unrelated model adoption controls stay prospective.",
+    "RED and GREEN commits have no author/coauthor trailers; hooks were disabled per commit to avoid out-of-scope execution. Report is force-added because .task-state is ignored. The report-only commit follows the listed RED/GREEN commits and cannot self-record its own SHA; the final response supplies it."
+  ],
+  "source_sha": "811d3618be5e5686534b8c6c256b5ff260894c44"
+}

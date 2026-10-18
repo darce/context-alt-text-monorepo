@@ -1,0 +1,92 @@
+{
+  "lane": "drfu-02",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 6333,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:315 - CI half-width above delta/2 explicitly demotes a cell to DIRECTIONAL; docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1273 acknowledges Golden150 may not resolve 10pp and calls for a larger corpus.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "No code change indicated; retain the precision gate and its DIRECTIONAL outcome for unresolved intervals."
+    },
+    {
+      "db_id": 6334,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:465 - detection rows are appended before the frame-specific branch at :475; apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:115 - regression assertion compares detection tuples across native and e2e and requires equality.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py",
+      "size": "S",
+      "fix_hint": "No scoring change indicated; the frame switch changes identification rows while detection recall remains the same measurement."
+    },
+    {
+      "db_id": 6335,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:230 - undefined micro-ratio draws are padded as delta zero and stamped partial; :328-329 demotes a non-ok bootstrap status; apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:245 and :269 assert partial status and primary-tier demotion.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "No fix indicated; keep partial bootstrap status fail-closed for confirmatory tiering."
+    },
+    {
+      "db_id": 6376,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:39 and :43 - missing and non-success cluster_job.json raise BenchError with code cluster_gate_refused; apps/prototype-description-service/scripts/bench/cross_stack_bench.py:46-47 prints exc.code on stderr, and tests/test_cluster_gate.py:140 asserts the failed-job code.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_cluster_gate.py",
+      "size": "S",
+      "fix_hint": "No change indicated; the score/export abort already emits the stable cluster_gate_refused code."
+    },
+    {
+      "db_id": 6377,
+      "outcome": "REFUTED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:459 - the normative items.jsonl example ends at attempt without naming terminal_ingest_outcome; :888 allows analyze/transport failure codes in that field, while apps/prototype-description-service/scripts/bench/score_report.py:371 reads the exact terminal_ingest_outcome key as ingest provenance.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "Add the exact terminal_ingest_outcome key to the normative JSONL example and reserve it for ingest status, leaving analyze failures in phase/outcome/error_code."
+    },
+    {
+      "db_id": 6378,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:594-597 - each excluded item increments attrition_ingest_analyze when ia_fail is true, otherwise attrition_join when join_fail is true, so the counters cannot double-count one item.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "No change indicated; preserve the mutually exclusive attrition classification."
+    },
+    {
+      "db_id": 6384,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-description-service/api/main.py:995-1001 - health/detailed persists model name, cache path, bundle file count, status, detail, and profile without content digests; apps/prototype-description-service/recognition/application/health.py:498-512 only checks bundle presence and file count, and apps/prototype-description-service/scripts/bench/preflight.py:80 persists that full response excerpt.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/api/main.py",
+        "apps/prototype-description-service/scripts/bench/export_map.py",
+        "apps/prototype-description-service/scripts/bench/tests/test_preflight.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py",
+      "size": "M",
+      "fix_hint": "Persist SHA-256 digests for the live model bundle and raw exports in run provenance, then assert those digests survive preflight/export persistence."
+    },
+    {
+      "db_id": 6387,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:115-117 - the assertion that native and e2e detection tuples are identical is the same STAT-03 concern as db 6334; the canonical finding remains closed because only identification inputs vary by frame.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py",
+      "size": "S",
+      "fix_hint": "No separate change indicated; this finding is the same closed frame-row concern as db 6334."
+    }
+  ]
+}

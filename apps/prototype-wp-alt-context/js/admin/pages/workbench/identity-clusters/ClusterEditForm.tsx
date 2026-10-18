@@ -1,0 +1,254 @@
+/**
+ * Cluster label edit form — Library pane adapter over the shared NameFaceControl
+ * (UXW2-3). Save wiring stays identity-anchored in the caller; this adapter maps
+ * the control's single-gesture resolution back onto the legacy callbacks.
+ */
+
+import React from 'react';
+import { __, sprintf } from '@wordpress/i18n';
+
+import type { ComboboxOption } from '../../../../components/ui/combobox';
+import { parseNamingOptionValue, unwrapClusterOptionId } from './buildNamingOptions';
+import type { SuggestionProvenance } from './useClusterMatchAction';
+import {
+  budgetOverlayOptions as budgetRows,
+  NameFaceControl,
+  normalizeNameFaceLabel,
+  type NameFaceResolution,
+} from './NameFaceControl';
+
+export {
+  budgetOverlayOptions,
+  OVERLAY_OPTIONS_LIMIT,
+  OVERLAY_SUGGESTED_BUDGET,
+} from './NameFaceControl';
+
+interface ClusterEditFormProps {
+  /** Current label input value */
+  labelInput: string;
+  /** Called when label input changes */
+  onLabelChange: (value: string) => void;
+  /** Combobox options (suggestions + existing labels) */
+  options: ComboboxOption[];
+  /** Whether suggestions are loading */
+  isLoading: boolean;
+  /** Whether a mutation is in progress */
+  isPending: boolean;
+  /** Override label for the save button */
+  saveLabel?: string;
+  /** Called when save button is clicked */
+  onSave: (labelOverride?: string) => void;
+  /**
+   * Explicit person-source confirm path — rename/create only; never merge (PR-16 / FIX-1).
+   * When provided, person-row confirm uses this instead of onSave.
+   */
+  onPersonSelect?: (label: string, rosterEntryId: number) => void;
+  /** Called when a suggestion is confirmed (optional suggestionId resolves the pending row by id) */
+  onConfirmSuggestion?: (
+    clusterId: string,
+    label: string,
+    suggestionId?: string,
+    suggestionProvenance?: SuggestionProvenance,
+  ) => void;
+  /** Called when cancel button is clicked */
+  onCancel: () => void;
+  /** Called when a suggested match is rejected */
+  onRejectSuggestion?: (suggestionId: string) => void;
+  /** Envelope total from the at-rest labelled-cluster page. */
+  atRestTotal?: number;
+  /** Envelope truncated flag from the at-rest labelled-cluster page. */
+  atRestTruncated?: boolean;
+  /** True while the loader is still in at-rest (debounced) mode. */
+  isAtRestMode?: boolean;
+  /** The suggestion read failed: shown as an error with retry, never as an empty list. */
+  suggestionsError?: boolean;
+  /** Re-runs the failed suggestion read. */
+  onRetrySuggestions?: () => void;
+}
+
+/**
+ * Edit form for cluster label with autofocus input and quick suggestions.
+ */
+export const ClusterEditForm = ({
+  labelInput,
+  onLabelChange,
+  options,
+  isLoading,
+  isPending,
+  saveLabel,
+  onSave,
+  onPersonSelect,
+  onConfirmSuggestion,
+  onCancel,
+  onRejectSuggestion,
+  atRestTotal = 0,
+  atRestTruncated = false,
+  isAtRestMode = false,
+  suggestionsError,
+  onRetrySuggestions,
+}: ClusterEditFormProps): React.JSX.Element => {
+  const prefillRef = React.useRef(labelInput);
+  const selectedSuggestionRef = React.useRef<ComboboxOption | null>(null);
+  const [commitFeedback, setCommitFeedback] = React.useState('');
+  const inputId = `acx-identity-cluster-name-${React.useId()}`;
+  const saveButtonLabel = saveLabel ?? (isPending ? __('Saving name…', 'alt-context') : __('Save name', 'alt-context'));
+  const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
+  const atRestHintId = `acx-identity-cluster-at-rest-hint-${React.useId()}`;
+
+  const displayedCount = React.useMemo(() => budgetRows(options).length, [options]);
+
+  const commitSelectedSuggestion = React.useCallback(
+    (option: ComboboxOption): boolean => {
+      const clusterId = unwrapClusterOptionId(String(option.value));
+      if (onConfirmSuggestion && clusterId) {
+        const suggestionId =
+          typeof option.suggestion_id === 'string' && option.suggestion_id.length > 0
+            ? option.suggestion_id
+            : undefined;
+        // Identity provenance: the dropdown option carries the source face of its suggestion row.
+        const sourceIdentityId =
+          typeof option.suggestion_identity_id === 'string' && option.suggestion_identity_id.length > 0
+            ? option.suggestion_identity_id
+            : undefined;
+        const suggestionProvenance: SuggestionProvenance | undefined =
+          suggestionId && sourceIdentityId ? { kind: 'identity', identityId: sourceIdentityId } : undefined;
+        if (suggestionProvenance) {
+          onConfirmSuggestion(clusterId, option.label, suggestionId, suggestionProvenance);
+        } else {
+          onConfirmSuggestion(clusterId, option.label, suggestionId);
+        }
+        return true;
+      }
+      return false;
+    },
+    [onConfirmSuggestion],
+  );
+
+  // Enter / Save: exact person match routes to the person path (rename/create,
+  // never merge); a filled suggestion commits on this explicit control (R3-27);
+  // anything else saves the typed label (PR-16 / FIX-1).
+  const handleCommit = React.useCallback(
+    (resolution: NameFaceResolution) => {
+      if (resolution.kind === 'ambiguous') {
+        return;
+      }
+      const selected = selectedSuggestionRef.current;
+      if (
+        selected &&
+        normalizeNameFaceLabel(selected.label) === normalizeNameFaceLabel(resolution.name)
+      ) {
+        selectedSuggestionRef.current = null;
+        if (commitSelectedSuggestion(selected)) {
+          setCommitFeedback('');
+          return;
+        }
+        setCommitFeedback('');
+        onSave(selected.label);
+        return;
+      }
+      if (resolution.kind === 'roster') {
+        const folded = normalizeNameFaceLabel(resolution.name);
+        const sameFoldCount = options.filter(
+          (option) =>
+            (option.source === 'person' ||
+              parseNamingOptionValue(String(option.value))?.source === 'person') &&
+            normalizeNameFaceLabel(option.label) === folded,
+        ).length;
+        // Prefill no-op stays for a single exact match (R1-13). Same-fold
+        // confirm passes the chosen rosterEntryId with the label (R3-12).
+        if (sameFoldCount <= 1 && folded === normalizeNameFaceLabel(prefillRef.current)) {
+          setCommitFeedback(__('No changes to save.', 'alt-context'));
+          return;
+        }
+        setCommitFeedback('');
+        if (onPersonSelect) {
+          onPersonSelect(resolution.name, resolution.rosterEntryId);
+        } else {
+          onSave(resolution.name);
+        }
+        return;
+      }
+      if (normalizeNameFaceLabel(resolution.name) === normalizeNameFaceLabel(prefillRef.current)) {
+        setCommitFeedback(__('No changes to save.', 'alt-context'));
+        return;
+      }
+      setCommitFeedback('');
+      onSave(resolution.name);
+    },
+    [commitSelectedSuggestion, onPersonSelect, onSave, options],
+  );
+
+  // Row click fills the field. Save/Enter is the commit (INT-07 / HAI-12).
+  const handleOptionConfirm = React.useCallback(
+    (option: ComboboxOption) => {
+      selectedSuggestionRef.current = option;
+      setCommitFeedback('');
+      onLabelChange(option.label);
+    },
+    [onLabelChange],
+  );
+
+  const handleValueChange = React.useCallback(
+    (value: string) => {
+      const selected = selectedSuggestionRef.current;
+      if (
+        selected &&
+        normalizeNameFaceLabel(selected.label) !== normalizeNameFaceLabel(value)
+      ) {
+        selectedSuggestionRef.current = null;
+      }
+      setCommitFeedback('');
+      onLabelChange(value);
+    },
+    [onLabelChange],
+  );
+
+  return (
+    <>
+      <NameFaceControl
+        options={options}
+        value={labelInput}
+        onValueChange={handleValueChange}
+        onCommit={handleCommit}
+        onOptionConfirm={handleOptionConfirm}
+        onRejectSuggestion={onRejectSuggestion}
+        onCancel={onCancel}
+        isPending={isPending}
+        isLoading={isLoading}
+        suggestionsError={suggestionsError}
+        onRetrySuggestions={onRetrySuggestions}
+        searchPlaceholder={__('Enter a name…', 'alt-context')}
+        commitLabel={saveButtonLabel}
+        pendingLabel={saveButtonLabel}
+        placeholder={__('Enter a name…', 'alt-context')}
+        suggestionsHeader={__('People', 'alt-context')}
+        visibleLabel={__('Person name', 'alt-context')}
+        inputId={inputId}
+        className="acx-identity-cluster__edit"
+        classPrefix="acx-identity-cluster"
+        hideStatusAnnouncement={Boolean(commitFeedback)}
+        hintId={showAtRestTruncationHint ? atRestHintId : undefined}
+        hint={
+          showAtRestTruncationHint ? (
+            <p
+              id={atRestHintId}
+              className="acx-identity-cluster__at-rest-hint"
+            >
+              {sprintf(
+                /* translators: 1: number of labels currently shown, 2: total labelled clusters */
+                __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
+                displayedCount,
+                atRestTotal,
+              )}
+            </p>
+          ) : null
+        }
+      />
+      {commitFeedback ? (
+        <p className="acx-identity-cluster__result-count" role="status" aria-live="polite">
+          {commitFeedback}
+        </p>
+      ) : null}
+    </>
+  );
+};

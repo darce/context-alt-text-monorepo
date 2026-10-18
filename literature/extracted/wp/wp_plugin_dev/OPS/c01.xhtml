@@ -1,0 +1,303 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>1 An Introduction to Plugins</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_1" role="doc-pagebreak" title="1"/><a id="c01"/><span class="chapterNumber">1</span><br/><span class="chapterTitle">An Introduction to Plugins</span></h1>
+</header>
+<section><span id="c01-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c01-list-0001">
+<li id="c01-li-0001">Understanding what a plugin is</li>
+<li id="c01-li-0002">Using available WordPress APIs</li>
+<li id="c01-li-0004">Finding examples of popular plugins</li>
+<li id="c01-li-0005">Separating plugin and theme functionality</li>
+<li id="c01-li-0006">Managing and installing plugins</li>
+<li id="c01-li-0007">Understanding types of WordPress plugins</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c01-para-0003">WordPress is the most popular open source content management system available today. One of the primary reasons WordPress is so popular is the ease with which you can customize and extend WordPress through plugins. WordPress has an amazing framework in place that gives plugin developers the tools needed to extend WordPress in any way imaginable.</p>
+<p id="c01-para-0004">Understanding how plugins work, and the tools available in WordPress, is critical knowledge when developing professional WordPress plugins.</p>
+</section>
+<section><span id="c01-sec-0002"/>
+<h2 id="head-2-1">WHAT IS A PLUGIN?</h2>
+<p id="c01-para-0005">A <i>plugin</i> in WordPress is a PHP‐based script that extends or alters the core functionality of WordPress. Quite simply, plugins are files installed in WordPress to add a feature, or set of features, to WordPress. Plugins can range in complexity from a simple social networking plugin to an extremely elaborate eCommerce package. There is no limit to what a plugin can do in WordPress; because of this, there is no shortage of plugins available for download.</p> <span epub:type="pagebreak" id="Page_2" role="doc-pagebreak" title="2"/>
+<section><span id="c01-sec-0003"/>
+<h3 id="head-3-1">How Plugins Interact with WordPress</h3>
+<p>WordPress features many different APIs for use in your plugin. Each API, or application programming interface, helps interact with WordPress in a different way. The following are the main available APIs in WordPress and their function:</p>
+<ul class="check" id="c01-list-0002">
+<li id="c01-li-0008"><b>Plugin:</b> Provides a set of hooks that enable plugins access to specific parts of WordPress. WordPress contains two different types of hooks: Actions and Filters. The Action hook enables you to trigger custom plugin code at specific points during execution. For example, you can trigger a custom function to run after a user registers a user account in WordPress. The Filter hook modifies text before adding it to or after retrieving it from the database.</li>
+<li id="c01-li-0009"><b>Widgets:</b> Allows you to create and manage widgets in your plugin. Widgets appear under the Appearance ➪ Widgets screen and are available to add to any registered sidebar in your theme. The API enables multiple instances of the same widget to be used throughout your sidebars.</li>
+<li id="c01-li-0010"><b>Shortcode:</b> Adds shortcode support to your plugin. A shortcode is a simple hook that enables you to call a PHP function by adding something such as [shortcode] to a post or page.</li>
+<li id="c01-li-0011"><b>HTTP:</b> Sends HTTP requests from your plugin. This API retrieves content from an external URL or for submitting content to a URL. Currently you have five different ways to send an HTTP request. This API standardizes that process and tests each method prior to executing. Based on your server configuration, the API will use the appropriate method and make the request.</li>
+<li id="c01-li-0012"><b>REST API:</b> Allows developers to interact with your WordPress website remotely by sending and receiving JavaScript Object Notation (JSON) objects. You can create, read, update, and delete (CRUD) content within WordPress. The REST API is covered extensively in <a href="c12.xhtml">Chapter 12</a>, “REST API.”</li>
+<li id="c01-li-0013"><b>Settings:</b> Inserts settings or a settings section for your plugin. The primary advantage to using the Settings API is security. All settings data is scrubbed, so you do not need to worry about cross‐site request forgery (CSRF) and cross‐site scripting (XSS) attacks when saving plugin settings.</li>
+<li id="c01-li-0014"><b>Options:</b> Stores and retrieves options in your plugin. This API features the capability to create new options, update existing options, delete options, and retrieve any option already defined.</li>
+<li id="c01-li-0015"><b>Dashboard Widgets:</b> Creates Dashboard widgets. Widgets automatically appear on the WordPress Dashboard and contain all standard customization features including minimize, drag/drop, and screen options for hiding.</li>
+<li id="c01-li-0016"><b>Rewrite:</b> Creates custom rewrite rules in your plugin. This API enables you to add static endpoints (
+<code>/custom‐page/</code>), structure tags (
+<code>%postname%</code>), and feed links (
+<code>/feed/json/</code>).</li>
+<li id="c01-li-0017"><b>Transients:</b> Creates temporary options (cached data) in your plugins. This API is similar to the Options API, but all options are saved with an expiration time.</li>
+<li id="c01-li-0018"><span epub:type="pagebreak" id="Page_3" role="doc-pagebreak" title="3"/><b>Database:</b> Accesses the WordPress database. This includes creating, updating, deleting, and retrieving database records for use in your plugins.</li>
+<li id="c01-li-0019"><b>Theme Customization (Customize) API:</b> Adds custom website and theme options to the WordPress Customizer. Theme customizations are displayed in a real‐time preview prior to publishing to the live website.</li>
+</ul>
+<p id="c01-para-0007">There are additional, lesser known APIs that exist within the WordPress Core software. To view a full list, visit the Core Developer Handbook:</p>
+<p id="c01-para-0008"><code><a href="https://make.wordpress.org/core/handbook/best-practices/core-apis">https://make.wordpress.org/core/handbook/best-practices/core-apis</a></code></p>
+<p id="c01-para-0009">WordPress also features pluggable functions. These functions enable you to override specific core functions in a plugin. For example, the <code>wp_mail()</code> function is a pluggable function. You can easily define this function in your plugin and send email using the Simple Mail Transfer Protocol (SMTP) rather than the default method. All pluggable functions are defined in the <code>/wp‐includes/pluggable.php</code> WordPress Core file.</p>
+<p>As an example, let's look at the <code>wp_mail()</code> pluggable function, which starts with this line of code:</p>
+<pre id="c01-code-0001"><code>if ( ! function_exists( 'wp_mail' ) ) :</code></pre>
+<p>You can see that the code first checks to see whether a <code>wp_mail()</code> function already exists using the <code>function_exists()</code> PHP function. If you created your own custom <code>wp_mail()</code> function, that will be used; if not, the WordPress Core version of <code>wp_mail()</code> will be used.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c01-para-0012"><b>WARNING</b> <i>Pluggable functions are no longer being added to WordPress Core. Newer functions utilize hooks for overriding their functionality.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c01-para-0013">You can use some predefined functions during specific plugin tasks, such as when a plugin is activated or deactivated and even when a plugin is uninstalled. <a href="c02.xhtml">Chapter 2</a>, “Plugin Framework,” covers these functions in detail.</p>
+</section>
+<section><span id="c01-sec-0005"/>
+<h3 id="head-3-2">When Are Plugins Loaded?</h3>
+<p id="c01-para-0014">Plugins are loaded early in the process when a WordPress‐powered web page is called. <a href="#c01-fig-0001" id="R_c01-fig-0001">Figure 1‐1</a> shows a high‐level diagram of the standard loading process when loading a page in WordPress.</p>
+<figure> <img alt="A high-level diagram presenting the standard loading process when loading a web page in WordPress." class="center" src="images/c01f001.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c01-fig-0001" id="c01-fig-0001" role="doc-backlink"><b>FIGURE 1‐1</b></a>:</span> Loading a page in WordPress</p>
+</figcaption>
+</figure>
+<p id="c01-para-0015">The flow changes slightly when loading an admin page. The differences are minor and primarily concern what theme is loaded: admin theme versus your website theme.</p>
+</section>
+</section> <span epub:type="pagebreak" id="Page_4" role="doc-pagebreak" title="4"/>
+<section><span id="c01-sec-0006"/>
+<h2 id="head-2-2">AVAILABLE PLUGINS</h2>
+<p>When researching available plugins, you need to know where to find WordPress plugins. You can download plugins from many places on the Internet, but this isn't always a good idea.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c01-para-0017"><b>WARNING</b> <i>As with any software, downloading plugins from an untrusted source could lead to malware‐injected and compromised plugin files. It's best to download plugins only from trusted websites and official sources such as the official Plugin Directory.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<section><span id="c01-sec-0008"/>
+<h3 id="head-3-3">Official Plugin Directory</h3>
+<p id="c01-para-0018">The first place to start when researching available WordPress plugins is the official Plugin Directory at <code><a href="http://wordpress.org">WordPress.org</a></code>. The Plugin Directory is located at <code><a href="https://wordpress.org/plugins">https://wordpress.org/plugins</a></code>. With more than 55,000 plugins available and millions of plugin downloads, it's easy to see the vital role plugins play in every WordPress website. All plugins available in the Plugin Directory are 100 percent GPL and free to use for personal or commercial use.</p>
+</section>
+<section><span id="c01-sec-0009"/>
+<h3 id="head-3-4">Popular Plugin Examples</h3>
+<p>Take a look at some of the more popular WordPress plugins available to get a sense of their diversity:</p>
+<ul class="check" id="c01-list-0003">
+<li id="c01-li-0020"><b>Yoast SEO:</b> Advanced search engine optimization functionality for WordPress. Features include custom metadata for all content, canonical URLs, custom post type support, XML sitemaps, and more!
+<ul class="check" id="c01-list-0004">
+<li id="c01-li-0021"><code><a href="https://wordpress.org/plugins/yoast-seo">https://wordpress.org/plugins/yoast-seo</a></code></li>
+</ul>
+</li>
+<li id="c01-li-0022"><b>WPForms:</b> A powerful drag‐and‐drop form builder. Create simple contact forms and powerful subscription payment forms, all without writing a single line of code.
+<ul class="check" id="c01-list-0005">
+<li id="c01-li-0023"><code><a href="https://wordpress.org/plugins/wpforms-lite">https://wordpress.org/plugins/wpforms-lite</a></code></li>
+</ul>
+</li>
+<li id="c01-li-0024"><b>BuddyPress:</b> A suite of components used to bring common social networking features to your website. Features for online communities include member profiles, activity streams, user groups, messaging, and more!
+<ul class="check" id="c01-list-0006">
+<li id="c01-li-0025"><code><a href="https://wordpress.org/plugins/buddypress">https://wordpress.org/plugins/buddypress</a></code></li>
+</ul>
+</li>
+<li id="c01-li-0026"><b>WooCommerce:</b> Advanced eCommerce solution built on WordPress. This is an extremely powerful plugin allowing anyone to sell physical and digital goods online.
+<ul class="check" id="c01-list-0007">
+<li id="c01-li-0027"><code><a href="https://wordpress.org/plugins/woocommerce">https://wordpress.org/plugins/woocommerce</a></code></li>
+</ul>
+</li>
+<li id="c01-li-0028"><b>Custom Post Type UI:</b> Easy‐to‐use interface for registering and managing custom post types and taxonomies in WordPress.
+<ul class="check" id="c01-list-0008">
+<li id="c01-li-0029"><code><a href="https://wordpress.org/plugins/custom-post-type-ui">https://wordpress.org/plugins/custom-post-type-ui</a></code></li>
+</ul>
+</li>
+</ul>
+<p id="c01-para-0025"><span epub:type="pagebreak" id="Page_5" role="doc-pagebreak" title="5"/>As you can see, the preceding plugins can handle a variety of complex tasks. The features added by these plugins are universal and features that many websites on the Internet could have.</p>
+</section>
+<section><span id="c01-sec-0010"/>
+<h3 id="head-3-5">Popular Plugin Tags</h3>
+<p>Now you will look at some popular tags for plugins. Plugin tags are just like blog post tags, simple keywords that describe a plugin in the Plugin Directory. This makes it easy to search for existing plugins by tag. The following are popular examples:</p>
+<ul class="check" id="c01-list-0009">
+<li id="c01-li-0030"><b>Twitter:</b> Everyone loves Twitter for micro‐blogging and sharing links. You can find an abundance of Twitter‐related plugins for WordPress.
+<ul class="check" id="c01-list-0010">
+<li id="c01-li-0031"><code><a href="https://wordpress.org/plugins/tags/twitter">https://wordpress.org/plugins/tags/twitter</a></code></li>
+</ul>
+</li>
+<li id="c01-li-0032"><b>Google:</b> With so many different services and APIs, <i>Google</i> is a popular plugin tag. Everything from Google ads to Google maps have been integrated into a WordPress plugin.
+<ul class="check" id="c01-list-0011">
+<li id="c01-li-0033"><code><a href="https://wordpress.org/plugins/tags/google">https://wordpress.org/plugins/tags/google</a></code></li>
+</ul>
+</li>
+<li id="c01-li-0034"><b>Blocks:</b> Most plugins that include block editor integration also use the <i>blocks</i> tag. This is great for viewing the many different types of blocks available for WordPress.
+<ul class="check" id="c01-list-0012">
+<li id="c01-li-0035"><code><a href="https://wordpress.org/plugins/tags/blocks">https://wordpress.org/plugins/tags/blocks</a></code></li>
+</ul>
+</li>
+</ul>
+<p id="c01-para-0030">Viewing popular plugin tags can provide inspiration when developing new plugins for WordPress.</p>
+</section>
+</section>
+<section><span id="c01-sec-0011"/>
+<h2 id="head-2-3">ADVANTAGES OF PLUGINS</h2>
+<p id="c01-para-0031">WordPress offers many advantages when using plugins. It's important to understand the advantages of building plugins to truly understand why you should spend time building them. This can also help when determining the need for a specific plugin in WordPress.</p>
+<section><span id="c01-sec-0012"/>
+<h3 id="head-3-6">Not Modifying Core</h3>
+<p id="c01-para-0032">One of the main advantages to plugins is the ability to modify the behavior of WordPress without modifying any core files. Core files refer to any file that is part of the default WordPress installation.</p>
+<p id="c01-para-0033">Hacking core files can make it difficult to update WordPress when a new version is released. If you made any modifications to a core file, that modification would be overwritten when the update occurs. Keeping WordPress up‐to‐date with the latest version is essential in keeping your website secure.</p>
+<p id="c01-para-0034">Modifying core files can also lead to an unstable website. Different areas of WordPress rely on other areas to function as expected. If you modify a core file and it no longer works as expected, it can cause instability and quite possibly break a completely unrelated feature in WordPress.</p>
+</section>
+<section><span id="c01-sec-0013"/>
+<h3 id="head-3-7">Why Reinvent the Wheel?</h3>
+<p>Another advantage to building plugins is the structure that already exists for your plugin. Many of the common features have already been developed and are ready for use in your plugin. For example, <span epub:type="pagebreak" id="Page_6" role="doc-pagebreak" title="6"/>you can take advantage of the built‐in user roles in WordPress. Using the user roles, you can easily restrict your code to execute only if a user is an administrator. Look at this example:</p>
+<pre id="c01-code-0002"><code>&lt;?php</code>
+<code>if ( current_user_can( 'manage_options' ) ) {</code>
+<code> //any code entered here will only be executed IF</code>
+<code> //user is an administrator</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p id="c01-para-0036">As you can see, it's easy to verify that a user has proper permissions prior to executing any code in your plugin. You will learn about user accounts and roles in <a href="c09.xhtml">Chapter 9</a>, “Users and User Data.”</p>
+<p>As another example, look at sending an email in WordPress. Sure, you could create a new function in your plugin to send email, but why? WordPress has a handy function called <code>wp_mail()</code>for sending email. Look at this example:</p>
+<pre id="c01-code-0003"><code>&lt;?php</code>
+<code>$email_to = 'you@example.com';</code>
+<code>$email_subject = 'Plugin email example';</code>
+<code>$email_message = 'How do you like my new plugin?';</code>
+<code> </code>
+<code>wp_mail( $email_to, $email_subject, $email_message );</code>
+<code>?&gt;</code></pre>
+<p id="c01-para-0038">As you can see, sending an email in WordPress couldn't be easier. Unless your plugin needs some customized emailing functionality, you don't need to re‐create this function from scratch. Using this function also ensures the widest adoption for sending emails from WordPress because you use the built‐in function.</p>
+<p id="c01-para-0039">Using the available built‐in features of WordPress can greatly reduce the time to develop a plugin. Another advantage of not reinventing the wheel is that this approach more often than not will allow for your plugins to work across a greater number of servers and setups, thereby maximizing compatibility. Don't reinvent the wheel with features that already exist in WordPress.</p>
+</section>
+<section><span id="c01-sec-0014"/>
+<h3 id="head-3-8">Separating Plugins and Themes</h3>
+<p id="c01-para-0040">A plugin can take control of the rendering process; therefore, the plugin can become a “theme.” Similarly, a theme can have plugin functionality included. Because of this, the difference between the two can sometimes become blurred, so why not just include your plugin code directly in a theme? This is a common question and one that can have a few different answers.</p>
+<p id="c01-para-0041">Should themes include plugin functionality? The short answer is no. The primary reason for this is because plugins are meant to add features and functionality to WordPress, regardless of the theme used. This creates a nice separation between your website design and the functionality of your website. The reason this separation is needed is so your theme is not directly tied to the functionality required. WordPress is built so that you can easily change your design, or theme, at any point with just a couple clicks. If all plugin functionality existed in your theme and you switched themes, you will have lost all that functionality you required.</p>
+<p id="c01-para-0042"><span epub:type="pagebreak" id="Page_7" role="doc-pagebreak" title="7"/>There is also a strong argument that certain features should be included in a theme. A common feature most themes include is breadcrumb navigation. This feature could certainly exist in a plugin, and there are many plugins available for this, but it makes more sense to include this navigation‐centric feature in the theme.</p>
+</section>
+<section><span id="c01-sec-0015"/>
+<h3 id="head-3-9">Easy Updates</h3>
+<p id="c01-para-0043">WordPress makes it easy to update a plugin to the latest version. Every plugin installed from the <code><a href="http://wordpress.org">WordPress.org</a></code> Plugin Directory alerts you when a new version of the plugin has been released. Updating the plugin is as simple as clicking the update notification listed just below the plugin details on the Plugin screen of your WordPress Dashboard.</p>
+<p id="c01-para-0044">Plugins not installed from the Plugin Directory can also be updated using the auto‐update functionality of WordPress. This is the method that premium plugins, specifically plugins that are sold on third‐party websites outside of the Plugin Directory, push out updates to their plugins. The plugin author must define where WordPress can download the latest version, and WordPress will take care of the rest. If the plugin author doesn't define this location, you must manually update the plugin.</p>
+<p id="c01-para-0045">Keeping plugins updated is an important part of keeping your website free from security vulnerabilities and bugs.</p>
+</section>
+<section><span id="c01-sec-0016"/>
+<h3 id="head-3-10">Easier to Share and Reuse</h3>
+<p id="c01-para-0046">Plugins are easy to share with others. It's much easier to share a plugin than tell someone to modify specific lines of code in your theme or WordPress. Using plugins also makes it easy to use the same functionality across multiple sites. If you find a group of plugins that you like, you can easily install them on every WordPress website you create.</p>
+</section>
+<section><span id="c01-sec-0017"/>
+<h3 id="head-3-11">Plugin Sandbox</h3>
+<p id="c01-para-0047">When you activate a broken plugin in WordPress, it won't break your site. If the plugin triggers a fatal error, WordPress automatically deactivates the plugin before it has a chance to wreak havoc. This fail‐safe feature makes it less risky when activating and testing new plugins. Even if the plugin does cause a white screen of death (error message), you can easily rename the plugin folder directly on your web server, and WordPress deactivates the plugin. This makes it impossible for a rogue plugin to lock you out of your own site because of an error.</p>
+<p id="c01-para-0048">On the other hand, if you were to hack the WordPress Core, you could cause fatal errors that would crash your website. This can also include causing unrecoverable damage to WordPress.</p>
+</section>
+<section><span id="c01-sec-0018"/>
+<h3 id="head-3-12">Plugin Community</h3>
+<p id="c01-para-0049">A huge community is centered around plugin development, sharing knowledge and code, and creating amazing plugins. Getting involved in the community is a great way to take your plugin development skills to the next level. <a href="c16.xhtml">Chapter 16</a>, “The Developer Toolbox,” covers many of these resources.</p>
+</section>
+</section> <span epub:type="pagebreak" id="Page_8" role="doc-pagebreak" title="8"/>
+<section><span id="c01-sec-0019"/>
+<h2 id="head-2-4">INSTALLING AND MANAGING PLUGINS</h2>
+<p id="c01-para-0050">All plugin management in WordPress happens on the Plugins screen in the WordPress Dashboard. The menu shown in <a href="#c01-fig-0002" id="R_c01-fig-0002">Figure 1‐2</a> is available only to administrators in WordPress, so non‐administrators cannot see this menu. If you use the Multisite feature of WordPress, the Plugins menu is hidden by default. You need to enable the menu using My Sites ➪ Network Admin ➪ Settings.</p>
+<figure> <img alt="Screenshot of the Plugins menu available only to administrators displayed in the WordPress Dashboard." class="center" src="images/c01f002.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c01-fig-0002" id="c01-fig-0002" role="doc-backlink"><b>FIGURE 1‐2</b></a>:</span> Plugins menu</p>
+</figcaption>
+</figure>
+<section><span id="c01-sec-0020"/>
+<h3 id="head-3-13">Installing a Plugin</h3>
+<p id="c01-para-0051">WordPress features three different methods for installing a new plugin. Your server setup dictates which method is the best to use.</p>
+<p id="c01-para-0052">The first method uses the built‐in auto‐installer. This method enables you to search the Plugin Directory on <code><a href="http://wordpress.org">WordPress.org</a></code> directly from the Dashboard of your WordPress website. Simply visit Plugins ➪ Add New from your WordPress Dashboard to search for a plugin. After you find a plugin to install, click the Install Now button, and the plugin automatically downloads and installs.</p>
+<p id="c01-para-0053">The second method uses the zip uploader. Zipped plugin files can be uploaded, extracted, and installed by WordPress. To use this method, click the Upload Plugin button at the top of the Add Plugins page. Click the Choose File button and select the plugin zip file you want to install. After you select the plugin, click the Install Now button, as shown in <a href="#c01-fig-0003" id="R_c01-fig-0003">Figure 1‐3</a>.</p>
+<figure> <img alt="Screenshot of the Install Now button displaying the Upload Plugin button at the top of the Add Plugins page, to click the Choose File button and select the plugin zip file to be installed." class="center" src="images/c01f003.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c01-fig-0003" id="c01-fig-0003" role="doc-backlink"><b>FIGURE 1‐3</b></a>:</span> Install Now button</p>
+</figcaption>
+</figure>
+<p id="c01-para-0054">The third and final method to install a plugin in WordPress uses Secure (or SSH) File Transfer Protocol (SFTP). Using SFTP involves simply connecting to your web server using an SFTP client and manually uploading the plugin to your WordPress installation. To use this method, upload the uncompressed plugin folder or file to the <code>wp‐content/plugins</code> directory on your web server.</p>
+</section> <span epub:type="pagebreak" id="Page_9" role="doc-pagebreak" title="9"/>
+<section><span id="c01-sec-0021"/>
+<h3 id="head-3-14">Managing Plugins</h3>
+<p id="c01-para-0055">After you install a plugin in WordPress, you can manage it, along with all other plugins, on the Plugins ➪ Installed Plugins screen. Here you can find a list of all plugins, active or not, available in your WordPress installation. You can easily activate, deactivate, edit, update, and delete plugins from this screen.</p>
+<p id="c01-para-0056">The Plugin screen also features bulk actions for activating, deactivating, updating, and deleting plugins. Check all the plugins you want to manage and then select the appropriate bulk action from the drop‐down menu. This process makes managing multiple plugins a breeze!</p>
+</section>
+<section><span id="c01-sec-0022"/>
+<h3 id="head-3-15">Editing Plugins</h3>
+<p id="c01-para-0057">WordPress features a built‐in plugin editor on the Plugins ➪ Plugin Editor screen. The plugin editor enables you to view and edit the source code of any plugin installed in WordPress. Keep in mind you can edit the source code only if the plugin file is writable by the web server; otherwise, you can only view the code.</p>
+<p>To use the editor, select the plugin from the drop‐down menu on the top‐right portion of the Edit Plugins page. The editor lists all files associated with the selected plugin. There is also a documentation lookup feature that makes it easy to research a specific function's purpose in the plugin you are reviewing.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c01-para-0059"><b>WARNING</b> <i>A word of caution when using the built‐in plugin editor: a browser doesn't have an Undo button. There is also no code revision history, so one bad code edit can crash your entire website with no way to revert the changes. It's best to use the code editor for reference only and never use it to edit your plugin files.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c01-sec-0024"/>
+<h3 id="head-3-16">Plugin Directories</h3>
+<p id="c01-para-0060">A lesser known fact is that WordPress actually features two plugin directories. The primary directory is located at <code>wp‐content/plugins</code> in a standard WordPress installation. The second, lesser known plugin directory is at <code>wp‐content/mu‐plugins</code>. The <code>mu‐plugins</code> directory, which stands for <i>Must‐Use</i>, is not automatically created by WordPress, so it must be manually created to be used.</p>
+<p>The primary difference between the two is that the <code>mu‐plugins</code> directory is for plugins that are always executed. This means any plugin included in this directory will automatically be loaded in WordPress and across all sites in the network if you run Multisite. Mu‐plugins are always on and cannot be deactivated.<span epub:type="pagebreak" id="Page_10" role="doc-pagebreak" title="10"/></p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c01-para-0062"><b>NOTE</b> <i>The</i> <code>mu‐plugins</code> <i>directory will not read plugins in a subfolder, so all plugins must be individual files or must include additional files that exist in a subdirectory. Any plugin files in a subfolder will be ignored unless included in the primary plugin file.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c01-sec-0026"/>
+<h3 id="head-3-17">Types of Plugins</h3>
+<p id="c01-para-0063">WordPress features a few different types and statuses for plugins, as shown in <a href="#c01-fig-0004" id="R_c01-fig-0004">Figure 1‐4</a>. You need to understand the difference when administering and creating plugins for WordPress.</p>
+<figure> <img alt="Screenshot displaying a few different types and statuses for plugins created by WordPress." class="center" src="images/c01f004.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c01-fig-0004" id="c01-fig-0004" role="doc-backlink"><b>FIGURE 1‐4</b></a>:</span> Types and statuses for plugins</p>
+</figcaption>
+</figure>
+<ul class="check" id="c01-list-0013">
+<li id="c01-li-0036"><b>Active:</b> Plugin is active and running in WordPress.</li>
+<li id="c01-li-0037"><b>Inactive:</b> Plugin is installed but not active. No code from the plugin is executed.</li>
+<li id="c01-li-0038"><b>Recently Active:</b> A temporary status given to any plugin that has been recently deactivated.</li>
+<li id="c01-li-0039"><b>Must‐Use:</b> All plugins installed in the <code>wp‐content/mu‐plugins</code> directory. All Must‐Use, or MU, plugins are loaded automatically. The only way to deactivate an MU plugin is to remove it completely from the directory.</li>
+<li id="c01-li-0040"><b>Drop‐ins:</b> Core functionality of WordPress can be replaced by Drop‐in plugins. These plugins are specifically named PHP files located in the <code>wp‐content</code> directory. If WordPress detects one of these files, it will be automatically loaded and listed under the Drop‐in filter on the Plugin screen. Currently ten Drop‐in plugins are available.
+<ul class="check" id="c01-list-0014">
+<li id="c01-li-0041">
+<code>advanced‐cache.php</code>: Advanced caching plugin</li>
+<li id="c01-li-0042">
+<code>db.php</code>: Custom database class</li>
+<li id="c01-li-0043">
+<code>db‐error.php</code>: Custom database error message</li>
+<li id="c01-li-0044">
+<code>install.php</code>: Custom installation script</li>
+<li id="c01-li-0045">
+<code>maintenance.php</code>: Custom maintenance message</li>
+<li id="c01-li-0046">
+<code>object‐cache.php</code>: External object cache</li>
+<li id="c01-li-0047">
+<code>sunrise.php</code>: Advanced domain mapping</li>
+<li id="c01-li-0048">
+<code>blog‐deleted.php</code>: Custom blog deleted message</li>
+<li id="c01-li-0049">
+<code>blog‐inactive.php</code>: Custom blog inactive message</li>
+<li id="c01-li-0050">
+<code>blog‐suspended.php</code>: Custom blog suspended message</li>
+</ul>
+</li>
+</ul>
+<p id="c01-para-0066"><span epub:type="pagebreak" id="Page_11" role="doc-pagebreak" title="11"/>The last four Drop‐in plugins are specific to the WordPress Multisite feature. A standard WordPress installation will have no use for these plugins.</p>
+<p id="c01-para-0067">When developing a new plugin, determine what type of plugin you want to create before you start the development process. Most plugins will be standard WordPress plugins, but occasionally you might need to create a Must‐Use or Drop‐in plugin.</p>
+</section>
+</section>
+<section><span id="c01-sec-0027"/>
+<h2 id="head-2-5">SUMMARY</h2>
+<p id="c01-para-0068">In this chapter, you learned about plugins and how they can interact with WordPress using the available APIs. The major advantages to using plugins and why plugin functionality shouldn't always be included in a theme were discussed. Installing and managing plugins in the WordPress Dashboard was covered.</p>
+<p id="c01-para-0069">Now that you understand how plugins work in WordPress, it's time to create the plugin foundation!</p>
+</section>
+</section>
+</body>
+</html>

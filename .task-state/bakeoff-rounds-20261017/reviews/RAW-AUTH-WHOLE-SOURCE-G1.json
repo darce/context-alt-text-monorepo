@@ -1,0 +1,87 @@
+{
+  "status": "REVISE",
+  "summary": "One material source defect:valid keys matching response fields corrupt caption parsing or silently erase token usage. Independent approved50 and17 legacy checks pass.",
+  "source_sha": "8b01c18a5a1e56b6d39854ca9c630ca94add54e7",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G1.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G1.md"
+  ],
+  "commits": [
+    "514523e2c85aa83d56396e0b5f823e460709c726"
+  ],
+  "findings": [
+    {
+      "id": "RAW-AUTH-SOURCE-G1-01",
+      "severity": "high",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:698",
+      "description": "Recursive credential redaction rewrites protocol field names, breaking valid credentials and silently discarding measured token usage.",
+      "evidence": "Real public describe() and CLI, unchanged approved Endpoint normal response producer plus external usage block11/7/18: distinct-key-01 returns title/alt and totals22/14/36, complete=true. Identical response bytes with valid key usage still succeed but return null counts, passes_missing_usage=2, complete=false. Valid key message changes choices[0].message to [redacted], raises RemoteClientError and produces a bounded aborted CLI record. Both cases send exact Bearer headers; no credential reflection occurs in the normal payload. Frozen grammar permits all nonempty visible ASCII and auth must preserve payload/treatment/counters. Evidence: /tmp/raw-auth-whole-source-g1/manifests/{public-probe,cli-collision}.json and outputs/{public-http,cli-collision-http}.json.",
+      "fix": "Keep recognized protocol structure intact for caption/usage parsing; scrub actual reflected values and sanitize or refuse unsafe printable diagnostics/output separately. Preserve valid-key behavior, typed failures and privacy without a minimum length, token regex or renamed public API. Recheck usage/message against the same distinct-key parent and real CLI records."
+    }
+  ],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/context.py",
+      "exit_code": 0,
+      "summary": "499 selected complete input/prior-evidence reads; eight Canon v0.26.2 bodies/four full distillations/three primary pins verified. Source/AST and prior reports/maps/failed scripts retained; G2 full report recovered separately by hash."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/pytest_run.py approved",
+      "exit_code": 0,
+      "summary": "Unchanged approved50:50 passed in13.41s; normal service config, both conftests, required pytest-timeout, actual current imports.37 clients closed; full collection/HTTP receipts."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/pytest_run.py adjacent-final",
+      "exit_code": 0,
+      "summary": "Exact17 focused legacy selectors:17 passed in13.90s.17 clients created; audit finally closed11 left open by legacy tests."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/public_probe.py",
+      "exit_code": 1,
+      "summary": "Genuine public contract RED:usage loses measured counters;message/content/title/{ break valid caption paths. Identical-response distinct-key parent succeeds22/14/36. Actual raw/escaped reflections scrubbed successfully with intact usage;9 clients closed."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/cli_collision.py",
+      "exit_code": 1,
+      "summary": "Real CLI confirms distinct-key complete36-token record versus usage null totals and message aborted record;10 HTTP exchanges, all6 clients closed. Measured-duration monetary arithmetic remains correct in all3 records."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/file_faults.py",
+      "exit_code": 0,
+      "summary": "Actual CLI:valid/short-read parents succeed;fstat failure reads zero bytes;first-read and post-short-read failures refuse privately before HTTP/output. All held FDs and4 clients closed."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/transport_controls.py",
+      "exit_code": 1,
+      "summary": "Audit error retained:bad-caption control expected privacy for a path never supplied to the constructor. External producer corrected to reflect the supplied synthetic key; SUT unchanged."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/transport_controls.py",
+      "exit_code": 0,
+      "summary": "Eight controls/32 actual exchanges:401/403/307 typed statuses, three strikes then CircuitOpenError,429 exactly5 attempts per failure,configured0.2s/injected timeout,invalid JSON and redacted caption error. All8 clients closed."
+    },
+    {
+      "command": ".venv/bin/ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "exit_code": 0,
+      "summary": "Focused read-only lint passes."
+    },
+    {
+      "command": ".venv/bin/ruff format --check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+      "exit_code": 0,
+      "summary": "Focused read-only format check passes."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-whole-source-g1/scripts/verify.py --committed",
+      "exit_code": 0,
+      "summary": "Strict schema/committed equality,two-path ownership,actual native base/tree,stable source/test/parent/import/prior evidence,matched HTTP parents and client/FD closure verified."
+    }
+  ],
+  "limitations": [
+    "Logical input8ae8c54e4d6b1ad7e1d3daf9b70f4c7497bd4479 is absent locally; source_sha is honest native base8b01c18a5a1e56b6d39854ca9c630ca94add54e7 with equal requested tree568e45dec23891860ca074a6477b68e2896117a9. Equal trees establish bytes, not ancestry. Author native b410ac50/stage6633/tree34db5cca ancestry is supplied custody, not this stripped checkout ancestry.",
+    "First whole SOURCE gate:one new material source defect, not a recurrence ID for old test-oracle defects. No repair,dispatch,adoption,central finding closure,feature close-check,main merge or runtime/quality approval. Root owns next SECOND source-author SolHIGHSTANDARD and later independent review.",
+    "No live graph/MCP/ONNX tools exposed or claimed. Supplied current three-file177-node/730-edge map and verified gte-base-en-v1.5 selected reinjection were checked against exact source/AST/hashes; no import-closure or whole-project graph completeness claim.",
+    "MockTransport,synthetic keys and zero-byte fixtures only. Pinned llama.cpp d261223d24e97f2df50220e4a5b7f0adb69bba81 selects upstream Bearer compatibility;installed runtime auth,real network deadlines,model inference and quality remain unqualified. No installs,broad suites,cloud/GPU/guest,credentials,media/GT,inference,shared-service changes,cache deletion,foreign signals or nested agents.",
+    "Full private audit /tmp/raw-auth-whole-source-g1 retains snapshots/scripts/outputs/exits/importhashes/collection/HTTP evidence and audit setup failure. Selected prior-evidence hashes remain unchanged; prior audit roots were read-only. Tests and all owned probe clients/descriptors close;legacy11 clients closed in audit finally;command children completed.",
+    "Actual cgroup1GiB and CPU25000/100000 verified. Requested model/XHIGH/STANDARD/1500s are session context,not independently attested metadata. commits identifies substantive review commit;a later JSON-only pointer commit avoids self-reference."
+  ]
+}

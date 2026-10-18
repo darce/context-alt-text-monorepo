@@ -1,0 +1,57 @@
+{
+  "lane": "a1h-billing1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_reconcile_retry_fixwave.py recognition/tests/unit/test_app1_billing_recovery_contracts.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: error: failed to remove file `/home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-billing1-70af8025/lib/python3.12/site-packages/../../../bin/alembic`: Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_reconcile_retry_fixwave.py recognition/tests/unit/test_app1_billing_recovery_contracts.py",
+      "result": "pass",
+      "detail": "20 passed in 2.25s; recognition imported from apps/prototype-description-service/recognition/__init__.py."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_reconcile_fixwave_postgres.py recognition/tests/integration/test_app1_billing_recovery_postgres.py",
+      "result": "not_run",
+      "detail": "The PostgreSQL integration tests require a database unavailable in this sandbox; the test files were read for their guard assertions."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16038,
+      "finding_id": "APP1-RECOVERY-RV06",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_reconciliation_repository.py:250-267 - comment: `SET LOCAL bypass must not outlive this method or mix with tenant-bound work.` `_operator_scope` rejects tenant-bound sessions, saves the prior bypass value, and restores it in `finally`; test_app1_billing_recovery_postgres.py:355,385,406 asserts bypass is off after success, validation failure, and SQL failure.",
+      "guard_test": "recognition/tests/integration/test_app1_billing_recovery_postgres.py::test_postgres_operator_bypass_restored_and_rejects_tenant_bound"
+    },
+    {
+      "db_id": 16042,
+      "finding_id": "APP1-RECOVERY-RV10",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_reconciliation_repository.py:424-436 - comment: `current fence may complete a quarantined item after audited retry`; the conflict update only changes quarantined progress to completed. The unit test asserts the retry quarantine resolves and progress becomes completed at test_app1_billing_recovery_contracts.py:600-604.",
+      "guard_test": "recognition/tests/unit/test_app1_billing_recovery_contracts.py::test_complete_item_after_retry_is_fenced_and_atomic"
+    },
+    {
+      "db_id": 16041,
+      "finding_id": "APP1-RECOVERY-RV09",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_reconciliation_repository.py:212-219 - audited retry updates only rows with status `OPEN`; the unit test verifies repeat retry is rejected and a resolved row remains resolved at test_app1_billing_recovery_contracts.py:515-545.",
+      "guard_test": "recognition/tests/unit/test_app1_billing_recovery_contracts.py::test_audited_retry_rejects_resolved_and_repeated_retry"
+    },
+    {
+      "db_id": 16039,
+      "finding_id": "APP1-RECOVERY-RV07",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/repositories/billing_reconciliation_repository.py:333 - the PostgreSQL reacquire select uses `populate_existing=True`. With `expire_on_commit=False`, the integration test reacquires in the same session and asserts owner `worker-b` and fence 2 at test_app1_billing_recovery_postgres.py:265-300.",
+      "guard_test": "recognition/tests/integration/test_app1_billing_recovery_postgres.py::test_postgres_same_session_reacquire_returns_fresh_fence"
+    }
+  ],
+  "new_findings": [],
+  "summary": "All four listed corrections hold and their guard assertions are present; the requested unit suite passed 20 tests, while PostgreSQL integration tests were not run because this sandbox has no database. No new defects were found at the repository callers reviewed."
+}

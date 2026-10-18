@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "suite_id": "fir-development-and-measurement",
+  "owner": "FIRDV-2",
+  "description": "PROVISIONAL acceptance intent for SC-01 through SC-11; executor and live/human evidence are not implemented by this planning change. Missing evidence must not pass.",
+  "command": "cd apps/prototype-description-service && uv run python -m scripts.eval_harness.firdv_contract_eval --cases ../../docs/scopes/fir-development-and-measurement-cases.json --evidence-sink ../../.task-state/evals/results.jsonl",
+  "threshold": {
+    "kind": "status",
+    "required_status": "pass"
+  },
+  "evidence_sink": ".task-state/evals/results.jsonl",
+  "timeout": 300,
+  "tags": [
+    "FIRDV",
+    "provisional",
+    "requires-executor",
+    "requires-live-evidence"
+  ]
+}

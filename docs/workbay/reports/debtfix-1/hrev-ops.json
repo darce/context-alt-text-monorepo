@@ -1,0 +1,63 @@
+{
+  "lane": "hrev-ops",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; LC_ALL=C \"$resolved_python\" -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_preflight_gpu_env.py scripts/deploy/tests/test_probe_budgets.py scripts/test_lint_ratchet.py -k 'not real_run_worker'",
+      "result": "pass",
+      "detail": "321 passed, 1 deselected in 325.76s."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16881,
+      "finding_id": "DADJ-11299",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/lint_ratchet.py:350-353 - the parser raises when parsed locations do not equal the reported count; scripts/test_lint_ratchet.py:419-434 asserts the newline-filename partial inventory raises 'complete file inventory'.",
+      "guard_test": "scripts/test_lint_ratchet.py::test_ruff_format_rejects_partial_inventory_for_newline_filename"
+    },
+    {
+      "db_id": 16884,
+      "finding_id": "DADJ-11302",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/test_lint_ratchet.py:389-402 asserts the stderr relative notebook inventory normalizes to notebooks/example.ipynb; :405-416 checks legacy output; :419-434 rejects partial parsing; :460-468 checks stdout diagnostics on exit 2.",
+      "guard_test": "scripts/test_lint_ratchet.py::test_ruff_format_parses_relative_notebook_cell_path_from_stderr; test_ruff_format_parses_legacy_would_reformat_lines; test_ruff_format_rejects_partial_inventory_for_newline_filename; test_ruff_format_unexpected_exit_includes_stdout_diagnostic"
+    },
+    {
+      "db_id": 16882,
+      "finding_id": "DADJ-11300",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/lint_ratchet.py:307-309 - the location regex treats optional ':cell N' separately from line and column; scripts/test_lint_ratchet.py:392 and :402 checks cell 1 parses to notebooks/example.ipynb.",
+      "guard_test": "scripts/test_lint_ratchet.py::test_ruff_format_parses_relative_notebook_cell_path_from_stderr"
+    },
+    {
+      "db_id": 16880,
+      "finding_id": "DADJ-16200",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/recognition-service.sh:4069 - canonical health uses probe_budget ACX_CANONICAL_HEALTH 8 5; scripts/deploy/tests/test_probe_budgets.py:209-210 proves eight failed probes are attempted and reports 8x5s.",
+      "guard_test": "scripts/deploy/tests/test_probe_budgets.py::test_canonical_health_default_budget_covers_slow_restart_startup"
+    },
+    {
+      "db_id": 16879,
+      "finding_id": "DADJ-16199",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/deploy/preflight-gpu-env.sh:1033-1034 rejects a tenant only when it is not an RFC 4122 UUID or is a placeholder; scripts/deploy/tests/test_preflight_gpu_env.py:768-776 proves the documented 00000000-0000-4000-8000-000000000001 demo tenant passes.",
+      "guard_test": "scripts/deploy/tests/test_preflight_gpu_env.py::test_06_documented_demo_tenant_id_is_accepted"
+    },
+    {
+      "db_id": 16883,
+      "finding_id": "DADJ-11301",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "scripts/lint_ratchet.py:380-382 joins non-empty stdout and stderr before raising on unexpected Ruff exits; scripts/test_lint_ratchet.py:460-468 asserts the stdout parse diagnostic survives exit 2.",
+      "guard_test": "scripts/test_lint_ratchet.py::test_ruff_format_unexpected_exit_includes_stdout_diagnostic"
+    }
+  ],
+  "new_findings": [],
+  "summary": "All six listed findings hold in the reviewed tree. The required lane suite passed (321 passed, 1 deselected), and no new defects were found in the changed files or reviewed integration seams."
+}

@@ -1,0 +1,89 @@
+{
+  "lane": "drfu-05",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 6226,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:153-175; docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:414-417 - the contract distinguishes normalized-centre GT from absolute-pixel predictions, requires dimensions for prediction conversion, and uses disjoint missing-dimension and unexpected-key errors.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No change indicated: prediction units and the two failure codes are explicit in the current contract and scorer."
+    },
+    {
+      "db_id": 6227,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:418; apps/prototype-description-service/scripts/bench/score.py:77-83 - the current contract explicitly makes no uniqueness claim for tied optima, and the scorer maximizes total IoU then filters assigned pairs by threshold.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No change indicated: the obsolete total-order claim is absent from the current contract."
+    },
+    {
+      "db_id": 6228,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:416; apps/prototype-description-service/scripts/bench/score.py:35-57 - the contract clamps both converted sides componentwise to [0, 1], and IoU clamps both operands before computing intersection and union.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No change indicated: the current scoring rule applies the same boundary clamp to GT and predictions."
+    },
+    {
+      "db_id": 6236,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:638; apps/prototype-description-service/scripts/bench/score_report.py:310-311; apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py:85-102 - non-exhaustive detection cells are normatively DIRECTIONAL and the tier assertion pins that result.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "S",
+      "fix_hint": "No change indicated: the current tier table, scorer, and assertion agree on DIRECTIONAL."
+    },
+    {
+      "db_id": 6238,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/corpus.py:116-144; apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py:18-28,51-62 - strict exhaustiveness loads raise gt_box_count_mismatch while default loads mark the same incomplete entries non-exhaustive, and tests cover both modes.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "S",
+      "fix_hint": "No change indicated: hard assertion and soft scoring downgrade are explicitly selected by the loader flag."
+    },
+    {
+      "db_id": 6239,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:599-608,761-778 - complete entries enter the detection set when the manifest's document-level annotation mode is EXHAUSTIVE; scoring does not depend on a fixture-only loader assertion flag, and roster_only is not widened by subsetting.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No change indicated: the scorer bases eligibility on complete entry geometry plus the manifest's declared exhaustiveness mode."
+    },
+    {
+      "db_id": 6412,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:77-90,287-297 - the stack allowlist pins each stack_id's expected_profile and expected_pgvector_dim, and config loading rejects values changed to match a drifted live stack.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No change indicated: operator configuration cannot override the profile and dimension pair pinned to each allowlisted stack_id."
+    },
+    {
+      "db_id": 6416,
+      "outcome": "REFUTED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:642-645,1037-1042 - the tier table downgrades only native-frame detection P/R, then says any other declared secondary may be CONFIRMATORY; the legal endpoint grid includes identification_recall@frame_fir5_native/label_map_primary. score_report.py:319-320 demotes that cell, leaving the normative table inconsistent with implementation.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "Extend the normative native-frame downgrade to every P/R endpoint and add an identification-native secondary assertion that remains DIRECTIONAL."
+    }
+  ]
+}

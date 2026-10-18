@@ -1,0 +1,148 @@
+{
+  "assignment_rule": "hmac-sha256(seed, image_sha256)[:8]/2**64 < held_out_fraction",
+  "disjointness": {
+    "identities_spanning_both_halves": [
+      "Auburn Current",
+      "Linen Kestrel",
+      "Muted Yarrow",
+      "Russet Fathom",
+      "Slate Willow"
+    ],
+    "note": "identity labels are per-image, not per-cluster; a person in both halves means their images were split by content hash \u2014 acceptable for description eval, must be resolved (move to train) before any face-identification eval uses held_out",
+    "partition_provenance": "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); no cluster partition, disjointness computed on present_identities only",
+    "provisional_reason": "identities_span_both_halves",
+    "status": "provisional"
+  },
+  "draw_timestamp": "2026-08-18T00:00:00Z",
+  "exposure_inventory": {
+    "annotation_mode": "roster_only",
+    "empty_identity_media_ids": [
+      27,
+      34,
+      35
+    ],
+    "entries": 37,
+    "with_face_boxes": 0,
+    "with_must_right": 34,
+    "with_present_identities": 34
+  },
+  "held_out": {
+    "identities": [
+      "Auburn Current",
+      "Gilded Cypress",
+      "Hollow Pennant",
+      "Linen Kestrel",
+      "Muted Current",
+      "Muted Yarrow",
+      "Russet Fathom",
+      "Slate Willow"
+    ],
+    "media_ids": [
+      1,
+      2,
+      4,
+      5,
+      11,
+      13,
+      14,
+      15,
+      16,
+      18,
+      19,
+      20,
+      21,
+      24,
+      25,
+      28,
+      29,
+      33,
+      36,
+      37
+    ],
+    "sha256": [
+      "054a9b14823ef9d7ca0cb8bb4d44c4908b9c5bf7de7080306e65e03523caba5b",
+      "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28",
+      "19413ef423beccfff22a0f962ec0262c33a73b3899438f4b8e660296f69d6147",
+      "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
+      "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6",
+      "33c54fbb5d4762dc1497725a748ec9ee4a850a2de49bad34348a9353c34a45dc",
+      "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
+      "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda",
+      "4163f17f853f80f7e7b38fd80ea53af1c3c93441d5865dbdb382ac5f5b782adf",
+      "4dd4c1ddb589fce8335891680a18367e4e8e9db449569de889826b692f0ca053",
+      "52e20b0e2a5079d25dc2af25c8c4eeff07408252a0b2adb288db91c955d389a8",
+      "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9",
+      "5e51ec4730c5e5c1ebb8f0122e26e69e19c38068125ab55801957d9499597e61",
+      "6e341aa64418923f9e2ea18eb20e733d094ccb53ac68d565fb4aa1dc4f6722f4",
+      "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04",
+      "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19",
+      "dbbf96ca265c69610b3974ba2a58920224af83130613ccd13e6a41fd7886e05e",
+      "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9",
+      "e7081767186f95d469cbd8792a0361d6580e14637688beab9914ec55eb158740",
+      "ed83b4f5861fe50cd6b0548a6e18d5633846f59bd68a4995a1745861c5b811da"
+    ]
+  },
+  "held_out_fraction": 0.5,
+  "pre_split_exposure": [
+    "golden.json v3 (37 entries) curated pre-split: present_identities non-empty on 34/37 (empty: media_id 27,34,35), face_boxes=0/37, must_right=34/37, annotation_mode=roster_only; held_out half is model-held-out but NOT selection-held-out",
+    "curation tenant 4ddf8f36 (LocalWP :10018) live with clustered uploads pre-draw",
+    "determinism-anchor runs S0/S2A (bakeoff-results/) scored the 37 pre-split"
+  ],
+  "protection": "forward-from-draw-timestamp: any image, identity or curation decision first observed after draw_timestamp is protected by this split; entries listed in pre_split_exposure were already exposed",
+  "schema_version": 1,
+  "seal_sha256": "8a5c19c558dbed95a2ae4c21cdc0a050b42b82d1659c2e32cc83f22fc2a653f5",
+  "seed": "vlm6-s1-sealed-eval-split-20260818",
+  "source_manifest": {
+    "path": "scene/tests/seed/golden.json",
+    "sha256": "93fc86b2bf014d3783ff0999a47e88949ccb72e8cab9eec7cee9faa6891bcd0b"
+  },
+  "train": {
+    "identities": [
+      "Auburn Current",
+      "Daniel Arce",
+      "Linen Kestrel",
+      "Muted Yarrow",
+      "Russet Fathom",
+      "Slate Willow",
+      "Tidal Harbor"
+    ],
+    "media_ids": [
+      3,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12,
+      17,
+      23,
+      26,
+      27,
+      30,
+      31,
+      32,
+      34,
+      35,
+      38
+    ],
+    "sha256": [
+      "013bca0b2b1ebb367445ec1783e76b48fe1c13a2ab56f2f19f4335ceeb21feaa",
+      "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969",
+      "2b57b7a7d498cafbad6b5587ddabeb8d4c2fc8d1c4763f120d7374df188644f4",
+      "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90",
+      "4b98847d196ea19d6fc1181f0f16533c61ef6dfe8ba0da18bfc13d77afc404c1",
+      "4e0ce9a2ccc7ace3de4a8968c9badd75d5ae3c83c9ea81082ca44a9658b9bc98",
+      "4e9ecee469b6a48a55c95e6a32688498d7065b2ba403eb697f06ddb65a541416",
+      "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70",
+      "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3",
+      "7c1a1592345f0fbcb9ee33991665ebab093234800fac1debcc35d6ac31b636db",
+      "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603",
+      "a3bba8687c958f4a4c61bee2db4c154fb435fe3d8e2ceee835a3ac46b22a7a4f",
+      "c34b723d5623195bd06aa8289951f929c57059ddde7957f7ab8a07faf2ed152c",
+      "c7f0051132ae985a01364f3ec4fb04e1b62f745a9d99f52e93675b31d4cbf2bd",
+      "cb5adbad2760babea68a7317800f9f2e3abe9d7e21e327f8d2c5f36e2b799ac6",
+      "d77b26f9e20d222ee8d578e619b91db4af106f8811c106e33d4cfbd3a1f41f1a",
+      "e949ba1d682e60f24b94cf57d2e11109a912ffbc75ba7b1754e532b1a37fc170"
+    ]
+  }
+}

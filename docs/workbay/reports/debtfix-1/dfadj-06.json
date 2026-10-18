@@ -1,0 +1,210 @@
+{
+  "lane": "dfadj-06",
+  "base": "a219271125248d74220f38c40e2879e0d60d85a4",
+  "results": [
+    {
+      "db_id": 16805,
+      "finding_id": "DADJ-10161",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/api/main.py:286 - _resolve_description_profile defaults ACX_DESCRIPTION_ADAPTER to DescriptionProfile.FLORENCE_SMALL.value, so the seeded canned adapter is no longer the default.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No code change is needed for the default-profile scenario; seeded remains an explicit profile choice."
+    },
+    {
+      "db_id": 16812,
+      "finding_id": "DADJ-5240",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/db/migrations/versions/001_identity_schema.py:3075 - mv_identity_cluster_centroids still computes AVG(ne.unit_embedding), then normalizes that unweighted, face-row average; quality columns are separate and no session grain is included.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/db/migrations/versions/001_identity_schema.py",
+        "apps/prototype-description-service/recognition/tests/unit/test_centroid_recomputation.py"
+      ],
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_centroid_recomputation.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Aggregate representative embeddings with quality weights and a session-aware contribution cap, then test duplicate-session resistance."
+    },
+    {
+      "db_id": 16785,
+      "finding_id": "DADJ-5696",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/recognition/application/health.py:159-169 emits numeric_runtime_fingerprint from the service, and scripts/bench/preflight.py:72-89 reads it, compares the service OpenCV major with configured expectations, and stamps service_reported; test_preflight.py:183-204 asserts the shared fingerprint is exposed.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No code change is needed; detailed health and benchmark preflight now use the service-reported runtime fingerprint."
+    },
+    {
+      "db_id": 16824,
+      "finding_id": "DADJ-5770",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:50 still says no service surface reports OpenCV and requires operator_attested; docs/tasks/fir/FIR-9-workbench-curation-atlas-task-plan.md:67 specifies a private cv_runtime_version; docs/tasks/fir23-stack/FIR23-STACK-task-plan.md:32 requires only a cv2 major field, despite the shared producer in recognition/application/health.py:150-169.",
+      "severity": "medium",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "docs/tasks/fir/FIR-9-workbench-curation-atlas-task-plan.md",
+        "docs/tasks/fir23-stack/FIR23-STACK-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Reconcile the active FIR-8, FIR-9, and FIR23-STACK contracts with the shared service fingerprint and its persisted run provenance."
+    },
+    {
+      "db_id": 16801,
+      "finding_id": "DADJ-5771",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py:382-385 stores hdbscan and scipy versions under settings_snapshot.runtime_versions; test_observability_persistence.py:21-39 reads the persisted RecognitionRun row and asserts both values match installed versions.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/recognition/tests/integration/test_observability_persistence.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No code change is needed for the missing clustering-library versions; each clustering run now persists HDBSCAN and SciPy versions."
+    },
+    {
+      "db_id": 16813,
+      "finding_id": "DADJ-5731",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py:399-402 fingerprints OpenCV, ONNX Runtime, and NumPy, but :426 builds the embedding space token from only OpenCV and ONNX Runtime; the same module explicitly says NumPy is not in that key at :423.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py",
+        "apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py",
+        "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_provenance.py"
+      ],
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_provenance.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Stamp and compare the complete resolved numeric and clustering dependency set on comparable runs, including dependencies omitted from the current space token."
+    },
+    {
+      "db_id": 16802,
+      "finding_id": "DADJ-5598",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/recognition/tests/fixtures/face_pipeline/generate_goldens.py:162 writes pre_norm_magnitude, while test_face_pipeline_opencv_ref.py:239-252 reads only cosine_min from the metadata and checks the normalized output; test_face_pipeline_ort_parity.py:287-291 likewise asserts only scale-invariant cosine.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_opencv_ref.py"
+      ],
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_opencv_ref.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Assert the raw batch norm against embedding_meta.json pre_norm_magnitude with a tight relative tolerance."
+    },
+    {
+      "db_id": 16803,
+      "finding_id": "DADJ-16206",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/application/describe_load.py:561-569 reads the host-published revision and passes it as minimum_revision when allocating the next database revision; test_describe_load.py:970-972 covers a host revision of 41 after a database counter reset.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scene/tests/test_describe_load.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No code change is needed; publication now reseeds a reset database counter above the revision already present in the host file."
+    },
+    {
+      "db_id": 16804,
+      "finding_id": "DADJ-15176",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py:416-420 enables grounding by default and :498-524 requests and returns Qwen phrase boxes; test_gpu_remote_adapter.py:851-882 checks the default and asserts a grounded phrase box is emitted.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scene/tests/test_gpu_remote_adapter.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No code change is needed; the GPU adapter now requests Qwen phrase grounding by default and has a box-emission test."
+    },
+    {
+      "db_id": 16811,
+      "finding_id": "DADJ-15394",
+      "task": "DEBTFIX-1",
+      "verdict": "OPERATOR",
+      "duplicate_of": null,
+      "evidence": "scripts/eval_harness/bakeoff10-manifest-20260716.json:28 has an empty face_boxes array; scene/tests/seed/golden.json:40 has a base_caption but no truth-fact arrays, whose empty defaults in scripts/eval_harness/manifest.py:930-934 make placement/reference scoring vacuous at :1207-1208. Per-stage estimated-or-unknown costs are now persisted by scripts/eval_harness/bakeoff.py:1410-1458.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scene/tests/seed/golden.json",
+        "apps/prototype-description-service/scripts/eval_harness/bakeoff10-manifest-20260716.json"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [],
+      "fix_hint": "The corpus owner must curate the identity, spatial, and reference truth facts in the scored manifests; per-stage cost is already stamped as estimated or explicitly unknown."
+    },
+    {
+      "db_id": 16799,
+      "finding_id": "DADJ-10002",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:279-303 keeps the present_identities comparison under strict xfail because the selection and golden paths are disjoint; the missing multi-person-plus-strangers selection cell is also explicitly xfailed at :322-328.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add a non-xfailed identity-parity assertion that works across the split-disjoint manifests and keep the lost selection classes explicitly reported."
+    },
+    {
+      "db_id": 16851,
+      "finding_id": "DADJ-6288",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py:1562-1577 tests matched_faces values using only pred_faces=3 and labeled_faces=2, so the reverse bound orientation pred<labeled is not exercised even though face_metrics.py:620-622 checks min(pred,labeled).",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py",
+      "size": "S",
+      "related": [16852],
+      "fix_hint": "Add named zero, min, and out-of-range matched_faces cases with pred<labeled as well as labeled<pred."
+    },
+    {
+      "db_id": 16852,
+      "finding_id": "DADJ-6290",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py:1562-1577 covers only matched=0, the upper bound, and out-of-range endpoints for pred_faces=3/labeled_faces=2; no interior 0<matched<min case asserts TP/FP/FN, although face_metrics.py:623-625 calculates that branch.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py",
+      "size": "S",
+      "related": [16851],
+      "fix_hint": "Add an interior matched-count case such as pred=3, labeled=5, matched=2 and assert TP=2, FP=1, FN=3."
+    }
+  ]
+}

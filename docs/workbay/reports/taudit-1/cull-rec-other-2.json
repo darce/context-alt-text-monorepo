@@ -1,0 +1,18 @@
+{
+  "lane": "cull-rec-other-2",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 39,
+  "tests_in_partition": 414,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py::test_compose_env_blob_ownership_repair_profile",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py::test_compose_env_and_prod_blob_ownership_repair_profile",
+      "evidence": "test_runtime_packaging.py:642-645 reads docker-compose.env.yml and asserts the repair-profile predicate; test_cross_slice_contract_gates.py:63-66 lists both env and prod compose files and :346-350 applies the same predicate to both, covering the env-file regression through the same seam.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

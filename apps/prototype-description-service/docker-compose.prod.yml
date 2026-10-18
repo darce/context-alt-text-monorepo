@@ -1,0 +1,113 @@
+# Reference production topology (parity-gated with docker-compose.env.yml).
+#
+# Deploy path used by scripts/deploy/recognition-service.sh is NOT this file:
+#   prod    → -f docker-compose.env.yml -f docker-compose.admin.yml
+#   dev|stg → -f docker-compose.env.yml
+# Keep runtime semantics identical to env.yml (ACX_IMAGE_REPO, /data/cache:ro,
+# HF modules tmpfs, RECOGNITION_BLOB_ROOT + acx_blobs) so a future consumer
+# cannot pick a divergent blob/cache topology.
+#
+# Usage (manual / legacy only): docker compose -f docker-compose.prod.yml up -d
+# Requires a .env file in the project directory (same dir as this file).
+# On the VM: a regular file /opt/acx-backend/<env>/.env (0600), never a symlink to secrets/.env (REF-09).
+# Locally:   copy .env.prod.example to .env and fill in values.
+#
+# Secrets: with RECOGNITION_SECRET_BACKEND=oci_vault (prod), api/worker fetch
+# POSTGRES_DSN/PGPASSWORD/RECOGNITION_ADMIN_TOKEN from OCI Vault via the VM
+# instance principal — those stay blank in .env. See
+# infra/oci/vault-instance-principal-runbook.md and ADR-013.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /opt/acx-backend/data/pgdata:/var/lib/postgresql/data
+      - ./db/docker-prod-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    # Repo via ACX_IMAGE_REPO (default recognition); tag stays :latest (prod semantics).
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
+      - ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}
+      - ACX_GPU_STATE_STALE_SECONDS=${ACX_GPU_STATE_STALE_SECONDS:-180}
+      - ACX_DESCRIBE_LOAD_PATH=${ACX_DESCRIBE_LOAD_PATH}
+      - ACX_DESCRIBE_LOAD_REFRESH_SECONDS=${ACX_DESCRIBE_LOAD_REFRESH_SECONDS}
+    volumes:
+      # :ro for recognition + VLM (see docker-compose.env.yml contract comment).
+      # InsightFace models are pre-seeded; Florence RW would be an RCE surface.
+      - /opt/acx-backend/data/models:/data/cache:ro
+      - acx_blobs:/var/lib/acx-blobs
+      # Host lifecycle units own gpu-state.json under /run/acx, so the API gets
+      # that directory read-only. The API exclusively owns describe-load.json
+      # under its namespaced /run/acx-write/prod directory and needs that mount
+      # writable for atomic temp-file + rename publication.
+      - ${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro
+      - ${ACX_DESCRIBE_LOAD_DIR}:/run/acx-write/prod
+    tmpfs:
+      - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
+    expose:
+      - "8000"
+
+  worker:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
+    volumes:
+      - /opt/acx-backend/data/models:/data/cache:ro
+      - acx_blobs:/var/lib/acx-blobs
+    tmpfs:
+      - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
+    command: ["python", "-m", "recognition.worker.scan_worker"]
+
+  # One-shot ownership repair for stacks that created acx_blobs while the image
+  # still ran as root. Docker never re-chowns an existing named volume, so
+  # image-time `chown acx:acx /var/lib/acx-blobs` only helps fresh volumes —
+  # USER acx then hits EACCES on every multipart upload. Run once after upgrade:
+  #   docker compose -f docker-compose.prod.yml --profile repair run --rm fix-blob-ownership
+  # Not started by default (profiles: [repair]); safe to re-run (idempotent chown).
+  # scripts/deploy/recognition-service.sh runs this on every restart for env.yml stacks.
+  fix-blob-ownership:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest
+    user: "0:0"
+    volumes:
+      - acx_blobs:/var/lib/acx-blobs
+    entrypoint: ["chown", "-R", "acx:acx", "/var/lib/acx-blobs"]
+    profiles: ["repair"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  acx_blobs:
+  caddy_data:
+  caddy_config:

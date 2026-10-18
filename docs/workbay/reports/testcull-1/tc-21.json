@@ -1,0 +1,60 @@
+{
+  "lane": "tc-21",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py",
+      "verdict": "KEEP",
+      "tests_total": 38,
+      "tests_affected": [],
+      "reason": "KEEP: the tests cover live Dockerfile, Compose, and deploy behavior, with synthetic mutations that prove the guards reject missing mounts, repair steps, image labels, or SSH protections (TEST-15).",
+      "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py:478 - test_deploy_restart_runs_blob_ownership_repair drives do_restart through fake SSH and asserts pull then repair-profile invocation then systemctl restart; the next test verifies repair failure prevents restart.",
+      "subject": "Dockerfile and Compose deployment contracts plus recognition-service.sh behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/deploy/test_dockerfile_stage_topology.py",
+      "verdict": "KEEP",
+      "tests_total": 40,
+      "tests_affected": [],
+      "reason": "KEEP: these tests protect the live BuildKit default target and runtime-stage provenance, and synthetic Dockerfiles prove that stage-order and VLM-extra mutations are detected (TEST-15).",
+      "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_dockerfile_stage_topology.py:127 - test_default_build_target_is_the_torch_free_runtime asserts bare builds select runtime; test_guard_bites_when_stage_order_is_swapped at :268 proves appending runtime-vlm flips the detected target.",
+      "subject": "Dockerfile BuildKit stage selection and torch-free runtime topology",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py",
+      "verdict": "REWRITE",
+      "tests_total": 36,
+      "tests_affected": [
+        "test_entrypoint_cmd_chain_modules_are_copied",
+        "test_entrypoint_image_variant_fail_closed_branches",
+        "test_entrypoint_blob_root_unwritable_fail_closed",
+        "test_logging_config_avoids_app_logs_mkdir_at_import",
+        "test_guard_bites_when_entrypoint_variant_gate_is_inverted",
+        "test_guard_bites_when_entrypoint_vlm_gate_uses_inequality",
+        "test_guard_bites_when_verify_vlm_cache_soft_fails",
+        "test_guard_bites_when_if_header_soft_fails_with_or_true",
+        "test_guard_bites_when_entrypoint_variant_fail_closed_removed",
+        "test_guard_bites_when_entrypoint_blob_check_removed"
+      ],
+      "reason": "REWRITE the listed source-shape checks as executable entrypoint and import behavior tests where outcomes are not already guarded; preserve Dockerfile copy/presence assertions and reuse the existing temp-root entrypoint fixtures and missing-variant mutation for overlapping cases (TEST-16, REF-10).",
+      "evidence": "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py:287 - the entrypoint test reads shell source and asserts command order; :559-616 and :698-804 parse source text for fail-closed and VLM-gate predicates; :642-657 AST-scans logging_config for top-level mkdir calls; apps/prototype-description-service/recognition/tests/deploy/test_vlm_cache_gate.py:779-815 - existing temp-root entrypoint cases cover missing, invalid, and mismatched baked variants, and the missing-variant mutation.",
+      "subject": "docker-entrypoint.sh boot, image-variant and blob-root behavior; api.logging_config import behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-15", "REF-10"],
+      "replacement": "Reuse and extend apps/prototype-description-service/recognition/tests/deploy/test_vlm_cache_gate.py's _run_entrypoint_fixture for executable boot-order, VLM-gating, and blob-root assertions; retain the Dockerfile module/file-presence checks as packaging contracts. Reuse test_entrypoint_missing_image_variant_fails_closed, test_entrypoint_garbage_image_variant_fails_closed, and test_entrypoint_env_mismatch_fails_closed plus test_entrypoint_variant_gate_mutation_is_observable for baked-variant coverage instead of adding duplicate fixtures or mutations. Keep api.logging_config as a controlled import behavior check, and apply new negative mutations only to the uncovered behavior seams.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    }
+  ],
+  "fixtures": []
+}

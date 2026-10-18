@@ -1,0 +1,20 @@
+# One-shot unit invoked by acx-demo-expiry.timer (DS-4).
+# Revokes expired demo_instances via expire_demo (row + api_keys.revoked_at).
+#
+# Install (with the timer):
+#   sudo cp acx-demo-expiry.service acx-demo-expiry.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now acx-demo-expiry.timer
+
+[Unit]
+Description=ACX demo instance expiry sweep (DS-4)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/acx-backend
+# Adjust env/DSN path for the host; prod refuses local DSN hosts.
+ExecStart=/opt/acx-backend/.venv/bin/python -m scripts.sweep_expired_demos --env prod
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

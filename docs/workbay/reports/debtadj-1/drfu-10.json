@@ -1,0 +1,90 @@
+{
+  "lane": "drfu-10",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 1608,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/deps/admin_auth.py:66 - require_admin validates the dedicated admin token or Basic password; apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py:148 - admin_router applies it to all admin routes.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The reported missing admin-auth primitive and router guard are present in the current code."
+    },
+    {
+      "db_id": 5730,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-description-service/scripts/bench/preflight.py:44-77 - preflight requires opencv_major from the endpoint config and stamps its source as operator_attested; scripts/bench/driver.py:110 serializes that configured value, so run provenance does not attest the live OpenCV runtime.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/preflight.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py",
+      "size": "S",
+      "fix_hint": "Populate run preflight provenance from a runtime-reported and verified OpenCV version instead of the operator-supplied config value."
+    },
+    {
+      "db_id": 6336,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1253-1254 explicitly withholds CONFIRMATORY status without the half-width and exhaustiveness gates; scripts/bench/score_report.py:311-330 also applies exhaustiveness, accepted-set floor, precision, and primary/Holm eligibility before CONFIRMATORY.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The current success criteria and tier resolver state the additional gates that the finding said were omitted."
+    },
+    {
+      "db_id": 6360,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:486-501 checks only detection rows and detection_pr for the zero-export item on both frames; it never passes the ID rows to identification_pr. export_map.py:477-513 filters unmatched GT names out of native ID, so this test does not establish the described dual-frame ID cascade.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py",
+      "size": "S",
+      "fix_hint": "Add a zero-export ID metric assertion for e2e and explicitly pin the native matched-face exclusion so the proof matches the frame contract."
+    },
+    {
+      "db_id": 6362,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:461-483 - the export has an empty cluster_label, yet the test requires overlap mapping to return Alice Q and the optimistic identification metric to gain a true positive over primary mapping.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The current overlap-mapping test would fail if identification used the raw unmapped cluster label."
+    },
+    {
+      "db_id": 6364,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:30-57 - the localization GREEN test supplies one inline GT FaceBox and one prediction, then asserts one match and perfect matched/count-only scores; it does not load the two-box manifest entry.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The GREEN localization case uses its own single-box ground truth, so the multi-face fixture shape does not contradict its expectation."
+    },
+    {
+      "db_id": 10011,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:229-258 checks disjoint manifests and correct split membership; :324-350 marks selection-only absent hard cases as expected xfails while requiring the reported corpus to retain them; scene/tests/seed/golden.json:1183 still contains the designated media_id 38 entry.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The current split contract represents the selection/report asymmetry and preserves the reported hard cases and designated stranger."
+    },
+    {
+      "db_id": 13723,
+      "outcome": "UNSURE",
+      "evidence": "apps/prototype-description-service/scene/application/describe_load.py:443-445 publishes batch_in_progress and scene/tests/test_describe_load.py:489-503 asserts it for a pending bulk run, but the repository snapshot cannot establish whether the production image was rebuilt and deployed; next read the active prod image digest and its published describe-load.json payload.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scene/tests/test_describe_load.py",
+      "size": "S",
+      "fix_hint": "Verify the active production image and load snapshot to determine whether the source-level field fix reached the running service."
+    }
+  ]
+}

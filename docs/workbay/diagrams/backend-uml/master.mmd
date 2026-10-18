@@ -1,0 +1,100 @@
+flowchart LR
+    %% ======================================================================
+    %% PROTOTYPE DESCRIPTION SERVICE - BACKEND SIGNAL FLOW (HIGH LEVEL)
+    %% Focus: Backend components and primary data flows
+    %% ======================================================================
+
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
+    subgraph App["Prototype Description Service (FastAPI app)"]
+        direction TB
+
+        subgraph Recognition["Recognition Context"]
+            direction TB
+
+            subgraph HTTP["FastAPI HTTP Boundary (recognition)"]
+                direction TB
+                Routers["ENTRY: /recognition/* routers\nanalyze, clusters, suggestions,\nmedia, diagnostics, events, health"]
+                Auth["Auth + tenant guards\nAuthorization Bearer or X-API-Key\nX-Tenant-ID / tenant_id"]
+                SSEClusters["ENTRY: SSE /recognition/clusters/events"]
+                SSEJobs["ENTRY: SSE /recognition/jobs/{id}/stream"]
+            end
+
+            subgraph Services["Application Services"]
+                direction TB
+                ScanQueue["ScanQueueService"]
+                ClusterService["ClusterService"]
+                SuggestionService["SuggestionService"]
+                JobService["JobService"]
+                MediaService["MediaIdentityService"]
+            end
+
+            subgraph Realtime["Realtime + Observability"]
+                direction TB
+                Broadcaster["EventBroadcaster (in-memory)"]
+                ClusteringLogger["ClusteringLogger"]
+                ObsRepo["ObservabilityRepository"]
+            end
+
+            subgraph Worker["Async Scan Worker"]
+                direction TB
+                ScanWorker["scan_worker.py\nscan + clustering/curation/split jobs"]
+                ScanService["ScanService\nFaceDetector + EmbeddingGenerator"]
+            end
+
+            subgraph Infra["Infrastructure"]
+                direction TB
+                Repos["SqlAlchemy* repositories"]
+                Embeddings["InsightFaceAdapter"]
+            end
+        end
+
+        subgraph Roster["Roster Context"]
+            direction TB
+            RosterRouter["ENTRY: /roster/health"]
+            RosterHealth["roster.application.health.check_health()"]
+        end
+
+        subgraph Scene["Scene Context"]
+            direction TB
+            SceneRouter["ENTRY: /scene/health"]
+            SceneHealth["scene.application.health.check_health()"]
+        end
+
+        Shared["shared/\nhealth + utilities"]
+    end
+
+    subgraph Data["Data Plane"]
+        direction TB
+        DB["Postgres + pgvector\nRLS tenant isolation"]
+        Thumbs["Thumbnail storage"]
+        Models["InsightFace model cache"]
+    end
+
+    Routers --> Auth --> Services
+    Routers --> SSEClusters
+    Routers --> SSEJobs
+
+    Services --> Repos --> DB
+    Services --> ClusteringLogger --> ObsRepo --> DB
+    Services -.-> Broadcaster
+
+    SSEClusters --> Broadcaster
+    SSEJobs -.-> Repos
+
+    ScanWorker --> ScanService
+    ScanWorker -.-> ClusterService
+    ScanWorker --> Repos
+    ScanService --> DB
+    ScanService --> Thumbs
+    ScanService --> Embeddings --> Models
+
+    RosterRouter --> RosterHealth --> Shared
+    SceneRouter --> SceneHealth --> Shared
+
+    RouterCode["Code anchors:\napps/prototype-description-service/api/main.py\nrecognition/interface_adapters/http/routers/*\nrecognition/interface_adapters/http/deps/services.py\nrecognition/worker/scan_worker.py\nrecognition/application/events/broadcaster.py\nrecognition/infrastructure/repositories/*\nroster/interface_adapters/http/health_router.py\nscene/interface_adapters/http/health_router.py"]
+    Routers -.-> RouterCode

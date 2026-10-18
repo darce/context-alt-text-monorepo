@@ -1,0 +1,106 @@
+{
+  "lane": "a1h-usage3",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\"; resolved_python=\"$lane_root/.venv/bin/python\"; \"$resolved_python\" -c \"import recognition as module; print(module.__file__)\"",
+      "result": "pass",
+      "detail": "Imported /home/gate/workbay-sandbox/feature-app-1-a1h-usage3-ebc3ccb5/apps/prototype-description-service/recognition/__init__.py from this lane."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_app1_read_route_census.py recognition/tests/unit/test_app1_gate3_operation_id_required.py recognition/tests/unit/test_app1_gate3_replay_enqueue.py recognition/tests/unit/test_app1_single_admission.py recognition/tests/unit/test_app1_usage_admission_wiring.py recognition/tests/unit/test_app1_usage_recognition_lifecycle.py",
+      "result": "not_run",
+      "detail": "uv failed before pytest: error: failed to remove file /home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-usage3-ebc3ccb5/lib/python3.12/site-packages/../../../bin/alembic: Read-only file system (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_app1_read_route_census.py recognition/tests/unit/test_app1_gate3_operation_id_required.py recognition/tests/unit/test_app1_gate3_replay_enqueue.py recognition/tests/unit/test_app1_single_admission.py recognition/tests/unit/test_app1_usage_admission_wiring.py recognition/tests/unit/test_app1_usage_recognition_lifecycle.py",
+      "result": "not_run",
+      "detail": "No final pytest result. It emitted Timeout (0:04:00)! in test_app1_read_route_census.py:213 at test_missing_api_key_denied_under_production_auth's TestClient request, remained blocked, then was interrupted (exit 130)."
+    },
+    {
+      "command": "uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_replay_dispatch_postgres.py",
+      "result": "not_run",
+      "detail": "The PostgreSQL integration tests require a database unavailable in this sandbox; both tests were read for TEST-15."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16983,
+      "finding_id": "FARP-54502d5279069a5f-H-5c5f82498e7c30a7b798b19c",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py:478 - `job.started_at <= now - INLINE_PROCESSING_LEASE`; unit tests cover replay of populated PENDING work and expired inline claims.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_gate3_replay_enqueue.py::test_replay_claims_populated_pending_job_once; apps/prototype-description-service/recognition/tests/unit/test_app1_gate3_replay_enqueue.py::test_replay_reclaims_expired_inline_lease"
+    },
+    {
+      "db_id": 16087,
+      "finding_id": "APP1-POLL-INV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py:224 - `Tenant-scoped API keys always win. Query tenant_id is never authority.`; line 691 hides a job failing `_job_is_visible` with 404.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/api/test_app1_read_route_census.py::test_other_tenant_cannot_read_job_even_by_spoofing_query_tenant_id"
+    },
+    {
+      "db_id": 16020,
+      "finding_id": "APP1-WORKER-RV05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py:906 - persisted cancellation calls `settle_usage_job` after `cancel_scan_job` and reloads the job.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_worker_lifecycle.py::test_cancel_http_releases_pre_pickup_and_charges_after_start"
+    },
+    {
+      "db_id": 16984,
+      "finding_id": "FARP-54502d5279069a5f-M-67d80970cdc4912d2e2405f0",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py:467 - dispatch serializes on `with_for_update()`; PostgreSQL tests assert `len(processor_calls) == 1` and that a second-chunk failure leaves zero items and the job PENDING.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/integration/test_app1_replay_dispatch_postgres.py::test_concurrent_original_and_replay_populate_and_process_once; apps/prototype-description-service/recognition/tests/integration/test_app1_replay_dispatch_postgres.py::test_population_failure_in_second_chunk_rolls_back_first_chunk"
+    },
+    {
+      "db_id": 15475,
+      "finding_id": "APP1-W2-INT-01",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/scripts/verify_identity_schema.py:381 - verifier checks opted-in `HEAL_UNIQUE_CONSTRAINTS`; migration line 100 includes `uq_cluster_merge_receipts_survivor_seq`. The generic empty-gap assertion does not specifically guard this entry.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16033,
+      "finding_id": "APP1-RECOVERY-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py:90 - exact `EXPECTED_SCHEMA_TABLES` equality includes the recovery cursor/quarantine/progress and known-item lease tables; line 144 checks exact downgrade order.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py::test_identity_schema_declares_expected_table_set"
+    },
+    {
+      "db_id": 15468,
+      "finding_id": "APP1-W0-L0-09",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/db/models/portal_billing.py:115 - ORM status default is `expired`, and migration line 1159 also defaults to `expired`; portal contract test line 247 only checks `DEFAULT_ENTITLEMENT_STATUS`, not either schema default.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 15467,
+      "finding_id": "APP1-W0-L0-08",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_contracts.py:196 - `assert isinstance(stub, protocol)` checks names only; line 234 covers selected BillingProvider parameters but not protocol signatures/awaitability across the other protocols.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_portal_contracts.py::test_billing_provider_requires_attempt_owned_checkout_and_header_verify"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py",
+      "line": 478,
+      "title": "Inline lease expiry can reclaim a live processor",
+      "defect": "The 30-minute reclaim clock is `IdentityScanJob.started_at`; the inline processor runs outside the dispatch transaction and does not heartbeat that timestamp after startup.",
+      "failure_scenario": "With inline mode enabled, 61 slow media items each taking near the detector's 30-second per-image timeout can keep the first processor active past 30 minutes. A same-key replay then sees RUNNING as stale and starts the full inline processor again, duplicating remote detection and persistence work.",
+      "fix": "Persist and renew a processor heartbeat while inline work runs, and reclaim only after heartbeat expiry with an owner/fencing check; alternatively enforce a verified maximum task duration below the lease.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_app1_gate3_replay_enqueue.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Rechecked 8 findings: HOLDS 5, PARTIAL 3, NOT_FIXED 0. New findings: medium 1. The assigned pytest suite and PostgreSQL integration tests are not_run because verification was blocked."
+}

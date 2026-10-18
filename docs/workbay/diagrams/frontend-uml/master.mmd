@@ -1,0 +1,104 @@
+graph TB
+    %% Updated: 2026-03-28
+
+    subgraph Pages["React Pages"]
+        Dashboard["DashboardPage"]
+        Workbench["WorkbenchPage"]
+        Roster["RosterPage"]
+        Retention["RetentionPage"]
+    end
+
+    subgraph WorkbenchSurface["Workbench Surface"]
+        ScanTab["ScanTabContent"]
+        ConfirmTab["ConfirmTabContent"]
+        SyncIndicator["SyncStatusIndicator"]
+        ConflictInbox["ConflictInbox"]
+        DeadLetter["DeadLetterPanel"]
+        WorkbenchContext["WorkbenchContext"]
+    end
+
+    subgraph APILayer["API Layer"]
+        ScanApi["scanApi"]
+        ClusterApi["clusterApi + clusterApiMutations"]
+        IdentityApi["identityApi"]
+        ConflictApi["conflictApi"]
+        SyncApi["syncApi"]
+        RetentionApi["retentionApi"]
+        RosterApi["rosterApi"]
+    end
+
+    subgraph Hooks["Hooks / Page State"]
+        JobState["useJobStateMachine"]
+        JobHistory["useRecognitionJobHistory"]
+        WorkbenchMedia["useWorkbenchMedia"]
+        Selection["useMediaSelectionState"]
+        Filters["useWorkbenchFilters"]
+        SyncStatus["useSyncStatus"]
+        Conflicts["useConflicts"]
+        OutboxOps["useOutboxOperations"]
+        RetentionState["useRetentionPageState"]
+        RosterHooks["useRosterEntries + cluster hooks"]
+    end
+
+    subgraph PHPProxy["WordPress PHP Proxy"]
+        RecognitionController["RecognitionController"]
+        BaseProxy["AbstractRecognitionProxyController"]
+        ConflictController["ConflictController"]
+        SyncController["SyncStatusController"]
+        RetentionController["RetentionController"]
+        ApiClass["Api class"]
+    end
+
+    subgraph Backend["Recognition Service Backend"]
+        BackendAPI[("FastAPI<br/>/recognition/* + /retention/*")]
+    end
+
+    Workbench --> WorkbenchContext
+    Workbench --> ScanTab
+    Workbench --> ConfirmTab
+    Workbench --> SyncIndicator
+    Workbench --> ConflictInbox
+    Workbench --> DeadLetter
+
+    Dashboard --> JobHistory
+    Dashboard --> SyncStatus
+    Dashboard --> RetentionState
+    WorkbenchContext --> JobHistory
+    WorkbenchContext --> WorkbenchMedia
+    WorkbenchContext --> Selection
+    WorkbenchContext --> Filters
+    WorkbenchContext --> JobState
+    ConflictInbox --> Conflicts
+    DeadLetter --> OutboxOps
+    Retention --> RetentionState
+    Roster --> RosterHooks
+
+    JobState --> ScanApi
+    JobState --> ClusterApi
+    WorkbenchMedia --> IdentityApi
+    SyncStatus --> SyncApi
+    Conflicts --> ConflictApi
+    OutboxOps --> ConflictApi
+    RetentionState --> RetentionApi
+    RosterHooks --> RosterApi
+
+    ScanApi --> RecognitionController
+    ClusterApi --> RecognitionController
+    IdentityApi --> RecognitionController
+    ConflictApi --> ConflictController
+    SyncApi --> SyncController
+    RetentionApi --> RetentionController
+
+    RecognitionController --> BaseProxy
+    ConflictController --> BaseProxy
+    SyncController --> BaseProxy
+    RetentionController --> BaseProxy
+    BaseProxy --> ApiClass
+    ApiClass --> BackendAPI
+
+    style Pages fill:#e3f2fd,stroke:#0d47a1,color:#0d47a1
+    style WorkbenchSurface fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style APILayer fill:#fff3e0,stroke:#f57c00,color:#e65100
+    style Hooks fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
+    style PHPProxy fill:#fce4ec,stroke:#ad1457,color:#880e4f
+    style Backend fill:#e0e0e0,stroke:#616161,color:#424242

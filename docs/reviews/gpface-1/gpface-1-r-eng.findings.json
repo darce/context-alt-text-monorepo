@@ -1,0 +1,181 @@
+{
+  "lane_id": "gpface-1-r-eng",
+  "commit": "a820d3eb192cb0198cfb272d5f99097893cf9744",
+  "reviewed_files": [
+    "CLAUDE.md",
+    "docs/assessments/current/guided-prototype-face-recognition-2026-09-05.md",
+    "apps/prototype-wp-alt-context/js/admin/App.tsx",
+    "apps/prototype-wp-alt-context/js/admin/utils/routeHelpers.ts",
+    "apps/prototype-wp-alt-context/js/admin/navigation/appLinks.ts",
+    "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts",
+    "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.test.ts",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedPrototypePage.test.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedFaceMatchCard.test.tsx",
+    "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedUxMap.contract.test.ts",
+    "apps/prototype-wp-alt-context/js/admin/assets/guided/CREDITS.md",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-prototype.scss",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/_guided-flow-strip.scss",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/index.scss",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/__tests__/productionCssBundle.ts",
+    "apps/prototype-wp-alt-context/js/admin/styles/components/__tests__/productionCssBundle.test.ts",
+    "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json",
+    "apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.md",
+    "apps/prototype-wp-alt-context/js/components/ui/FaceThumbnail.tsx",
+    "apps/prototype-wp-alt-context/js/components/ui/faceGeometry.ts",
+    "apps/prototype-wp-alt-context/js/admin/api/recognition/types/identity.ts"
+  ],
+  "hypotheses": [
+    {
+      "claim": "The v3 state shape or required lookup/transition helpers are missing, renamed, or typed differently.",
+      "verdict": "refuted",
+      "evidence": "state.ts:34-129 defines the v3 status, face, person, identity, provenance, draft, candidate, appliedText, and history types; state.ts:273-335 defines the lookups, constructor, draftFor, confirmedPersonKeys, and draftKeyFor; state.ts:352-472 defines all required identity, edit, reject, apply, undo, reset, and guard helpers."
+    },
+    {
+      "claim": "The seed does not preserve the required saved-build origin, source values, press-photo alt text, or identity ordering.",
+      "verdict": "refuted",
+      "evidence": "state.ts:133-234 seeds origin 'saved-build', scenarioVersion 'guided-people-v3', people in Katy-then-Justin order, faces left Justin then right Katy, all six guided image imports, the required pressPhoto fields, four drafts, and provenance; state.ts:291-302 sets identities from faces and appliedText to seed.pressPhoto.altText."
+    },
+    {
+      "claim": "Transition (a) confirm left -> confirm right -> apply -> undo -> undo loses the both-name draft, the seed applied text, or LIFO history.",
+      "verdict": "refuted",
+      "evidence": "Expected draftKey none -> justin-trudeau -> both, appliedText seed until apply, both after apply, then seed after each undo, and history lengths 0 -> 1 -> 2 -> 3 -> 4 -> 4. Actual state.ts:352-364 refreshes the draft and appends each identity event, :440-457 stores previousAppliedText on apply, and :460-471 pops available applications in LIFO order; Page.tsx:222-247 emits the required confirm/apply/undo feedback. GuidedPrototypePage.test.tsx:363-385 asserts the two undo outcomes and SEED_ALT_TEXT."
+    },
+    {
+      "claim": "Transition (b) drops a saved edit when the second face is confirmed instead of recomputing the both-name draft.",
+      "verdict": "refuted",
+      "evidence": "GuidedFacesPanel.tsx:77-101 disables both decision buttons while hasUnsavedEdit is true; after save, state.ts:352-364 confirms the second face, recomputes draftKeyFor, refreshes candidate to drafts.both, and intentionally drops the saved edit per assessment:362-364."
+    },
+    {
+      "claim": "Transition (c) reject -> edit -> save -> apply changes appliedText incorrectly or permits a rejected candidate to apply.",
+      "verdict": "refuted",
+      "evidence": "Expected history lengths are 0 -> 1 rejected -> 2 edit-saved -> 3 applied, with appliedText changing only at apply. Actual state.ts:419-423 marks rejected, :407-417 saves a non-empty edited candidate, and :440-457 rejects only status 'rejected' before writing appliedText; Page.tsx:198-209 and :238-243 provide the save/apply/reject feedback."
+    },
+    {
+      "claim": "Transition (d) apply -> reset carries applied text, decisions, or history into the new practice.",
+      "verdict": "refuted",
+      "evidence": "Expected reset output is a fresh scenario with draftKey none, appliedText equal to pressPhoto.altText, unconfirmed identities, and history length 0. Actual state.ts:291-306 constructs those values; GuidedPrototypePage.tsx:211-217 replaces the scenario, increments resetVersion, clears hasUnsavedEdit, and reports the reset; state.test.ts:265-273 exercises the applied-then-reset path."
+    },
+    {
+      "claim": "draftKeyFor or the description explanation misses one of the four identity-decision cases.",
+      "verdict": "refuted",
+      "evidence": "state.ts:318-335 returns both, katy-perry, justin-trudeau, or none from confirmed face-match identities regardless of unidentified/unconfirmed status; GuidedDescriptionReview.tsx:25-42 selects both-confirmed, one-confirmed, all-decided-none, and otherwise-unconfirmed explanations."
+    },
+    {
+      "claim": "The public state helpers mutate their input or couple identities to array positions instead of faceId.",
+      "verdict": "refuted",
+      "evidence": "state.ts:250-265 deep-clones nested scenario data; state.ts:279-288 looks up faces and identities by id/faceId; state.ts:352-375 clones before replacement; GuidedFacesPanel.tsx:48-59 and :74-76 iterate stable scenario.faces order and fetch each identity by face.id."
+    },
+    {
+      "claim": "Page callbacks are mapped to the wrong state helpers, assertHistoryFaceId is used outside identity events, or resetVersion fails to clear the editor.",
+      "verdict": "refuted",
+      "evidence": "GuidedPrototypePage.tsx:198-247 maps save, apply, confirm, unnamed, reject, undo, and reset to their matching helpers and feedback; :59-68 invokes assertHistoryFaceId only in identity-confirmed/unidentified cases; GuidedDescriptionReview.tsx:56-59 resets editValue on candidate text or resetVersion changes; Page.tsx:350-357 passes resetVersion and all editor callbacks."
+    },
+    {
+      "claim": "The six bundled assets, pixel-space face boxes, build globs, or CSS bundle inventory are inconsistent.",
+      "verdict": "refuted",
+      "evidence": "state.ts:1-6 imports all six JPEGs via relative Vite paths; GuidedFaceMatchCard.tsx:36-46 passes face.box as x/y/width/height with mediaUrl; FaceThumbnail.tsx:25-30 documents source-image bbox coordinates and :75/:163-165 applies pixel crop math; productionCssBundle.ts:70-78 includes js/**/*.jpg; productionCssBundle.test.ts:33-41 lists the same six GUIDED_ASSETS. The bundled press image is 1400x933 and the boxes are pixel coordinates."
+    },
+    {
+      "claim": "The guided route is not reachable from the dashboard hash URL or is not registered in the router.",
+      "verdict": "refuted",
+      "evidence": "appLinks.ts:99-111 defines guidedPrototype '/guided-prototype' and :164 emits only toGuidedPrototype(); DashboardPage.tsx:326-329 uses that builder; App.tsx:79-86 registers the page at '/guided-prototype'; routeHelpers.ts:39-41 accepts the same hash path."
+    },
+    {
+      "claim": "The guided SCSS omits one of the two partial imports, uses un-tokenized color/type/radius/shadow values, or duplicates the flow selector across partials.",
+      "verdict": "refuted",
+      "evidence": "styles/components/index.scss:28-29 imports both guided partials; _guided-prototype.scss:6-737 uses --acx-* design tokens for the checked color, typography, radius, and shadow properties; _guided-flow-strip.scss:1-71 owns .acx-guided-flow and its raw zero radius at :67 carries the required E21-4 disposition."
+    },
+    {
+      "claim": "The surface has no dead exports or wave-1 generic-draft leftovers.",
+      "verdict": "confirmed",
+      "evidence": "state.ts:391 exports assertCandidateIdentity even though the v3 export list at assessment:352-357 does not list it and no reviewed consumer imports it; GuidedDescriptionReview.tsx:109 emits the legacy-named data-generic-draft attribute, and GuidedPrototypePage.test.tsx:8 still defines GENERIC_DRAFT."
+    },
+    {
+      "claim": "The page journey test asserts both full-undo outcomes against the seed text.",
+      "verdict": "refuted",
+      "evidence": "GuidedPrototypePage.test.tsx:363-385 applies two drafts, asserts the first undo restores JUSTIN_DRAFT at :376-379, and asserts the second undo restores SEED_ALT_TEXT at :381-384; state.test.ts:236-246 independently checks the same LIFO restoration."
+    },
+    {
+      "claim": "The regression suite has exact end-to-end coverage for all required b/c seams and every seed asset mapping.",
+      "verdict": "confirmed",
+      "evidence": "GuidedPrototypePage.test.tsx:322-345 covers stale Apply and unnamed-button disabling but never executes confirm-left -> unsaved edit -> blocked confirm-right -> save -> confirm-right; state.test.ts:204-225 rejects and applies a prebuilt both-name candidate but never executes reject -> edit -> save -> apply; state.test.ts:63-65 checks Justin gallery length and only the first Justin src, not guided-justin-trudeau-2025-b.jpg."
+    }
+  ],
+  "findings": [
+    {
+      "id": "GPFACE-1-RE-01",
+      "severity": "low",
+      "category": "status",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "line": 17,
+      "evidence": "The component compares the domain value with the scattered literal `status === 'edited'`; equivalent literals occur in GuidedDescriptionReview.tsx:19, :27, :157, :181, :212, GuidedFacesPanel.tsx:77-78, GuidedFaceMatchCard.tsx:14/18, and GuidedPrototypePage.tsx:39-43/59-76, while state.ts:8-32 keeps the canonical as-const objects private.",
+      "impact": "Status and history vocabulary can drift between the state module and page components without a type-level or review-time single-source check, making later state changes harder to audit.",
+      "recommendation": "Export the canonical status/history as-const objects or focused predicates from state.ts and use them for every component comparison and switch.",
+      "rule": "sr-007"
+    },
+    {
+      "id": "GPFACE-1-RE-02",
+      "severity": "low",
+      "category": "deadcode",
+      "file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts",
+      "line": 391,
+      "evidence": "The module exports `assertCandidateIdentity`, but the v3 export list in the contract names the public guard `nameGuardError` and no reviewed file imports this assertion helper directly.",
+      "impact": "An internal validation implementation detail is exposed as an unsupported API, expanding the state surface and making dead code look intentional.",
+      "recommendation": "Make assertCandidateIdentity non-exported; keep only the contract’s public helpers exported.",
+      "rule": "7.3 exports; dead-code hygiene"
+    },
+    {
+      "id": "GPFACE-1-RE-03",
+      "severity": "low",
+      "category": "legacy",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "line": 109,
+      "evidence": "The visual-card span carries the leftover attribute `data-generic-draft={scenario.drafts.none}`, and GuidedPrototypePage.test.tsx:8 still names its fixture `GENERIC_DRAFT`.",
+      "impact": "The DOM and regression vocabulary retain the wave-1 genericDraft name even though v3 calls this value drafts.none / Draft without names, inviting stale selectors and terminology drift.",
+      "recommendation": "Remove the unused data attribute and rename the test fixture to a v3 term such as NONE_DRAFT if a selector still needs it.",
+      "rule": "7.3 naming; dead-code and leftovers"
+    },
+    {
+      "id": "GPFACE-1-RE-04",
+      "severity": "low",
+      "category": "tests",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/guided/__tests__/GuidedPrototypePage.test.tsx",
+      "line": 322,
+      "evidence": "The test title is `it('blocks applying stale textarea text until it is saved or discarded', async () => {` and its assertions at :331-338 cover Apply and Keep-this-person-unnamed disabled states, but no assertion clicks the right-face confirm button before or after saving.",
+      "impact": "A regression in parent hasUnsavedEdit propagation could allow an identity change to discard stale text or fail to unlock the right-face confirmation, while this suite remains green.",
+      "recommendation": "Add the exact sequence confirm left -> type unsaved text -> assert right confirm disabled -> save -> click right confirm -> assert the both draft and saved-edit discard behavior.",
+      "rule": "7.3 transition table; regression net"
+    },
+    {
+      "id": "GPFACE-1-RE-05",
+      "severity": "low",
+      "category": "tests",
+      "file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.test.ts",
+      "line": 204,
+      "evidence": "The test `it('keeps editing and rejection separate from explicit application, then supports undo', () => {` rejects at :207 and applies the original both-name scenario at :212, but never performs saveGuidedEdit after rejection before apply.",
+      "impact": "A change that leaves a rejected candidate non-applicable after a successful edit could pass the existing separate rejection and edit tests without covering the required recovery path.",
+      "recommendation": "Add rejectGuidedCandidate -> saveGuidedEdit(custom text) -> applyGuidedCandidate assertions for candidate status, appliedText, and history kinds/length.",
+      "rule": "7.3 transition table; regression net"
+    },
+    {
+      "id": "GPFACE-1-RE-06",
+      "severity": "low",
+      "category": "tests",
+      "file": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.test.ts",
+      "line": 64,
+      "evidence": "The seed test asserts `getGuidedPerson(scenario, JUSTIN).galleryPhotos[0].src` contains `guided-justin-trudeau-2025` but never asserts galleryPhotos[1].src contains the distinct `guided-justin-trudeau-2025-b` asset; :63 only checks the gallery length is 2.",
+      "impact": "The six-file build inventory can stay green while the state maps the second Justin gallery slot to the wrong or missing asset, so the visible evidence gallery can regress unnoticed.",
+      "recommendation": "Assert the second Justin gallery src explicitly and keep the existing exact count and press-photo assertions.",
+      "rule": "7.3 seed; asset regression net"
+    }
+  ]
+}

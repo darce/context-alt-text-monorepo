@@ -1,0 +1,125 @@
+classDiagram
+%% Workbench identity clustering components (React)
+
+class WorkbenchPage {
+  <<component>>
+  +tabs: scan|batch|confirm
+  +activeJobIds: string[]
+  +clusterMessage: string|null
+}
+
+class IdentityClusterList {
+  <<component>>
+  +mediaItems: DetectedIdentity[]
+  +onMergeUndo()
+  +onLabelUpdate()
+}
+
+class IdentityClusterItem {
+  <<component>>
+  +cluster: ClusterGroup
+  +onMerge(label)
+  +onSplit()
+  +onReassign(identityId, targetClusterId?)
+  +onLabelChange(label)
+}
+
+class ClusterActions {
+  <<hook>>
+  +mergeCluster()
+  +revertMerge()
+  +splitCluster()
+  +reassignIdentity()
+}
+
+class ClusterEditForm {
+  <<component>>
+  +labelInput: string
+  +existingLabels: string[]
+  +onSubmit(label)
+}
+
+class SuggestionReviewPanel {
+  <<component>>
+  +suggestions: PendingSuggestion[]
+  +onAccept(id)
+  +onReject(id)
+}
+
+class InlineSuggestionPrompt {
+  <<component>>
+  +options: ComboboxOption[]
+  +onSelect(clusterId)
+}
+
+class DebugMetricsPanel {
+  <<component>>
+  +debugMetrics: DebugMetrics
+}
+
+class MergeUndoBanner {
+  <<component>>
+  +lastMerge: MergeClusterResponse
+  +onUndo()
+}
+
+class TrainingStageBanner {
+  <<component>>
+  +stage: TrainingStageResponse
+}
+
+class ClusterGroup {
+  <<type>>
+  +clusterId: string|null
+  +label: string|null
+  +isAutoLabel: boolean
+  +members: DetectedIdentity[]
+}
+
+class ComboboxOption {
+  <<type>>
+  +value: string
+  +label: string
+  +group: string
+  +similarity: number
+  +identityCount: number
+}
+
+class Hooks {
+  <<React Query>>
+  +useClusterSuggestions(identityId)
+  +useClusterMutations()
+  +useClusterEditState()
+  +useRecognitionClusters()
+  +useRecognitionCluster()
+}
+
+class RecognitionApi {
+  <<module>>
+  +listRecognitionClusters()
+  +fetchIdentitySuggestions(identityId, topK)
+  +updateClusterLabel()
+  +mergeCluster()
+  +revertMergeCluster()
+  +splitCluster()
+  +reassignClusterIdentity()
+  +acceptSuggestion()
+  +rejectSuggestion()
+}
+
+WorkbenchPage --> IdentityClusterList
+WorkbenchPage --> SuggestionReviewPanel
+WorkbenchPage --> TrainingStageBanner
+WorkbenchPage --> MergeUndoBanner
+IdentityClusterList --> IdentityClusterItem
+IdentityClusterItem --> ClusterActions
+IdentityClusterItem --> ClusterEditForm
+IdentityClusterItem --> InlineSuggestionPrompt
+IdentityClusterItem --> DebugMetricsPanel
+ClusterActions --> RecognitionApi
+ClusterEditForm --> Hooks : existingLabels
+InlineSuggestionPrompt --> Hooks : useClusterSuggestions
+MergeUndoBanner --> ClusterActions
+SuggestionReviewPanel --> RecognitionApi
+SuggestionReviewPanel --> Hooks : invalidate queries
+Hooks --> RecognitionApi

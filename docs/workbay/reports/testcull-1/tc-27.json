@@ -1,0 +1,114 @@
+{
+  "lane": "tc-27",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "scripts/tests/test_plan_accept_handler_wiring.py",
+      "verdict": "KEEP",
+      "tests_total": 5,
+      "tests_affected": [],
+      "reason": "These checks exercise the live plan-accept Make target and protect the tracked-handler and ignored-plugin-overlay boundaries.",
+      "evidence": "scripts/tests/test_plan_accept_handler_wiring.py:51-62 - dry-runs make and checks the tracked handler invocation; scripts/tests/test_plan_accept_handler_wiring.py:65-146 checks that the plugin overlay stays ignored and has no tracked plan-accept definition.",
+      "subject": "make plan-accept wiring and Makefile.d plugin overlay safety",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/tests/test_plan_baseline_handler_behavior.py",
+      "verdict": "KEEP",
+      "tests_total": 9,
+      "tests_affected": [],
+      "reason": "The tests cover fallback CLI statuses and exit codes, and the docstring check protects text exposed to operators through argparse help.",
+      "evidence": "scripts/tests/test_plan_baseline_handler_behavior.py:30-115 - invokes the handler and asserts payloads and exit codes; scripts/tests/test_plan_baseline_handler_behavior.py:118-123 pins help text passed through argparse at scripts/workstate/lifecycle/handlers/plan_baseline.py:20.",
+      "subject": "tracked plan-accept fallback CLI behavior and operator help",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/tests/test_provision_lane_worktree.py",
+      "verdict": "KEEP",
+      "tests_total": 24,
+      "tests_affected": [],
+      "reason": "The isolated cases cover worktree overlay preservation, fail-closed behavior, and dependency-cache symlink and lockfile safety.",
+      "evidence": "scripts/tests/test_provision_lane_worktree.py:14-54,120-176,477-791 - builds temporary checkouts and asserts provisioning results, refusal paths, preserved files, and cache isolation.",
+      "subject": "lane worktree provisioner overlay and dependency-cache safety",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/tests/test_ux_map_gate_wiring.py",
+      "verdict": "KEEP",
+      "tests_total": 6,
+      "tests_affected": [],
+      "reason": "These checks protect the live UX-map lint target, its inclusion in check-all, and the CI setup and triggers required to run it.",
+      "evidence": "scripts/tests/test_ux_map_gate_wiring.py:75-127 - asserts Make target wiring, Node setup and render-parity workflow commands, and root Makefile path filters.",
+      "subject": "UX-map parity gate and CI wiring",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/tests/test_wave4_playwright_contract.py",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [],
+      "reason": "These active runner and Playwright collection gate contracts are isolated in a wave-named file and belong in a general runner-contract module.",
+      "evidence": "scripts/tests/test_wave4_playwright_contract.py:12-46 - asserts the runner allowlist and that Playwright collection has its own provisioned, dependency-owning workflow job.",
+      "subject": "workbay remote runner configuration and Playwright collection gate",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Move both tests into scripts/tests/test_workbay_runner_contracts.py, a general module for runner configuration and gate workflow contracts.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/train/occlusion/test_equivalence_claims.py",
+      "verdict": "REWRITE",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_m6_is_not_path_equivalent_one_layer_down"
+      ],
+      "reason": "The public verdict-equivalence checks are useful, but this test directly asserts intermediate output from a private helper.",
+      "evidence": "scripts/train/occlusion/test_equivalence_claims.py:134-160 checks verdicts through audit_provenance_row; :162-193 calls private _synthetic_audit_targets and asserts its output differs.",
+      "subject": "M6 surviving-mutation verdict equivalence and masking rationale",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-12",
+        "TEST-16"
+      ],
+      "replacement": "Expose the masked intermediate-path evidence through a stable mutation-guard seam, or promote the helper contract, while retaining the public audit_provenance_row equivalence checks.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/vm/tests/test_vm_script_suites.py",
+      "verdict": "SPEED",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_reap_lane_bash_suite"
+      ],
+      "reason": "This bridge launches the real reap Bash suite, documented at about 206 seconds, so that coverage belongs in a later VM verification stage.",
+      "evidence": "scripts/vm/tests/test_vm_script_suites.py:32 records the observed ~206s runtime; :51-54 launches the suite and validates its result and skip coverage.",
+      "subject": "VM reap-lane Bash suite and skip coverage",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Run test_reap_lane.sh in a dedicated later VM stage; retain only quick bridge/output validation in commit-stage pytest.",
+      "est_seconds_saved": 206,
+      "risk": "medium"
+    }
+  ],
+  "fixtures": []
+}

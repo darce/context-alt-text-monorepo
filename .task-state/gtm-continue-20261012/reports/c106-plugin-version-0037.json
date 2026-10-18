@@ -1,0 +1,110 @@
+{
+  "lane_id": "c106-plugin-version-0037",
+  "status": "COMMITTED_GREEN_PENDING_PARENT",
+  "scope": "metadata-only",
+  "release_version": {
+    "from": "0.0.36",
+    "to": "0.0.37"
+  },
+  "source_identity": {
+    "requested_source_sha": "372a6413a7ae0eb71baa3566716546684bac5a58",
+    "requested_source_object_present_locally": false,
+    "requested_tree": "63c593a4e0f5b8585f67555627b7c5ca07fedf4a",
+    "pre_bump_base_commit": "a5fa5f361ba06a331d84a6ad38fdf9637f51b4f1",
+    "pre_bump_base_tree": "63c593a4e0f5b8585f67555627b7c5ca07fedf4a",
+    "pre_bump_tree_matches_requested": true,
+    "metadata_checkpoint_commit": "b0d633ec4c3241a26cf970019d3f68235115b0a1",
+    "metadata_checkpoint_tree": "fb13856a7dee9f9c1f8fff6daf57bb9d92faf7ee"
+  },
+  "owned_paths_changed": [
+    "apps/prototype-wp-alt-context/alt-context.php",
+    "apps/prototype-wp-alt-context/package.json",
+    "apps/prototype-wp-alt-context/package-lock.json"
+  ],
+  "files": [
+    {
+      "path": "apps/prototype-wp-alt-context/alt-context.php",
+      "sha256_before": "a96f82af3de4f3dc0009c38f2eb496d0b6e3f9d749600f5d7dbe86aa55e8b268",
+      "sha256_after": "d52a612b6f74749e72f1ee0dd6dd096b86555097994b8465a76628da358cd8d6",
+      "diff": "1 line changed: line 7 header 'Version: 0.0.36' -> 'Version: 0.0.37'"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/package.json",
+      "sha256_before": "eda554bbd096cf8fb74fd9c22e33428c3dfb7ce0b3a2c66616309d1ae4c6dca4",
+      "sha256_after": "cb709756004fad3d67dcf72ef5d4bf11f7ed4adce99c8ef1f62e350b34707ab0",
+      "diff": "1 line changed: line 3 'version' 0.0.36 -> 0.0.37"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/package-lock.json",
+      "sha256_before": "bca3a03eb6507c39af1b4a11a36d0490d9c05698b2ac0d0cab29cb342cfa88ee",
+      "sha256_after": "130134404968d0d482cc96dff69bd47710198fb310c09b434c6243099a7e885d",
+      "diff": "2 lines changed: root 'version' and packages[''].version 0.0.36 -> 0.0.37"
+    }
+  ],
+  "diff_stat": {
+    "files_changed": 3,
+    "insertions": 4,
+    "deletions": 4
+  },
+  "lockfile_dependency_check": {
+    "method": "parsed package-lock.json with root version and packages[''].version normalized to a placeholder, then compared serialized JSON before vs after",
+    "packages_count_before": 745,
+    "packages_count_after": 745,
+    "normalized_sha256_before": "a301e2776eb6ac1522443e7c15eaffcd2152e258ca0d1444cd55217d4e4be5a1",
+    "normalized_sha256_after": "a301e2776eb6ac1522443e7c15eaffcd2152e258ca0d1444cd55217d4e4be5a1",
+    "identical": true
+  },
+  "source_digest_now": {
+    "value": "b463513c92b8c01c7592f994edc37345836a360ccb448392049acce60b0a0eef",
+    "computed_by": "scripts/release/package-plugin.sh --print-source-digest",
+    "note": "source_digest() hashes package.json and package-lock.json, both changed by this bump, so any source stamp minted at 0.0.36 no longer matches. Final packaging must rebuild and restamp. The 0.0.36 digest value was not computed."
+  },
+  "commands": [
+    {
+      "command": "make plugin-bump VERSION=0.0.37",
+      "exit": 0,
+      "result": "plugin-bump: bumped to 0.0.37; all three surfaces report 0.0.37"
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0,
+      "result": "clean"
+    },
+    {
+      "command": "bash apps/prototype-wp-alt-context/scripts/release/tests/test-package-plugin.sh",
+      "exit": 0,
+      "counts": {
+        "pass": 36,
+        "fail": 0
+      },
+      "note": "Existing regression suite. It runs on temporary 0.0.1 fixtures under /tmp via ACX_PACKAGE_PLUGIN_DIR and ACX_PACKAGE_DIST_DIR, so it does not read the repo version. Case 6 (package-lock.json version mismatch) passes."
+    },
+    {
+      "command": "ACX_PACKAGE_PLUGIN_DIR=<worktree>/apps/prototype-wp-alt-context ACX_PACKAGE_DIST_DIR=<tmp> bash apps/prototype-wp-alt-context/scripts/release/package-plugin.sh --no-build",
+      "exit": 1,
+      "result": "Version gate passed: validate_version_consistency (package-plugin.sh:334) runs before the stamp gate (package-plugin.sh:367). Stopped at 'Build source stamp mismatch': public/assets/dist/.acx-build-source.sha256 is missing because no build has run in this sandbox. No zip was written.",
+      "classification": "environmental build-artifact gate, not a version-metadata failure; not a RED result"
+    },
+    {
+      "command": "bash apps/prototype-wp-alt-context/scripts/release/package-plugin.sh --print-source-digest",
+      "exit": 0,
+      "result": "b463513c92b8c01c7592f994edc37345836a360ccb448392049acce60b0a0eef"
+    }
+  ],
+  "unrun": [
+    "Full package-plugin.sh run without --no-build (npm/vite build, composer, zip). Deferred to final packaging after joined reviewed main and the exact source hash.",
+    "npm/composer installs and any network or package downloads (not permitted; offline only).",
+    "Vitest/Playwright suites. Not applicable to a metadata-only change.",
+    "scripts/tests pytest harness. No test asserting the 0.0.37 value was identified, and this change does not touch its inputs. Not run."
+  ],
+  "tests_added": [],
+  "tests_modified": [],
+  "red_results": "none; no new tests were authored and no causal RED is claimed",
+  "blockers": [],
+  "next_actions": [
+    "Parent: public source gate (Solxhigh) remains parent-owned.",
+    "Final packaging waits for joined reviewed main and the exact source hash. Rebuild and restamp dist before packaging, because source_digest covers package.json and package-lock.json.",
+    "Report path is gitignored by .gitignore:112 (.task-state/). Committed with git add -f for this lane only. Existing tracked file: .task-state/e21-20-rev9-verify.txt."
+  ],
+  "exclusions": "No sibling113 paths were touched. No release tag, network publication, deploy, generated bundle, or Co-Authored-By trailer."
+}

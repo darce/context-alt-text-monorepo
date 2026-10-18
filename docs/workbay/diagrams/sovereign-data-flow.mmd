@@ -1,0 +1,89 @@
+---
+title: Sovereign Sync Data Flow
+---
+flowchart TD
+    subgraph Backend["Recognition Service"]
+        DB[(PostgreSQL)]
+        SnapshotAPI["Snapshot Endpoint"]
+        CurationAPI["Curation Sync Endpoint"]
+        TopologyAPI["Topology Endpoints"]
+    end
+
+    subgraph Plugin["WordPress Plugin"]
+        subgraph SyncLayer["Sovereign Sync Layer"]
+            Projector["SnapshotProjector"]
+            OutboxWriter["OutboxWriter"]
+            OutboxDrain["OutboxDrain"]
+            Dispatcher["OutboxDispatcher"]
+            ConflictRepo["ConflictRepository"]
+            ConflictSvc["ConflictResolutionService"]
+            Sequencer["CrossPlaneSequencer"]
+            SyncState["SyncStateRepository"]
+        end
+
+        subgraph LocalState["Local State"]
+            Clusters[(wp_acx_clusters)]
+            Members[(wp_acx_identity_members)]
+            Outbox[(wp_acx_sync_outbox)]
+            Conflicts[(wp_acx_sync_conflicts)]
+            SyncMeta[(wp_acx_sync_state)]
+        end
+
+        subgraph UI["Admin UI"]
+            Workbench["Workbench / Dashboard"]
+            Inbox["ConflictInbox"]
+            DeadLetter["DeadLetterPanel / Timeline"]
+            SyncHealth["SyncStatusIndicator"]
+        end
+    end
+
+    DB -->|"get_snapshot()"| SnapshotAPI
+    SnapshotAPI -->|"JSON snapshot"| Projector
+    Projector -->|"Machine rows (atomic tx)"| ProjectionGate{"Curated row diverges?"}
+    ProjectionGate -->|"No"| Clusters
+    ProjectionGate -->|"No"| Members
+    ProjectionGate -->|"Yes"| ConflictRepo
+    ConflictRepo -->|"Open conflict row"| Conflicts
+    Projector -->|"Refresh counts + last sync result"| SyncState
+    SyncState -->|"Persist"| SyncMeta
+
+    Workbench -->|"User curation"| OutboxWriter
+    OutboxWriter -->|"Enqueue"| Outbox
+    Outbox -->|"Drain cycle"| OutboxDrain
+    OutboxDrain --> Dispatcher
+    Dispatcher -->|"Curation ops"| CurationAPI
+    Dispatcher -->|"Topology ops"| TopologyAPI
+    CurationAPI -->|"ack / conflict / failure"| OutboxDrain
+    TopologyAPI -->|"ack / conflict / failure"| OutboxDrain
+    OutboxDrain --> Result{"Backend result"}
+    Result -->|"ack"| Outbox
+    Result -->|"conflict"| ConflictRepo
+    Result -->|"failure"| Outbox
+    OutboxDrain -->|"acknowledged / pending / failed / conflict / discarded"| Outbox
+    OutboxDrain -->|"Refresh counts"| SyncState
+
+    Sequencer -->|"Sequence topology"| OutboxDrain
+
+    Inbox -->|"List + detail"| Conflicts
+    DeadLetter -->|"List failed / discarded / pending"| Outbox
+    SyncHealth -->|"Read aggregate health"| SyncMeta
+    Inbox -->|"Resolve conflict"| ConflictSvc
+    ConflictSvc --> Resolution{"accepted or dismissed?"}
+    Resolution -->|"accepted"| AcceptPath["Apply machine-side reconciliation"]
+    Resolution -->|"dismissed"| DismissPath["Keep local state / re-enqueue if outbox conflict"]
+    AcceptPath --> Clusters
+    AcceptPath --> Members
+    DismissPath --> Outbox
+    ConflictSvc -->|"Mark accepted / dismissed"| Conflicts
+    ConflictSvc -->|"Refresh counts"| SyncState
+
+    Clusters -->|"Workbench read path"| Workbench
+    Members -->|"Workbench read path"| Workbench
+    Conflicts -->|"Conflict inbox"| Inbox
+    Outbox -->|"Dead-letter panel + timeline"| DeadLetter
+    SyncMeta -->|"Sync health badge + dashboard summary"| SyncHealth
+
+    style Projector fill:#f9f,stroke:#333,stroke-width:2px
+    style SnapshotAPI fill:#bbf,stroke:#333,stroke-width:2px
+    style ConflictSvc fill:#fbb,stroke:#333,stroke-width:2px
+    style OutboxDrain fill:#bfb,stroke:#333,stroke-width:2px

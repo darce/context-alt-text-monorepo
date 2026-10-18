@@ -1,0 +1,44 @@
+{
+  "model_id": "microsoft/Florence-2-base-ft",
+  "model_revision": "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e",
+  "model_version": "florence-2-base-ft",
+  "prompt_or_task_version": "more_detailed_caption+od.b3.v1",
+  "device": "cpu",
+  "num_beams": 3,
+  "max_image_edge_px": 1024,
+  "host": {
+    "platform": "macOS-15.5-arm64-arm-64bit",
+    "processor": "arm"
+  },
+  "cold_load_s": 38.4,
+  "peak_rss_mb": 582.4,
+  "images_count": 2,
+  "latency_s": {
+    "min": 55.7,
+    "max": 118.54,
+    "mean": 87.12
+  },
+  "results": [
+    {
+      "image": "/tmp/e19-vlm/china.jpg",
+      "bytes": 196653,
+      "latency_s": 55.7,
+      "caption": "There is a tall red building with a pointed roof. There are trees surrounding the building. There is water in front of the building with boats in it.",
+      "objects": [
+        "boat"
+      ],
+      "alt_text_draft": "There is a tall red building with a pointed roof. There are trees surrounding the building. There is water in front of the building with boats in it."
+    },
+    {
+      "image": "/tmp/e19-vlm/flower.jpg",
+      "bytes": 142987,
+      "latency_s": 118.54,
+      "caption": "There is a large flower in the middle of the picture. The flower is light orange in color. There are many petals on the flower. The petals are round. There is a center in the center of the flower that is red. The background behind the flower is blurry. The flowers are in the sun. The sun is shining on the petals.",
+      "objects": [
+        "dining table"
+      ],
+      "alt_text_draft": "There is a large flower in the middle of the picture. The flower is light orange in color. There are many petals on the flower. The petals are round. There is a center in the center of the flower that is red. The background behind the flower is blurry. The flowers are in the sun. The sun is shining on the petals."
+    }
+  ],
+  "note": "Mac CPU is an optimistic proxy for the OCI A1 ARM target; the binding A1 benchmark runs on the deployed host. Decision (keep_seeded / enable_local_cpu / defer_to_hosted_gpu) is recorded in the decision memo."
+}

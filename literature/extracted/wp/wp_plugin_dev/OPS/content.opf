@@ -1,0 +1,185 @@
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:epub="http://www.idpf.org/2007/ops" unique-identifier="isbn-id" version="3.0" xml:lang="en">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:title id="t1">Professional WordPress Plugin Development</dc:title>
+<meta property="title-type" refines="#t1">main</meta>
+<meta property="display-seq" refines="#t1">1</meta>
+<dc:title id="t2">Second Edition</dc:title>
+<meta property="title-type" refines="#t2">edition</meta>
+<meta property="display-seq" refines="#t2">2</meta>
+<dc:creator id="creator1">Williams, Brad; Tadlock, Justin; James Jacoby, John</dc:creator>
+<meta id="role1" property="role" refines="#creator1" scheme="marc:relators">aut</meta>
+<meta property="file-as" refines="#creator1">Williams, Brad</meta>
+<meta property="display-seq" refines="#creator1">1</meta>
+<dc:creator id="creator2">Justin Tadlock</dc:creator>
+<meta id="role2" property="role" refines="#creator2" scheme="marc:relators">aut</meta>
+<meta property="file-as" refines="#creator2">Tadlock, Justin</meta>
+<meta property="display-seq" refines="#creator2">2</meta>
+<dc:creator id="creator3">John James Jacoby</dc:creator>
+<meta id="role3" property="role" refines="#creator3" scheme="marc:relators">aut</meta>
+<meta property="file-as" refines="#creator3">Jacoby, John James</meta>
+<meta property="display-seq" refines="#creator3">3</meta>
+<dc:language>en-US</dc:language>
+<meta property="dcterms:publisher">John Wiley &amp; Sons</meta>
+<dc:identifier id="isbn-id">6210893</dc:identifier>
+<meta property="identifier-type" refines="#isbn-id" scheme="onix:codelist5">15</meta>
+<dc:source id="src-id">urn:isbn:9781119666943</dc:source>
+<meta property="identifier-type" refines="#src-id" scheme="onix:codelist5">15</meta>
+<meta property="source-of" refines="#src-id">pagination</meta>
+<meta content="cover-image" name="cover"/>
+<meta property="dcterms:modified">2020-05-12T07:23:12Z</meta>
+<dc:date>2020-06-10T00:00:00Z</dc:date>
+<meta property="schema:accessibilitySummary">This publication contains well-structured HTML with page mapping and alt text. There are no extended descriptions of images. There is no MathML, and math is captured as images.</meta>
+<meta property="schema:accessMode">textual</meta>
+<meta property="schema:accessMode">visual</meta>
+<meta property="schema:accessModeSufficient">textual</meta>
+<meta property="schema:accessModeSufficient">visual</meta>
+<meta property="schema:accessibilityFeature">structuralNavigation</meta>
+<meta property="schema:accessibilityFeature">alternativeText</meta>
+<meta property="schema:accessibilityFeature">printPageNumbers</meta>
+<meta property="schema:accessibilityFeature">displayTransformability</meta>
+<meta property="schema:accessibilityFeature">readingOrder</meta>
+<meta property="schema:accessibilityAPI">ARIA</meta>
+<meta property="schema:accessibilityHazard">none</meta>
+<publisher xmlns="http://purl.org/dc/elements/1.1/">John Wiley &amp; Sons, Incorporated</publisher>
+</metadata>
+<manifest>
+<item href="images/9781119666936.jpg" id="cover-image" media-type="image/jpeg" properties="cover-image"/>
+<item href="images/arrow.png" id="Aarrow" media-type="image/png"/>
+<item href="images/arrow1.png" id="Aarrow1" media-type="image/png"/>
+<item href="images/c01f001.png" id="Ac01f001" media-type="image/png"/>
+<item href="images/c01f002.png" id="Ac01f002" media-type="image/png"/>
+<item href="images/c01f003.png" id="Ac01f003" media-type="image/png"/>
+<item href="images/c01f004.png" id="Ac01f004" media-type="image/png"/>
+<item href="images/c03f001.png" id="Ac03f001" media-type="image/png"/>
+<item href="images/c03f002.png" id="Ac03f002" media-type="image/png"/>
+<item href="images/c03f003.png" id="Ac03f003" media-type="image/png"/>
+<item href="images/c03f004.png" id="Ac03f004" media-type="image/png"/>
+<item href="images/c03f005.png" id="Ac03f005" media-type="image/png"/>
+<item href="images/c03f006.png" id="Ac03f006" media-type="image/png"/>
+<item href="images/c03f007.png" id="Ac03f007" media-type="image/png"/>
+<item href="images/c03f008.png" id="Ac03f008" media-type="image/png"/>
+<item href="images/c03f009.png" id="Ac03f009" media-type="image/png"/>
+<item href="images/c03f010.png" id="Ac03f010" media-type="image/png"/>
+<item href="images/c03f011.png" id="Ac03f011" media-type="image/png"/>
+<item href="images/c03f012.png" id="Ac03f012" media-type="image/png"/>
+<item href="images/c03f013.png" id="Ac03f013" media-type="image/png"/>
+<item href="images/c03f014.png" id="Ac03f014" media-type="image/png"/>
+<item href="images/c03f015.png" id="Ac03f015" media-type="image/png"/>
+<item href="images/c04f001.png" id="Ac04f001" media-type="image/png"/>
+<item href="images/c04f002.png" id="Ac04f002" media-type="image/png"/>
+<item href="images/c04f003.png" id="Ac04f003" media-type="image/png"/>
+<item href="images/c04f004.png" id="Ac04f004" media-type="image/png"/>
+<item href="images/c07f001.png" id="Ac07f001" media-type="image/png"/>
+<item href="images/c07f002.png" id="Ac07f002" media-type="image/png"/>
+<item href="images/c07f003.png" id="Ac07f003" media-type="image/png"/>
+<item href="images/c07f004.png" id="Ac07f004" media-type="image/png"/>
+<item href="images/c07f005.png" id="Ac07f005" media-type="image/png"/>
+<item href="images/c07f006.png" id="Ac07f006" media-type="image/png"/>
+<item href="images/c07f007.png" id="Ac07f007" media-type="image/png"/>
+<item href="images/c07f008.png" id="Ac07f008" media-type="image/png"/>
+<item href="images/c07f009.png" id="Ac07f009" media-type="image/png"/>
+<item href="images/c07f010.png" id="Ac07f010" media-type="image/png"/>
+<item href="images/c07f011.png" id="Ac07f011" media-type="image/png"/>
+<item href="images/c07f012.png" id="Ac07f012" media-type="image/png"/>
+<item href="images/c07f013.png" id="Ac07f013" media-type="image/png"/>
+<item href="images/c07f014.png" id="Ac07f014" media-type="image/png"/>
+<item href="images/c07f015.png" id="Ac07f015" media-type="image/png"/>
+<item href="images/c07f016.png" id="Ac07f016" media-type="image/png"/>
+<item href="images/c07f017.png" id="Ac07f017" media-type="image/png"/>
+<item href="images/c07f018.png" id="Ac07f018" media-type="image/png"/>
+<item href="images/c07f019.png" id="Ac07f019" media-type="image/png"/>
+<item href="images/c07f020.png" id="Ac07f020" media-type="image/png"/>
+<item href="images/c07f021.png" id="Ac07f021" media-type="image/png"/>
+<item href="images/c08f001.png" id="Ac08f001" media-type="image/png"/>
+<item href="images/c08f002.png" id="Ac08f002" media-type="image/png"/>
+<item href="images/c08f003.png" id="Ac08f003" media-type="image/png"/>
+<item href="images/c09f001.png" id="Ac09f001" media-type="image/png"/>
+<item href="images/c09f002.png" id="Ac09f002" media-type="image/png"/>
+<item href="images/c10f001.png" id="Ac10f001" media-type="image/png"/>
+<item href="images/c10f002.png" id="Ac10f002" media-type="image/png"/>
+<item href="images/c11f001.png" id="Ac11f001" media-type="image/png"/>
+<item href="images/c12f001.png" id="Ac12f001" media-type="image/png"/>
+<item href="images/c12f002.png" id="Ac12f002" media-type="image/png"/>
+<item href="images/c12f003.png" id="Ac12f003" media-type="image/png"/>
+<item href="images/c12f004.png" id="Ac12f004" media-type="image/png"/>
+<item href="images/c12f005.png" id="Ac12f005" media-type="image/png"/>
+<item href="images/c12f006.png" id="Ac12f006" media-type="image/png"/>
+<item href="images/c13f001.png" id="Ac13f001" media-type="image/png"/>
+<item href="images/c14f001.png" id="Ac14f001" media-type="image/png"/>
+<item href="images/c14f002.png" id="Ac14f002" media-type="image/png"/>
+<item href="images/c14f003.png" id="Ac14f003" media-type="image/png"/>
+<item href="images/c14f004.png" id="Ac14f004" media-type="image/png"/>
+<item href="images/c14f005.png" id="Ac14f005" media-type="image/png"/>
+<item href="images/c15f001.png" id="Ac15f001" media-type="image/png"/>
+<item href="images/c15f002.png" id="Ac15f002" media-type="image/png"/>
+<item href="images/c15f003.png" id="Ac15f003" media-type="image/png"/>
+<item href="images/c16f001.png" id="Ac16f001" media-type="image/png"/>
+<item href="images/c16f002.png" id="Ac16f002" media-type="image/png"/>
+<item href="images/c16f003.png" id="Ac16f003" media-type="image/png"/>
+<item href="images/c16f004.png" id="Ac16f004" media-type="image/png"/>
+<item href="images/logo.png" id="Alogo" media-type="image/png"/>
+<item href="WileyTemplate_v5.5.css" id="Awileytemplate_v5.5.css" media-type="text/css"/>
+<item href="index.css" id="Aindex.css" media-type="text/css"/>
+<item href="cover.xhtml" id="Acover" media-type="application/xhtml+xml"/>
+<item href="navigation.xhtml" id="Anavigation" media-type="application/xhtml+xml" properties="nav"/>
+<item href="f01.xhtml" id="Af01" media-type="application/xhtml+xml"/>
+<item href="f02.xhtml" id="Af02" media-type="application/xhtml+xml"/>
+<item href="f03.xhtml" id="Af03" media-type="application/xhtml+xml"/>
+<item href="f04.xhtml" id="Af04" media-type="application/xhtml+xml"/>
+<item href="f05.xhtml" id="Af05" media-type="application/xhtml+xml"/>
+<item href="f06.xhtml" id="Af06" media-type="application/xhtml+xml"/>
+<item href="f07.xhtml" id="Af07" media-type="application/xhtml+xml"/>
+<item href="c01.xhtml" id="Ac01" media-type="application/xhtml+xml"/>
+<item href="c02.xhtml" id="Ac02" media-type="application/xhtml+xml"/>
+<item href="c03.xhtml" id="Ac03" media-type="application/xhtml+xml"/>
+<item href="c04.xhtml" id="Ac04" media-type="application/xhtml+xml"/>
+<item href="c05.xhtml" id="Ac05" media-type="application/xhtml+xml"/>
+<item href="c06.xhtml" id="Ac06" media-type="application/xhtml+xml"/>
+<item href="c07.xhtml" id="Ac07" media-type="application/xhtml+xml"/>
+<item href="c08.xhtml" id="Ac08" media-type="application/xhtml+xml"/>
+<item href="c09.xhtml" id="Ac09" media-type="application/xhtml+xml"/>
+<item href="c10.xhtml" id="Ac10" media-type="application/xhtml+xml"/>
+<item href="c11.xhtml" id="Ac11" media-type="application/xhtml+xml"/>
+<item href="c12.xhtml" id="Ac12" media-type="application/xhtml+xml"/>
+<item href="c13.xhtml" id="Ac13" media-type="application/xhtml+xml"/>
+<item href="c14.xhtml" id="Ac14" media-type="application/xhtml+xml"/>
+<item href="c15.xhtml" id="Ac15" media-type="application/xhtml+xml"/>
+<item href="c16.xhtml" id="Ac16" media-type="application/xhtml+xml"/>
+<item href="b01.xhtml" id="Ab01" media-type="application/xhtml+xml"/>
+<item href="eula.xhtml" id="Aeula" media-type="application/xhtml+xml"/>
+<item href="toc.ncx" id="ncx" media-type="application/x-dtbncx+xml"/>
+</manifest>
+<spine toc="ncx">
+<itemref idref="Acover"/>
+<itemref idref="Anavigation"/>
+<itemref idref="Af01"/>
+<itemref idref="Af06"/>
+<itemref idref="Af07"/>
+<itemref idref="Ac01"/>
+<itemref idref="Ac02"/>
+<itemref idref="Ac03"/>
+<itemref idref="Ac04"/>
+<itemref idref="Ac05"/>
+<itemref idref="Ac06"/>
+<itemref idref="Ac07"/>
+<itemref idref="Ac08"/>
+<itemref idref="Ac09"/>
+<itemref idref="Ac10"/>
+<itemref idref="Ac11"/>
+<itemref idref="Ac12"/>
+<itemref idref="Ac13"/>
+<itemref idref="Ac14"/>
+<itemref idref="Ac15"/>
+<itemref idref="Ac16"/>
+<itemref idref="Ab01"/>
+<itemref idref="Af02"/>
+<itemref idref="Af03"/>
+<itemref idref="Af04"/>
+<itemref idref="Af05"/>
+<itemref idref="Aeula"/>
+</spine>
+<guide>
+<reference href="cover.xhtml" title="Cover" type="cover"/>
+<reference href="navigation.xhtml" title="Table of Contents" type="toc"/>
+</guide>
+</package>

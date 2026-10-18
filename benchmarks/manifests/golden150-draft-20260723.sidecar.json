@@ -1,0 +1,5413 @@
+{
+  "schema": "golden150-draft-sidecar.v1",
+  "created": "2026-07-23",
+  "build_notes": {
+    "selection": "/Users/daniel/Development/context-alt-text-monorepo-fir-5/.task-state/golden150/golden150_candidates_v6.json (v6.1-updated)",
+    "inventory": "/Users/daniel/Development/context-alt-text-monorepo-fir-5/.task-state/golden150/inventory_v6.json",
+    "operator_boxes": "/Users/daniel/Development/context-alt-text-monorepo/benchmarks/tools/operator_boxes.json",
+    "corrections": "/Users/daniel/Development/context-alt-text-monorepo-fir-5/.task-state/golden150/operator_corrections_20260723.json",
+    "images_dir": "/Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/out/cpu-fullrun/downscaled",
+    "sha256_provenance": "hashes computed over the DOWNSCALED max-1280px mirror files, not the originals; mirror is flat celebs/ + personal/ (no yyyy/mm hierarchy)",
+    "box_convention": "FaceBox normalized CENTRE-point (x,y=centre, w,h fraction) per manifest.py docstring; detector pixel bboxes (top-left origin) from inventory converted against ORIGINAL inventory dims (scale-invariant on the aspect-preserving mirror); intersected with image bounds before normalization (see clamp_log; no faces dropped)",
+    "box_source_mapping": "FaceBox.source is a free-form str in the schema (docstring says iptc|mwg but nothing validates or consumes it); TRUE provenance kept: 'detector' for DB-derived boxes, 'operator' for the 6 manual boxes. OPEN DECISION: remap to mwg if a downstream convention requires it.",
+    "operator_name_canon": {
+      "Candid": "Candid Ridgeway"
+    },
+    "binding_rule": "operator positional bindings applied at bbox x-order index (verified against note x-coords for 251/388/418; 201/220/480 position labels consistent)",
+    "slice_tag_mapping": "masked/sunglasses/occlusion_other/profile/low_res direct; blur_any->blur; occlusion_any|occlusion_partial_minor|occluded_missed_face without masked/sunglasses -> occlusion_other; informational flags sidecar-only; no similar_people flags in v6.1",
+    "domain_priority": "occlusion-family > crowds > mirrors > black_and_white > art; omitted when no family matches (no guessing)",
+    "policy_gate_members": [
+      63,
+      191,
+      388,
+      418,
+      603
+    ],
+    "provenance_field": "source=celeb stamped where celeb_identity_from_filename(basename) yields a name that is in present_identities (headline-identification frame keys on provenance.source==celeb); license=fixture (pre-existing eval fixture pool \u2014 upstream license unverified, publishable unset so is_publishable fails closed). Parsed-but-unconfirmed celeb filenames listed under celeb_provenance_skipped. Personal/social images stay unstamped (source=operator|localwp license=consented at curation)",
+    "difficulty_field": "omitted (not derivable from v6.1 without guessing)",
+    "must_right_rule": "must_right = present_identities (named only), easy_wrong = [] (no corrections provided easy-wrong entries)"
+  },
+  "clamp_log": [
+    {
+      "media_id": 76,
+      "path": "personal/auburn_current_76.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": -65,
+        "y": 103,
+        "w": 753,
+        "h": 852
+      },
+      "clamped_px": {
+        "x": 0.0,
+        "y": 103,
+        "w": 688.0,
+        "h": 852
+      },
+      "image_px": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    {
+      "media_id": 84,
+      "path": "personal/gilded_cypress_84.jpeg",
+      "box_index": 0,
+      "original_px": {
+        "x": 452,
+        "y": -143,
+        "w": 692,
+        "h": 1111
+      },
+      "clamped_px": {
+        "x": 452,
+        "y": 0.0,
+        "w": 692,
+        "h": 968.0
+      },
+      "image_px": {
+        "width": 1440,
+        "height": 1794
+      }
+    },
+    {
+      "media_id": 133,
+      "path": "personal/saffron_cypress_133.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 884,
+        "y": -259,
+        "w": 886,
+        "h": 1353
+      },
+      "clamped_px": {
+        "x": 884,
+        "y": 0.0,
+        "w": 886,
+        "h": 1094.0
+      },
+      "image_px": {
+        "width": 2560,
+        "height": 1707
+      }
+    },
+    {
+      "media_id": 182,
+      "path": "personal/saffron_cypress_182.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": -105,
+        "y": -86,
+        "w": 502,
+        "h": 588
+      },
+      "clamped_px": {
+        "x": 0.0,
+        "y": 0.0,
+        "w": 397.0,
+        "h": 502.0
+      },
+      "image_px": {
+        "width": 720,
+        "height": 1280
+      }
+    },
+    {
+      "media_id": 198,
+      "path": "personal/russet_fathom_198.jpg",
+      "box_index": 5,
+      "original_px": {
+        "x": 2483,
+        "y": 183,
+        "w": 100,
+        "h": 149
+      },
+      "clamped_px": {
+        "x": 2483,
+        "y": 183,
+        "w": 77.0,
+        "h": 149
+      },
+      "image_px": {
+        "width": 2560,
+        "height": 1920
+      }
+    },
+    {
+      "media_id": 201,
+      "path": "personal/russet_fathom_201.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 162,
+        "y": 1347,
+        "w": 465,
+        "h": 574
+      },
+      "clamped_px": {
+        "x": 162,
+        "y": 1347,
+        "w": 465,
+        "h": 573.0
+      },
+      "image_px": {
+        "width": 2560,
+        "height": 1920
+      }
+    },
+    {
+      "media_id": 244,
+      "path": "personal/ochre_harbor_244.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": -22,
+        "y": 424,
+        "w": 120,
+        "h": 116
+      },
+      "clamped_px": {
+        "x": 0.0,
+        "y": 424,
+        "w": 98.0,
+        "h": 116
+      },
+      "image_px": {
+        "width": 1080,
+        "height": 1203
+      }
+    },
+    {
+      "media_id": 244,
+      "path": "personal/ochre_harbor_244.jpg",
+      "box_index": 1,
+      "original_px": {
+        "x": -6,
+        "y": 220,
+        "w": 62,
+        "h": 75
+      },
+      "clamped_px": {
+        "x": 0.0,
+        "y": 220,
+        "w": 56.0,
+        "h": 75
+      },
+      "image_px": {
+        "width": 1080,
+        "height": 1203
+      }
+    },
+    {
+      "media_id": 244,
+      "path": "personal/ochre_harbor_244.jpg",
+      "box_index": 2,
+      "original_px": {
+        "x": -2,
+        "y": 88,
+        "w": 55,
+        "h": 58
+      },
+      "clamped_px": {
+        "x": 0.0,
+        "y": 88,
+        "w": 53.0,
+        "h": 58
+      },
+      "image_px": {
+        "width": 1080,
+        "height": 1203
+      }
+    },
+    {
+      "media_id": 244,
+      "path": "personal/ochre_harbor_244.jpg",
+      "box_index": 11,
+      "original_px": {
+        "x": 1029,
+        "y": 354,
+        "w": 52,
+        "h": 79
+      },
+      "clamped_px": {
+        "x": 1029,
+        "y": 354,
+        "w": 51.0,
+        "h": 79
+      },
+      "image_px": {
+        "width": 1080,
+        "height": 1203
+      }
+    },
+    {
+      "media_id": 276,
+      "path": "personal/slate_willow_276.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 76,
+        "y": -9,
+        "w": 57,
+        "h": 113
+      },
+      "clamped_px": {
+        "x": 76,
+        "y": 0.0,
+        "w": 57,
+        "h": 104.0
+      },
+      "image_px": {
+        "width": 480,
+        "height": 853
+      }
+    },
+    {
+      "media_id": 293,
+      "path": "personal/cobalt_beacon_293.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 419,
+        "y": -16,
+        "w": 154,
+        "h": 264
+      },
+      "clamped_px": {
+        "x": 419,
+        "y": 0.0,
+        "w": 154,
+        "h": 248.0
+      },
+      "image_px": {
+        "width": 960,
+        "height": 1280
+      }
+    },
+    {
+      "media_id": 336,
+      "path": "personal/wicker_orchard_336.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 121,
+        "y": -37,
+        "w": 386,
+        "h": 523
+      },
+      "clamped_px": {
+        "x": 121,
+        "y": 0.0,
+        "w": 386,
+        "h": 486.0
+      },
+      "image_px": {
+        "width": 960,
+        "height": 794
+      }
+    },
+    {
+      "media_id": 341,
+      "path": "personal/sable_verity_341.jpg",
+      "box_index": 7,
+      "original_px": {
+        "x": 897,
+        "y": 382,
+        "w": 64,
+        "h": 80
+      },
+      "clamped_px": {
+        "x": 897,
+        "y": 382,
+        "w": 63.0,
+        "h": 80
+      },
+      "image_px": {
+        "width": 960,
+        "height": 640
+      }
+    },
+    {
+      "media_id": 341,
+      "path": "personal/sable_verity_341.jpg",
+      "box_index": 8,
+      "original_px": {
+        "x": 922,
+        "y": 108,
+        "w": 39,
+        "h": 50
+      },
+      "clamped_px": {
+        "x": 922,
+        "y": 108,
+        "w": 38.0,
+        "h": 50
+      },
+      "image_px": {
+        "width": 960,
+        "height": 640
+      }
+    },
+    {
+      "media_id": 352,
+      "path": "personal/pewter_hollow_352.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": -19,
+        "y": 187,
+        "w": 100,
+        "h": 134
+      },
+      "clamped_px": {
+        "x": 0.0,
+        "y": 187,
+        "w": 81.0,
+        "h": 134
+      },
+      "image_px": {
+        "width": 549,
+        "height": 479
+      }
+    },
+    {
+      "media_id": 359,
+      "path": "personal/sable_verity_359.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 280,
+        "y": -16,
+        "w": 271,
+        "h": 327
+      },
+      "clamped_px": {
+        "x": 280,
+        "y": 0.0,
+        "w": 271,
+        "h": 311.0
+      },
+      "image_px": {
+        "width": 604,
+        "height": 402
+      }
+    },
+    {
+      "media_id": 362,
+      "path": "personal/wicker_orchard_362.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": -62,
+        "y": 156,
+        "w": 634,
+        "h": 918
+      },
+      "clamped_px": {
+        "x": 0.0,
+        "y": 156,
+        "w": 572.0,
+        "h": 918
+      },
+      "image_px": {
+        "width": 2048,
+        "height": 2048
+      }
+    },
+    {
+      "media_id": 362,
+      "path": "personal/wicker_orchard_362.jpg",
+      "box_index": 3,
+      "original_px": {
+        "x": 1460,
+        "y": 263,
+        "w": 624,
+        "h": 854
+      },
+      "clamped_px": {
+        "x": 1460,
+        "y": 263,
+        "w": 588.0,
+        "h": 854
+      },
+      "image_px": {
+        "width": 2048,
+        "height": 2048
+      }
+    },
+    {
+      "media_id": 368,
+      "path": "personal/citrine_bramble_368.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 64,
+        "y": 755,
+        "w": 222,
+        "h": 210
+      },
+      "clamped_px": {
+        "x": 64,
+        "y": 755,
+        "w": 222,
+        "h": 205.0
+      },
+      "image_px": {
+        "width": 960,
+        "height": 960
+      }
+    },
+    {
+      "media_id": 480,
+      "path": "personal/muted_current_480.jpg",
+      "box_index": 4,
+      "original_px": {
+        "x": 775,
+        "y": -37,
+        "w": 65,
+        "h": 108
+      },
+      "clamped_px": {
+        "x": 775,
+        "y": 0.0,
+        "w": 65,
+        "h": 71.0
+      },
+      "image_px": {
+        "width": 1080,
+        "height": 1080
+      }
+    },
+    {
+      "media_id": 549,
+      "path": "personal/saffron_orchard_549.jpg",
+      "box_index": 1,
+      "original_px": {
+        "x": 143,
+        "y": -5,
+        "w": 61,
+        "h": 89
+      },
+      "clamped_px": {
+        "x": 143,
+        "y": 0.0,
+        "w": 61,
+        "h": 84.0
+      },
+      "image_px": {
+        "width": 500,
+        "height": 332
+      }
+    },
+    {
+      "media_id": 550,
+      "path": "personal/saffron_orchard_550.jpg",
+      "box_index": 3,
+      "original_px": {
+        "x": 459,
+        "y": 115,
+        "w": 47,
+        "h": 52
+      },
+      "clamped_px": {
+        "x": 459,
+        "y": 115,
+        "w": 41.0,
+        "h": 52
+      },
+      "image_px": {
+        "width": 500,
+        "height": 335
+      }
+    },
+    {
+      "media_id": 590,
+      "path": "personal/sylvan_ridgeway_590.jpg",
+      "box_index": 0,
+      "original_px": {
+        "x": 64,
+        "y": -141,
+        "w": 939,
+        "h": 820
+      },
+      "clamped_px": {
+        "x": 64,
+        "y": 0.0,
+        "w": 939,
+        "h": 679.0
+      },
+      "image_px": {
+        "width": 1440,
+        "height": 1440
+      }
+    }
+  ],
+  "counts": {
+    "boxes_total": 375,
+    "boxes_named": 167,
+    "boxes_stranger": 208,
+    "boxes_operator": 6,
+    "provenance_celeb": 7,
+    "provenance_operator": 137
+  },
+  "celeb_provenance_skipped": [
+    {
+      "media_id": 418,
+      "path": "personal/verdant_verity_418.jpeg",
+      "parsed_name": "<redacted-filename-parse>",
+      "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
+    },
+    {
+      "media_id": 550,
+      "path": "personal/saffron_orchard_550.jpg",
+      "parsed_name": "<redacted-filename-parse>",
+      "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
+    },
+    {
+      "media_id": 551,
+      "path": "personal/saffron_orchard_551.jpg",
+      "parsed_name": "<redacted-filename-parse>",
+      "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
+    },
+    {
+      "media_id": 557,
+      "path": "personal/indigo_ridgeway_557.jpeg",
+      "parsed_name": "<redacted-filename-parse>",
+      "reason": "parsed celeb name not in present_identities (unconfirmed \u2014 e.g. detector miss without operator box)"
+    }
+  ],
+  "media": {
+    "11": {
+      "path": "celebs/anne_hathaway_11.jpg",
+      "informational_flags": [
+        "detector_miss"
+      ],
+      "all_strata_flags": [
+        "detector_miss"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "detector_miss",
+            "family": "detection",
+            "note": "operator: clear face present (Anne Hathaway); detector found none \u2014 manual bbox needed at curation"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "detector-miss hard case (operator pass 1): clear face present (Anne Hathaway), detector found none \u2014 manual bbox at curation",
+      "original_dims": {
+        "width": 1200,
+        "height": 1800
+      }
+    },
+    "12": {
+      "path": "celebs/antonio_banderas_12.avif",
+      "informational_flags": [
+        "detector_miss"
+      ],
+      "all_strata_flags": [
+        "detector_miss"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "detector_miss",
+            "family": "detection",
+            "note": "operator: clear face present (Antonio Banderas); detector found none \u2014 manual bbox needed at curation"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "detector-miss hard case (operator pass 1): clear face present (Antonio Banderas), detector found none \u2014 manual bbox at curation",
+      "original_dims": {
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    "13": {
+      "path": "celebs/ariana_grande_13.jpg",
+      "informational_flags": [
+        "detector_miss"
+      ],
+      "all_strata_flags": [
+        "detector_miss"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "detector_miss",
+            "family": "detection",
+            "note": "operator: clear face present (Ariana Grande); detector found none \u2014 manual bbox needed at curation"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "detector-miss hard case (operator pass 1): clear face present (Ariana Grande), detector found none \u2014 manual bbox at curation",
+      "original_dims": {
+        "width": 1441,
+        "height": 1920
+      }
+    },
+    "14": {
+      "path": "celebs/arnold_schwarzenegger_14.jpg",
+      "informational_flags": [
+        "detector_miss"
+      ],
+      "all_strata_flags": [
+        "detector_miss"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "detector_miss",
+            "family": "detection",
+            "note": "operator: clear face present (Arnold Schwarzenegger); detector found none \u2014 manual bbox needed at curation"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator: not low-light or blurred \u2014 blur flag removed"
+        ]
+      },
+      "why": "detector-miss hard case (operator pass 1): clear face present (Arnold Schwarzenegger), detector found none \u2014 manual bbox at curation",
+      "original_dims": {
+        "width": 1200,
+        "height": 1896
+      }
+    },
+    "15": {
+      "path": "celebs/audrey_hepburn_15.jpg",
+      "informational_flags": [
+        "bw",
+        "detector_miss"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "detector_miss"
+      ],
+      "strata_provenance": {
+        "bw": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "detector_miss",
+            "family": "detection",
+            "note": "operator: clear face present (Audrey Hepburn); detector found none \u2014 manual bbox needed at curation"
+          },
+          {
+            "kind": "bw",
+            "family": "bw",
+            "note": "operator pass 2: IS black-and-white"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "detector-miss hard case (operator pass 1): clear face present (Audrey Hepburn), detector found none \u2014 manual bbox at curation",
+      "original_dims": {
+        "width": 2051,
+        "height": 2560
+      }
+    },
+    "21": {
+      "path": "celebs/bob_dylan_21.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "occlusion_any",
+        "occlusion_other"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Bob Dylan",
+      "original_dims": {
+        "width": 1200,
+        "height": 1600
+      }
+    },
+    "22": {
+      "path": "celebs/bob_dylan_22.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw",
+        "occlusion_partial_minor",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw",
+        "occlusion_partial_minor",
+        "twin_eligible"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "bw": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "bw",
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: only PARTIAL occlusion at the bottom of the chin (harmonica) \u2014 chin is not a recognition-critical region (eyes/nose/mouth are); demoted to informational occlusion_partial_minor, excluded from the named-occlusion floor (retired caption terms: microphone)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Bob Dylan",
+      "original_dims": {
+        "width": 2560,
+        "height": 1440
+      }
+    },
+    "23": {
+      "path": "celebs/bob_dylan_23.jpg",
+      "informational_flags": [
+        "high_contrast",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "high_contrast",
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion (already reclassified high_contrast in pass 2 \u2014 stage spotlight) (retired caption terms: microphone)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: not blur/low-light \u2014 high contrast stage spotlight; informational flag high_contrast"
+        ]
+      },
+      "why": "identity coverage: Bob Dylan",
+      "original_dims": {
+        "width": 2440,
+        "height": 1480
+      }
+    },
+    "61": {
+      "path": "personal/hollow_pennant_61.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "62": {
+      "path": "personal/hollow_pennant_62.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [
+        "low_res"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "nsfw replacement: same-identity alternate (Hollow Pennant), screened, lowest media_id",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "63": {
+      "path": "personal/hollow_pennant_63.jpg",
+      "informational_flags": [
+        "policy_gate_designated",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "policy_gate_designated",
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion \u2014 caption mining was wrong; not quite low-light either; clean enough to serve as a synthetic-occlusion twin base (operator-designated twin_eligible) (retired caption terms: peek)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5: DESIGNATED policy-gate suppression test \u2014 the flag lives in manifest policy (policy.recognition_enabled=false), not image content. Roster identity clearly present and nameable; the pipeline must output no names (sharpest suppression probe). Deterministic pick: best-covered identities, single-face frontal (|yaw|<=30), no confirmed occlusion, highest det_score"
+        ]
+      },
+      "why": "occlusion upgrade (caption rescan): newly text-confirmed occlusion (peek) swapped in for a generic twin-base fill",
+      "original_dims": {
+        "width": 1080,
+        "height": 1080
+      }
+    },
+    "73": {
+      "path": "personal/auburn_current_73.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Auburn Current",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "76": {
+      "path": "personal/auburn_current_76.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Auburn Current",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "84": {
+      "path": "personal/gilded_cypress_84.jpeg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion \u2014 the herringbone scarf sits on her chin only; mouth open and visible, face unobstructed. Garment term 'scarf' was a caption false positive; twin_eligible kept (retired caption terms: scarf)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 1440,
+        "height": 1794
+      }
+    },
+    "93": {
+      "path": "personal/gilded_cypress_93.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5 systemic rule: twin_eligible stripped \u2014 occluded faces are disqualified as twin bases (clean-leg contamination: the synthetic-occlusion delta must measure occlusion as the isolated perturbation from a clean base; landmark anchors under occluders are unreliable). Twin bases must be unoccluded, well-lit, eyes-open, clean-frontal"
+        ]
+      },
+      "why": "identity coverage: Self",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "94": {
+      "path": "personal/gilded_cypress_94.jpg",
+      "informational_flags": [
+        "mirror",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "mirror",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "mirror": "text",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "mirror"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5 systemic rule: twin_eligible stripped \u2014 occluded faces are disqualified as twin bases (clean-leg contamination: the synthetic-occlusion delta must measure occlusion as the isolated perturbation from a clean base; landmark anchors under occluders are unreliable). Twin bases must be unoccluded, well-lit, eyes-open, clean-frontal"
+        ]
+      },
+      "why": "occlusion upgrade (caption rescan): newly text-confirmed occlusion (covering her face) swapped in for a generic twin-base fill",
+      "original_dims": {
+        "width": 750,
+        "height": 1333
+      }
+    },
+    "104": {
+      "path": "personal/gilded_cypress_104.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Gilded Cypress",
+      "original_dims": {
+        "width": 720,
+        "height": 1280
+      }
+    },
+    "118": {
+      "path": "personal/gilded_cypress_118.jpg",
+      "informational_flags": [
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "low_res",
+        "occlusion_any",
+        "profile",
+        "profile_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "nsfw_cleared",
+            "family": "nsfw",
+            "note": "operator pass 4: NOT nsfw \u2014 operator cleared; restored to selection (v4 replacement reverted)"
+          },
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "operator pass 4: NSFW cleared \u2014 restored (v4 replacement #78 reverted)",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "128": {
+      "path": "personal/onyx_lantern_128.jpg",
+      "informational_flags": [
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "profile",
+        "profile_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Onyx Lantern",
+      "original_dims": {
+        "width": 1080,
+        "height": 1277
+      }
+    },
+    "133": {
+      "path": "personal/saffron_cypress_133.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 2560,
+        "height": 1707
+      }
+    },
+    "140": {
+      "path": "personal/sable_current_140.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "occlusion upgrade (caption rescan): newly text-confirmed occlusion (shades) swapped in for a generic twin-base fill",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "143": {
+      "path": "personal/sable_current_143.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sable Current",
+      "original_dims": {
+        "width": 1440,
+        "height": 1801
+      }
+    },
+    "144": {
+      "path": "personal/sable_current_144.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sable Current",
+      "original_dims": {
+        "width": 1440,
+        "height": 1801
+      }
+    },
+    "154": {
+      "path": "personal/slate_willow_154.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Plumb Tanner",
+      "original_dims": {
+        "width": 1080,
+        "height": 1080
+      }
+    },
+    "162": {
+      "path": "personal/saffron_orchard_162.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "masked",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "masked"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5 systemic rule: twin_eligible stripped \u2014 occluded faces are disqualified as twin bases (clean-leg contamination: the synthetic-occlusion delta must measure occlusion as the isolated perturbation from a clean base; landmark anchors under occluders are unreliable). Twin bases must be unoccluded, well-lit, eyes-open, clean-frontal"
+        ]
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 1257,
+        "height": 1676
+      }
+    },
+    "178": {
+      "path": "personal/saffron_orchard_178.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "occlusion_other"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5 systemic rule: twin_eligible stripped \u2014 occluded faces are disqualified as twin bases (clean-leg contamination: the synthetic-occlusion delta must measure occlusion as the isolated perturbation from a clean base; landmark anchors under occluders are unreliable). Twin bases must be unoccluded, well-lit, eyes-open, clean-frontal"
+        ]
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 943,
+        "height": 1676
+      }
+    },
+    "182": {
+      "path": "personal/saffron_cypress_182.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Saffron Cypress",
+      "original_dims": {
+        "width": 720,
+        "height": 1280
+      }
+    },
+    "188": {
+      "path": "personal/russet_ridgeway_188.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Russet Ridgeway",
+      "original_dims": {
+        "width": 604,
+        "height": 453
+      }
+    },
+    "190": {
+      "path": "personal/saffron_cypress_190.jpg",
+      "informational_flags": [
+        "bw",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "bw": "text",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Saffron Cypress",
+      "original_dims": {
+        "width": 512,
+        "height": 512
+      }
+    },
+    "191": {
+      "path": "personal/saffron_orchard_191.jpg",
+      "informational_flags": [
+        "policy_gate_designated",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "policy_gate_designated",
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5: DESIGNATED policy-gate suppression test \u2014 the flag lives in manifest policy (policy.recognition_enabled=false), not image content. Roster identity clearly present and nameable; the pipeline must output no names (sharpest suppression probe). Deterministic pick: best-covered identities, single-face frontal (|yaw|<=30), no confirmed occlusion, highest det_score"
+        ]
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 1341,
+        "height": 1676
+      }
+    },
+    "192": {
+      "path": "personal/saffron_cypress_192.jpg",
+      "informational_flags": [
+        "bw",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "bw": "text",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Saffron Cypress",
+      "original_dims": {
+        "width": 899,
+        "height": 1124
+      }
+    },
+    "198": {
+      "path": "personal/russet_fathom_198.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Russet Fathom",
+      "original_dims": {
+        "width": 2560,
+        "height": 1920
+      }
+    },
+    "201": {
+      "path": "personal/russet_fathom_201.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "mirror",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "mirror",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "mirror": "text",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "mirror"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [
+          {
+            "name": "Muted Current",
+            "position": "rightmost",
+            "status": "bound",
+            "face_index": 3,
+            "note": "operator wrote '<misspelled variant of the subject name>'; normalized (no roster hit)"
+          }
+        ],
+        "notes": []
+      },
+      "why": "identity coverage: Self",
+      "original_dims": {
+        "width": 2560,
+        "height": 1920
+      }
+    },
+    "214": {
+      "path": "personal/russet_fathom_214.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: colour image \u2014 b&w flag removed"
+        ]
+      },
+      "why": "identity coverage: Russet Fathom",
+      "original_dims": {
+        "width": 1280,
+        "height": 960
+      }
+    },
+    "217": {
+      "path": "personal/wicker_fathom_217.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Wicker Fathom",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "218": {
+      "path": "personal/wicker_fathom_218.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Wicker Fathom",
+      "original_dims": {
+        "width": 1080,
+        "height": 1439
+      }
+    },
+    "220": {
+      "path": "personal/muted_fathom_220.jpg",
+      "informational_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "both",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "crowd"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [
+          {
+            "name": "Auburn Hollow",
+            "position": "rightmost",
+            "status": "bound",
+            "face_index": 2
+          }
+        ],
+        "notes": []
+      },
+      "why": "identity coverage: Muted Fathom",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "226": {
+      "path": "personal/cobalt_beacon_226.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO face occlusion \u2014 her BODY is partially hidden, not her face; 'partially hidden' matched body concealment. Twin-eligibility auto-checked (not operator-confirmed): yaw -2.6 / pitch -8.4 / landmark_quality 0.553 pass, but face area 5208px < 10000px clean-area threshold -> NOT twin_eligible; blur/low-light text flag retained (hard-capture) (retired caption terms: partially hidden)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "occlusion upgrade (caption rescan): newly text-confirmed occlusion (partially hidden) swapped in for a generic twin-base fill",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "227": {
+      "path": "personal/brisk_compass_227.jpeg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: no mirror at all \u2014 it's an archway; mirror flag removed"
+        ]
+      },
+      "why": "identity coverage: Brisk Compass",
+      "original_dims": {
+        "width": 1440,
+        "height": 1800
+      }
+    },
+    "228": {
+      "path": "personal/cobalt_beacon_228.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "stranger_occlusion"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "stranger_occlusion"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: Cobalt Beacon's face is NOT occluded \u2014 the occlusion (hair over faces, hoods) belongs to the OTHER, unidentified girls. Occlusion flags are PER-FACE in truth; an image-level flag must be attributed to the named face to count for the named-occlusion floor (retired caption terms: hooded)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Cobalt Beacon",
+      "original_dims": {
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    "233": {
+      "path": "personal/russet_ridgeway_233.jpeg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "both",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "crowd"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Russet Ridgeway",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "237": {
+      "path": "personal/onyx_lantern_237.jpeg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "twin_eligible"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "backfill for #428 (pass 3: policy-gate directive was mis-attributed; Citrine Fathom already covered) \u2014 twin-eligible clean base, under-covered identity first, lowest media_id",
+      "original_dims": {
+        "width": 1179,
+        "height": 2096
+      }
+    },
+    "241": {
+      "path": "personal/onyx_lantern_241.jpg",
+      "informational_flags": [
+        "bw",
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "bw": "text",
+        "crowd_group": "geo"
+      },
+      "text_strata": [
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Onyx Lantern",
+      "original_dims": {
+        "width": 1179,
+        "height": 2096
+      }
+    },
+    "244": {
+      "path": "personal/ochre_harbor_244.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res",
+        "occlusion_any",
+        "profile",
+        "profile_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Ochre Harbor",
+      "original_dims": {
+        "width": 1080,
+        "height": 1203
+      }
+    },
+    "245": {
+      "path": "personal/ochre_harbor_245.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Ochre Harbor",
+      "original_dims": {
+        "width": 1080,
+        "height": 1241
+      }
+    },
+    "246": {
+      "path": "personal/ochre_harbor_246.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: colour image \u2014 b&w flag removed"
+        ]
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 1440,
+        "height": 1515
+      }
+    },
+    "251": {
+      "path": "personal/muted_yarrow_251.jpg",
+      "informational_flags": [
+        "crowd",
+        "crowd_group",
+        "detector_miss",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd",
+        "crowd_group",
+        "detector_miss",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "both",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "crowd"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [
+          {
+            "name": "Muted Yarrow",
+            "status": "bound",
+            "face_index": 2,
+            "binding": "positional",
+            "operator_new_identity": true,
+            "note": "operator pass 4: 3rd face from left (x-order idx 2, bbox x=107); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
+          },
+          {
+            "name": "Onyx Marsh",
+            "status": "bound",
+            "face_index": 3,
+            "binding": "positional",
+            "operator_new_identity": true,
+            "note": "operator pass 4: immediately right of Muted (x-order idx 3, bbox x=262, tiny 12x15px box); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
+          }
+        ],
+        "notes": [
+          "operator pass 4: Muted Yarrow + Onyx Marsh are NEW identities (no DB labels) \u2014 operator ground truth",
+          "operator pass 5: reclassified detector_miss \u2014 contains identities the recognizer missed (Muted Yarrow, Onyx Marsh); was mis-counted policy-gate by the selector's 'no named faces = policy-negative' conflation. IG-handle filename 'kristaafisher' corroborates Onyx Marsh; both names operator ground truth (pass 4 positional bindings). Identity names operator-pending-confirm (11-15 pattern); faces ARE boxed (recognition-miss, not detection-miss \u2014 no manual bbox needed)"
+        ]
+      },
+      "why": "policy-negative: faces but no named identities",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "254": {
+      "path": "personal/wicker_fathom_254.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Wicker Fathom",
+      "original_dims": {
+        "width": 1172,
+        "height": 1172
+      }
+    },
+    "256": {
+      "path": "personal/sylvan_orchard_256.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "both",
+        "profile": "geo",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "crowd"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Orchard",
+      "original_dims": {
+        "width": 1206,
+        "height": 2144
+      }
+    },
+    "258": {
+      "path": "personal/sylvan_orchard_258.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "occlusion": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Orchard",
+      "original_dims": {
+        "width": 1440,
+        "height": 1920
+      }
+    },
+    "267": {
+      "path": "personal/sable_current_267.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "bw": "text",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion \u2014 she is simply looking up and to the left (gaze/pose, face unobstructed). Pose is significantly off-frontal (yaw -42.3): existing geo profile flag retained (auto-derived); twin-eligibility fails on yaw (retired caption terms: cigarette)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "occlusion upgrade (caption rescan): newly text-confirmed occlusion (cigarette) swapped in for a generic twin-base fill",
+      "original_dims": {
+        "width": 584,
+        "height": 876
+      }
+    },
+    "270": {
+      "path": "personal/pewter_hollow_270.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw",
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw",
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "bw": "text",
+        "crowd_group": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Pewter Hollow",
+      "original_dims": {
+        "width": 720,
+        "height": 1280
+      }
+    },
+    "271": {
+      "path": "personal/pewter_hollow_271.jpg",
+      "informational_flags": [
+        "bw",
+        "mirror_selfie_no_reflection",
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "masked",
+        "mirror_selfie_no_reflection",
+        "occlusion_any",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "bw": "text",
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "bw",
+        "masked"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
+        ]
+      },
+      "why": "identity coverage: Pewter Hollow",
+      "original_dims": {
+        "width": 720,
+        "height": 1280
+      }
+    },
+    "275": {
+      "path": "personal/slate_willow_275.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "nsfw_cleared",
+            "family": "nsfw",
+            "note": "operator pass 3: NOT nsfw \u2014 operator cleared; stays in selection"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Slate Willow \u00b7 operator pass 3: NOT nsfw \u2014 cleared",
+      "original_dims": {
+        "width": 750,
+        "height": 1333
+      }
+    },
+    "276": {
+      "path": "personal/slate_willow_276.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "masked",
+        "occlusion_any",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo",
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "masked"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction) \u2014 entered the selection during the same pass as the #529 backfill; gold mask is caption-explicit x2 cross-model"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "pass 5 backfill for #529 (operator NSFW cull): caption-confirmed occlusion alternate from the pool (gold mask, \u00d72 cross-model), under-covered identity first (Slate Willow), lowest media_id",
+      "original_dims": {
+        "width": 480,
+        "height": 853
+      }
+    },
+    "278": {
+      "path": "personal/brisk_compass_278.jpeg",
+      "informational_flags": [
+        "bw",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "bw": "text",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Brisk Compass",
+      "original_dims": {
+        "width": 1440,
+        "height": 1438
+      }
+    },
+    "284": {
+      "path": "personal/ochre_ridgeway_284.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Ochre Ridgeway",
+      "original_dims": {
+        "width": 387,
+        "height": 580
+      }
+    },
+    "293": {
+      "path": "personal/cobalt_beacon_293.jpg",
+      "informational_flags": [
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "occlusion_other",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "operator",
+        "occlusion": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "hair",
+            "family": "occlusion",
+            "note": "operator post-sweep: partly occluded \u2014 HAIR covering face regions (hair rule: counts when covering an eye/substantial region \u2014 it does here) + PROFILE pose confirmed (provenance geo -> operator)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Cobalt Beacon",
+      "original_dims": {
+        "width": 960,
+        "height": 1280
+      }
+    },
+    "294": {
+      "path": "personal/flaxen_yarrow_294.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Flaxen Yarrow",
+      "original_dims": {
+        "width": 800,
+        "height": 800
+      }
+    },
+    "295": {
+      "path": "personal/sable_verity_295.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5: colour image, NOT b&w \u2014 flag removed (joins pass-2 b&w corrections)"
+        ]
+      },
+      "why": "nsfw replacement: same-identity alternate (Sable Verity), screened, lowest media_id",
+      "original_dims": {
+        "width": 612,
+        "height": 612
+      }
+    },
+    "305": {
+      "path": "personal/onyx_beacon_305.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5 systemic rule: twin_eligible stripped \u2014 occluded faces are disqualified as twin bases (clean-leg contamination: the synthetic-occlusion delta must measure occlusion as the isolated perturbation from a clean base; landmark anchors under occluders are unreliable). Twin bases must be unoccluded, well-lit, eyes-open, clean-frontal"
+        ]
+      },
+      "why": "identity coverage: Onyx Beacon",
+      "original_dims": {
+        "width": 960,
+        "height": 960
+      }
+    },
+    "306": {
+      "path": "personal/dappled_juniper_306.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "low_res",
+        "occlusion_any",
+        "occlusion_other"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: colour image \u2014 b&w flag removed"
+        ]
+      },
+      "why": "identity coverage: Dappled Juniper",
+      "original_dims": {
+        "width": 640,
+        "height": 640
+      }
+    },
+    "308": {
+      "path": "personal/flaxen_yarrow_308.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO real occlusion \u2014 just a strand of hair on the forehead; recognition-critical regions all visible. Twin-eligibility auto-checked: unnamed stranger face present (rule requires all faces named+clean) -> NOT twin_eligible"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Flaxen Yarrow",
+      "original_dims": {
+        "width": 960,
+        "height": 720
+      }
+    },
+    "309": {
+      "path": "personal/umber_willow_309.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "twin_eligible"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "nsfw replacement: same-identity alternate (Umber Willow), screened, lowest media_id",
+      "original_dims": {
+        "width": 612,
+        "height": 612
+      }
+    },
+    "318": {
+      "path": "personal/dappled_juniper_318.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 2048,
+        "height": 1360
+      }
+    },
+    "321": {
+      "path": "personal/candid_orchard_321.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator: mirror-selfie without visible mirror reflection \u2014 mirror flag removed"
+        ]
+      },
+      "why": "identity coverage: Candid Orchard \u00b7 operator: mirror-selfie without visible reflection \u2014 mirror flag removed",
+      "original_dims": {
+        "width": 640,
+        "height": 640
+      }
+    },
+    "323": {
+      "path": "personal/sable_verity_323.jpg",
+      "informational_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "low_res",
+        "occlusion_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "crowd_group": "both",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "crowd",
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "nsfw_cleared",
+            "family": "nsfw",
+            "note": "operator pass 4: NOT nsfw \u2014 operator cleared; restored to selection (v4 replacement reverted)"
+          },
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "operator pass 4: NSFW cleared \u2014 restored (v4 replacement #172 reverted)",
+      "original_dims": {
+        "width": 720,
+        "height": 897
+      }
+    },
+    "328": {
+      "path": "personal/russet_ridgeway_328.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "bw"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "bw": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion on her face ('scarf' caption hit was wrong). Twin auto-check: second unnamed face off-frontal (yaw -32.9, lmq 0.23) -> NOT twin_eligible; blur/b&w flags retained (retired caption terms: scarf)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "occlusion upgrade (caption rescan): newly text-confirmed occlusion (scarf) swapped in for a generic twin-base fill",
+      "original_dims": {
+        "width": 448,
+        "height": 604
+      }
+    },
+    "334": {
+      "path": "personal/dappled_juniper_334.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Dappled Juniper",
+      "original_dims": {
+        "width": 640,
+        "height": 640
+      }
+    },
+    "336": {
+      "path": "personal/wicker_orchard_336.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Wicker Orchard",
+      "original_dims": {
+        "width": 960,
+        "height": 794
+      }
+    },
+    "337": {
+      "path": "personal/wicker_orchard_337.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 480,
+        "height": 480
+      }
+    },
+    "338": {
+      "path": "personal/citrine_fathom_338.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Citrine Fathom",
+      "original_dims": {
+        "width": 960,
+        "height": 720
+      }
+    },
+    "339": {
+      "path": "personal/citrine_fathom_339.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Citrine Fathom",
+      "original_dims": {
+        "width": 1536,
+        "height": 2048
+      }
+    },
+    "341": {
+      "path": "personal/sable_verity_341.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sable Verity",
+      "original_dims": {
+        "width": 960,
+        "height": 640
+      }
+    },
+    "347": {
+      "path": "personal/citrine_bramble_347.jpg",
+      "informational_flags": [
+        "bw",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "twin_eligible"
+      ],
+      "strata_provenance": {
+        "bw": "text"
+      },
+      "text_strata": [
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "nsfw replacement: same-identity alternate (Citrine Bramble), screened, lowest media_id",
+      "original_dims": {
+        "width": 1495,
+        "height": 1478
+      }
+    },
+    "352": {
+      "path": "personal/pewter_hollow_352.jpg",
+      "informational_flags": [
+        "bw",
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "bw": "text",
+        "crowd_group": "geo"
+      },
+      "text_strata": [
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Pewter Hollow",
+      "original_dims": {
+        "width": 549,
+        "height": 479
+      }
+    },
+    "357": {
+      "path": "personal/indigo_357.jpg",
+      "informational_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "both",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "crowd"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Self",
+      "original_dims": {
+        "width": 787,
+        "height": 1050
+      }
+    },
+    "358": {
+      "path": "personal/dappled_juniper_358.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion on her face. Twin auto-check: yaw 35.4 > 25 and landmark_quality 0.201 < 0.45 -> NOT twin_eligible; blur/low-light flag retained"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Dappled Juniper",
+      "original_dims": {
+        "width": 1544,
+        "height": 1024
+      }
+    },
+    "359": {
+      "path": "personal/sable_verity_359.jpg",
+      "informational_flags": [
+        "bw",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "bw",
+        "twin_eligible"
+      ],
+      "strata_provenance": {
+        "bw": "text"
+      },
+      "text_strata": [
+        "bw"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 604,
+        "height": 402
+      }
+    },
+    "361": {
+      "path": "personal/onyx_lantern_361.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "low_res"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Onyx Lantern",
+      "original_dims": {
+        "width": 720,
+        "height": 960
+      }
+    },
+    "362": {
+      "path": "personal/wicker_orchard_362.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Wicker Orchard",
+      "original_dims": {
+        "width": 2048,
+        "height": 2048
+      }
+    },
+    "363": {
+      "path": "personal/russet_ridgeway_363.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "both",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "crowd"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Russet Ridgeway",
+      "original_dims": {
+        "width": 720,
+        "height": 480
+      }
+    },
+    "365": {
+      "path": "personal/wicker_orchard_365.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Wicker Orchard",
+      "original_dims": {
+        "width": 720,
+        "height": 480
+      }
+    },
+    "367": {
+      "path": "personal/onyx_beacon_367.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Onyx Beacon",
+      "original_dims": {
+        "width": 960,
+        "height": 640
+      }
+    },
+    "368": {
+      "path": "personal/citrine_bramble_368.jpg",
+      "informational_flags": [
+        "collage",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "collage",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: colour image \u2014 b&w flag removed (false-colour 'fade' filter but colour)",
+          "operator post-sweep: COLLAGE \u2014 joins 429/461/418 in that class; group/crowd flag removed (faces across collage panels are not a group shot, same rule as 429/461)"
+        ]
+      },
+      "why": "identity coverage: Citrine Bramble",
+      "original_dims": {
+        "width": 960,
+        "height": 960
+      }
+    },
+    "375": {
+      "path": "personal/opaline_beacon_375.jpg",
+      "informational_flags": [
+        "zero_face"
+      ],
+      "all_strata_flags": [
+        "zero_face"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "zero-face floor restore (pass 1: prior zero-face picks reclassified detector_miss)",
+      "original_dims": {
+        "width": 1170,
+        "height": 2080
+      }
+    },
+    "383": {
+      "path": "personal/muted_fathom_383.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Muted Fathom",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "387": {
+      "path": "personal/ochre_ridgeway_387.jpeg",
+      "informational_flags": [
+        "mirror",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "mirror",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "mirror": "text",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "mirror"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "near-dupe replacement: same person (Ochre Ridgeway), non-marathon context (visually distinct from kept #284), lowest media_id tie-break",
+      "original_dims": {
+        "width": 1440,
+        "height": 1800
+      }
+    },
+    "388": {
+      "path": "personal/verdant_verity_388.jpg",
+      "informational_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "policy_gate_designated",
+        "policy_negative",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "low_res",
+        "occlusion_any",
+        "policy_gate_designated",
+        "policy_negative",
+        "profile",
+        "profile_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "crowd_group": "both",
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "crowd",
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [
+          {
+            "name": "Verdant Verity",
+            "position": "second_left",
+            "status": "bound",
+            "note": "operator pass 4: bound to 2nd-from-left box (x-order idx 1, bbox x=217) despite 12px x-gap to next box (x=229) \u2014 \u2713 operator (positional \u2014 confirm at curation)",
+            "face_index": 1,
+            "binding": "positional",
+            "operator_new_identity": true
+          }
+        ],
+        "notes": [
+          "operator: policy-gate suppression test \u2014 roster identity present, recognition_enabled=false, pipeline must output no names",
+          "operator pass 4: Verdant Verity is a NEW identity (no DB label); canonical spelling 'Verity' (variant 'Kaufman' seen once, recorded in corrections)",
+          "operator pass 5: policy-gate designation confirmed BY DESIGN \u2014 flag lives in manifest policy (recognition_enabled=false), not image content"
+        ]
+      },
+      "why": "policy-negative: faces but no named identities",
+      "original_dims": {
+        "width": 856,
+        "height": 573
+      }
+    },
+    "398": {
+      "path": "personal/muted_fathom_398.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Muted Fathom",
+      "original_dims": {
+        "width": 480,
+        "height": 853
+      }
+    },
+    "399": {
+      "path": "personal/cobalt_beacon_399.jpg",
+      "informational_flags": [
+        "mirror_selfie_no_reflection",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "mirror_selfie_no_reflection",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection",
+          "operator pass 2: colour image \u2014 b&w flag removed"
+        ]
+      },
+      "why": "identity coverage: Cobalt Beacon",
+      "original_dims": {
+        "width": 480,
+        "height": 853
+      }
+    },
+    "407": {
+      "path": "personal/sylvan_beacon_407.jpeg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "collage"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "collage"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator post-sweep: COLLAGE \u2014 joins 429/461/418 in that class; group/crowd flag removed (faces across collage panels are not a group shot, same rule as 429/461)"
+        ]
+      },
+      "why": "identity coverage: Sylvan Beacon",
+      "original_dims": {
+        "width": 1170,
+        "height": 2080
+      }
+    },
+    "414": {
+      "path": "personal/sylvan_orchard_414.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd",
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "profile",
+        "profile_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "both",
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text",
+        "crowd",
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Orchard",
+      "original_dims": {
+        "width": 1206,
+        "height": 2144
+      }
+    },
+    "415": {
+      "path": "personal/hollow_pennant_415.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "collage"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "collage"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator post-sweep: COLLAGE-class \u2014 two polaroid pictures in one image (polaroid pair); geo group/crowd removed (panel-derived, not a group shot); no twin flag carried"
+        ]
+      },
+      "why": "identity coverage: Hollow Pennant \u2014 polaroid pair (collage-class, operator post-sweep)",
+      "original_dims": {
+        "width": 1152,
+        "height": 1539
+      }
+    },
+    "416": {
+      "path": "personal/hollow_pennant_416.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Hollow Pennant",
+      "original_dims": {
+        "width": 1200,
+        "height": 1598
+      }
+    },
+    "418": {
+      "path": "personal/verdant_verity_418.jpeg",
+      "informational_flags": [
+        "collage",
+        "policy_gate_designated",
+        "policy_negative"
+      ],
+      "all_strata_flags": [
+        "collage",
+        "policy_gate_designated",
+        "policy_negative"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [
+          {
+            "name": "Verdant Verity",
+            "status": "bound",
+            "face_index": 4,
+            "binding": "positional",
+            "operator_new_identity": true,
+            "note": "operator pass 4: collage top-left sub-image 3rd-from-left (bbox x=428, y=794); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
+          },
+          {
+            "name": "Verdant Verity",
+            "status": "bound",
+            "face_index": 5,
+            "binding": "positional",
+            "operator_new_identity": true,
+            "note": "operator pass 4: collage bottom circle vignette 3rd-from-left (bbox x=613, y=1352); positional binding (bbox x-order) \u2014 person-order vs face-box-order can differ if a face was missed; confirm at curation"
+          }
+        ],
+        "notes": [
+          "operator pass 3: policy-gate suppression test relocated from #428 \u2014 roster identity Verdant Verity present x2, recognition_enabled=false, pipeline must output no names",
+          "operator pass 4: binding corroborated \u2014 both bound boxes share detector cluster be55c368 with the #388 operator-bound Verdant Verity box",
+          "operator pass 4: Verdant Verity is a NEW identity (no DB label); canonical spelling 'Verity' (variant 'Kaufman' seen once, recorded in corrections)",
+          "operator pass 5: policy-gate designation confirmed BY DESIGN \u2014 flag lives in manifest policy (recognition_enabled=false), not image content",
+          "operator post-sweep: collage flag CONFIRMED/SET (was implicit in the Verdant Verity sub-image bindings); group/crowd removed per the collage rule (panels are not a group shot); policy-gate designation and both bound GK boxes intact"
+        ]
+      },
+      "why": "policy-gate suppression test (pass 3 relocation from #428): Verdant Verity present x2 in collage, recognition_enabled=false \u2014 pipeline must output no names",
+      "original_dims": {
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    "422": {
+      "path": "personal/russet_harbor_422.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "occlusion_other"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "animal_cat",
+            "family": "occlusion",
+            "note": "operator pass 4: NOT clean-frontal \u2014 half the face covered by a cat, one eye visible, mouth not visible; occlusion CONFIRMED (kind=animal_cat); twin_eligible removed"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "operator pass 4: occlusion CONFIRMED (half the face covered by a cat, kind=animal_cat) \u2014 re-added to the priority occlusion slice; twin_eligible removed (not clean-frontal)",
+      "original_dims": {
+        "width": 720,
+        "height": 960
+      }
+    },
+    "426": {
+      "path": "personal/citrine_fathom_426.jpg",
+      "informational_flags": [
+        "mirror_selfie_no_reflection",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "mirror_selfie_no_reflection",
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
+        ]
+      },
+      "why": "identity coverage: Citrine Fathom",
+      "original_dims": {
+        "width": 1536,
+        "height": 2048
+      }
+    },
+    "429": {
+      "path": "personal/candid_ridgeway_429.jpg",
+      "informational_flags": [
+        "collage",
+        "detector_miss",
+        "occluded_missed_face"
+      ],
+      "all_strata_flags": [
+        "collage",
+        "detector_miss",
+        "occluded_missed_face"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion on the DETECTED faces \u2014 the 'veil' caption hit did not describe a detected face. Not twin_eligible (collage, 8 faces) (retired caption terms: veil)"
+          }
+        ],
+        "identity_annotations": [
+          {
+            "name": "Candid Ridgeway",
+            "status": "unbound",
+            "kind": "detector_miss",
+            "location": "middle-left cell of the 3x3 grid",
+            "occluded": true,
+            "severity": "heavy",
+            "note": "operator pass 5: GOLD occlusion-induced detection failure \u2014 face HEAVILY OCCLUDED and not detected at all; needs manual box at curation. Only occlusion-induced-miss GT in the set so far"
+          }
+        ],
+        "notes": [
+          "operator pass 2: same-person collage, not a group/crowd shot \u2014 group flag removed, collage flag added",
+          "occlusion rescan: collage keeps BOTH the collage flag and caption-supported occlusion"
+        ]
+      },
+      "why": "identity coverage: Candid Ridgeway",
+      "original_dims": {
+        "width": 1080,
+        "height": 1080
+      }
+    },
+    "430": {
+      "path": "personal/candid_ridgeway_430.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Candid Ridgeway",
+      "original_dims": {
+        "width": 820,
+        "height": 865
+      }
+    },
+    "431": {
+      "path": "personal/candid_ridgeway_431.jpg",
+      "informational_flags": [
+        "mirror_selfie_no_reflection",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "mirror_selfie_no_reflection",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
+        ]
+      },
+      "why": "identity coverage: Candid Ridgeway",
+      "original_dims": {
+        "width": 828,
+        "height": 1472
+      }
+    },
+    "438": {
+      "path": "personal/quiet_fathom_438.jpg",
+      "informational_flags": [
+        "screenshot",
+        "thumbnail_grid",
+        "zero_face"
+      ],
+      "all_strata_flags": [
+        "screenshot",
+        "thumbnail_grid",
+        "zero_face"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5: Instagram profile screenshot, 4x3 thumbnail grid (art, cars, abstract) \u2014 informational screenshot + thumbnail_grid (faceless analogue of #595 avatar_grid). KEPT as a zero-face member: genuinely face-free and non-trivial (thumbnail grid is detector false-positive bait); remaining pool alternatives are either trivially face-free text screenshots or images that likely contain real faces (unsafe zero-face ground truth)"
+        ]
+      },
+      "why": "zero-face non-trivial replacement (pass 3): face-free scene/objects where a detector could plausibly false-positive \u2014 replaces pure-text screenshot",
+      "original_dims": {
+        "width": 750,
+        "height": 1334
+      }
+    },
+    "453": {
+      "path": "personal/russet_lantern_453.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Russet Lantern",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "454": {
+      "path": "personal/russet_lantern_454.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "occlusion_other"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Russet Lantern",
+      "original_dims": {
+        "width": 1080,
+        "height": 720
+      }
+    },
+    "455": {
+      "path": "personal/russet_lantern_455.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Russet Lantern",
+      "original_dims": {
+        "width": 712,
+        "height": 712
+      }
+    },
+    "456": {
+      "path": "personal/vellum_falcon_456.jpeg",
+      "informational_flags": [
+        "mirror_selfie_no_reflection",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "mirror_selfie_no_reflection",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
+        ]
+      },
+      "why": "identity coverage: Vellum Falcon",
+      "original_dims": {
+        "width": 1170,
+        "height": 2080
+      }
+    },
+    "457": {
+      "path": "personal/vellum_falcon_457.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Vellum Falcon",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "458": {
+      "path": "personal/vellum_falcon_458.jpg",
+      "informational_flags": [
+        "mirror_selfie_no_reflection"
+      ],
+      "all_strata_flags": [
+        "mirror_selfie_no_reflection"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
+        ]
+      },
+      "why": "identity coverage: Vellum Falcon",
+      "original_dims": {
+        "width": 1080,
+        "height": 1077
+      }
+    },
+    "459": {
+      "path": "personal/candid_yarrow_459.jpg",
+      "informational_flags": [
+        "mirror"
+      ],
+      "all_strata_flags": [
+        "mirror"
+      ],
+      "strata_provenance": {
+        "mirror": "operator"
+      },
+      "text_strata": [
+        "mirror"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "mirror",
+            "family": "mirror",
+            "note": "operator pass 2: REAL mirror confirmed (reflects Chloe's back) \u2014 mirrors stratum member"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Candid Yarrow",
+      "original_dims": {
+        "width": 1978,
+        "height": 2560
+      }
+    },
+    "460": {
+      "path": "personal/candid_yarrow_460.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Candid Yarrow",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "463": {
+      "path": "personal/pewter_hollow_463.jpg",
+      "informational_flags": [
+        "art",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "art",
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "art",
+            "family": "art",
+            "note": "operator: stylized portrait"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "clean frontal twin-eligible base",
+      "original_dims": {
+        "width": 720,
+        "height": 1280
+      }
+    },
+    "480": {
+      "path": "personal/muted_current_480.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "detector_miss",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "detector_miss",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [
+          {
+            "name": "Muted Current",
+            "position": "leftmost",
+            "status": "bound",
+            "face_index": 0
+          }
+        ],
+        "notes": [
+          "operator pass 5: reclassified detector_miss \u2014 contains identities the recognizer missed (Muted Current); was mis-counted policy-gate by the selector's 'no named faces = policy-negative' conflation. IG-handle filename 'ohhelloitserika' corroborates Candid; name from the operator pass-1 annotation (bound to leftmost box). Identity names operator-pending-confirm (11-15 pattern); faces ARE boxed (recognition-miss, not detection-miss \u2014 no manual bbox needed)"
+        ]
+      },
+      "why": "policy-negative: faces but no named identities",
+      "original_dims": {
+        "width": 1080,
+        "height": 1080
+      }
+    },
+    "484": {
+      "path": "personal/saffron_falcon_484.jpg",
+      "informational_flags": [
+        "zero_face"
+      ],
+      "all_strata_flags": [
+        "zero_face"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "zero-face non-trivial replacement (pass 3): face-free scene/objects where a detector could plausibly false-positive \u2014 replaces pure-text screenshot",
+      "original_dims": {
+        "width": 828,
+        "height": 1472
+      }
+    },
+    "489": {
+      "path": "personal/ochre_ridgeway_489.jpeg",
+      "informational_flags": [
+        "mirror_selfie_no_reflection",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "mirror_selfie_no_reflection",
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
+        ]
+      },
+      "why": "near-dupe replacement: same person (Ochre Ridgeway), non-marathon context (visually distinct from kept #284), lowest media_id tie-break",
+      "original_dims": {
+        "width": 1179,
+        "height": 2096
+      }
+    },
+    "492": {
+      "path": "personal/sylvan_fathom_492.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [
+        "low_res"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "nsfw_cleared",
+            "family": "nsfw",
+            "note": "operator pass 4: NOT nsfw \u2014 operator cleared; restored to selection (v4 replacement reverted)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "operator pass 4: NSFW cleared \u2014 restored (backfill consumed; weakest generic twin-fill dropped instead)",
+      "original_dims": {
+        "width": 375,
+        "height": 500
+      }
+    },
+    "493": {
+      "path": "personal/sylvan_fathom_493.jpg",
+      "informational_flags": [
+        "accessory_glasses",
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "accessory_glasses",
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NOT occlusion \u2014 clear eyeglasses are an accessory covariate, not occlusion (harness SliceTag taxonomy has masked/sunglasses/occlusion_other only; periocular + mouth regions remain visible; tongue-out is expression, not occlusion) (retired caption terms: hood)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Fathom",
+      "original_dims": {
+        "width": 300,
+        "height": 300
+      }
+    },
+    "494": {
+      "path": "personal/sylvan_fathom_494.jpg",
+      "informational_flags": [
+        "blur_any"
+      ],
+      "all_strata_flags": [
+        "blur_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "blur_lowlight",
+            "family": "blur_lowlight",
+            "note": "operator pass 5: twin_eligible removed \u2014 twin bases must isolate occlusion as the single perturbation and a low-light base compounds degradations; kept in selection under blur/low-light hard-capture (operator-confirmed low-light)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Fathom",
+      "original_dims": {
+        "width": 400,
+        "height": 400
+      }
+    },
+    "504": {
+      "path": "personal/plumb_ferry_504.jpg",
+      "informational_flags": [
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "occlusion_other",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo",
+        "occlusion": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "emoji_overlay",
+            "family": "occlusion",
+            "note": "operator: emoji covering face \u2014 occlusion confirmed"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Plumb Ferry",
+      "original_dims": {
+        "width": 729,
+        "height": 1024
+      }
+    },
+    "505": {
+      "path": "personal/plumb_ferry_505.jpg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Plumb Ferry",
+      "original_dims": {
+        "width": 1080,
+        "height": 1919
+      }
+    },
+    "512": {
+      "path": "personal/onyx_beacon_512.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "masked",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "masked"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Onyx Beacon",
+      "original_dims": {
+        "width": 750,
+        "height": 1333
+      }
+    },
+    "513": {
+      "path": "personal/auburn_ridgeway_513.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Auburn Ridgeway",
+      "original_dims": {
+        "width": 1080,
+        "height": 856
+      }
+    },
+    "514": {
+      "path": "personal/auburn_ridgeway_514.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "nsfw_cleared",
+            "family": "nsfw",
+            "note": "operator pass 4: NOT nsfw \u2014 operator cleared; restored to selection (v4 replacement reverted)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "operator pass 4: NSFW cleared \u2014 restored (v4 replacement #313 reverted)",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "515": {
+      "path": "personal/auburn_ridgeway_515.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "nsfw_cleared",
+            "family": "nsfw",
+            "note": "operator pass 4: NOT nsfw \u2014 operator cleared; restored to selection (v4 replacement reverted)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "operator pass 4: NSFW cleared \u2014 restored (backfill consumed; weakest generic twin-fill dropped instead)",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "516": {
+      "path": "personal/muted_hollow_516.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Muted Hollow",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "518": {
+      "path": "personal/muted_hollow_518.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Muted Hollow",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "531": {
+      "path": "personal/tidal_bramble_531.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Tidal Bramble",
+      "original_dims": {
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    "532": {
+      "path": "personal/tidal_bramble_532.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Tidal Bramble",
+      "original_dims": {
+        "width": 1080,
+        "height": 1080
+      }
+    },
+    "533": {
+      "path": "personal/tidal_bramble_533.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Tidal Bramble",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "535": {
+      "path": "personal/candid_orchard_535.jpg",
+      "informational_flags": [
+        "mirror_selfie_no_reflection",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "mirror_selfie_no_reflection",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_confirmed",
+            "family": "occlusion",
+            "note": "operator pass 2: occlusion confirmed (operator provenance)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: mirror-selfie without visible double reflection \u2014 NOT the mirrors stratum; informational flag mirror_selfie_no_reflection"
+        ]
+      },
+      "why": "identity coverage: Candid Orchard",
+      "original_dims": {
+        "width": 750,
+        "height": 1333
+      }
+    },
+    "536": {
+      "path": "personal/indigo_ridgeway_536.jpg",
+      "informational_flags": [
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "masked",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "masked"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Indigo Ridgeway",
+      "original_dims": {
+        "width": 750,
+        "height": 1333
+      }
+    },
+    "549": {
+      "path": "personal/saffron_orchard_549.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Saffron Orchard",
+      "original_dims": {
+        "width": 500,
+        "height": 332
+      }
+    },
+    "550": {
+      "path": "personal/saffron_orchard_550.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Saffron Orchard",
+      "original_dims": {
+        "width": 500,
+        "height": 335
+      }
+    },
+    "551": {
+      "path": "personal/saffron_orchard_551.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Saffron Orchard",
+      "original_dims": {
+        "width": 500,
+        "height": 332
+      }
+    },
+    "554": {
+      "path": "personal/plumb_tanner_554.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Plumb Tanner",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "555": {
+      "path": "personal/indigo_ridgeway_555.jpeg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "low_res",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Indigo Ridgeway",
+      "original_dims": {
+        "width": 640,
+        "height": 640
+      }
+    },
+    "557": {
+      "path": "personal/indigo_ridgeway_557.jpeg",
+      "informational_flags": [
+        "twin_eligible"
+      ],
+      "all_strata_flags": [
+        "twin_eligible"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Indigo Ridgeway",
+      "original_dims": {
+        "width": 375,
+        "height": 500
+      }
+    },
+    "559": {
+      "path": "personal/plumb_tanner_559.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion on her face \u2014 caption-mined 'sunglasses' flag also retired. Twin auto-check: landmark_quality 0.398 < 0.45 -> NOT twin_eligible"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Plumb Tanner",
+      "original_dims": {
+        "width": 750,
+        "height": 1333
+      }
+    },
+    "585": {
+      "path": "personal/sylvan_beacon_585.jpg",
+      "informational_flags": [
+        "eyes_closed"
+      ],
+      "all_strata_flags": [
+        "eyes_closed"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "not_occlusion",
+            "family": "occlusion",
+            "note": "operator pass 5: NO occlusion \u2014 her eyes are simply CLOSED ('hand near her face' baseline hit was wrong). Twin-eligibility EXCLUDED: closed eyes disqualify a clean twin base (eye landmarks matter; landmark_quality 0.0) (retired caption terms: hand near her face)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Beacon",
+      "original_dims": {
+        "width": 1350,
+        "height": 1080
+      }
+    },
+    "587": {
+      "path": "personal/sylvan_beacon_587.jpg",
+      "informational_flags": [
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "occlusion_any",
+        "occlusion_other",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "occlusion_other"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Beacon",
+      "original_dims": {
+        "width": 750,
+        "height": 1334
+      }
+    },
+    "589": {
+      "path": "personal/sylvan_ridgeway_589.jpg",
+      "informational_flags": [
+        "crowd_group",
+        "group",
+        "occlusion_any",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group",
+        "low_res",
+        "occlusion_any",
+        "profile",
+        "profile_any",
+        "sunglasses"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo",
+        "occlusion": "operator",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "sunglasses"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Ridgeway",
+      "original_dims": {
+        "width": 1024,
+        "height": 576
+      }
+    },
+    "590": {
+      "path": "personal/sylvan_ridgeway_590.jpg",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Sylvan Ridgeway",
+      "original_dims": {
+        "width": 1440,
+        "height": 1440
+      }
+    },
+    "595": {
+      "path": "personal/auburn_lantern_595.png",
+      "informational_flags": [
+        "avatar_grid",
+        "profile_any",
+        "profile_text"
+      ],
+      "all_strata_flags": [
+        "avatar_grid",
+        "low_res",
+        "profile_any",
+        "profile_text"
+      ],
+      "strata_provenance": {
+        "profile": "text"
+      },
+      "text_strata": [
+        "profile_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 3: NOT a crowd \u2014 Twitter profile screenshot with many small avatars; informational flag avatar_grid (tiny-face hard case, not group-shot semantics)"
+        ]
+      },
+      "why": "identity coverage: Sable Current",
+      "original_dims": {
+        "width": 1980,
+        "height": 1532
+      }
+    },
+    "603": {
+      "path": "personal/unlabeled_0603.jpg",
+      "informational_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "policy_gate_designated",
+        "policy_negative",
+        "profile_any",
+        "stranger_only_verified"
+      ],
+      "all_strata_flags": [
+        "crowd",
+        "crowd_group",
+        "group",
+        "low_res",
+        "policy_gate_designated",
+        "policy_negative",
+        "profile",
+        "profile_any",
+        "stranger_only_verified"
+      ],
+      "strata_provenance": {
+        "crowd_group": "both",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "crowd"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "stranger_only_verified",
+            "family": "identity",
+            "note": "operator: all faces confirmed strangers (no roster identities) \u2014 clean unknown-rejection policy image"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 2: colour image \u2014 b&w flag removed",
+          "operator pass 5: policy-gate designation confirmed BY DESIGN \u2014 flag lives in manifest policy (recognition_enabled=false), not image content"
+        ]
+      },
+      "why": "policy-negative: faces but no named identities",
+      "original_dims": {
+        "width": 1600,
+        "height": 1600
+      }
+    },
+    "605": {
+      "path": "personal/candid_orchard_605.png",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "profile": "geo"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Candid Orchard",
+      "original_dims": {
+        "width": 640,
+        "height": 1136
+      }
+    },
+    "611": {
+      "path": "personal/brisk_compass_611.jpeg",
+      "informational_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "all_strata_flags": [
+        "crowd_group",
+        "group"
+      ],
+      "strata_provenance": {
+        "crowd_group": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Brisk Compass",
+      "original_dims": {
+        "width": 1179,
+        "height": 2096
+      }
+    },
+    "616": {
+      "path": "personal/russet_ridgeway_616.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "occlusion_any"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "crowd_group",
+        "group",
+        "occlusion_any"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text",
+        "crowd_group": "geo",
+        "occlusion": "operator"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "occlusion_sweep_confirmed",
+            "family": "occlusion",
+            "note": "operator sweep 2026-07-23 (reviewed, no correction)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "occlusion upgrade (caption rescan): newly text-confirmed occlusion (hand near her mouth) swapped in for a generic twin-base fill",
+      "original_dims": {
+        "width": 1920,
+        "height": 2560
+      }
+    },
+    "621": {
+      "path": "personal/ochre_harbor_621.jpg",
+      "informational_flags": [
+        "profile_any"
+      ],
+      "all_strata_flags": [
+        "profile",
+        "profile_any"
+      ],
+      "strata_provenance": {
+        "profile": "geo"
+      },
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [
+          {
+            "kind": "nsfw_cleared",
+            "family": "nsfw",
+            "note": "operator pass 4: NOT nsfw \u2014 operator cleared; restored to selection (v4 replacement reverted)"
+          }
+        ],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "operator pass 4: NSFW cleared \u2014 restored (v4 replacement #247 reverted)",
+      "original_dims": {
+        "width": 1080,
+        "height": 1350
+      }
+    },
+    "629": {
+      "path": "personal/umber_willow_629.png",
+      "informational_flags": [],
+      "all_strata_flags": [],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": []
+      },
+      "why": "identity coverage: Umber Willow",
+      "original_dims": {
+        "width": 750,
+        "height": 1334
+      }
+    },
+    "633": {
+      "path": "personal/unlabeled_0633.jpg",
+      "informational_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "zero_face"
+      ],
+      "all_strata_flags": [
+        "blur_any",
+        "blur_lowlight_text",
+        "zero_face"
+      ],
+      "strata_provenance": {
+        "blur_lowlight": "text"
+      },
+      "text_strata": [
+        "blur_lowlight_text"
+      ],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator pass 5: NOT a mirror \u2014 two separate cocktail glasses; caption-mined mirror flag removed"
+        ]
+      },
+      "why": "zero-face non-trivial replacement (pass 3): face-free scene/objects where a detector could plausibly false-positive \u2014 replaces pure-text screenshot",
+      "original_dims": {
+        "width": 1920,
+        "height": 2560
+      }
+    },
+    "648": {
+      "path": "personal/unlabeled_0648.png",
+      "informational_flags": [
+        "zero_face"
+      ],
+      "all_strata_flags": [
+        "zero_face"
+      ],
+      "strata_provenance": {},
+      "text_strata": [],
+      "caption_source": "interleave-v3",
+      "nsfw_screen": "none",
+      "operator": {
+        "confirmations": [],
+        "identity_annotations": [],
+        "notes": [
+          "operator: bracelet text reads \"SADIST\", not \"SAINT\" \u2014 model caption error (caption left as generated; operator-verified reading recorded for VLM text-in-image scoring / reference_facts TEXT)"
+        ]
+      },
+      "why": "zero-face non-trivial replacement (pass 3): face-free scene/objects where a detector could plausibly false-positive \u2014 replaces pure-text screenshot",
+      "original_dims": {
+        "width": 750,
+        "height": 1334
+      },
+      "caption_correction": {
+        "field": "caption bracelet text (second strap)",
+        "model_caption_says": "SAINT",
+        "operator_verified_reading": "SADIST",
+        "kind": "model caption text error (operator-verified)",
+        "display": "caption NOT rewritten on the board; inline violet \u270e operator-correction note",
+        "manifest_hint": "reference_facts / TEXT fact candidate for VLM text-in-image scoring"
+      }
+    }
+  }
+}

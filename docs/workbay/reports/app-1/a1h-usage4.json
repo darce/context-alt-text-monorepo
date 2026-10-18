@@ -1,0 +1,78 @@
+{
+  "lane": "a1h-usage4",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_app1_read_route_census.py recognition/tests/unit/test_app1_curation_sync_admission.py recognition/tests/unit/test_app1_gate3_operation_id_required.py recognition/tests/unit/test_app1_gate3_replay_enqueue.py recognition/tests/unit/test_app1_gate3_usage_cancellation.py recognition/tests/unit/test_app1_operator_usage_census.py",
+      "result": "not_run",
+      "detail": "uv failed before pytest: failed to remove the managed alembic entry under .venv-lane-feature-app-1-a1h-usage4-43a92b77 because the filesystem is read-only; reran with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/api/test_app1_read_route_census.py recognition/tests/unit/test_app1_curation_sync_admission.py recognition/tests/unit/test_app1_gate3_operation_id_required.py recognition/tests/unit/test_app1_gate3_replay_enqueue.py recognition/tests/unit/test_app1_gate3_usage_cancellation.py recognition/tests/unit/test_app1_operator_usage_census.py",
+      "result": "fail",
+      "detail": "One test completed before Timeout (0:04:00)! in recognition/tests/api/test_app1_read_route_census.py::test_missing_api_key_denied_under_production_auth; timeout trace points to test_app1_read_route_census.py:213, blocked in TestClient.get. The run was interrupted after the timeout trace (exit 130)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=10 -o timeout_method=signal recognition/tests/api/test_app1_read_route_census.py -k test_missing_api_key_denied_under_production_auth",
+      "result": "not_run",
+      "detail": "The focused diagnostic produced no test result during the bounded observation and was interrupted (exit 130); the lane-suite timeout trace above is the recorded failure."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_replay_dispatch_postgres.py recognition/tests/integration/test_app1_reserved_at_period_postgres.py recognition/tests/integration/test_app1_sweeper_rls_postgres.py recognition/tests/integration/test_app1_usage_admission_postgres.py recognition/tests/integration/test_app1_usage_recovery_postgres.py recognition/tests/integration/test_app1_usage_worker_postgres.py",
+      "result": "not_run",
+      "detail": "PostgreSQL integration tests were not run because this sandbox lacks the required database; the test bodies and their assertions were read for TEST-15."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15852,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-H-a8ca790a577089ecc097d345",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py:605 — `resolve_analyze_operation_id` now requires the caller key when metered; :619-626 pass that operation ID, a generated job_id, and a request fingerprint. usage_repository.py:446 looks up by operation ID and :283-285 rejects fingerprint changes.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_gate3_operation_id_required.py::test_operation_key_required_before_reservation_and_job_creation; apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_new_operation_is_independently_chargeable"
+    },
+    {
+      "db_id": 15851,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-H-336d51ccf2dfd00507b502f7",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/deps/usage_admission.py:209 — `leave HTTP 202 as RESERVED`; :270 says workers own terminal settlement. analyze.py:623 passes the generated job_id, while scan_worker.py:480-485 and analyze.py:909-913 settle by tenant and job ID.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/integration/test_app1_usage_worker_postgres.py::test_postgres_worker_usage_lifecycle"
+    },
+    {
+      "db_id": 15850,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-H-2edeab182e68af1396e0bfdf",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py:585, describe.py:1487, and describe.py:1888 each enter `_maybe_admit_usage` for run, multipart, and async compute; the scene census asserts three reservations and bound job IDs at test_app1_usage_scene_census.py:341-359.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py::test_three_compute_posts_reserve_before_dispatch"
+    },
+    {
+      "db_id": 15856,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-M-aeafb97f2cd658c98b6d6e0f",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/workbay/contracts/usage-admission-api.md:25 documents `503 reservation_timeout` with `Retry-After: 5` and rollback; usage-admission-errors.json:32-35 adds the matching fixture case. The contract test compares fixture and API rows at test_app1_usage_admission_contract.py:131-132.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_contract.py::test_usage_admission_errors_match_contract_fixture"
+    },
+    {
+      "db_id": 15854,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-M-557b9b30cb07fe0c03dcda0f",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/deps/usage_admission.py:252 catches `UsageAdmissionTimeoutError`, attempts rollback at :253-259, then raises the bounded 503 at :260; the response carries `Retry-After` in _reservation_timeout at :176-181.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py::test_reservation_timeout_maps_to_bounded_503_without_dispatch; apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_contract.py::test_usage_admission_errors_match_contract_fixture"
+    },
+    {
+      "db_id": 15992,
+      "finding_id": "APP1-LEDGER-RV05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/interface_adapters/http/deps/usage_admission.py:252 catches `UsageAdmissionTimeoutError`, attempts rollback at :253-259, then maps it to `reservation_timeout` 503 at :260. The wiring test asserts status 503, Retry-After, rollback, and no dispatch.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py::test_reservation_timeout_maps_to_bounded_503_without_dispatch"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Rechecked 6 listed findings: 6 HOLDS; new findings high/medium/low 0/0/0. Lane verification is blocked after one test passed and the read-route census timed out at test_app1_read_route_census.py:213."
+}

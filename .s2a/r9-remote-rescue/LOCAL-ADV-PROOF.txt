@@ -1,0 +1,86 @@
+===== 1 GREEN (HEAD) =====
+....                                                                     [100%]
+=============================== warnings summary ===============================
+scene/tests/test_eval_harness_eval_split.py::test_cli_draw_non_utf8_exposure_file_exits_2
+scene/tests/test_eval_harness_eval_split.py::test_cli_check_missing_out_exits_2
+scene/tests/test_eval_harness_eval_split.py::test_cli_check_malformed_out_json_exits_2
+scene/tests/test_eval_harness_eval_split.py::test_cli_draw_missing_exposure_file_exits_2
+  /Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/cli.py:2689: HashVerificationSkippedWarning: load_manifest: hash verification skipped (split seal pins sha256 metadata; image bytes never opened) for /Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scene/tests/seed/golden.json
+    manifest = load_manifest(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+4 passed, 4 warnings in 4.93s
+===== 2 MUT[oserror_only_guard] =====
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________ test_cli_draw_non_utf8_exposure_file_exits_2 _________________
+scene/tests/test_eval_harness_eval_split.py:1512: in test_cli_draw_non_utf8_exposure_file_exits_2
+    main(argv)
+scripts/eval_harness/cli.py:3070: in main
+    args.func(args)
+scripts/eval_harness/cli.py:2696: in _cmd_draw_eval_split
+    exposure_notes = _collect_exposure_notes(args.exposure_note, args.exposure_file)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/eval_harness/cli.py:2666: in _collect_exposure_notes
+    collected.extend(Path(exposure_file).read_text().splitlines())
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.7-macos-aarch64-none/lib/python3.12/pathlib.py:1028: in read_text
+    return f.read()
+           ^^^^^^^^
+<frozen codecs>:322: in decode
+    ???
+E   UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+=============================== warnings summary ===============================
+scene/tests/test_eval_harness_eval_split.py::test_cli_draw_non_utf8_exposure_file_exits_2
+  /Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/cli.py:2689: HashVerificationSkippedWarning: load_manifest: hash verification skipped (split seal pins sha256 metadata; image bytes never opened) for /Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scene/tests/seed/golden.json
+    manifest = load_manifest(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED scene/tests/test_eval_harness_eval_split.py::test_cli_draw_non_utf8_exposure_file_exits_2 - UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+1 failed, 1 warning in 0.97s
+MUT1_EXIT=0 restored=
+===== 3 MUT[unguarded_check_read] =====
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________ test_cli_check_missing_out_exits_2 ______________________
+scene/tests/test_eval_harness_eval_split.py:1526: in test_cli_check_missing_out_exits_2
+    main(_check_cli_args(missing))
+scripts/eval_harness/cli.py:3063: in main
+    args.func(args)
+scripts/eval_harness/cli.py:2704: in _cmd_draw_eval_split
+    artifact = json.loads(out.read_text())
+                          ^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.7-macos-aarch64-none/lib/python3.12/pathlib.py:1027: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.7-macos-aarch64-none/lib/python3.12/pathlib.py:1013: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/20/pqd0ncgj7cb4zjf7t394lht00000gn/T/pytest-of-daniel/pytest-998/test_cli_check_missing_out_exi0/no-such-sealed-split.json'
+=============================== warnings summary ===============================
+scene/tests/test_eval_harness_eval_split.py::test_cli_check_missing_out_exits_2
+  /Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/cli.py:2689: HashVerificationSkippedWarning: load_manifest: hash verification skipped (split seal pins sha256 metadata; image bytes never opened) for /Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scene/tests/seed/golden.json
+    manifest = load_manifest(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED scene/tests/test_eval_harness_eval_split.py::test_cli_check_missing_out_exits_2 - FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/20/pqd0ncgj7cb4zjf7t394lht00000gn/T/pytest-of-daniel/pytest-998/test_cli_check_missing_out_exi0/no-such-sealed-split.json'
+1 failed, 1 warning in 0.84s
+MUT2_EXIT=0 restored=
+===== 4 PROBE non-dict JSON [] =====
+/Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/cli.py:2689: HashVerificationSkippedWarning: load_manifest: hash verification skipped (split seal pins sha256 metadata; image bytes never opened) for /Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scene/tests/seed/golden.json
+  manifest = load_manifest(
+Traceback (most recent call last):
+  File "<stdin>", line 11, in <module>
+  File "/Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/cli.py", line 3070, in main
+    args.func(args)
+  File "/Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/cli.py", line 2713, in _cmd_draw_eval_split
+    violations = verify_eval_split(
+                 ^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/Development/context-alt-text-monorepo-vlm-6/apps/prototype-description-service/scripts/eval_harness/strata.py", line 799, in verify_eval_split
+    violations.extend(_unknown_key_violations(artifact.get("held_out"), SPLIT_HALF_KEYS, label="held_out"))
+                                              ^^^^^^^^^^^^
+AttributeError: 'list' object has no attribute 'get'
+PROBE_NONDICT: UNCAUGHT AttributeError: 'list' object has no attribute 'get'
+===== 5 tree clean =====

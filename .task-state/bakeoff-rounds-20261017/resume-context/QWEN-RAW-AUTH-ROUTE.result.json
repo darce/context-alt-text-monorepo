@@ -1,0 +1,66 @@
+{
+  "status": "research_complete_missing_boundary",
+  "summary": "Reproduced the current raw Bakeoff authentication boundary gap with the actual public client: anonymous v3/two-pass succeeds; a strict protected fixture yields recorded401 and bounded abort. No existing qualified authenticated raw route was established. Proposed a minimal raw-only credential-file/client seam for separate test review and source authorization.",
+  "source_sha": "6224937d0197eef5e92699359624fb7a3d09cca8",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/research/QWEN-RAW-AUTH-ROUTE.json",
+    ".task-state/bakeoff-rounds-20261017/research/QWEN-RAW-AUTH-ROUTE.md"
+  ],
+  "commits": [
+    "71ab54d706b30602316f1930e1fb84a1916a2cad"
+  ],
+  "findings": [
+    {
+      "id": "QWEN-RAW-AUTH-01",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py:528",
+      "description": "Normal raw CLI/constructor cannot supply the protected serving credential. Inheritance reuses failure discipline while the raw client sends chat completions.",
+      "evidence": "Whole source and actual public BakeoffClient/httpx.MockTransport plus fetch_run_record: blank X-API-Key, absent Authorization; anonymous two-pass200, protected401 partial record, three HTTP failures then CircuitOpenError. Credential constructor keywords are rejected; parser has no auth option. External fixture credentialed200 is a fixture control only.",
+      "fix": "Review the NEW proposed --server-api-key-file and server_api_key constructor boundary in the companion Markdown, including private-file refusal, raw-only qualified header encoding, warmup propagation and nonleak tests. Root must approve independent behavioral tests and real RED before a separately authorized LOW source slice. Do not change global RemoteSceneClient service authentication."
+    },
+    {
+      "id": "QWEN-RAW-AUTH-02",
+      "severity": "info",
+      "file": "infra/oci/gpu-cloud-init.yaml:334",
+      "description": "The actual physical server authentication contract remains unqualified; a mutable image and minimum build are not a pin.",
+      "evidence": "Cloud-init passes --api-key-file from the configured GPU Vault authority; existing GpuRemoteAdapter and gpu_spike_bench use Bearer, but no installed immutable runtime-linked primary server auth source was available. Neither alternative supplies the accepted raw v3/two-pass route.",
+      "fix": "Runtime owner binds the actual immutable runtime and matching primary auth contract before freezing the new header expectation or claiming real-server acceptance. Preserve auth, incumbent refusal and experimental controls; keep power review independent."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B /tmp/qwen-raw-auth-route/read_context.py",
+      "exit_code": 0,
+      "summary": "867 complete source/context/prior-audit reads; eight Canon0.26.2 bodies/release pins and four full original distillations hash-verified; AST fallback retained."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/qwen-raw-auth-route/probe.attempt1.py",
+      "exit_code": 1,
+      "summary": "Retained private fixture setup failure: nonexistent AnnotationMode.IMAGE_LEVEL. Not a product RED; corrected to actual ROSTER_ONLY."
+    },
+    {
+      "command": "timeout 55s .venv/bin/python -B /tmp/qwen-raw-auth-route/probe.py",
+      "exit_code": 0,
+      "summary": "Actual public raw client and walker: anonymous two-pass success, protected401 bounded partial record, three-strike breaker, external strict-fixture valid control, no sentinel in run configuration/records/provenance/errors/diagnostics. Mock proves caller behavior only."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-raw-auth-route/observe.py",
+      "exit_code": 0,
+      "summary": "Native base/equal tree and absent logical object documented; actual cgroup1GiB/25percentCPU confirmed. Exact observations, search output and exits retained."
+    },
+    {
+      "command": "python3 -B /tmp/qwen-raw-auth-route/verify.py",
+      "exit_code": 0,
+      "summary": "Strict common JSON, exact native source/tree, read hashes/prior roots, two-file ownership, audit manifest and committed delivery equality checked."
+    }
+  ],
+  "limitations": [
+    "Logical input b99b43f7f48e51dfa85326463656995f086c7dde is absent locally; honest native source_sha shares exact tree f54406d1002ac77b72e96c8b176971531faa8b8f. Equal tree is not ancestry.",
+    "No live401, physical-server acceptance, runtime fit, admission, source/test approval, adoption, dispatch, production cli equivalence or quality winner. Power procedure bd390/review80217 remains independent; both targets STOPPED is supplied prior observation.",
+    "No graph/semantic MCP or fresh ONNX retrieval exposed. Supplied verified retrieval/reinjection and readiness maps checked with whole source/AST; no freshness claim. Public Canon tag fetch failed; complete supplied eight-body mirror and four full distillations verified.",
+    "No credentials requested, fetched, minted, rotated or used; no GPU/cloud/model/media/GT operation, install, nested agent, source/test/plan edit, shared runtime change, cache deletion or foreign signal. Zero-byte owned fixture only; all httpx requests use MockTransport.",
+    "Current no-credential serialization nonleak is verified; future valid credential handling is not. Existing Bearer callers do not prove installed llama.cpp semantics. NEW interfaces and test matrix are proposals only.",
+    "Private audit /tmp/qwen-raw-auth-route preserves scripts, complete snapshots, actual requests/responses, outputs/exits/import hashes and manifest. Initial import created one new51-byte :memory:.ses; moved owned incidental state into audit and confined later import cwd. ONNX telemetry warning retained; no model/session executed. Earlier probe enum/pointer/cgroup setup errors retained, never product evidence.",
+    "Actual cgroup confirms requested1GiB/25percentCPU; model/LOW/STANDARD selection is not independently attested. Prior audit roots preserved. commits identifies the substantive artifact commit; later JSON-only delivery commit records that pointer without self-reference."
+  ]
+}

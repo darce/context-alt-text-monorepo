@@ -1,0 +1,167 @@
+version = 1
+
+[targets.svc-local]
+audience = "backend"
+envs = ["local"]
+path = "apps/prototype-description-service/.env"
+example = "apps/prototype-description-service/.env.example"
+sections = ["Postgres connection", "Aliases", "Database DSNs", "Pool and timeout knobs", "Runtime mode", "API security", "Operator /admin surface"]
+doc = '''
+Local development environment template for the prototype description service.
+
+Copy to `apps/prototype-description-service/.env` and adjust as needed:
+  cp apps/prototype-description-service/.env.example apps/prototype-description-service/.env
+Or run `make dev-setup` (copies only if .env is absent, then mints a DB API key).
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: docs/secrets-inventory.md
+
+Consumed by:
+  - db.settings._load_env_file (Python runtime + Alembic + pytest)
+  - scripts/reset_dev_db.sh   (`make reset-local`)
+  - scripts/db_shell.sh       (`make db-shell`)
+
+Production deployments MUST NOT use this file - see `.env.prod.example`
+for the multi-environment OCI VM template.'''
+
+[targets.svc-vm]
+audience = "backend"
+envs = ["dev", "prod", "staging"]
+remote_paths = { dev = "/opt/acx-backend/dev/.env", staging = "/opt/acx-backend/staging/.env", prod = "/opt/acx-backend/prod/.env" }
+preserve = ["ACX_IMAGE_REPO"]
+lease_env = { dev = "dev", staging = "staging", prod = "prod" }
+example = "apps/prototype-description-service/.env.prod.example"
+sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description", "GPU lifecycle"]
+doc = '''
+Multi-environment deployment template for OCI VM.
+
+Each environment (prod/staging/dev) needs its own copy at:
+  /opt/acx-backend/<env>/.env          owner ubuntu:ubuntu, mode 0600
+(dev-fir uses .env.fir.example instead.) Edit that file in place. Do NOT use a
+secrets/.env + symlink layout: recognition-service.sh rewrites .env with an
+atomic os.replace, which replaces the symlink and strands secrets/.env as a
+stale copy (REF-09). Rotation: docs/secrets-inventory.md
+§ "Per-environment runtime files".
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+Do NOT commit secrets.'''
+
+[targets.svc-fir]
+audience = "backend"
+envs = ["fir"]
+remote_paths = { fir = "/opt/acx-backend/dev-fir/.env" }
+preserve = ["ACX_IMAGE_REPO"]
+lease_env = { fir = "dev-fir" }
+example = "apps/prototype-description-service/.env.fir.example"
+sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description"]
+doc = '''
+Isolated FIR/SFace 128d benchmark stack template for OCI VM (acx-dev-fir).
+
+Install at (the ONE runtime file; edit it in place):
+  /opt/acx-backend/dev-fir/.env        owner ubuntu:ubuntu, mode 0600
+  install -d -m 0755 /opt/acx-backend/dev-fir
+  install -m 0600 .env.fir.example /opt/acx-backend/dev-fir/.env
+Then replace every REPLACE_ME_DEV_FIR_PG with one fresh value that is not
+reused by any other env (PG-09), e.g. `openssl rand -hex 24`.
+Do NOT use a secrets/.env + symlink layout: recognition-service.sh rewrites
+.env with an atomic os.replace (image_repo_resource), which replaces the
+symlink with a regular file and leaves secrets/.env a stale copy (REF-09).
+Rotation + OCI Vault opt-in: apps/prototype-description-service/docs/secrets-inventory.md
+  § "Per-environment runtime files".
+
+This stack is intentionally separate from InsightFace acx-dev (512d). SFace is
+128d; media_identities.embedding is dimension-pinned by PGVECTOR_DIM and the
+three-way guard assert_three_way_embedding_dimensions
+(face_pipeline_adapter.py:318-329). Both of the following are MANDATORY:
+  - PGVECTOR_DIM=128
+  - RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline
+Plus RECOGNITION_FACE_PIPELINE_MODELS_DIR must point under the compose mount
+(${ACX_MODELS_PATH}:/data/cache) so runtime ONNX loads from the volume, not
+the package DEFAULT_MODELS_DIR.
+
+DEV tier: inline plaintext secret placeholders (mirror acx-dev). Uses the env
+secret backend by default; the commented oci_vault block below is the opt-in.
+Auth is enabled, so LocalWP fir wiring needs a tenant key.
+
+Annotation format: `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+Do NOT commit secrets.'''
+
+[targets.svc-auraface]
+audience = "backend"
+envs = ["dev-auraface", "staging-auraface", "prod-auraface"]
+remote_paths = { dev-auraface = "/opt/acx-backend/dev-auraface/.env", staging-auraface = "/opt/acx-backend/staging-auraface/.env", prod-auraface = "/opt/acx-backend/prod-auraface/.env" }
+preserve = ["ACX_IMAGE_REPO"]
+lease_env = { dev-auraface = "dev-auraface", staging-auraface = "staging-auraface", prod-auraface = "prod-auraface" }
+example = "apps/prototype-description-service/.env.auraface.example"
+sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description"]
+doc = '''
+AuraFace 512d isolated stack template for the OCI VM (three labels: dev-auraface, staging-auraface, prod-auraface).
+
+Install one runtime file per label, owner ubuntu:ubuntu, mode 0600:
+  /opt/acx-backend/<label>/.env
+Each label has its own compose project, network, PGDATA, model root, database and role. No value is shared with the generic dev, staging or prod stacks or with the dev-fir SFace 128d stack.
+
+Mandatory: PGVECTOR_DIM=512 and RECOGNITION_FACE_PIPELINE_PROFILE=auraface. RECOGNITION_FACE_PIPELINE_MODELS_DIR and RECOGNITION_AURAFACE_MODELS_DIR both point under the compose mount (${ACX_MODELS_PATH}:/data/cache).
+Auth stays enabled and the /admin surface stays disabled. Replace each host-supplied Postgres value with one fresh value per label; never reuse another label's DSN or password.
+
+The runtime refuses AuraFace activation until artifact provenance and preprocessing are verified (ADR-016). This template does not clear that gate.
+
+Do NOT commit secrets.'''
+
+[targets.demo]
+audience = "backend"
+envs = ["demo"]
+remote_paths = { demo = "/opt/acx-backend/demo/secrets/.env" }
+example = "infra/oci/demo/.env.example"
+sections = ["Compose", "MariaDB", "WordPress", "Generated secrets", "Image description", "GPU lifecycle"]
+doc = '''
+Demo stack secrets template — copy to /opt/acx-backend/demo/secrets/.env (chmod 600).
+Real credentials live on the VM only; never commit populated values.
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+domain: infra | source: demo stack ops | consumer: docker compose project identity'''
+
+[targets.wp-e2e]
+audience = "test"
+envs = ["local"]
+path = "apps/prototype-wp-alt-context/.env.local"
+example = "apps/prototype-wp-alt-context/.env.local.example"
+sections = ["Playwright auth", "Optional overrides"]
+doc = '''
+LocalWP-only Playwright auth bootstrap placeholders for E15-6.
+Copy this file to .env.local and fill in real values before running
+the auth bootstrap described in docs/playwright-localwp-evidence.md.
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+domain: test creds | source: local developer / CI secret store | consumer: Playwright LocalWP auth bootstrap'''
+
+[targets.app-portal-local]
+audience = "public_build"
+envs = ["local"]
+path = "apps/app-portal/.env.local"
+sections = ["Portal public build"]
+doc = '''Local Vite build-time values for app-portal.
+
+Consumed by `apps/app-portal/src/config.ts` through Vite's `import.meta.env`.
+The rendered publishable key and flags are public and ship in the browser bundle.'''
+
+[targets.app-portal-build]
+audience = "public_build"
+envs = ["prod"]
+path = "apps/app-portal/.env.production.local"
+example = "apps/app-portal/.env.example"
+sections = ["Portal public build"]
+doc = '''Production Vite build-time values for app-portal.
+
+Consumed by `apps/app-portal/src/config.ts` through Vite's `import.meta.env`.
+These values are public and ship in the browser bundle. The public production
+Clerk pk_live_ publishable key is committed in 60-app-portal.toml; it is public
+by design, never a Clerk secret.'''

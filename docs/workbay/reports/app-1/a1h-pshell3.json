@@ -1,0 +1,36 @@
+{
+  "lane": "a1h-pshell3",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "$lane_root/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.96s."
+    },
+    {
+      "command": "npm --prefix apps/app-portal test",
+      "result": "not_run",
+      "detail": "Vitest runs outside this sandbox; portal node_modules are unavailable here."
+    },
+    {
+      "command": "npm --prefix apps/app-portal run typecheck",
+      "result": "not_run",
+      "detail": "TypeScript runs outside this sandbox; portal node_modules are unavailable here."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/app-portal/src/components/WordPressTestConnectionGuidance.tsx",
+      "line": 8,
+      "title": "WordPress guidance advertises a modal without containing focus",
+      "defect": "The component declares `<div role=\"dialog\" aria-modal=\"true\">` at line 8 but does not move focus into the dialog or contain Tab navigation. Its app route leaves the session escape controls outside the dialog (App.tsx:292-296), despite the modal semantics.",
+      "failure_scenario": "A keyboard user activates the guidance button and App navigates to /keys/wordpress, unmounting the focused trigger. Focus can fall to the document body; pressing Tab can then reach the Clerk or sign-out controls outside the modal while aria-modal=true tells assistive technology that outside content is unavailable.",
+      "fix": "On mount focus a control inside the dialog, trap Tab among its focusable controls, and make the session escape region inert while the guidance is open.",
+      "test_file": "apps/app-portal/src/__tests__/keys-journey.test.tsx",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Re-reviewed the six portal files, the changed key journey test, and the named integration callers; no previously listed findings were supplied. One medium focus-management defect remains in the WordPress guidance route. The lane manifest test passed; portal Vitest and typecheck were not run because dependencies are unavailable in this sandbox."
+}

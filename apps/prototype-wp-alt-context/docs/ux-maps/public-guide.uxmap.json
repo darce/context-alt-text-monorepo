@@ -1,0 +1,476 @@
+{
+  "map_ref": "public-guide",
+  "product": "AltContext — signed-out public recorded guide",
+  "source_fixture": "apps/prototype-wp-alt-context/js/guide/main.tsx",
+  "goals": [
+    "Anyone can try the recorded review workflow at /guide/ signed-out; live generation and WordPress writes stay on the authenticated admin route.",
+    "NAV-08: the first screen shows two plain-language entry actions — Start the walkthrough and Read the case study.",
+    "NAV-07: public scope renders a fixed pair of external product links — Home at https://altcontext.com/ and the case study at https://darce.xyz/projects/altcontext/.",
+    "SECD-02/03: the public route performs no REST calls; /acx/v1/public/demo/describe stays gated by acx_public_demo_enabled and is expected off unless retained.",
+    "Bundle-failure still returns 200 with canonical and the PUBLIC_GUIDE_FALLBACK paragraph.",
+    "Detailed engine metadata stays in the notes while the recorded provenance summary is visible on screen in the section footer."
+  ],
+  "jobs": [
+    {
+      "id": "try-recorded",
+      "label": "Try the recorded review workflow signed-out"
+    },
+    {
+      "id": "leave-safely",
+      "label": "Leave the walkthrough without authenticating"
+    }
+  ],
+  "screens": [
+    {
+      "id": "entry",
+      "kind": "screen",
+      "title": "Review a recorded alt text example",
+      "purpose": "Signed-out public entrance. Public title and introduction explain the supplied festival example; scope.public: This is a supplied example roster with recorded drafts. Your choices change only the demo copy in this tab; they do not update WordPress or a server roster. Two entry actions (NAV-08): Start the walkthrough and Read the case study. Escape hatch (NAV-07): Home and Case study. first_time is the first visit with no in-tab state. error is domain disabled_404: AltContext\\PublicSite\\PublicGuideRoute returns the theme 404 when acx_public_guide_enabled is off — never this guide.",
+      "route": "/guide/",
+      "wp_page": null,
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
+      "primary_action_id": "start-walkthrough",
+      "states": ["default", "first_time", "error"],
+      "zones": [
+        {
+          "id": "public-escape",
+          "label": "Leave the walkthrough. Home. Case study.",
+          "role": "nav",
+          "states": ["default", "first_time"]
+        },
+        {
+          "id": "guided-scope",
+          "label": "Supplied example roster with recorded drafts. Choices affect only the demo copy in this tab; no WordPress or server roster update.",
+          "role": "content",
+          "states": ["default", "first_time"]
+        },
+        {
+          "id": "entry-cta",
+          "label": "Start the walkthrough (primary). Read the case study.",
+          "role": "nav",
+          "states": ["default", "first_time"]
+        }
+      ]
+    },
+    {
+      "id": "walkthrough",
+      "kind": "screen",
+      "title": "Recorded walkthrough",
+      "purpose": "RecordedWalkthrough scope=public: understand the supplied page context, then review the two bundled press photos stacked in .acx-guided-page__media-list. Each figure has a 1 / 1 image frame, visible Photo credit, one collapsed AltText.ai comparison disclosure, and its own current description in the sample image alt. One \"People recognised in this photo\" article sits in the .acx-guided-page__faces column on the right with both people's name choices; this column moves below the photo below 56.25rem. Face outlines pin on click. The three-paragraph provenance footer sits below the figures. After name choices, the public editor shows the current description and one editable draft for each photo; the sample image is the demo image and there is no second applied-preview image. Changes stay in the tab. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: a photo's sample draft unavailable. Keyboard completes choose → edit → use.",
+      "route": "/guide/",
+      "wp_page": null,
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx",
+      "primary_action_id": "continue-walkthrough",
+      "states": ["default", "edge_input", "error"],
+      "zones": [
+        {
+          "id": "guided-demo-root",
+          "label": "Public mount. data-scope=public. Supplied roster and recorded drafts only; changes stay in this tab.",
+          "role": "content",
+          "states": ["default", "edge_input", "error"]
+        },
+        {
+          "id": "guided-section-understand",
+          "label": "Understand the page and provenance. The context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked. Each figure has one 1 / 1 sample image whose alt is the current description, a visible Photo credit, one collapsed AltText.ai comparison disclosure, and a right-hand \"People recognised in this photo\" article with both name choices. The faces column moves below the photo below 56.25rem. Face outlines pin on click. The three-paragraph provenance footer follows the figures. Review the current image descriptions, comparison captions, credits, and recorded source details.",
+          "role": "content",
+          "states": ["default"]
+        },
+        {
+          "id": "name-choice-tribeca-left",
+          "label": "Justin Trudeau roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 89.4% strong crop is visible.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": ["default", "edge_input"]
+        },
+        {
+          "id": "name-choice-tribeca-right",
+          "label": "Katy Perry roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 100.0% strong cluster-anchor crop is visible.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": ["default", "edge_input"]
+        },
+        {
+          "id": "name-choice-coachella-left",
+          "label": "Justin Trudeau roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 70.2% strong crop is visible.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": ["default", "edge_input"]
+        },
+        {
+          "id": "name-choice-coachella-right",
+          "label": "Katy Perry roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 56.7% weak crop is below the 60.0% displayed threshold and is still grouped by the production clusterer.",
+          "role": "form",
+          "evidence_linked": true,
+          "states": ["default", "edge_input"]
+        }
+      ]
+    },
+    {
+      "id": "apply",
+      "kind": "screen",
+      "title": "Apply and undo",
+      "purpose": "For each photo, review the current description beside its editable recorded draft. Use this description updates that sample photo's alt in this tab; Undo this change restores its previous description. The public editor has no separate applied-preview image. empty: there is no change to undo. error: the draft is empty or unchanged, or its recorded sample is unavailable.",
+      "route": "/guide/",
+      "wp_page": null,
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "primary_action_id": "demo-apply",
+      "states": ["default", "empty", "error"],
+      "zones": [
+        {
+          "id": "guided-section-apply",
+          "label": "Review and edit the current description for each photo. Use this description changes only that sample photo's alt text in this tab. Undo restores that photo's previous description. The full-size sample photo above is the demo image; the public editor does not render a second preview image.",
+          "role": "content",
+          "states": ["default", "empty", "error"]
+        },
+        {
+          "id": "guided-photo-tribeca",
+          "label": "Tribeca sample photo. Its alt text is the current Tribeca description. This is the public demo image and the same image changes when the visitor uses or undoes a description.",
+          "role": "content",
+          "evidence_linked": true,
+          "states": ["default"]
+        },
+        {
+          "id": "guided-photo-coachella",
+          "label": "Coachella sample photo. Its alt text is the current Coachella description. This is the public demo image and the same image changes when the visitor uses or undoes a description.",
+          "role": "content",
+          "evidence_linked": true,
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "outcome",
+      "kind": "screen",
+      "title": "Your demo copy is updated",
+      "purpose": "Completion summary after Apply to demo copy or Keep current alt text. Applied and kept outcomes affect only the demo copy in this tab; WordPress media, a server roster, and a saved library are not updated. A next batch would use another supplied image and page context. Direct refresh of /guide/ restores first-visit state; in-tab history is not persisted.",
+      "route": "/guide/",
+      "wp_page": null,
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx",
+      "primary_action_id": "return-to-draft",
+      "states": ["default", "empty"],
+      "zones": [
+        {
+          "id": "demo-outcome",
+          "label": "Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context.",
+          "role": "status",
+          "states": ["default", "empty"]
+        }
+      ]
+    },
+    {
+      "id": "fallback",
+      "kind": "screen",
+      "title": "The walkthrough could not load",
+      "purpose": "Domain bundle_failed maps to error. The mounted guide hides .acx-public-guide__fallback; if ViteManifest entry_assets returns null, the template still renders 200 plus canonical content and PUBLIC_GUIDE_FALLBACK remains visible.",
+      "route": "/guide/",
+      "wp_page": null,
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/guide/main.tsx",
+      "primary_action_id": "reload-guide",
+      "states": ["error"],
+      "zones": [
+        {
+          "id": "public-guide-fallback",
+          "label": "The walkthrough could not load. Reload the page and try again.",
+          "role": "status",
+          "states": ["error"]
+        }
+      ]
+    },
+    {
+      "id": "escape",
+      "kind": "exit",
+      "title": "Leave the walkthrough",
+      "purpose": "NAV-07 escape hatch from public scope: Home is an external link to altcontext.com via escapeHref. Case study uses CASE_STUDY_URL. No authentication required.",
+      "route": "/",
+      "wp_page": null,
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts",
+      "primary_action_id": "go-home",
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "escape-home",
+          "label": "Home",
+          "role": "nav",
+          "states": ["default"]
+        },
+        {
+          "id": "escape-case-study",
+          "label": "Case study",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "start-walkthrough",
+      "verb": "Start the walkthrough",
+      "target": "walkthrough",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "entry"
+    },
+    {
+      "id": "read-case-study",
+      "verb": "Read the case study",
+      "target": "escape",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "entry"
+    },
+    {
+      "id": "continue-walkthrough",
+      "verb": "Review name suggestions",
+      "target": "apply",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "walkthrough"
+    },
+    {
+      "id": "preview-draft",
+      "verb": "Preview the change",
+      "target": "apply",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "walkthrough"
+    },
+    {
+      "id": "keep-current-alt-text",
+      "verb": "Keep current alt text",
+      "target": "outcome",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "walkthrough"
+    },
+    {
+      "id": "reset-demo",
+      "verb": "Reset demo",
+      "target": "walkthrough",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": true,
+      "preview_required": false,
+      "screen_id": "walkthrough"
+    },
+    {
+      "id": "demo-apply",
+      "verb": "Apply to demo copy",
+      "target": "outcome",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "apply"
+    },
+    {
+      "id": "demo-undo",
+      "verb": "Undo last application",
+      "target": "apply",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "apply"
+    },
+    {
+      "id": "return-to-draft",
+      "verb": "Return to the draft",
+      "target": "walkthrough",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "outcome"
+    },
+    {
+      "id": "reload-guide",
+      "verb": "Reload the page",
+      "target": "entry",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "fallback"
+    },
+    {
+      "id": "go-home",
+      "verb": "Home",
+      "target": "escape",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "escape"
+    },
+    {
+      "id": "go-case-study",
+      "verb": "Case study",
+      "target": "escape",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "escape"
+    }
+  ],
+  "flows": [
+    {
+      "id": "signed-out-core",
+      "job": "try-recorded",
+      "label": "Signed-out choose → edit → preview → apply → undo",
+      "steps": [
+        {
+          "screen_id": "entry",
+          "branch_label": "start"
+        },
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "choose and edit"
+        },
+        {
+          "screen_id": "apply",
+          "branch_label": "preview and apply"
+        },
+        {
+          "screen_id": "outcome",
+          "branch_label": "undo still in tab"
+        }
+      ]
+    },
+    {
+      "id": "direct-refresh",
+      "job": "try-recorded",
+      "label": "Direct reload of /guide/ keeps the page working",
+      "steps": [
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "reload"
+        },
+        {
+          "screen_id": "entry",
+          "branch_label": "first_time restored"
+        }
+      ]
+    },
+    {
+      "id": "mobile-keyboard",
+      "job": "try-recorded",
+      "label": "Pixel 7 keyboard-only completion",
+      "steps": [
+        {
+          "screen_id": "entry",
+          "branch_label": "keyboard"
+        },
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "keyboard"
+        },
+        {
+          "screen_id": "apply",
+          "branch_label": "keyboard"
+        },
+        {
+          "screen_id": "outcome",
+          "branch_label": null
+        }
+      ]
+    },
+    {
+      "id": "kept-completion",
+      "job": "try-recorded",
+      "label": "choose → edit → keep with bounded tab-only outcome",
+      "steps": [
+        {
+          "screen_id": "entry",
+          "branch_label": "start"
+        },
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "choose and edit"
+        },
+        {
+          "screen_id": "outcome",
+          "branch_label": "kept unchanged"
+        }
+      ]
+    },
+    {
+      "id": "reset-local-state",
+      "job": "try-recorded",
+      "label": "reset clears local choices and draft state",
+      "steps": [
+        {
+          "screen_id": "walkthrough",
+          "branch_label": "reset confirmation"
+        },
+        {
+          "screen_id": "entry",
+          "branch_label": "first_time restored"
+        }
+      ]
+    },
+    {
+      "id": "bundle-failure",
+      "job": "leave-safely",
+      "label": "Guide bundle aborted; fallback paragraph stays visible",
+      "steps": [
+        {
+          "screen_id": "fallback",
+          "branch_label": "bundle_failed"
+        }
+      ]
+    },
+    {
+      "id": "disabled-route-404",
+      "job": "leave-safely",
+      "label": "acx_public_guide_enabled off: theme 404, never the guide",
+      "steps": [
+        {
+          "screen_id": "entry",
+          "branch_label": "disabled_404"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Does a signed-out visitor who bookmarks /guide/#state deep-link anywhere, or is in-tab state always first_time after refresh?",
+    "Should the optional workflow-discussion destination be enabled once a verified main-site contact section is available?"
+  ],
+  "not_doing": [
+    "Live generation or GuidedLiveDescriptionPanel on the public route.",
+    "REST calls from js/guide/** to acx/v1, including /public/demo/describe.",
+    "Implicit enable of acx_public_guide_enabled from deploy-demo.",
+    "Creating AltContext\\PublicSite\\PublicGuideRoute in this lane (sibling owns src/public/class-public-guide-route.php).",
+    "Public WordPress toolbar, implementation design notes, or action-history panel.",
+    "A second required full-photo exercise; independent roster reference captures support the existing name decision."
+  ]
+}

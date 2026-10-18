@@ -1,0 +1,114 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Api;
+
+use WP_REST_Request;
+use WP_REST_Response;
+
+use function absint;
+use function array_filter;
+use function array_map;
+use function array_values;
+use function explode;
+use function get_post;
+use function get_post_meta;
+use function get_post_mime_type;
+use function get_post_modified_time;
+use function is_array;
+use function is_string;
+use function wp_get_attachment_metadata;
+
+class MediaDetailController {
+	public const MAX_MEDIA_IDS_PER_REQUEST = 100;
+
+	public function get_media_details( WP_REST_Request $request ): WP_REST_Response {
+		$requested_ids = $this->resolve_media_ids( $request );
+		$requested_count = \count( $requested_ids );
+		$truncated = $requested_count > self::MAX_MEDIA_IDS_PER_REQUEST;
+		$ids = $truncated ? \array_slice( $requested_ids, 0, self::MAX_MEDIA_IDS_PER_REQUEST ) : $requested_ids;
+		$details_by_media = array();
+
+		foreach ( $ids as $media_id ) {
+			$meta = wp_get_attachment_metadata( $media_id );
+			$xmp_persist = get_post_meta( $media_id, 'acx_xmp_persist_last_result', true );
+
+			$details_by_media[ (string) $media_id ] = array(
+				'id'             => $media_id,
+				'mimeType'       => get_post_mime_type( $media_id ),
+				'updatedAt'      => $this->resolve_updated_at( $media_id ),
+				'dimensions'     => array(
+					'width'  => is_array( $meta ) && isset( $meta['width'] ) ? (int) $meta['width'] : null,
+					'height' => is_array( $meta ) && isset( $meta['height'] ) ? (int) $meta['height'] : null,
+				),
+				'xmpPersistence' => is_array( $xmp_persist ) ? $xmp_persist : null,
+			);
+		}
+
+		return new WP_REST_Response(
+			array(
+				'details_by_media' => $details_by_media,
+				'limit'            => self::MAX_MEDIA_IDS_PER_REQUEST,
+				'total'            => $requested_count,
+				'truncated'        => $truncated,
+			),
+			200
+		);
+	}
+
+	/**
+	 * @return array<int>
+	 */
+	private function resolve_media_ids( WP_REST_Request $request ): array {
+		$raw_ids = $request->get_param( 'ids' );
+		if ( null === $raw_ids ) {
+			$raw_ids = $request->get_param( 'ids[]' );
+		}
+
+		if ( is_string( $raw_ids ) ) {
+			$raw_ids = explode( ',', $raw_ids );
+		}
+
+		if ( ! is_array( $raw_ids ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_map( 'absint', $raw_ids ),
+				static fn ( int $value ): bool => $value > 0
+			)
+		);
+	}
+
+	private function resolve_updated_at( int $media_id ): ?string {
+		$modified_time = get_post_modified_time( 'c', true, $media_id );
+
+		if ( \is_string( $modified_time ) && '' !== $modified_time ) {
+			return $modified_time;
+		}
+
+		$post = get_post( $media_id );
+		if ( ! \is_object( $post ) ) {
+			return null;
+		}
+
+		$modified_gmt = '';
+		if ( isset( $post->post_modified_gmt ) && \is_string( $post->post_modified_gmt ) ) {
+			$modified_gmt = $post->post_modified_gmt;
+		} elseif ( isset( $post->post_modified ) && \is_string( $post->post_modified ) ) {
+			$modified_gmt = $post->post_modified;
+		}
+
+		if ( '' === $modified_gmt || '0000-00-00 00:00:00' === $modified_gmt ) {
+			return null;
+		}
+
+		try {
+			return ( new \DateTimeImmutable( \sprintf( '%s UTC', $modified_gmt ) ) )->format( 'c' );
+		} catch ( \Exception ) {
+			return null;
+		}
+	}
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "face_id": "face-0001",
+  "image_id": "image-0001",
+  "psu_id": "psu-0001",
+  "identity_id": "id-0001",
+  "identity_status": "named",
+  "fold": 0,
+  "fold_role": "fit",
+  "cell": ["none", "none"],
+  "unit_id": null,
+  "sampling_arm": "probability",
+  "inclusion_probability": 0.5,
+  "cohort": null,
+  "leg_key": "sface__native__ab12cd__cv4.10.0__ort1.18.0",
+  "arm": "native",
+  "arm_availability": "available",
+  "alignment_mode": "separable",
+  "stage_reached": "embedded",
+  "top_k": [["id-0002", 0.31], ["id-0001", 0.62]],
+  "gallery_sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+  "timing_receipt_ref": "face-0001"
+}

@@ -1,0 +1,710 @@
+"""ONNX Runtime CPU YuNet detector + SFace embedder (FIR-3 S3).
+
+Production path with semantics pinned to OpenCV reference (S2):
+- YuNet post-process ports OpenCV ``FaceDetectorYNImpl::postProcess``
+  (strides 8/16/32, score = sqrt(cls·obj) with cls/obj clamped to [0,1]
+  before sqrt, bbox/kps decode, FaceDetectorYN NMS).
+- SFace preprocessing matches ``FaceRecognizerSFImpl::feature``:
+  ``blobFromImage(crop, 1, Size(112,112), Scalar(0,0,0), swapRB=true)``
+  i.e. BGR→RGB, scale=1.0, mean=0, NCHW float32 — verified empirically
+  (cosine 1.0 vs OpenCV feature on golden crop).
+
+Shared validation + embed batch live in ``_common`` (cv2/onnxruntime-free).
+Alignment is owned by ``FivePointAligner`` (separate module); this module does
+not reimplement alignment.
+
+Parity is validated for real-signal scores (production threshold 0.9). OpenCV
+FaceDetectorYN is itself instance-nondeterministic at the noise floor
+(tiny/degenerate inputs); do not treat empty-image double-runs as a parity
+oracle.
+
+Heuristics: rg-015 (manifest dim, no invented contracts), AGT-06 (fail closed),
+rg-013-style purity (onnxruntime/numpy + face_pipeline siblings only; no cv2).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from pathlib import Path
+import hashlib
+import threading
+import time
+from contextlib import contextmanager
+from typing import Final
+
+import cv2
+import numpy as np
+import onnxruntime as ort
+
+from recognition.infrastructure.face_pipeline._common import (
+    DEFAULT_INPUT_SIZE,
+    DEFAULT_NMS_THRESHOLD,
+    DEFAULT_SCORE_THRESHOLD,
+    DEFAULT_TOP_K,
+    SFACE_CROP_SIZE,
+    EmbedBatchResult,
+    FacePipelineInputError,
+    RawDetection,
+    _ensure_bgr_u8,
+    embed_batch,
+    resolve_embedding_dim,
+)
+from recognition.infrastructure.face_pipeline.provenance import (
+    MODEL_MANIFEST, load_verified_model, acquire_verified_model_bytes,
+)
+from recognition.infrastructure.face_pipeline.loaded_session import VerifiedModelBytes
+
+# OpenCV FaceDetectorYN pad divisor + FPN strides (face_detect.cpp).
+_YUNET_DIVISOR: Final[int] = 32
+_YUNET_STRIDES: Final[tuple[int, ...]] = (8, 16, 32)
+
+# Output tensor name order matching OpenCV FaceDetectorYN forward list.
+_YUNET_OUTPUT_NAMES: Final[tuple[str, ...]] = (
+    "cls_8",
+    "cls_16",
+    "cls_32",
+    "obj_8",
+    "obj_16",
+    "obj_32",
+    "bbox_8",
+    "bbox_16",
+    "bbox_32",
+    "kps_8",
+    "kps_16",
+    "kps_32",
+)
+
+_SFACE_ALIGNMENT_TEMPLATE_ID: Final[str] = "sface-5pt-112"
+_ARCFACE_ALIGNMENT_TEMPLATE_ID: Final[str] = "arcface-112"
+_SUPPORTED_ALIGNMENT_TEMPLATES: Final[frozenset[str]] = frozenset(
+    {_SFACE_ALIGNMENT_TEMPLATE_ID, _ARCFACE_ALIGNMENT_TEMPLATE_ID}
+)
+
+
+class UnsupportedModelPreprocessingError(ValueError):
+    """Raised when a model's declared preprocessing exceeds this pipeline's contract."""
+
+
+# The recorder is scoped to one inference on one worker thread. Nested calls
+# restore their caller's recorder; concurrent workers never share tensor state.
+_TENSOR_RECORDER = threading.local()
+
+
+def tensor_record(tensor: np.ndarray) -> dict:
+    return {"sha256": hashlib.sha256(tensor.tobytes()).hexdigest(),
+            "shape": tuple(tensor.shape), "dtype": str(tensor.dtype),
+            "contiguous": bool(tensor.flags.c_contiguous)}
+
+
+@contextmanager
+def recording_tensors():
+    previous = getattr(_TENSOR_RECORDER, "current", None)
+    records = {"detector": [], "embedder": [], "raw": []}
+    _TENSOR_RECORDER.current = records
+    try:
+        yield records
+    finally:
+        _TENSOR_RECORDER.current = previous
+
+
+def _capture_tensor(kind: str, tensor: np.ndarray, **extra) -> None:
+    recorder = getattr(_TENSOR_RECORDER, "current", None)
+    if recorder is not None:
+        recorder[kind].append(dict(tensor_record(tensor), **extra))
+
+
+def _constructor_artifact(model_name, models_dir, verified_artifact, acquire_verified):
+    if verified_artifact is None and acquire_verified:
+        verified_artifact = acquire_verified_model_bytes(
+            model_name, models_dir=models_dir, expected=MODEL_MANIFEST[model_name],
+            max_model_bytes=512 * 1024 * 1024, max_license_bytes=1024 * 1024,
+            deadline_monotonic=time.monotonic() + 60,
+        )
+    if verified_artifact is not None:
+        if not isinstance(verified_artifact, VerifiedModelBytes) or verified_artifact.logical_name != model_name:
+            raise ValueError("verified artifact model identity mismatch")
+    return verified_artifact
+
+
+def _verified_session_metadata(session):
+    def metadata(items):
+        return tuple({"name": item.name, "shape": tuple(item.shape), "type": item.type} for item in items)
+    return {"inputs": metadata(session.get_inputs()), "outputs": metadata(session.get_outputs()),
+            "providers": tuple(session.get_providers()),
+            "options": getattr(session, "_face_constructor_options", {})}
+
+
+def _ort_session(model_source: Path | bytes) -> ort.InferenceSession:
+    """CPU-only InferenceSession with pinned single-thread + reduced log noise.
+
+    Thread counts fixed to 1 for reproducible parity/determinism builds (BR-05).
+    """
+    opts = ort.SessionOptions()
+    opts.log_severity_level = 3  # ERROR
+    opts.inter_op_num_threads = 1
+    opts.intra_op_num_threads = 1
+    # Graph optimization and execution_mode stay SessionOptions defaults
+    # (ORT_ENABLE_ALL / ORT_SEQUENTIAL). Do not pin ORT_DISABLE_ALL here —
+    # that would change SFace/YuNet numerics relative to the FIR-3 baseline.
+    if not isinstance(model_source, bytes):
+        return ort.InferenceSession(
+            str(model_source), sess_options=opts, providers=["CPUExecutionProvider"],
+        )
+    constructor_options = {
+        "log_severity_level": opts.log_severity_level,
+        "inter_op_num_threads": opts.inter_op_num_threads,
+        "intra_op_num_threads": opts.intra_op_num_threads,
+        "execution_mode": opts.execution_mode.name,
+        "graph_optimization_level": opts.graph_optimization_level.name,
+    }
+    session = ort.InferenceSession(model_source, sess_options=opts, providers=["CPUExecutionProvider"])
+    session._face_constructor_options = constructor_options
+    return session
+
+
+def _pad_to_divisor(image: np.ndarray, *, divisor: int = _YUNET_DIVISOR) -> tuple[np.ndarray, int, int]:
+    """Pad BGR image bottom/right to multiple of ``divisor`` (OpenCV padWithDivisor)."""
+    h, w = image.shape[:2]
+    pad_w = ((w - 1) // divisor + 1) * divisor
+    pad_h = ((h - 1) // divisor + 1) * divisor
+    if pad_h == h and pad_w == w:
+        return image, pad_w, pad_h
+    pad = np.zeros((pad_h, pad_w, 3), dtype=np.uint8)
+    pad[:h, :w] = image
+    return pad, pad_w, pad_h
+
+
+def _bgr_to_nchw_float(image_u8: np.ndarray) -> np.ndarray:
+    """BGR uint8 HWC → float32 NCHW scale=1.0 (OpenCV blobFromImage defaults)."""
+    return np.ascontiguousarray(image_u8.astype(np.float32).transpose(2, 0, 1)[None, ...])
+
+
+def _bgr_to_sface_blob(crop_u8: np.ndarray) -> np.ndarray:
+    """BGR 112×112 → SFace ORT input: RGB float32 NCHW, scale=1, mean=0.
+
+    Mirrors ``dnn::blobFromImage(img, 1, Size(112,112), Scalar(0,0,0), true, false)``
+    (swapRB=true). Documented empirical match: cosine(ORT, OpenCV.feature) == 1.0
+    on synthetic golden crop (max abs ~1e-6).
+    """
+    rgb = crop_u8[:, :, ::-1]
+    return np.ascontiguousarray(rgb.astype(np.float32).transpose(2, 0, 1)[None, ...])
+
+
+def _bgr_to_declared_blob(
+    crop_u8: np.ndarray,
+    *,
+    channel_order: str,
+    input_scale: float,
+    input_mean: float = 0.0,
+) -> np.ndarray:
+    """Build a float32 NCHW blob from a BGR crop using declared metadata.
+
+    Formula: ``(channel_ordered - input_mean) * input_scale``. Mean 0 / scale 1
+    preserves the SFace 0–255 RGB blob. AuraFace uses mean 127.5 and scale
+    1/127.5 → RGB ``(pixel - 127.5) / 127.5``.
+    """
+    if crop_u8.shape != (SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3):
+        raise FacePipelineInputError(
+            f"declared blob expects shape {(SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3)}, got {crop_u8.shape}"
+        )
+    if channel_order == "RGB":
+        channel_ordered = crop_u8[:, :, ::-1]
+    elif channel_order == "BGR":
+        channel_ordered = crop_u8
+    else:  # validated when the model's builder is selected
+        raise ValueError(f"unsupported declared channel order {channel_order!r}")
+    blob = channel_ordered.astype(np.float32).transpose(2, 0, 1)[None, ...]
+    return np.ascontiguousarray((blob - np.float32(input_mean)) * np.float32(input_scale))
+
+
+def _blob_builder_for_model(model_name: str, *, entry=None) -> Callable[[np.ndarray], np.ndarray]:
+    """Resolve one model's preprocessing into the callable used by ``_feature``."""
+    try:
+        entry = MODEL_MANIFEST[model_name] if entry is None else entry
+    except KeyError:
+        known_models = ", ".join(sorted(MODEL_MANIFEST))
+        raise ValueError(f"unknown embedding model {model_name!r}; known models: {known_models}") from None
+
+    preprocessing = entry.preprocessing
+    if preprocessing is None:
+        if model_name == "sface" and entry.framework == "opencv":
+            return _bgr_to_sface_blob
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} has no declared preprocessing; only the OpenCV SFace model "
+            "may use the legacy SFace preprocessing path"
+        )
+
+    expected_input_size = (SFACE_CROP_SIZE, SFACE_CROP_SIZE)
+    if preprocessing.input_size != expected_input_size:
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares input_size={preprocessing.input_size!r}; "
+            f"this pipeline implements only {expected_input_size!r} SFace crops"
+        )
+    if preprocessing.alignment_template_id not in _SUPPORTED_ALIGNMENT_TEMPLATES:
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares alignment template "
+            f"{preprocessing.alignment_template_id!r}; this pipeline implements "
+            f"{sorted(_SUPPORTED_ALIGNMENT_TEMPLATES)}"
+        )
+    if preprocessing.channel_order not in {"RGB", "BGR"}:
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares unsupported channel_order="
+            f"{preprocessing.channel_order!r} for alignment template "
+            f"{preprocessing.alignment_template_id!r}; expected 'RGB' or 'BGR'"
+        )
+    input_mean = float(getattr(preprocessing, "input_mean", 0.0))
+    if not np.isfinite(preprocessing.input_scale):
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares non-finite input_scale={preprocessing.input_scale!r}"
+        )
+    if not np.isfinite(input_mean):
+        raise UnsupportedModelPreprocessingError(f"model {model_name!r} declares non-finite input_mean={input_mean!r}")
+
+    return lambda crop: _bgr_to_declared_blob(
+        crop,
+        channel_order=preprocessing.channel_order,
+        input_scale=preprocessing.input_scale,
+        input_mean=input_mean,
+    )
+
+
+def decode_yunet_level(
+    cls: np.ndarray,
+    obj: np.ndarray,
+    bbox: np.ndarray,
+    kps: np.ndarray,
+    *,
+    stride: int,
+    pad_w: int,
+    pad_h: int,
+    score_threshold: float,
+) -> list[RawDetection]:
+    """Decode one YuNet FPN level into pre-NMS detections (vectorized numpy).
+
+    Score: ``sqrt(clip(cls,[0,1]) * clip(obj,[0,1]))`` — clamp both logits into
+    the unit interval before the product (FIR3-BR-02). Upper-only ``min(x,1)``
+    would keep both-negative pairs as a false positive (``sqrt(0.25)=0.5``).
+    Bbox: center/size prior decode with exp on w/h; landmarks offset by grid
+    cell. Survivors only are decoded after a score mask (no per-anchor Python
+    loop; BR-03 / REF-05 behavior-preserving).
+    """
+    cols = int(pad_w // stride)
+    rows = int(pad_h // stride)
+    expected = rows * cols
+
+    cls_v = np.asarray(cls, dtype=np.float32).reshape(-1)
+    obj_v = np.asarray(obj, dtype=np.float32).reshape(-1)
+    bbox_v = np.asarray(bbox, dtype=np.float32).reshape(-1, 4)
+    kps_v = np.asarray(kps, dtype=np.float32).reshape(-1, 10)
+
+    if cls_v.size != expected or obj_v.size != expected:
+        raise FacePipelineInputError(
+            f"YuNet level stride={stride}: expected {expected} anchors "
+            f"(pad {pad_w}x{pad_h}), got cls={cls_v.size} obj={obj_v.size}"
+        )
+    if bbox_v.shape[0] != expected or kps_v.shape[0] != expected:
+        raise FacePipelineInputError(
+            f"YuNet level stride={stride}: bbox/kps anchor count mismatch "
+            f"(bbox={bbox_v.shape[0]} kps={kps_v.shape[0]} expected={expected})"
+        )
+
+    # Clamp cls/obj to [0,1] before sqrt so both-negative never yields score>0.
+    cls_c = np.clip(cls_v, 0.0, 1.0)
+    obj_c = np.clip(obj_v, 0.0, 1.0)
+    scores = np.sqrt(cls_c * obj_c)
+    keep = np.flatnonzero(scores >= score_threshold)
+    if keep.size == 0:
+        return []
+
+    rs = keep // cols
+    cs = keep % cols
+    bb = bbox_v[keep]
+    kp = kps_v[keep]
+    sc = scores[keep]
+
+    cs_f = cs.astype(np.float32)
+    rs_f = rs.astype(np.float32)
+    cx = (cs_f + bb[:, 0]) * stride
+    cy = (rs_f + bb[:, 1]) * stride
+    w = np.exp(bb[:, 2]) * float(stride)
+    h = np.exp(bb[:, 3]) * float(stride)
+    x1 = cx - w * 0.5
+    y1 = cy - h * 0.5
+
+    lm = kp.reshape(-1, 5, 2).astype(np.float32, copy=True)
+    lm[:, :, 0] = (lm[:, :, 0] + cs_f[:, None]) * float(stride)
+    lm[:, :, 1] = (lm[:, :, 1] + rs_f[:, None]) * float(stride)
+
+    out: list[RawDetection] = []
+    for i in range(int(keep.size)):
+        out.append(
+            RawDetection(
+                bbox=np.array(
+                    [float(x1[i]), float(y1[i]), float(w[i]), float(h[i])],
+                    dtype=np.float32,
+                ),
+                landmarks=lm[i],
+                score=float(sc[i]),
+            )
+        )
+    return out
+
+
+def _box_iou_xywh_int(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    """IoU of integer xywh boxes (OpenCV Rect2i / FaceDetectorYN NMS convention)."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+    ix1, iy1 = max(ax, bx), max(ay, by)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter_w = max(0, ix2 - ix1)
+    inter_h = max(0, iy2 - iy1)
+    inter = inter_w * inter_h
+    if inter <= 0:
+        return 0.0
+    union = aw * ah + bw * bh - inter
+    if union <= 0:
+        return 0.0
+    return float(inter) / float(union)
+
+
+def nms_yunet(
+    detections: list[RawDetection],
+    *,
+    score_threshold: float,
+    nms_threshold: float,
+    top_k: int,
+) -> list[RawDetection]:
+    """Greedy NMS with FaceDetectorYN postProcess semantics (int xywh IoU, score >= thr).
+
+    Not pure ``cv2.dnn.NMSBoxes`` float-IoU / strict-``>`` score-gate parity —
+    matches the int-cast path FaceDetectorYN uses (BR-04). Float boxes are
+    retained on keep. When ≤1 candidate survives the score gate, NMS is a no-op.
+    """
+    if not detections:
+        return []
+
+    # Score gate again (FaceDetectorYN NMS also filters by score_threshold).
+    candidates = [d for d in detections if d.score >= score_threshold]
+    if len(candidates) <= 1:
+        return candidates
+
+    # Sort by score descending.
+    order = sorted(range(len(candidates)), key=lambda i: candidates[i].score, reverse=True)
+    if top_k > 0 and len(order) > top_k:
+        order = order[:top_k]
+
+    int_boxes = [
+        (
+            int(candidates[i].bbox[0]),
+            int(candidates[i].bbox[1]),
+            int(candidates[i].bbox[2]),
+            int(candidates[i].bbox[3]),
+        )
+        for i in order
+    ]
+
+    keep_order_idx: list[int] = []
+    suppressed = [False] * len(order)
+    for i in range(len(order)):
+        if suppressed[i]:
+            continue
+        keep_order_idx.append(i)
+        for j in range(i + 1, len(order)):
+            if suppressed[j]:
+                continue
+            if _box_iou_xywh_int(int_boxes[i], int_boxes[j]) > nms_threshold:
+                suppressed[j] = True
+
+    return [candidates[order[i]] for i in keep_order_idx]
+
+
+def decode_yunet_outputs(
+    outputs: dict[str, np.ndarray],
+    *,
+    pad_w: int,
+    pad_h: int,
+    score_threshold: float,
+    nms_threshold: float,
+    top_k: int,
+) -> list[RawDetection]:
+    """Full YuNet post-process: per-stride decode + NMS (pure, modelless-testable)."""
+    missing = [n for n in _YUNET_OUTPUT_NAMES if n not in outputs]
+    if missing:
+        raise FacePipelineInputError(f"YuNet outputs missing keys: {missing}")
+
+    pre_nms: list[RawDetection] = []
+    for stride in _YUNET_STRIDES:
+        pre_nms.extend(
+            decode_yunet_level(
+                outputs[f"cls_{stride}"],
+                outputs[f"obj_{stride}"],
+                outputs[f"bbox_{stride}"],
+                outputs[f"kps_{stride}"],
+                stride=stride,
+                pad_w=pad_w,
+                pad_h=pad_h,
+                score_threshold=score_threshold,
+            )
+        )
+    return nms_yunet(
+        pre_nms,
+        score_threshold=score_threshold,
+        nms_threshold=nms_threshold,
+        top_k=top_k,
+    )
+
+
+RETRY_MAX_SIDE_ENV: Final = "RECOGNITION_FACE_DETECTION_RETRY_MAX_SIDE"
+# Opt-in: one extra scaled pass when the original max side exceeds this value; 0 is OFF.
+RETRY_SCALE_MAX_SIDE: Final = 640
+RETRY_MAX_SIDES: Final = frozenset({0, RETRY_SCALE_MAX_SIDE})
+_RETRY_KNOB_MESSAGE: Final = f"{RETRY_MAX_SIDE_ENV} must be 0 (off) or {RETRY_SCALE_MAX_SIDE}"
+
+
+def resolve_retry_max_side(raw: str | None) -> int:
+    """Parse the retry knob: unset or blank is OFF; any value other than 0 or 640 fails closed."""
+    text = "" if raw is None else raw.strip()
+    if not text:
+        return 0
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise ValueError(_RETRY_KNOB_MESSAGE) from exc
+    if value not in RETRY_MAX_SIDES:
+        raise ValueError(_RETRY_KNOB_MESSAGE)
+    return value
+
+
+def _int_xywh(face: RawDetection) -> tuple[int, int, int, int]:
+    return (int(face.bbox[0]), int(face.bbox[1]), int(face.bbox[2]), int(face.bbox[3]))
+
+
+def _resize_for_retry(img: np.ndarray, max_side: int) -> tuple[np.ndarray, float, float]:
+    """Scale so the longer side is ``max_side``; sx/sy come from the rounded output sizes."""
+    h, w = img.shape[:2]
+    scale = max_side / float(max(h, w))
+    new_w = max(1, round(w * scale))
+    new_h = max(1, round(h * scale))
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return resized, new_w / float(w), new_h / float(h)
+
+
+def _project_to_original(face: RawDetection, sx: float, sy: float) -> RawDetection:
+    """Map a scaled-pass xywh box and its landmarks to original pixels; the score is unchanged."""
+    bbox = np.asarray(face.bbox, dtype=np.float64)
+    landmarks = np.asarray(face.landmarks, dtype=np.float64)
+    return RawDetection(
+        bbox=np.array([bbox[0] / sx, bbox[1] / sy, bbox[2] / sx, bbox[3] / sy], dtype=np.float32),
+        landmarks=(landmarks / np.array([sx, sy], dtype=np.float64)).astype(np.float32),
+        score=face.score,
+    )
+
+
+def _merge_scaled_rows(
+    original: list[RawDetection],
+    scaled: list[RawDetection],
+    *,
+    nms_threshold: float,
+    top_k: int,
+) -> list[RawDetection]:
+    """Return non-duplicate scaled rows in scaled-pass order; original rows are never dropped."""
+    room = len(scaled) if top_k <= 0 else max(0, top_k - len(original))
+    kept_boxes = [_int_xywh(face) for face in original]
+    accepted: list[RawDetection] = []
+    for face in scaled:
+        if len(accepted) >= room:
+            break
+        box = _int_xywh(face)
+        if any(_box_iou_xywh_int(box, kept) > nms_threshold for kept in kept_boxes):
+            continue
+        accepted.append(face)
+        kept_boxes.append(box)
+    return accepted
+
+
+def _record_scale_retry(trace: dict) -> None:
+    """Attach this call's retry lineage to the per-call tensor recorder, when one is active."""
+    recorder = getattr(_TENSOR_RECORDER, "current", None)
+    if recorder is not None:
+        recorder["input_lineage"] = {"scale_retry": trace}
+
+
+class OrtYuNetDetector:
+    """ORT CPU YuNet detector with OpenCV FaceDetectorYN post-process semantics.
+
+    Batch API: ``detect(images) -> list[list[RawDetection]]``.
+    Defaults match ``OpenCVYuNetDetector`` (score 0.9, nms 0.3, top_k 5000).
+
+    ``initial_input_size`` is accepted for kwargs parity with
+    ``OpenCVYuNetDetector`` (BR-07). ORT sets input size per image via padding;
+    the value is not used to configure a native detector.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_name: str = "yunet",
+        models_dir: Path | None = None,
+        score_threshold: float = DEFAULT_SCORE_THRESHOLD,
+        nms_threshold: float = DEFAULT_NMS_THRESHOLD,
+        top_k: int = DEFAULT_TOP_K,
+        initial_input_size: tuple[int, int] = DEFAULT_INPUT_SIZE,
+        verified_artifact: VerifiedModelBytes | None = None,
+        acquire_verified: bool = False,
+        retry_max_side: int = 0,
+    ) -> None:
+        if retry_max_side not in RETRY_MAX_SIDES:
+            raise ValueError(_RETRY_KNOB_MESSAGE)
+        artifact = _constructor_artifact(model_name, models_dir, verified_artifact, acquire_verified)
+        model_path = load_verified_model(model_name, models_dir=models_dir) if artifact is None else None
+        self._verified_artifact = artifact
+        self._model_name = model_name
+        self._model_path = model_path
+        self._score_threshold = float(score_threshold)
+        self._nms_threshold = float(nms_threshold)
+        self._top_k = int(top_k)
+        self._retry_max_side = int(retry_max_side)
+        # Accepted for DI/factory kwargs parity; per-image pad resets size (BR-07).
+        self._initial_input_size = (int(initial_input_size[0]), int(initial_input_size[1]))
+        self._session = _ort_session(model_path if artifact is None else artifact.model_bytes)
+        self._input_name = self._session.get_inputs()[0].name
+        # Cache output names once (BR-03) — do not re-fetch inside detect loop.
+        self._output_names: tuple[str, ...] = tuple(o.name for o in self._session.get_outputs())
+        out_names = set(self._output_names)
+        missing = [n for n in _YUNET_OUTPUT_NAMES if n not in out_names]
+        if missing:
+            raise FacePipelineInputError(f"YuNet ONNX missing expected outputs {missing}; got {sorted(out_names)}")
+
+        if artifact is not None:
+            self._session_metadata = _verified_session_metadata(self._session)
+
+    @property
+    def score_threshold(self) -> float:
+        return self._score_threshold
+
+    @property
+    def nms_threshold(self) -> float:
+        return self._nms_threshold
+
+    @property
+    def top_k(self) -> int:
+        return self._top_k
+
+    @property
+    def retry_max_side(self) -> int:
+        return self._retry_max_side
+
+    def detect(self, images: Sequence[np.ndarray]) -> list[list[RawDetection]]:
+        """Detect faces in a batch of BGR images (same contract as OpenCV path)."""
+        results: list[list[RawDetection]] = []
+        for i, image in enumerate(images):
+            img = _ensure_bgr_u8(image, label=f"images[{i}]")
+            results.append(self._detect_image(img))
+        return results
+
+    def _detect_image(self, img: np.ndarray) -> list[RawDetection]:
+        faces, _ = self._run_pass(img)
+        if not self._retry_max_side or max(img.shape[:2]) <= self._retry_max_side:
+            return faces
+        # Exactly one extra pass, and only when the original max side exceeds the scale.
+        resized, sx, sy = _resize_for_retry(img, self._retry_max_side)
+        scaled, input_shape = self._run_pass(resized)
+        accepted = _merge_scaled_rows(
+            faces,
+            [_project_to_original(face, sx, sy) for face in scaled],
+            nms_threshold=self._nms_threshold,
+            top_k=self._top_k,
+        )
+        trace = {
+            "kind": "scale_retry_pass",
+            "max_side": self._retry_max_side,
+            "original_wh": [int(img.shape[1]), int(img.shape[0])],
+            "resized_wh": [int(resized.shape[1]), int(resized.shape[0])],
+            "scale_xy": [sx, sy],
+            "interpolation": "INTER_AREA",
+            "resized_bgr_sha256": hashlib.sha256(resized.tobytes()).hexdigest(),
+            "pass2_input_shape": list(input_shape),
+            "pass2_candidates": len(scaled),
+            "accepted_new": len(accepted),
+        }
+        _record_scale_retry(trace)
+        return faces + accepted
+
+    def _run_pass(self, img: np.ndarray) -> tuple[list[RawDetection], tuple[int, ...]]:
+        padded, pad_w, pad_h = _pad_to_divisor(img)
+        blob = _bgr_to_nchw_float(padded)
+        _capture_tensor("detector", blob, padding_geometry={"height": pad_h, "width": pad_w, "source_shape": tuple(img.shape)})
+        raw_outs = self._session.run(None, {self._input_name: blob})
+        outputs = dict(zip(self._output_names, raw_outs, strict=False))
+        faces = decode_yunet_outputs(
+            outputs,
+            pad_w=pad_w,
+            pad_h=pad_h,
+            score_threshold=self._score_threshold,
+            nms_threshold=self._nms_threshold,
+            top_k=self._top_k,
+        )
+        return faces, tuple(int(v) for v in blob.shape)
+
+
+class OrtSFaceEmbedder:
+    """ORT CPU face embedder with manifest-selected preprocessing.
+
+    Batch API: ``embed(crops) -> (N, dim)`` L2-normalized float32.
+    Crops must be 112×112×3 BGR. Dim from manifest (rg-015). Zero-norm raises.
+    Validation/normalization lives in ``_common.embed_batch`` (shared with OpenCV).
+    """
+
+    def __init__(
+        self,
+        *,
+        model_name: str = "sface",
+        models_dir: Path | None = None,
+        verified_artifact: VerifiedModelBytes | None = None,
+        acquire_verified: bool = False,
+    ) -> None:
+        self._model_name = model_name
+        artifact = _constructor_artifact(model_name, models_dir, verified_artifact, acquire_verified)
+        self._verified_artifact = artifact
+        if artifact is None:
+            self.embedding_dim = resolve_embedding_dim(model_name)
+            self._blob_builder = _blob_builder_for_model(model_name)
+            model_path = load_verified_model(model_name, models_dir=models_dir)
+            self._model_path = model_path
+            self._session = _ort_session(model_path)
+        else:
+            self.embedding_dim = artifact.manifest_snapshot.embedding_dim
+            self._blob_builder = _blob_builder_for_model(model_name, entry=artifact.manifest_snapshot)
+            self._model_path = None
+            self._session = _ort_session(artifact.model_bytes)
+            self._session_metadata = _verified_session_metadata(self._session)
+        self._input_name = self._session.get_inputs()[0].name
+
+    def _feature(self, crop: np.ndarray) -> np.ndarray:
+        """Raw model feature for one validated 112×112 BGR crop (hookable in tests)."""
+        blob = self._blob_builder(crop)
+        _capture_tensor("embedder", blob, channel_samples=tuple(float(v) for v in blob[0, :, 0, 0]))
+        out = self._session.run(None, {self._input_name: blob})[0]
+        raw = np.asarray(out, dtype=np.float32).reshape(-1)
+        _capture_tensor("raw", raw, dimension=int(raw.size), norm=float(np.linalg.norm(raw)))
+        return raw
+
+    def embed(self, crops: Sequence[np.ndarray]) -> EmbedBatchResult:
+        """Embed a batch of 112×112×3 BGR crops → EmbedBatchResult (vectors + pre-norm norms)."""
+        return embed_batch(
+            crops,
+            feature_fn=self._feature,
+            embedding_dim=self.embedding_dim,
+        )
+
+
+__all__ = [
+    "OrtSFaceEmbedder",
+    "OrtYuNetDetector",
+    "UnsupportedModelPreprocessingError",
+    "decode_yunet_level",
+    "decode_yunet_outputs",
+    "nms_yunet",
+]

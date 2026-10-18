@@ -1,0 +1,250 @@
+{
+  "lane": "tc-26",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "scripts/deploy/tests/test_check_gpu_snapshots_shell.py",
+      "verdict": "SPEED",
+      "tests_total": 10,
+      "tests_affected": [
+        "test_make_transport_does_not_hide_a_missing_checker_producer",
+        "test_make_gate_names_a_missing_digest_tool_before_opening_ssh",
+        "test_make_outer_deadline_terminates_a_post_connection_stall",
+        "test_check_gpu_snapshots_shell_suite"
+      ],
+      "reason": "These four process-heavy checks launch make or the full shell suite, whose seven make startups are documented as costing about 70–120 seconds per run.",
+      "evidence": "scripts/deploy/tests/test_check_gpu_snapshots_shell.py:27 - documents seven make startups and the measured warm/cold suite cost; lines 228, 272, 310, and 348 launch make or the shell suite.",
+      "subject": "scripts/deploy/check-gpu-snapshots.sh and recognition-service.sh live GPU snapshot transport",
+      "duplicate_of": "",
+      "canon": ["TEST-24"],
+      "replacement": "Keep the quick protocol/config checks in commit-stage pytest and move these four make/shell integration cases to the later deploy gate.",
+      "est_seconds_saved": 70,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/deploy/tests/test_cicd_runbook_least_privilege.py",
+      "verdict": "KEEP",
+      "tests_total": 5,
+      "tests_affected": [
+        "test_runbook_requires_the_narrow_ci_grant",
+        "test_runbook_does_not_present_the_wildcard_as_sufficient",
+        "test_runbook_names_the_wildcard_blast_radius",
+        "test_runbook_documents_a_machine_checked_policy_test",
+        "test_runbook_names_the_save_action_as_the_enforcement_point"
+      ],
+      "reason": "These checks protect operator-facing deployment instructions and the Tailscale policy test that rejects an unsafe wildcard grant.",
+      "evidence": "docs/runbooks/deploy-recognition-cicd.md:48 - requires the tag:ci to tag:oci-vm TCP/22 grant and describes the policy-save denial checks at lines 67–79.",
+      "subject": "docs/runbooks/deploy-recognition-cicd.md Tailscale setup contract",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "Keep the current runbook assertions.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/deploy/tests/test_compose_pg_headroom_mount.py",
+      "verdict": "SPEED",
+      "tests_total": 2,
+      "tests_affected": ["test_read_only_mounts_do_not_hide_uncreated_nested_mountpoints"],
+      "reason": "This repository-wide nested-mount guard recursively walks deploy and systemd trees and reads each candidate file on every run.",
+      "evidence": "scripts/deploy/tests/test_compose_pg_headroom_mount.py:86 - `_host_creation_sources` uses `rglob` over both production trees before checking nested mount destinations.",
+      "subject": "apps/prototype-description-service/docker-compose.env.yml bind-mount and host-directory contract",
+      "duplicate_of": "",
+      "canon": ["TEST-24"],
+      "replacement": "Move the scan to a static lint target with an explicit set of mount-creator files; keep the direct Compose path assertion in the fast suite.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/deploy/tests/test_deploy_sha_pin.py",
+      "verdict": "REWRITE",
+      "tests_total": 9,
+      "tests_affected": ["test_only_pin_deploy_sha_resolves_git_ref"],
+      "reason": "This one test parses source text to constrain where a private helper calls git instead of checking the pinned SHA through deployment behavior.",
+      "evidence": "scripts/deploy/tests/test_deploy_sha_pin.py:91 - regexes all source `rev-parse` calls and asserts one falls inside `pin_deploy_sha`.",
+      "subject": "scripts/deploy/recognition-service.sh pin_deploy_sha and preflight_branch_synced",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-12"],
+      "replacement": "Use a fake git executable with the existing deployment driver to observe ref resolution through pin_deploy_sha; the head-move test already checks that the resolved SHA remains in use.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/deploy/tests/test_deploy_snapshot.py",
+      "verdict": "REWRITE",
+      "tests_total": 8,
+      "tests_affected": [
+        "test_dispatch_materializes_only_shipping_commands_after_sha_pin",
+        "test_gpu_gate_inputs_come_from_snapshot"
+      ],
+      "reason": "These two tests inspect recognition-service source ordering and obsolete path strings, even though the surrounding snapshot behavior can be observed through a deployment driver.",
+      "evidence": "scripts/deploy/tests/test_deploy_snapshot.py:238 - parses dispatch source to assert call order; line 260 reads source to reject old asset paths.",
+      "subject": "scripts/deploy/recognition-service.sh snapshot materialization and command dispatch",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-12"],
+      "replacement": "Exercise the normal command dispatcher with fake git/archive/docker tools and assert which snapshot files reach the build and GPU gate after the live tree changes.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_clusterverif_1.py",
+      "verdict": "MERGE",
+      "tests_total": 4,
+      "tests_affected": [
+        "test_accepts_real_webp_in_ordinary_and_guided_seed",
+        "test_rejects_invalid_content",
+        "test_preserves_bundle_rules",
+        "test_rejects_webp_disguised_as_jpeg"
+      ],
+      "reason": "The verifier still enforces live image-content, manifest, provenance, and bundle behavior, and its cases belong in the stable guided-seed contract suite.",
+      "evidence": "scripts/deploy/tests/test_dw2_clusterverif_1.py:55 - runs verify-clustering-seed.sh against valid WebP, invalid content, and damaged bundle fixtures.",
+      "subject": "infra/oci/demo/tests/verify-clustering-seed.sh image and seed-bundle validation",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Move these verifier cases into scripts/deploy/tests/test-guided-seed.sh, which already sets up and exercises both the guided selector and clustering verifier.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_enablepubl_1.py",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": ["test_host_runner_refuses_remote_site_before_mutating_local_wordpress"],
+      "reason": "This live safety regression uses the same WordPress guide runner seam as the canonical enable-public-guide test module.",
+      "evidence": "scripts/deploy/tests/test_dw2_enablepubl_1.py:9 - asserts remote SITE_URL refusal occurs before WordPress, curl, or mutation side effects.",
+      "subject": "scripts/deploy/enable-public-guide.sh host runner safety",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Move the remote-target guard case into scripts/deploy/tests/test_enable_public_guide.py alongside the other runner-selection tests.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_exportgpue_1.py",
+      "verdict": "MERGE",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_audit_capture_fails_closed_at_the_page_limit",
+        "test_audit_capture_enforces_byte_limit_while_streaming",
+        "test_audit_capture_enforces_wall_clock_limit"
+      ],
+      "reason": "All three live audit-capture limit regressions belong beside the exporter’s stable shell contract tests; the wall-clock case also uses a real three-second sleeper.",
+      "evidence": "scripts/deploy/tests/test_dw2_exportgpue_1.py:71 - launches a fake OCI command that sleeps three seconds to exercise a one-second capture limit.",
+      "subject": "scripts/deploy/lib/export-gpu-evidence.sh bounded OCI audit capture",
+      "duplicate_of": "",
+      "canon": ["TEST-24"],
+      "replacement": "Merge all three cases into scripts/deploy/tests/test_export_gpu_evidence_shell.py and replace the sleeping fake OCI process with an injected clock or immediate timeout fake.",
+      "est_seconds_saved": 1,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_1.py",
+      "verdict": "MERGE",
+      "tests_total": 10,
+      "tests_affected": [
+        "test_redacts_yaml_secret_block_contents",
+        "test_redacts_curl_and_wget_user_credentials",
+        "test_redacts_unquoted_values_through_whitespace",
+        "test_redacts_json_secret_scalar_on_following_line",
+        "test_render_unit_enables_vault_bootstrap_only_for_oci_vault",
+        "test_vault_unit_install_refuses_missing_bootstrap_hook",
+        "test_vault_unit_install_enables_bootstrap_hook_when_present",
+        "test_env_unit_install_does_not_probe_vault_hook",
+        "test_sticky_env_ship_clamps_mode_to_0600",
+        "test_sticky_env_restore_clamps_mode_to_0600"
+      ],
+      "reason": "These live diagnostic-redaction, service-unit, and sticky image-repository regressions belong with their stable sanitizer and recognition-deploy suites.",
+      "evidence": "scripts/deploy/tests/test_dw2_recognitio_1.py:41 - asserts secret removal; lines 133 and 206 exercise vault hook installation and 0600 environment-file modes.",
+      "subject": "scripts/deploy/recognition-service.sh diagnostic sanitization, unit installation, and image-repository ownership",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Move the four sanitizer cases to test_sanitize_deploy_diagnostic.py and the unit-install/sticky-mode cases to test_recognition_deploy.py.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_2.py",
+      "verdict": "MERGE",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_lease_ttl_covers_restart_probes_and_gpu_gate_timeouts",
+        "test_model_preflight_sanitizes_combined_ssh_diagnostic",
+        "test_sanitizer_works_without_gnu_sed_case_insensitive_flag"
+      ],
+      "reason": "The lease-bound and sanitized-diagnostic behaviors remain live and belong with the stable lease and diagnostic test modules.",
+      "evidence": "scripts/deploy/tests/test_dw2_recognitio_2.py:62 - checks a calculated lease floor; lines 71 and 100 exercise SSH diagnostic sanitization and a BSD-sed-compatible path.",
+      "subject": "scripts/deploy/recognition-service.sh lease TTL calculation and model-preflight diagnostics",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Move the lease-floor case to test_deploy_env_lease.py and the two diagnostic cases to test_sanitize_deploy_diagnostic.py; keep the BSD-sed case on the preflight seam rather than extracting the helper body.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_5.py",
+      "verdict": "MERGE",
+      "tests_total": 4,
+      "tests_affected": [
+        "test_reported_quoted_secret_and_literal_canaries",
+        "test_c1_controls_removed_without_corrupting_utf8",
+        "test_ship_lease_covers_remote_build",
+        "test_lost_lease_prevents_remote_build"
+      ],
+      "reason": "The UTF-8 and lease checks are live additions for canonical suites, while the quoted-secret canary function repeats the shared tables and exact-output assertions already in the sanitizer suite.",
+      "evidence": "scripts/deploy/tests/test_dw2_recognitio_5.py:16 - imports the canonical sanitizer tables/helper; scripts/deploy/tests/test_sanitize_deploy_diagnostic.py:322 and 386 assert those same tables byte-for-byte.",
+      "subject": "scripts/deploy/recognition-service.sh diagnostic sanitizer and remote-build lease",
+      "duplicate_of": "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_sanitize_deploy_diagnostic_gr101_107_canaries; scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_sanitize_deploy_diagnostic_gr108_141_144_canaries",
+      "canon": ["REF-10"],
+      "replacement": "Move the C1/UTF-8 case to test_sanitize_deploy_diagnostic.py and lease cases to test_deploy_env_lease.py; omit the quoted-secret canary function because the canonical parametrized tests already run its shared cases.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_selectguid_1.py",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": ["test_webp_source_keeps_webp_extension_and_manifest_entry"],
+      "reason": "This live selector regression checks the guided-seed output contract and belongs in its stable shell suite.",
+      "evidence": "scripts/deploy/tests/test_dw2_selectguid_1.py:13 - runs select-guided-seed.sh and checks source bytes, the retained WebP extension, and the generated manifest.",
+      "subject": "infra/oci/demo/seed/select-guided-seed.sh output naming and manifest",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Fold the source-byte assertion into scripts/deploy/tests/test-guided-seed.sh beside its existing WebP extension and manifest assertions.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_syncdemo_1.py",
+      "verdict": "REWRITE",
+      "tests_total": 3,
+      "tests_affected": [
+        "test_failed_caddy_copy_restores_the_previous_file",
+        "test_promoted_caddyfile_is_validated_after_the_in_place_copy",
+        "test_failed_container_checksum_takes_the_force_recreate_path"
+      ],
+      "reason": "The live rollback and validation checks execute extracted remote heredoc bodies instead of observing the sync-demo command through its normal boundary.",
+      "evidence": "scripts/deploy/tests/test_dw2_syncdemo_1.py:14 - `_remote_body` parses a private heredoc from sync-demo.sh and runs that extracted text directly.",
+      "subject": "scripts/deploy/sync-demo.sh Caddy promotion, validation, and recovery",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-12"],
+      "replacement": "Move these cases to test_sync_demo_preflight.py and invoke the normal sync-demo command with fake SSH/docker tools, asserting remote files and recovery effects through the command boundary.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_syncrestore_1.py",
+      "verdict": "REWRITE",
+      "tests_total": 1,
+      "tests_affected": ["test_failed_caddyfile_restore_retains_rollback_copy"],
+      "reason": "This live rollback guarantee is tested by extracting and invoking the private restore_caddyfile function body directly.",
+      "evidence": "scripts/deploy/tests/test_dw2_syncrestore_1.py:15 - `_remote_body` extracts the remote heredoc and the test then regex-extracts restore_caddyfile for direct execution.",
+      "subject": "scripts/deploy/sync-demo.sh Caddyfile restoration after failed promotion",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-12"],
+      "replacement": "Merge the rollback scenario into test_sync_demo_preflight.py and invoke it through the normal sync-demo command with fake SSH/copy tools, observing that the prior file and rollback copy remain available.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    }
+  ],
+  "fixtures": []
+}

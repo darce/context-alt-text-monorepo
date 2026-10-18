@@ -1,0 +1,105 @@
+{
+  "lane": "ta-dw2misc",
+  "base": "5f195fa928ab2863a6915124ba9d8a2879e45594",
+  "baseline": {
+    "command": ".venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_dw2_enablepubl_1.py scripts/deploy/tests/test_dw2_exportgpue_1.py --durations=15",
+    "result": "PASS: 5 passed, 0 failed in 3.98s (four named functions; guide has two parameters). Slowest calls: wall-clock 1.72s; page limit 0.95s; streaming byte limit 0.57s; guide host 0.16s; guide default 0.04s. Lane gate: 26 passed in 11.38s. Interpreter resolved from lane root. Import-origin control skipped: owned path is a JSON report and these shell-command tests exercise no lane-owned importable Python package. Observed checkout base differs from dispatch commit 773138f240b3c38511cb26b8e51a0e0253d8f4b1; this report adjudicates files at the recorded actual HEAD."
+  },
+  "items": [
+    {
+      "path": "scripts/deploy/tests/test_dw2_enablepubl_1.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_host_runner_refuses_remote_site_before_mutating_local_wordpress"
+      ],
+      "target": "scripts/deploy/tests/test_enable_public_guide.py",
+      "seam": "scripts/deploy/enable-public-guide.sh:CLI (--site-url, ACX_WP_RUNNER)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_enablepubl_1.py",
+            "scripts/deploy/tests/test_enable_public_guide.py"
+          ],
+          "do": "Move the complete parametrized test into scripts/deploy/tests/test_enable_public_guide.py::test_host_runner_refuses_remote_site_before_mutating_local_wordpress beside the runner tests, reuse the existing local _run/_log/_mutations helpers, and delete the source module. Retain both None and host parameters and all return-code, diagnostic, command-log and mutation assertions. No duplicate test can be removed: test_host_runner_reachable_via_acx_wp_runner tests successful local host selection, not remote refusal. Expected collected count remains two cases; suite time approximately unchanged (0.20s combined baseline calls). Run the target module and check collection after the move.",
+          "red_proof": "Implementation lane must temporarily bypass the remote-host refusal at enable-public-guide.sh:238-240 and show both moved parameters fail; restore production afterward. Also temporarily move refusal after a WordPress mutation and show the no-side-effect assertions fail. These are required future mutation proofs, not proofs run by this report-only lane.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_enablepubl_1.py:5 - Imports test harness helpers from the proposed target; this is not access to private production logic.",
+        "scripts/deploy/tests/test_dw2_enablepubl_1.py:8 - Two runner parameters exercise the same public command safety guard.",
+        "scripts/deploy/tests/test_dw2_enablepubl_1.py:13 - Runs the shell CLI against a remote SITE_URL.",
+        "scripts/deploy/tests/test_dw2_enablepubl_1.py:16 - Requires exit 2, refusal diagnostic, no mutations, no wp invocation and no curl invocation.",
+        "scripts/deploy/tests/test_enable_public_guide.py:250 - Shared harness launches the complete operator script via subprocess, with external-tool stubs.",
+        "scripts/deploy/tests/test_enable_public_guide.py:481 - Existing target host-runner test proves successful selection; it does not duplicate remote-target rejection.",
+        "scripts/deploy/tests/test_enable_public_guide.py:499 - Missing-runner refusal is a distinct precondition, not a duplicate.",
+        "scripts/deploy/enable-public-guide.sh:238 - Production remote-host guard precedes curl and mutations.",
+        "Tracked and hidden-file searches of *.py, *.mk, Makefile, *.json and *.toml excluding docs/workbay/reports found no source-module references or pins requiring updates. MOVE is worthwhile because it removes the review-wave module filename."
+      ],
+      "canon": [
+        "DBG-02",
+        "REF-10",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_exportgpue_1.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_audit_capture_fails_closed_at_the_page_limit",
+        "test_audit_capture_enforces_byte_limit_while_streaming",
+        "test_audit_capture_enforces_wall_clock_limit"
+      ],
+      "target": "scripts/deploy/tests/test_export_gpu_evidence_shell.py",
+      "seam": "scripts/deploy/lib/export-gpu-evidence.sh:CLI (--out, OCI_BIN, EVIDENCE_AUDIT_CAPTURE_MAX_BYTES, EVIDENCE_AUDIT_CAPTURE_MAX_SECONDS)",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_exportgpue_1.py",
+            "scripts/deploy/tests/test_export_gpu_evidence_shell.py"
+          ],
+          "do": "Move _run_export and all three tests unchanged to scripts/deploy/tests/test_export_gpu_evidence_shell.py::test_audit_capture_fails_closed_at_the_page_limit, ::test_audit_capture_enforces_byte_limit_while_streaming and ::test_audit_capture_enforces_wall_clock_limit; delete the source module. The target already imports the necessary modules and runs the same full exporter CLI. Retain the fake external OCI process, page/byte/time configurations, failure diagnostics and absent-bundle assertions. No duplicate guard is removed. Narrow the proposal to relocation: keep the one-second configured deadline and three-second sleeper until an independent deterministic design proves the same deadline regression. Expected collected count remains three; suite time approximately unchanged (3.24s combined calls, including 1.72s wall-clock case); the exporter kills the sleeper at its deadline rather than waiting all three seconds. Run the target module and compare collected node IDs after moving.",
+          "red_proof": "Implementation lane must independently raise the page limit above 1000, bypass the streaming byte-limit failure, and ignore the configured max_seconds in favor of the 120-second default; each corresponding moved test must fail, then restore production. The wall-clock mutation must still launch a real fake OCI child that eventually emits valid empty events, so loss of the configured deadline produces successful capture and a failing assertion. Required future mutation proofs; none executed in this report-only lane.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_exportgpue_1.py:13 - Harness creates an external OCI executable and runs the complete public exporter CLI at lines 26-31; no sliced body, private production helper, or source-text assertion.",
+        "scripts/deploy/tests/test_dw2_exportgpue_1.py:34 - Page-limit case supplies 1000 events and rejects non-bounded/all-pages requests through the fake external OCI tool; lines 49-51 require failure, diagnostic and absent output.",
+        "scripts/deploy/tests/test_dw2_exportgpue_1.py:54 - Byte-limit case streams 4096 bytes with configured 512-byte limit; lines 66-68 require failure, limit diagnostic and absent output.",
+        "scripts/deploy/tests/test_dw2_exportgpue_1.py:71 - Wall-clock case uses a three-second external-tool sleeper and a one-second configured capture limit; lines 85-87 require failure, deadline diagnostic and absent output.",
+        "scripts/deploy/tests/test_export_gpu_evidence_shell.py:18 - Target has the same full exporter command and bundle-output seam.",
+        "scripts/deploy/tests/test_export_gpu_evidence_shell.py:78 - Target wraps the shell contract suite; its direct tests cover lock/publication/recovery, not duplicate audit-limit regressions.",
+        "scripts/deploy/lib/export-gpu-evidence.sh:763 - Real capture computes a monotonic deadline from configured max_seconds.",
+        "scripts/deploy/lib/export-gpu-evidence.sh:775 - Selector waits for remaining budget; empty events directly produce deadline failure. An immediate empty-events fake would remain green if remaining budget were accidentally extended, losing the current configured-deadline guard (TEST-15).",
+        "scripts/deploy/lib/export-gpu-evidence.sh:799 - Process completion is also bounded by the remaining deadline; a fake OCI exit 124 alone would not produce the exporter-owned timeout diagnostic.",
+        "scripts/deploy/lib/export-gpu-evidence.sh:804 - Timeout kills the external process group, explaining why measured duration is shorter than the three-second sleeper.",
+        "A new production clock seam solely to accelerate this test has no demonstrated second use (REF-12); the proposed test already uses a public seam, so TEST-12/TEST-16 rewrite prerequisites do not hold. TEST-08/TEST-24 motivate future independent timing work but do not justify weakening deadline coverage or slicing production code.",
+        "Tracked and hidden-file searches of *.py, *.mk, Makefile, *.json and *.toml excluding docs/workbay/reports found no source-module references or pins requiring updates. MOVE removes the review-wave module filename."
+      ],
+      "canon": [
+        "DBG-02",
+        "REF-10",
+        "TEST-12",
+        "TEST-16",
+        "TEST-15",
+        "TEST-19",
+        "TEST-08",
+        "TEST-24",
+        "REF-12",
+        "REF-05"
+      ],
+      "risk": "high"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "lane": "cull-scene-1",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 39,
+  "tests_in_partition": 1284,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/scene/tests/test_describe_async_worker.py::test_worker_module_importable",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/scene/tests/test_describe_async_worker.py::test_worker_records_cpu_provisional_then_gpu_final",
+      "evidence": "apps/prototype-description-service/scene/tests/test_describe_async_worker.py:191 - import-only test; apps/prototype-description-service/scene/tests/test_describe_async_worker.py:200,210,223 - covering test imports and invokes the same symbol, then asserts COMPLETED status.",
+      "canon": "TEST-11",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

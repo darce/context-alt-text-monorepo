@@ -1,0 +1,458 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>6 JavaScript</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_133" role="doc-pagebreak" title="133"/><a id="c03"/><span class="chapterNumber">6</span><br/><span class="chapterTitle">JavaScript</span></h1>
+</header>
+<section><span id="c03-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c03-list-0001">
+<li id="c03-li-0001">Introduction to JavaScript</li>
+<li id="c03-li-0002">Registering scripts</li>
+<li id="c03-li-0003">Enqueueing scripts</li>
+<li id="c03-li-0004">Limiting scope</li>
+<li id="c03-li-0005">Localizing scripts</li>
+<li id="c03-li-0006">Inline scripts</li>
+<li id="c03-li-0007">Overview of bundled scripts</li>
+<li id="c03-li-0008">Polyfills</li>
+<li id="c03-li-0009">Your custom scripts</li>
+<li id="c03-li-0010">Old reliable: jQuery</li>
+<li id="c03-li-0011">Middle reliable: Backbone and Underscore</li>
+<li id="c03-li-0012">New reliable: React</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c03-para-0003">In the first edition of this book, we wrote that JavaScript is “principally a language used to code plain‐text script executed on the client side, that is, the browser.” Since then, JavaScript has exploded into one of the world's most popular programming languages, and that statement is no longer completely accurate.</p>
+<p id="c03-para-0004">JavaScript can be used to power a web server using Node, and the web is now full of rich and powerful tooling that is pushing the boundaries of what is possible in‐browser. Even the bulk of the latest and greatest block‐based content editor is coded using nearly nothing but JavaScript.</p>
+<p id="c03-para-0005"><span epub:type="pagebreak" id="Page_134" role="doc-pagebreak" title="134"/>This chapter covers best practices for getting your JavaScript files registered and enqueued inside WordPress. It will educate you on what JavaScript comes bundled with WordPress, including some oldies but goodies. It will help prepare you for the next chapter, which will put everything you've learned across multiple chapters to work using Gutenberg, the block‐based editing experience included in the latest versions of WordPress.</p>
+<p>When it comes to JavaScript in WordPress, remember this:</p>
+<ul class="none" id="c03-list-0002">
+<li id="c03-li-0013"><i>Always register. Conditionally enqueue</i>.</li>
+</ul>
+</section>
+<section><span id="c03-sec-0002"/>
+<h2 id="head-2-42">REGISTERING SCRIPTS</h2>
+<p id="c03-para-0007">WordPress expects all JavaScript files to be registered. Registering prevents multiple plugins from including duplicates of the same JavaScript libraries multiple times and also just generally helps you keep track of all the JavaScript you are packaging inside your WordPress plugins (which can sometimes be a lot!).</p>
+<p id="c03-para-0008">Registering is simply announcing that some unique JavaScript file exists so that it can be easily included in the correct order later. Many things in WordPress are registered before they are used. Things like Post Types and Taxonomies are good examples of things we've already touched on in this book, and JavaScript is no different.</p>
+<p id="c03-para-0009">At the time of this writing, the official WordPress documentation considers registering your JavaScript files as optional, but we strongly recommend you consider it a requirement for everything you do. Even if you decide to skip this step and jump ahead to enqueueing, if you enqueue something that isn't registered, it does the registration just‐in‐time for you anyway. Do it yourself, and you'll be glad you did.</p>
+<p id="c03-para-0010">You can register your custom JavaScript files anytime in your loading or bootstrapping process. We recommend doing this relatively early, like on the <code>plugins_loaded</code> or <code>init</code> action hook, because if they are registered too late, it makes it difficult for other plugins to use your JavaScript reliably.</p>
+<p>Register your JavaScript via the <code>wp_register_script()</code> function, like so:</p>
+<pre id="c03-code-0001"><code>/**</code>
+<code> * Register a script</code>
+<code> */</code>
+<code>function pdev_register_scripts() {</code>
+<code>       wp_register_script(</code>
+<code>             'pdev-your-script-id',                    // Unique name</code>
+<code>             plugin_dir_url( __FILE__ ) . 'your.js',   // URL to the file</code>
+<code>             array(),                                  // Dependencies</code>
+<code>             '1.0.0',                                  // Version</code>
+<code>             true                                      // Output in Footer</code>
+<code>       );</code>
+<code>}</code>
+<code>add_action( 'init', 'pdev_register_scripts' );</code></pre>
+<p>You can also similarly deregister a script if you need to:</p>
+<pre id="c03-code-0002"><code>/**</code>
+<code> * Deregister a script<span epub:type="pagebreak" id="Page_135" role="doc-pagebreak" title="135"/></code>
+<code> */</code>
+<code>function pdev_deregister_scripts() {</code>
+<code>       wp_deregister_script( 'pdev-your-script-id' );</code>
+<code>}</code>
+<code>add_action( 'init', 'pdev_deregister_scripts' );</code></pre>
+<p id="c03-para-0013">We recommend registering each of your unique JavaScript files (and to avoid using the JavaScript <code>@import</code> approach) because it will always be better for WordPress to be aware of your JavaScript intentions, plus it helps you better organize all of the JavaScript you will likely be writing and working with in your professional plugins going forward.</p>
+<p id="c03-para-0014">It is still possible to write inline JavaScript, but it is highly recommended you avoid going this route in your professional plugins and stick to registering them. If you're considering just dumping some <code>&lt;script&gt;</code> tags into your post content or <code>&lt;head&gt;</code>, please reconsider refactoring your code so that your JavaScript fits into individual files that can be registered; you will be glad you did!</p>
+</section>
+<section><span id="c03-sec-0003"/>
+<h2 id="head-2-43">ENQUEUEING SCRIPTS</h2>
+<p id="c03-para-0015">Now that you've registered your JavaScript files, it's time to enqueue them. Enqueueing is the way that WordPress manages what will end up being a somewhat complex tree of relationships between different scripts, the files they depend on, and the files that depend on them. Under the hood, it uses the <code>WP_Dependencies</code> API, which is exactly what is used when registering and enqueueing CSS.</p>
+<p id="c03-para-0016">This is also how you tell WordPress that your intention is to interact with (or include) what JavaScript on which available pages. Thanks to having registered all of your JavaScript earlier, the dependency tree will be completely managed for you!</p>
+<p id="c03-para-0017">You will typically want to enqueue your JavaScript on one of two different WordPress action hooks: <code>admin_enqueue_scripts</code> or <code>wp_enqueue_scripts</code>. The former is for admin area JavaScript, and the latter is for theme‐side JavaScript.</p>
+<p id="c03-para-0018">There are other atypical reasons and ways to enqueue your JavaScript, but we recommend avoiding them as much as you can. The added code complexity is difficult to maintain over time and will cause confusion and misunderstandings when it comes time to share your code with colleagues and with the rest of the world.</p>
+<p>You will enqueue your registered JavaScript like this:</p>
+<pre id="c03-code-0003"><code>/**</code>
+<code> * Enqueue a script</code>
+<code> */</code>
+<code>function pdev_enqueue_scripts() {</code>
+<code>       wp_enqueue_script( 'pdev-your-script-id' );</code>
+<code>}</code>
+<code>add_action( 'wp_enqueue_scripts', 'pdev_enqueue_scripts' );</code></pre>
+<p>You may also similarly dequeue a previously enqueued script.</p>
+<pre id="c03-code-0004"><code>/**</code>
+<code> * Dequeue a script</code>
+<code> */<span epub:type="pagebreak" id="Page_136" role="doc-pagebreak" title="136"/></code>
+<code>function pdev_dequeue_scripts() {</code>
+<code>       wp_dequeue_script( 'pdev-your-script-id' );</code>
+<code>}</code>
+<code>add_action( 'wp_enqueue_scripts', 'pdev_dequeue_scripts' );</code></pre>
+</section>
+<section><span id="c03-sec-0004"/>
+<h2 id="head-2-44">LIMITING SCOPE</h2>
+<p id="c03-para-0021">Now that you know how to register and enqueue your JavaScript, the next thing you'll want to do is tune it so that you are enqueueing only on the WordPress pages where it is necessary for that JavaScript to be.</p>
+<p id="c03-para-0022">This is always going to be different based on the needs of your application, but by using your best judgment and a bit of trial and error, you will find it is possible to narrow down the scope based on just about any criteria you can imagine.</p>
+<p id="c03-para-0023">WordPress includes many helper functions for identifying what kind of page is being loaded. Functions like <code>is_singular()</code>, <code>is_archive()</code>, and more can be used to tell WordPress whether your custom JavaScript should be included.</p>
+<p>In this example, you are looking for single pages with gallery shortcodes only:</p>
+<pre id="c03-code-0005"><code>/**</code>
+<code> * Enqueue only on single pages using Gallery shortcodes</code>
+<code> */</code>
+<code>function pdev_enqueue_gallery_scripts() {</code>
+<code>       if ( is_singular() &amp;&amp; has_shortcode( get_the_content(), 'gallery' ) {</code>
+<code>             wp_enqueue_script( 'pdev-your-script-id' );</code>
+<code>       }</code>
+<code>}</code>
+<code>add_action( 'wp_enqueue_scripts', 'pdev_enqueue_gallery_scripts' );</code></pre>
+</section>
+<section><span id="c03-sec-0005"/>
+<h2 id="head-2-45">LOCALIZING SCRIPTS</h2>
+<p id="c03-para-0025">When you want to take something out of PHP and make it available within your JavaScript, you need to localize it. This API gets its name from the idea that all languages (not just coding ones) are restricted to their particular fixed area, but sometimes it's necessary to translate something from one language to another.</p>
+<p id="c03-para-0026">In the normal world, the act of translating words between languages is called <i>localization</i>, so why would that be any different in the coding world? Just because you know something in PHP doesn't mean you shouldn't know it in your JavaScript too, right? Right!</p>
+<p id="c03-para-0027">Localizing allows you to bridge the gap between what variable content you can ask WordPress for in PHP and translate it into your custom JavaScript for later reuse. In this section, you will take a PHP array of keys and values and turn it into a JavaScript object of keys and values instead. Magic!</p>
+<p><span epub:type="pagebreak" id="Page_137" role="doc-pagebreak" title="137"/>In this example, we are localizing some strings and the time into our JavaScript:</p>
+<pre id="c03-code-0006"><code>/**</code>
+<code> * Enqueue only on single pages using Gallery shortcodes</code>
+<code> */</code>
+<code>function pdev_localize_scripts() {</code>
+<code>       wp_localize_script(</code>
+<code>             'pdev-your-script-id',            // Script handle from previous</code>
+<code>             'pdevScript',                     // Name of JavaScript object</code>
+<code>             array(                            // Array of properties for JS object</code>
+<code>                    'greeting' =&gt; __( 'Hello' )</code>
+<code>                    'repeat'   =&gt; __( 'Hello, again' ),</code>
+<code>                    'time'     =&gt; time()</code>
+<code>             )</code>
+<code>       );</code>
+<code>}</code>
+<code>add_action( 'wp_enqueue_scripts', 'pdev_localize_scripts' );</code></pre>
+<p id="c03-para-0029">You can include anything you need to in your array, but you'll need to remember that localization applies only to the registered and enqueued JavaScript referenced in the script handle and only by using the name of the JavaScript object as you've named it. If you have more than one file you need to localize, simply make multiple calls to <code>wp_localize_script()</code>, one for each file.</p>
+</section>
+<section><span id="c03-sec-0006"/>
+<h2 id="head-2-46">INLINE SCRIPTS</h2>
+<p id="c03-para-0030">If you must include inline scripts to accomplish your goals, you should use the <code>wp_add_inline_script()</code> function to do so. This allows you to output JavaScript directly before or after a registered JavaScript file is rendered to the page, allowing you to sneak ahead of or behind it right away, rather than needing to worry about the dependency tree of multiple JavaScript files.</p>
+<p>In many ways, you can probably get by without using this approach, but it is useful for the times when you do need to do this. A good example of this in WordPress is the <code>wp_localize_jquery_ui_datepicker()</code> function. Its job is to make sure that anytime the jQuery UI Datepicker is initialized, the date and time abbreviations for the currently selected language are set in JavaScript.</p>
+<pre id="c03-code-0007"><code>/**</code>
+<code> * Localizes the jQuery UI datepicker.</code>
+<code> *</code>
+<code> * @since 4.6.0</code>
+<code> *</code>
+<code> * @link https://api.jqueryui.com/datepicker/#options</code>
+<code> *</code>
+<code> * @global WP_Locale $wp_locale WordPress date and time locale object.</code>
+<code> */</code>
+<code>function wp_localize_jquery_ui_datepicker() {</code>
+<code>       global $wp_locale;</code>
+<code> </code>
+<code>       if ( ! wp_script_is( 'jquery-ui-datepicker', 'enqueued' ) ) {</code>
+<code>             return;</code>
+<code>       }</code>
+<code> <span epub:type="pagebreak" id="Page_138" role="doc-pagebreak" title="138"/></code>
+<code>       // Convert the PHP date format into jQuery UI's format.</code>
+<code>       $datepicker_date_format = str_replace(</code>
+<code>             array(</code>
+<code>                    'd',</code>
+<code>                    'j',</code>
+<code>                    'l',</code>
+<code>                    'z', // Day.</code>
+<code>                    'F',</code>
+<code>                    'M',</code>
+<code>                    'n',</code>
+<code>                    'm', // Month.</code>
+<code>                    'Y',</code>
+<code>                    'y', // Year.</code>
+<code>             ),</code>
+<code>             array(</code>
+<code>                    'dd',</code>
+<code>                    'd',</code>
+<code>                    'DD',</code>
+<code>                    'o',</code>
+<code>                    'MM',</code>
+<code>                    'M',</code>
+<code>                    'm',</code>
+<code>                    'mm',</code>
+<code>                    'yy',</code>
+<code>                    'y',</code>
+<code>             ),</code>
+<code>             get_option( 'date_format' )</code>
+<code>       );</code>
+<code> </code>
+<code>       $datepicker_defaults = wp_json_encode(</code>
+<code>             array(</code>
+<code>                  'closeText'       =&gt; __( 'Close' ),</code>
+<code>                  'currentText'     =&gt; __( 'Today' ),</code>
+<code>                  'monthNames'      =&gt; array_values( $wp_locale-&gt;month ),</code>
+<code>                  'monthNamesShort' =&gt; array_values( $wp_locale-&gt;month_abbrev ),</code>
+<code>                  'nextText'        =&gt; __( 'Next' ),</code>
+<code>                  'prevText'        =&gt; __( 'Previous' ),</code>
+<code>                  'dayNames'        =&gt; array_values( $wp_locale-&gt;weekday ),</code>
+<code>                  'dayNamesShort'   =&gt; array_values( $wp_locale-&gt;weekday_abbrev ),</code>
+<code>                  'dayNamesMin'     =&gt; array_values( $wp_locale-&gt;weekday_initial ),</code>
+<code>                  'dateFormat'      =&gt; $datepicker_date_format,</code>
+<code>                  'firstDay'        =&gt; absint( get_option( 'start_of_week' ) ),</code>
+<code>                  'isRTL'           =&gt; $wp_locale-&gt;is_rtl(),</code>
+<code>             )</code>
+<code>       );</code>
+<code> </code>
+<code>       wp_add_inline_script( 'jquery-ui-datepicker', </code>
+<code>       "jQuery(document).ready(function(jQuery){jQuery.datepicker.</code>
+<code>       setDefaults({$datepicker_defaults});});" );</code>
+<code>}</code></pre>
+<p id="c03-para-0032">As you can see, <code>wp_add_inline_script()</code> is particularly useful here in making sure that no matter when or why you are using the jQuery UI Datepicker library, it will always be invoked with the correct strings and settings for the chosen language.</p>
+<p id="c03-para-0033"><span epub:type="pagebreak" id="Page_139" role="doc-pagebreak" title="139"/>At the time of this writing, you should consider using this in your own plugins relatively sparingly. The majority of the time, you will have complete control over your own code, where you should be able to register, enqueue, and localize, without ever having the need to use inline JavaScript. But as the web becomes increasingly dependent on JavaScript, inline scripts are becoming increasingly popular.</p>
+<p>Here's a quick <code>console.log()</code> to show you how to do it:</p>
+<pre id="c03-code-0008"><code>/**</code>
+<code> * Inline right after your other script has been output to the page</code>
+<code> */</code>
+<code>function pdev_inline_scripts() {</code>
+<code>       wp_add_inline_script (</code>
+<code>             'pdev-your-script-id',  // Script handle from previous</code>
+<code>             'console.log("hello")'  // Your raw JavaScript</code>
+<code>       );</code>
+<code>}</code>
+<code>add_action( 'wp_enqueue_scripts', 'pdev_inline_scripts' );</code></pre>
+</section>
+<section><span id="c03-sec-0007"/>
+<h2 id="head-2-47">OVERVIEW OF BUNDLED SCRIPTS</h2>
+<p id="c03-para-0035">WordPress comes bundled with many extremely useful JavaScript libraries and tools. These tools are there to be used, and you should at all costs avoid inventing your own versions of these technologies (unless you have a specific reason to do so).</p>
+<p id="c03-para-0036">The reason so much JavaScript is bundled with WordPress is because WordPress itself uses a lot of JavaScript for many everyday functions that you may not have ultimately needed to consider. Admin area pages like Menus, the Customizer, the Media Library, and even the Dashboard all rely on JavaScript libraries to make them work.</p>
+<p id="c03-para-0037">As time goes on, many pieces of functionality are being rewritten using React, but it will be many years before jQuery is completely unplugged from WordPress Admin, likely requiring a complete ground‐up rewrite of the entire Dashboard.</p>
+<section><span id="c03-sec-0008"/>
+<h3 id="head-3-107">jQuery UI and Other Scripts</h3>
+<p id="c03-para-0038">The bulk of the bundled scripts belongs to a library called jQuery and its partner project jQuery UI. Together, these scripts account for nearly 50 different unique JavaScript files that all exist to help make many complex tasks a breeze.</p>
+<p id="c03-para-0039">The list of bundled JavaScript changes rarely, but it does regularly enough that including a comprehensive list of them here would likely be out‐of‐date relatively quickly, so rather than list them all, we'll show you how to enqueue them quickly.</p>
+<p>Let's say you want to include the jQuery UI library Sortable, because you have a need to make certain aspects of your plugin UI be able to be rearranged by the user. Thanks to the fact that all of these bundled libraries are already registered inside WordPress, you would simply need to enqueue it like so:</p>
+<pre id="c03-code-0009"><code>/**</code>
+<code> * Enqueue only on single pages using Gallery shortcodes</code>
+<code> */<span epub:type="pagebreak" id="Page_140" role="doc-pagebreak" title="140"/></code>
+<code>function pdev_enqueue_sortable_scripts() {</code>
+<code>       wp_enqueue_script( 'jquery-ui-sortable' );</code>
+<code>}</code>
+<code>add_action( 'wp_enqueue_scripts', 'pdev_enqueue_sortable_scripts' );</code></pre>
+<p id="c03-para-0041">You may have noticed that we never enqueued jQuery itself. That's because WordPress already registered it as a dependency and knows that if you want jQuery UI Sortable, it needs to include jQuery ahead of it in the first place or your Sortables will not work.</p>
+<p id="c03-para-0042">In addition to jQuery, there are multiple color pickers, image croppers, Backbone, Underscore, zxcvbn, Masonry, CodeMirror, Twemoji, and many other useful tools to help you get a jump‐start on your plugin development.</p>
+</section>
+<section><span id="c03-sec-0009"/>
+<h3 id="head-3-108">The WP Global</h3>
+<p id="c03-para-0043">The <code>wp</code> JavaScript global is a monolithic object that is used to encapsulate a ton of extremely useful utilities. Behind the scenes, WordPress has been using this global for years now as the place where it attaches most of its JavaScript‐related needs.</p>
+<p id="c03-para-0044">In recent years, this global has become the home to emoji parsing, the Heartbeat API, JavaScript Hooks, svgPainter, a11y Speak, Ajax, and many more (especially when viewing a page that uses the block‐based editor!).</p>
+<p id="c03-para-0045">There are so many utilities in there, it is impossible to document them all, so we are going to pick out a few of the more important and useful ones. At the time of this writing, there is no comprehensive documentation on most of these helpers. Your best bet to learn more today is to open your browser console in Inspector, type <b>
+<code>console.log( wp )</code></b>, and start poking around to see what is available.</p>
+<section><span id="c03-sec-0010"/>
+<h4 id="head-4-54">a11y Speak</h4>
+<p id="c03-para-0046">Accessibility and JavaScript sometimes do not play nicely together. As the web becomes more interactive—more like an application than a page—the need to announce changes in page content has arisen.</p>
+<p id="c03-para-0047">
+<code>wp.a11y.speak()</code> exists as the de facto way in WordPress to tell the user, using JavaScript, that the web page content has changed. Information is available at <code><a href="http://make.wordpress.org/accessibility/handbook/markup/wp-a11y-speak">make.wordpress.org/accessibility/handbook/markup/wp-a11y-speak</a></code>.</p>
+</section>
+<section><span id="c03-sec-0011"/>
+<h4 id="head-4-55">Escaping</h4>
+<p id="c03-para-0048">
+<code>wp.escapeHtml</code> is a polyfill that provides helper functions for escaping quotation marks, ampersands, less‐than symbols, HTML, and entire attribute values. As you start to write more React‐based JavaScript later, the need to control how your code is escaped will become an important security measure.</p>
+</section>
+<section><span id="c03-sec-0012"/>
+<h4 id="head-4-56">i18n</h4>
+<p id="c03-para-0049">
+<code>wp.i18n</code> is the utility you will use to localize the strings that are embedded inside your React‐based JavaScript files. You can now use many of the GetText‐style API function calls inside your JavaScript. We will be covering the better known PHP equivalents in <a href="c11.xhtml">Chapter 11</a>.</p>
+<p id="c03-para-0050"><span epub:type="pagebreak" id="Page_141" role="doc-pagebreak" title="141"/>This is the future of how you will be able to make your JavaScript code ready to be translated into every other language other than English. If you are going to include raw text strings in your JavaScript, we strongly encourage you to use these functions going forward to ensure that it can be localized.</p>
+</section>
+<section><span id="c03-sec-0013"/>
+<h4 id="head-4-57">Heartbeat</h4>
+<p id="c03-para-0051">
+<code>wp.heartbeat</code> is a series of function calls used to manage how routine listeners are enqueued on the current page. As the needs of your application become increasingly complex, you may have things that need to be processed in the background, or you may have application states that need to be checked every few seconds. You would use the Heartbeat API to register how often you need to check for changes and listen to it for a response.</p>
+</section>
+</section>
+</section>
+<section><span id="c03-sec-0014"/>
+<h2 id="head-2-48">POLYFILLS</h2>
+<p id="c03-para-0052">Since WordPress 5.0, polyfills exist as a way for WordPress to come bundled with fallback support for many of the JavaScript libraries that are considered to be required going forward for modern web development, in the event that something is missing or a browser does not meet certain requirements.</p>
+<p id="c03-para-0053">One example of a polyfill is React, which is a JavaScript library developed by Facebook to assist with rapidly developing reusable and interactive user interfaces. React is used extensively inside Gutenberg, as are a few dozen other of its dependencies.</p>
+<p id="c03-para-0054">You may never need to interact with these scripts directly, but it's important to understand what they are and why they exist so that when you start developing your own React components later, you know that React already exists for you here. We will be teaching you all about React in <a href="c07.xhtml">Chapter 7</a>, which covers Gutenberg!</p>
+</section>
+<section><span id="c03-sec-0015"/>
+<h2 id="head-2-49">YOUR CUSTOM SCRIPTS</h2>
+<p id="c03-para-0055">When you are writing advanced WordPress plugins, much of your time will be spent architecting, planning, and researching whether anyone has already solved the same problem that you are going to try to solve yourself. If you're lucky, something already exists, and you will be able to save some time by including their work in with yours. Otherwise, you may be on your own.</p>
+<p id="c03-para-0056">The custom JavaScript you write should be broken up into pieces much the same way that PHP files are separated out logically. This is your plugin, and you should keep your code organized and clean so that it is easy to pick up and work on later, maybe after you've forgotten a lot of what exactly is inside it today. There are dozens of open source tools available for compiling and transpiling your JavaScript, and you should feel comfortable using whichever ones meet your needs.</p>
+<p id="c03-para-0057">We recommend plugins have an <code>/assets</code> directory, with a <code>/js</code> subdirectory where all of the plugins JavaScript can live, all broken out and down into separate files as needed to maintain order within your plugin. You can always minify and compile them together later, but you can't always break everything all apart into smaller more easily managed pieces.</p>
+<p><span epub:type="pagebreak" id="Page_142" role="doc-pagebreak" title="142"/>If you are bundling third‐party libraries, create another subdirectory for them named <code>/vendor</code> underneath your <code>/js</code> directory. It is commonly understood that vendor code is code you've incorporated into your project that is outside your direct control but that your own code relies on to get the job done.</p>
+<ul class="check" id="c03-list-0003">
+<li id="c03-li-0014"><code>/your‐plugin/assets/</code></li>
+<li id="c03-li-0015"><code>/your‐plugin/assets/js/</code></li>
+<li id="c03-li-0016"><code>/your‐plugin/assets/js/vendor/</code></li>
+</ul>
+</section>
+<section><span id="c03-sec-0016"/>
+<h2 id="head-2-50">jQuery</h2>
+<p id="c03-para-0059">jQuery is the world's most popular JavaScript framework. It is used by more than 80 percent of the top million sites followed by Quantcast (source: <code><a href="http://trends.builtwith.com/javascript">trends.builtwith.com/javascript</a></code>) and is used by many different WordPress admin area pages.</p>
+<p id="c03-para-0060">There are many books on jQuery available, and since this is a WordPress book, we aren't going to go into too much detail here.</p>
+<section><span id="c03-sec-0017"/>
+<h3 id="head-3-109">Benefits of Using jQuery</h3>
+<p>What makes jQuery such a great library and the reasons why it comes with WordPress are among the following:</p>
+<ul class="check" id="c03-list-0004">
+<li id="c03-li-0017">The minified and gzipped library is only 24KB.</li>
+<li id="c03-li-0018">It uses a quick and terse syntax for faster developing.</li>
+<li id="c03-li-0019">It is completely cross‐browser compatible.</li>
+<li id="c03-li-0020">It supports all CSS selectors.</li>
+<li id="c03-li-0021">It makes events, DOM manipulation and traversing, and animations and effects all super easy.</li>
+<li id="c03-li-0022">It makes Ajax simpler, easily reading JSON and XML.</li>
+<li id="c03-li-0023">It has great documentation at <code><a href="http://docs.jquery.com">docs.jquery.com</a></code>.</li>
+</ul>
+<p id="c03-para-0062">It is possible to use any other library you'd like, but because WordPress uses jQuery for its own internal purposes, it's smart for beginners because there are many different examples already in the code base to use for your own starting‐off points.</p>
+</section>
+<section><span id="c03-sec-0018"/>
+<h3 id="head-3-110">jQuery Crash Course</h3>
+<p id="c03-para-0063">The scope of this section is not to teach you how to master this powerful JavaScript library in a few minutes but to give you some basis to read on without being completely lost, as well as WordPress‐specific information.</p> <span epub:type="pagebreak" id="Page_143" role="doc-pagebreak" title="143"/>
+<section><span id="c03-sec-0019"/>
+<h4 id="head-4-58">The jQuery Object</h4>
+<p>In vanilla JavaScript, you may have written code like this:</p>
+<pre id="c03-code-0010"><code>document.getElementById('container').getElementsByTagName('a')</code></pre>
+<p>to select elements that your CSS would call <code>#container a</code>. With jQuery, you can now simply write the following:</p>
+<pre id="c03-code-0011"><code>jQuery('#container a')</code></pre>
+</section>
+<section><span id="c03-sec-0020"/>
+<h4 id="head-4-59">Syntax and Chaining</h4>
+<p id="c03-para-0066">jQuery methods can be chained together, which will return the <code>jQuery</code> object, as you will see in the following short practical example.</p>
+<p>Create a minimalist HTML content that includes the latest jQuery script from the official website.</p>
+<pre id="c03-code-0012"><code>&lt;html&gt;</code>
+<code>&lt;head&gt;</code>
+<code>&lt;script src='http://code.jquery.com/jquery.js'&gt;&lt;/script&gt;</code>
+<code>&lt;title&gt;Quick jQuery example&lt;/title&gt;</code>
+<code>&lt;/head&gt;</code>
+<code>&lt;body&gt;</code>
+<code>&lt;p class="target"&gt;click on me!&lt;/p&gt;</code>
+<code>&lt;p class="target"&gt;click on me!&lt;/p&gt;</code>
+<code>&lt;p class="target"&gt;click on me!&lt;/p&gt;</code>
+<code>&lt;/body&gt;</code>
+<code>&lt;/html&gt;</code></pre>
+<p>Now, right before the closing <code>&lt;/body&gt;</code> tag, insert a jQuery snippet to add a background and a border to each paragraph, and that, when clicked, changes the background color while shrinking it for two seconds before making it disappear.</p>
+<pre id="c03-code-0013"><code>&lt;script&gt;</code>
+<code>jQuery('p.target')</code>
+<code>    .css( { background:'#eef', border: '1px solid red' } )</code>
+<code>    .click(function(){</code>
+<code>    jQuery (this)</code>
+<code>        .css('background','#aaf')</code>
+<code>        .animate(</code>
+<code>            { width:'300px', borderWidth:'30px', marginLeft:'100px'},</code>
+<code>            2000,</code>
+<code>            function(){</code>
+<code>                jQuery (this).fadeOut();</code>
+<code>            }</code>
+<code>        );</code>
+<code>    });</code>
+<code>&lt;/script&gt;</code></pre>
+<p>If you dissect this compact snippet, you can see the main structure.</p>
+<pre id="c03-code-0014"><code>jQuery ('p.target').css( ).click( function(){ } );</code></pre>
+<p id="c03-para-0070">This applies some styling to the selected paragraph and then defines the behavior when the event <code>click</code> occurs on this element. Chaining enables a method to return an object itself as a result, reducing usage of temporary variables and enabling a compact syntax.</p>
+<p id="c03-para-0071"><span epub:type="pagebreak" id="Page_144" role="doc-pagebreak" title="144"/>Similarly, within the function defining the click behavior, you can see several methods applied to the <code>jQuery(this)</code> object, referencing the current jQuery object instantiated by the initial <code>jQuery(‘p.target’)</code>.</p>
+<p id="c03-para-0072">What you have now is three independently animated paragraph blocks!</p>
+</section>
+<section><span id="c03-sec-0021"/>
+<h4 id="head-4-60">No‐Conflict Mode in WordPress</h4>
+<p>To enable coexistence with other libraries, jQuery has a no‐conflict mode, activated by default within WordPress, which prevents using the dollar sign (
+<code>$</code>) directly to call on jQuery itself. The result of this is that if you port existing jQuery code to a WordPress environment, you need to use one of these solutions:</p>
+<ul class="check" id="c03-list-0005">
+<li id="c03-li-0024">Write <code>jQuery()</code> instead of each <code>$()</code>.</li>
+<li id="c03-li-0025">Use a jQuery wrapper.</li>
+</ul>
+<p>To illustrate this, consider the following initial jQuery code you would need to port into a WordPress no‐conflict environment:</p>
+<pre id="c03-code-0015"><code>$('.something').each( function(){</code>
+<code>    $(this).addClass( 'stuff' );</code>
+<code>});</code>
+<code>$.data( document.body, 'foo', 1337 );</code></pre>
+<p>The first option would give the following result:</p>
+<pre id="c03-code-0016"><code>jQuery('.something').each( function(){</code>
+<code>    jQuery(this).addClass( 'stuff' );</code>
+<code>});</code>
+<code>jQuery.data( document.body, 'foo', 1337 );</code></pre>
+<p>The second option would give the following result:</p>
+<pre id="c03-code-0017"><code>// jQuery noConflict wrapper:</code>
+<code>(function($) {</code>
+<code>    // $() will work here</code>
+<code>    $('.something').each( function(){</code>
+<code>        $(this).addClass( 'stuff' );</code>
+<code>    });</code>
+<code>    $.data( document.body, 'foo', 1337 );</code>
+<code>})(jQuery);</code></pre>
+<p id="c03-para-0077">Both solutions are programmatically equal, but using a no‐conflict wrapper will enable you to more conveniently and easily use existing code without having to replace each <code>$</code> with a longer <code>jQuery</code>.</p>
+</section>
+<section><span id="c03-sec-0022"/>
+<h4 id="head-4-61">Launching Code on Document Ready</h4>
+<p>A frequent requirement in JavaScript is to make sure that elements in a page load before you can do something with them. Here is a snippet you may have used before:</p>
+<pre id="c03-code-0018"><code>window.onload = function(){</code>
+<code>    /* do something */</code>
+<code>}</code></pre>
+<p><span epub:type="pagebreak" id="Page_145" role="doc-pagebreak" title="145"/>This ancient technique has two weaknesses:</p>
+<ul class="check" id="c03-list-0006">
+<li id="c03-li-0026">Another script can easily overwrite the <code>window.onload</code> definition with its own function.</li>
+<li id="c03-li-0027">The <code>onload</code> event in JavaScript waits for everything to be fully loaded before executing, including images, banner ads, external widgets, and so on.</li>
+</ul>
+<p>With jQuery, you get a much better solution:</p>
+<pre id="c03-code-0019"><code>jQuery(document).ready( function(){</code>
+<code>    /* do something */</code>
+<code>});</code></pre>
+<p id="c03-para-0081">Now, as soon as the DOM hierarchy has been fully constructed, the document <code>“ready”</code> event triggers. This happens before images load, before ads are shown, so the user experience is much smoother and faster.</p>
+<p>You can combine the document‐ready function with a jQuery <code>noConflict()</code> wrapper, like the following:</p>
+<pre id="c03-code-0020"><code>jQuery(document).ready(function($) {</code>
+<code>        </code>
+<code>    // $() will work as an alias for jQuery() inside of this function</code>
+<code>        </code>
+<code>});</code></pre>
+<p id="c03-para-0083">Using this technique, you can use the <code>$()</code> syntax and be sure that you do not reference a <code>DOM</code> element that has not been rendered by the browser yet.</p>
+</section>
+</section>
+<section><span id="c03-sec-0023"/>
+<h3 id="head-3-111">Ajax</h3>
+<p id="c03-para-0084">Ajax is a web development technique that enables a page to retrieve data asynchronously and to update parts of the page without the need to reload the entire thing all at once. The word originally was an acronym for Asynchronous JavaScript And XML, but the use of XML is not actually mandatory.</p>
+<p id="c03-para-0085">Ajax is not a technology or a programming language but rather a group of technologies that make up a methodology. It involves client‐side scripts such as JavaScript and server‐side scripts such as PHP that output content in HTML, CSS, XML, and JSON—or pretty much anything else!</p>
+<p>Here is an extremely primitive Ajax example:</p>
+<pre id="c03-code-0021"><code>&lt;!DOCTYPE html&gt;</code>
+<code>&lt;html&gt;</code>
+<code>&lt;body&gt;</code>
+<code>&lt;script&gt;</code>
+<code>function loadExample() {</code>
+<code>  var xhttp = new XMLHttpRequest();</code>
+<code>  xhttp.onreadystatechange = function() {</code>
+<code>    if (this.readyState == 4 &amp;&amp; this.status == 200) {</code>
+<code>     document.getElementById("demo").innerHTML = this.responseText;</code>
+<code>    }</code>
+<code>  };<span epub:type="pagebreak" id="Page_146" role="doc-pagebreak" title="146"/></code>
+<code>  xhttp.open("GET", "example.com", true);</code>
+<code>  xhttp.send();</code>
+<code>}</code>
+<code>&lt;/script&gt;</code>
+<code> </code>
+<code>&lt;div id="demo"&gt;</code>
+<code>  &lt;h2&gt; AJAX Will remove this &lt;/h2&gt;</code>
+<code>  &lt;button type="button" onclick="loadExample()"&gt;Click to Change&lt;/button&gt;</code>
+<code>&lt;/div&gt;</code>
+<code> </code>
+<code>&lt;/body&gt;</code>
+<code>&lt;/html&gt;</code></pre>
+<p id="c03-para-0087">You can learn more about Ajax in WordPress by reading the developer documentation at <code><a href="https://developer.wordpress.org/plugins/javascript/ajax">developer.wordpress.org/plugins/javascript/ajax</a></code>.</p>
+</section>
+</section>
+<section><span id="c03-sec-0024"/>
+<h2 id="head-2-51">BACKBONE/UNDERSCORE</h2>
+<p id="c03-para-0088">Backbone and Underscore were brought into WordPress when the Media Library was redesigned in 2011. They are largely intended to complement jQuery, and therefore we do not recommend investing too much time into learning these technologies, as React is generally considered the modern approach for the foreseeable future. They are worth mentioning here because nearly everything in the Media Library uses them, which is cleanly coded and fully documented. If you are curious to learn more about them, please refer to the Media Library code itself.</p>
+<p id="c03-para-0089">Lodash is also included in WordPress and in many ways is the successor to Underscore, much in the same way that using React will mean you will not really need to use Backbone.</p>
+<p id="c03-para-0090">Please visit <code><a href="http://backbonejs.org">backbonejs.org</a></code> and <code><a href="http://underscorejs.org">underscorejs.org</a></code> for more information.</p>
+</section>
+<section><span id="c03-sec-0025"/>
+<h2 id="head-2-52">REACT</h2>
+<p id="c03-para-0091">React was invented by engineers at Facebook and is the new star of the JavaScript show. Not only is it bundled with WordPress, but its popularity has eclipsed that of other modern competitors like Angular and Vue. Its licensing was originally incompatible with the GPL license that WordPress uses, making it a complete nonoption at its inception. The web development community rallied to get Facebook to reconsider its licensing and it did, so here we are!</p>
+<p id="c03-para-0092">React by itself is a lovely and simple piece of software. Using it in WordPress today, though, does require a little bit of rule bending and head scratching. This is because React is new and designed to be used alongside a bevy of new JavaScript libraries and tools, but WordPress is a legacy piece of software with many years' worth of compromises that have been made over time.</p>
+<p id="c03-para-0093">How to best use React in WordPress has been iterated on and reinvented and changed many times since WordPress 5.0 was released. The dust is starting to settle, so we are going to teach you what is currently considered to be the best way to blend them both together in your own plugins.</p>
+<p id="c03-para-0094"><span epub:type="pagebreak" id="Page_147" role="doc-pagebreak" title="147"/>Much like how jQuery UI complemented jQuery, libraries such as Babel, Redux, Moment, webpack, React DOM, and others exist in WordPress to complement React and to help make things like the block‐based editor—Gutenberg—possible.</p>
+<p id="c03-para-0095">Rather than try to deliver a complete crash course in React here, we are going to jump straight into applying everything we've learned so far in the next chapter. React requires a totally different (and very deep) dive into JavaScript concepts that are not really used anywhere else in WordPress. Get ready, because the next chapter is going to be intense!</p>
+</section>
+<section><span id="c03-sec-0026"/>
+<h2 id="head-2-53">SUMMARY</h2>
+<p id="c03-para-0096">JavaScript now makes up around 30 percent of the WordPress code base, and there are no signs of that number getting smaller anytime soon. Just like with PHP, there is now an endless amount of material available that will take you on super‐deep dives into just about every different aspect of it.</p>
+<p id="c03-para-0097">This chapter has focused solely on the WordPress‐specific things that most other JavaScript texts would not think to include. You will be writing more and more JavaScript in your professional WordPress plugins, and there is no avoiding it anymore. <a href="c07.xhtml">Chapter 7</a> will continue your JavaScript education by fully immersing you in the wonderful world of Gutenberg blocks!</p>
+</section>
+</section>
+</body>
+</html>

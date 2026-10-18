@@ -1,0 +1,18 @@
+{
+  "lane": "cull-rec-unit-5",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 39,
+  "tests_in_partition": 335,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/recognition/tests/unit/test_start_prototype_local_script.py::test_make_serve_preserves_skip_install_fast_path",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_start_prototype_local_script.py:75 reads the Makefile; :79 only checks that the token appears in the textual recipe. A tabbed comment retaining the token would pass if the recipe stopped passing the variable, although apps/prototype-description-service/scripts/start_prototype_local.sh:80 relies on it to skip installation.",
+      "canon": "TEST-15",
+      "confidence": "medium",
+      "cost": "cheap"
+    }
+  ]
+}

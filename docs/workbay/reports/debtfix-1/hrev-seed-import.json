@@ -1,0 +1,47 @@
+{
+  "lane": "hrev-seed-import",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\" || { echo 'cannot resolve lane root' >&2; exit 1; }\nresolved_python=\"$lane_root/.venv/bin/python\"\nif [ ! -x \"$resolved_python\" ]; then\n  echo \"lane interpreter unavailable: $resolved_python\" >&2\n  exit 127\nfi\nLC_ALL=C \"$resolved_python\" -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_seed_import_rights.py scripts/deploy/tests/test_sync_demo_seed_rights.py scripts/deploy/tests/test_dw2_webpimport_1.py",
+      "result": "pass",
+      "detail": "24 passed in 1.34s"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 17067,
+      "finding_id": "FX3SEE-d9b16256acf1d216-H-cfa9d5e7e4dbb8051ed6c2d5",
+      "was": "open",
+      "verdict": "NOW_FIXED",
+      "evidence": "scripts/deploy/sync-demo.sh:99 includes `\"$SEED_RIGHTS_DIR/clustering-rights.tsv\" \"$SEED_RIGHTS_DIR/guided-rights.tsv\"` in source preflight; lines 151-152 copy both to the remote seed directory. Both default files exist and have the expected header at line 1. `test_sync_demo_seed_rights.py::test_seed_rights_ledgers_are_copied_after_the_import_script` asserts both copy commands are present.",
+      "guard_test": "scripts/deploy/tests/test_sync_demo_seed_rights.py::test_seed_rights_ledgers_are_copied_after_the_import_script"
+    },
+    {
+      "db_id": 17077,
+      "finding_id": "FX3SEE-a7ce3cfa9164b485-M-eb26e7b15d2f2a621bf1e6a1",
+      "was": "open",
+      "verdict": "NOW_FIXED",
+      "evidence": "infra/oci/demo/seed/import.sh:166-169 checks `month < 1 || month > 12 || day < 1 || day > days_in_month` after Gregorian month/leap-year day counts. `test_impossible_added_date_fails_validation_before_import` asserts impossible dates return 2 with no media import; the leap-day test checks a valid date.",
+      "guard_test": "scripts/deploy/tests/test_seed_import_rights.py::test_impossible_added_date_fails_validation_before_import"
+    },
+    {
+      "db_id": 17072,
+      "finding_id": "FX3SEE-a7ce3cfa9164b485-M-263048ec57b120c926cd8a54",
+      "was": "open",
+      "verdict": "NOW_FIXED",
+      "evidence": "infra/oci/demo/seed/import.sh:109-135 rejects rows without exactly five tabs, empty subject/basis/source fields, and notices outside `takedown_on_request|attribution_required|none`. The five-field, empty-source, and unknown-notice tests assert exit 2 before any media import.",
+      "guard_test": "scripts/deploy/tests/test_seed_import_rights.py::test_five_field_row_fails_validation_before_import; test_empty_source_fails_validation_before_import; test_unknown_notice_fails_validation_before_import"
+    },
+    {
+      "db_id": 17071,
+      "finding_id": "FX3SEE-a7ce3cfa9164b485-M-040ce75ff4dd7c8d0dfd725e",
+      "was": "open",
+      "verdict": "PARTIAL",
+      "evidence": "infra/oci/demo/seed/import.sh:233-249 attempts `wp post delete \"$attachment_id\" --force` after either basis or source metadata update failure, then exits. `test_metadata_failure_deletes_attachment_and_stops_importing` asserts deletion after an injected failure of the first (basis) update; it does not inject failure of the second (source) update, so that duplicated branch lacks a regression guard.",
+      "guard_test": "scripts/deploy/tests/test_seed_import_rights.py::test_metadata_failure_deletes_attachment_and_stops_importing"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The ledger deployment, impossible-date rejection, and six-field rights-row validation are present and covered by passing tests. Metadata failure cleanup is present after either update, but the regression test covers only the basis-update failure. The lane test command passed all 24 tests; no additional integration-seam defect was confirmed."
+}

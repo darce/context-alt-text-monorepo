@@ -1,0 +1,766 @@
+{
+  "observed_at": "2026-10-17T21:04Z",
+  "general": {
+    "content": [],
+    "structuredContent": {
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "17788",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.6569181680679321,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "6208",
+          "task_ref": "VLM6-LEX",
+          "score": 0.6449466943740845,
+          "snippet": "Untangled the three open bake-off items as one defect: two parallel orchestration surfaces, neither authoritative.\n\n1. Report control mismatch (issue 3): build_bakeoff_report.py now recomputes the canonical manifest digest for a v3…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "1826",
+          "task_ref": "E20-FUSION",
+          "score": 0.6377824544906616,
+          "snippet": "## Changes\nSlice 4 (labels + bake-off + memo) via grok-4.5 offload lane: mis-attachment/altitude labels added to bakeoff_golden.json; new deterministic fusion_runner.py (acx-eval/v1 run records, stub adapters, distinct from bakeoff.py per…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "5671",
+          "task_ref": "VLM-6",
+          "score": 0.6328589916229248,
+          "snippet": "Slice 2 advanced via 3 parallel grok-4.6/high VM lanes from integrated HEAD e646339 (=282f82680 local), disjoint ownership: S2A stub OpenAI-compatible VLM server + real-socket end-to-end dry-run test of bakeoff.main + `make…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "18667",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.6162736415863037,
+          "snippet": "Cleanup-on-normalexit andpayloadPDEATHSIGdeletionmutants survive5targetedtests; privateexit_nowprobe catchesnormalexitcleanupdeletion. Add independentboundedcausalguardtests preservingalloldassertions.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17603",
+          "task_ref": "MAINT-CONTINUE-BAKEOFF-20261017",
+          "score": 0.6160852313041687,
+          "snippet": "Exact allowlisted12 terminal oldCURUX/IDWEAVE sandboxes archived/reaped by native /home/gate/bin/reap-lane.sh --archive-to /home/gate/lane-archive.git; actualsummary reaped12 skipped0 bytes_freed8639504384 exit0, receipt…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "4943",
+          "task_ref": "VLM-6",
+          "score": 0.6139585971832275,
+          "snippet": "**Decision**: keep the S2a-2 bake-off driver (`37ca1c26`) on the branch, record 7 findings against it, and dispatch a fix pass rather than reverting.\n\n**Why keep it**: the module's shape is right — registry-driven, plan-only, no network,…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "2806",
+          "task_ref": "VECVLM-1",
+          "score": 0.6138750314712524,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    "isError": false
+  },
+  "reinjection": {
+    "content": [],
+    "structuredContent": {
+      "ok": true,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "status": "selected",
+      "skip_reason": null,
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null,
+      "relevant_lines": [
+        "relevant:",
+        "- cdx_decision_bakerounds_third_cache_parallel_wo…: AfterLOUDcanonproposal17701/expandedwireproposal17702, WorkBaycompiled6nodes5dataedges: [decision:17703]",
+        "- BAKEROUNDS-DETECT-ENV-01: Initial2GiB OOM preserved. Required4GiB retry/controlled diagnosis completed; remaining runtime/quality [finding:19023]",
+        "- Accept reviewed BAKECACHE-1 plan on local main: Canonical make plan-accept --local --review-task-ref MAINT-BAKEOFF-ROUNDS-20261017 returned [decision:17716]",
+        "- Persist immutable cache-review prior-art packet…: R1–R3 plans/findings, raw third author maps and selection, canon/template and semantic context have [decision:17709]",
+        "- cdx_decision_bakerounds_inputs_pass_ledger_defe…: IndependentINPUTSGATEPASS0defects proof retained anddecision17691recorded. review_runs pass write [decision:17692]",
+        "- cdx_decision_bakerounds_resume_web_compilation_…: Restored cont-20261017T072019394197Z-570e28a9 and main b2e0c9845. Verified semantic provider [decision:17677]",
+        "- Close deferred evidence ledger and reap complet…: After genuine integration of7cacheplanningfindings, deferred actual informational PASS0 ledger writes [decision:17727]",
+        "- bakeoff_four_native_lanes_and_gpu_residency_gra…: CORPUS/CLUSTER/DETECT/RETRIEVAL firstHaiku5.5xhigh actualnative attempts are active; ROSTER/CAPTION [decision:17645]"
+      ],
+      "semantic_reinjection": {
+        "anchor_sources": [
+          "visible_text"
+        ],
+        "chars_budget": 7000,
+        "chars_used": 1311,
+        "effective_config": {
+          "candidate_pool": 32,
+          "max_concepts": 8,
+          "max_redundancy": 0.92,
+          "max_score_drop": 0.2,
+          "min_score": 0.35,
+          "mmr_relevance_weight": 0.7,
+          "notify_allowance_chars": 220,
+          "refresh_budget_chars": 1500,
+          "snippet_chars": 120
+        },
+        "fallback_scope": null,
+        "model_id": "gte-base-en-v1.5",
+        "score_hi": 0.6035562753677368,
+        "score_lo": 0.5405054688453674,
+        "selected": [
+          {
+            "emitted_chars": 166,
+            "id": "17703",
+            "kind": "decision",
+            "label": "cdx_decision_bakerounds_third_cache_parallel_wo…",
+            "score": 0.6035562753677368,
+            "snippet": "AfterLOUDcanonproposal17701/expandedwireproposal17702, WorkBaycompiled6nodes5dataedges: [decision:17703]"
+          },
+          {
+            "emitted_chars": 148,
+            "id": "19023",
+            "kind": "finding",
+            "label": "BAKEROUNDS-DETECT-ENV-01",
+            "score": 0.573595404624939,
+            "snippet": "Initial2GiB OOM preserved. Required4GiB retry/controlled diagnosis completed; remaining runtime/quality [finding:19023]"
+          },
+          {
+            "emitted_chars": 159,
+            "id": "17716",
+            "kind": "decision",
+            "label": "Accept reviewed BAKECACHE-1 plan on local main",
+            "score": 0.5631974339485168,
+            "snippet": "Canonical make plan-accept --local --review-task-ref MAINT-BAKEOFF-ROUNDS-20261017 returned [decision:17716]"
+          },
+          {
+            "emitted_chars": 169,
+            "id": "17709",
+            "kind": "decision",
+            "label": "Persist immutable cache-review prior-art packet…",
+            "score": 0.5875710844993591,
+            "snippet": "R1–R3 plans/findings, raw third author maps and selection, canon/template and semantic context have [decision:17709]"
+          },
+          {
+            "emitted_chars": 167,
+            "id": "17692",
+            "kind": "decision",
+            "label": "cdx_decision_bakerounds_inputs_pass_ledger_defe…",
+            "score": 0.6005136370658875,
+            "snippet": "IndependentINPUTSGATEPASS0defects proof retained anddecision17691recorded. review_runs pass write [decision:17692]"
+          },
+          {
+            "emitted_chars": 162,
+            "id": "17677",
+            "kind": "decision",
+            "label": "cdx_decision_bakerounds_resume_web_compilation_…",
+            "score": 0.5405054688453674,
+            "snippet": "Restored cont-20261017T072019394197Z-570e28a9 and main b2e0c9845. Verified semantic provider [decision:17677]"
+          },
+          {
+            "emitted_chars": 171,
+            "id": "17727",
+            "kind": "decision",
+            "label": "Close deferred evidence ledger and reap complet…",
+            "score": 0.5831576585769653,
+            "snippet": "After genuine integration of7cacheplanningfindings, deferred actual informational PASS0 ledger writes [decision:17727]"
+          },
+          {
+            "emitted_chars": 169,
+            "id": "17645",
+            "kind": "decision",
+            "label": "bakeoff_four_native_lanes_and_gpu_residency_gra…",
+            "score": 0.5655027627944946,
+            "snippet": "CORPUS/CLUSTER/DETECT/RETRIEVAL firstHaiku5.5xhigh actualnative attempts are active; ROSTER/CAPTION [decision:17645]"
+          }
+        ],
+        "skip_reason": null,
+        "status": "selected"
+      }
+    },
+    "isError": false
+  },
+  "cache": {
+    "content": [],
+    "structuredContent": {
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "11078",
+          "task_ref": "WAVE4-E2E",
+          "score": 0.6144868731498718,
+          "snippet": "Verified raw agent-stream .task-state/remote-exec-feature-wave4-e2e-z5ur7jqi/agent-stream.jsonl item4 completed reads ALL5finalfiles plus playwright.config.ts andpackage.json together. item6 checks CI wiring references. Reviewerfindings[];…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "handoff_state.focus",
+          "entity_id": "E15-6",
+          "task_ref": "E15-6",
+          "score": 0.6079744696617126,
+          "snippet": "Fresh-clone and LocalWP Playwright proof complete; close-check pending task status done plus root main package-lock drift cleanup/merge",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "10601",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.6077007055282593,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "18146",
+          "task_ref": "GTMBURST-1",
+          "score": 0.5987555980682373,
+          "snippet": "[harvest-salvage] UNSTRUCTURED SALVAGE: {\"verdict\":\"fail\",\"findings\":[{\"id\":\"FXGATE-M-EIO-CLEANUP\",\"severity\":\"medium\",\"file\":\"scripts/remote_gate.sh\",\"line\":566,\"related_lines\":[338,342,547],\"title\":\"Persistent stdout EIO escapes cleanup…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "handoff_state.objective",
+          "entity_id": "E15-6",
+          "task_ref": "E15-6",
+          "score": 0.597274661064148,
+          "snippet": "Consolidate Playwright-backed operator proof tasks after E15-6 harness work",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "16493",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.5972632169723511,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "BAKECACHE-1",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    "isError": false
+  },
+  "subject": {
+    "content": [],
+    "structuredContent": {
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "5342",
+          "task_ref": "FIR-7",
+          "score": 0.6373993158340454,
+          "snippet": "Add parametrised RED tests for unsplit compound corpus names ('ffhq256', 'vggface2train', 'casiawebfaceextra', 'widerfacehd') alongside the FIR-7-BR-27 negative cases, so the branch is pinned in both directions at once. Add its removal as…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "8591",
+          "task_ref": "FIR-8",
+          "score": 0.6371986865997314,
+          "snippet": "Verified spot-checks all hold: `test_corpus_superset.py:24` ends `or True` (no-op) and `:50` `assert set(exc.value.code.split())` only checks non-empty; `test_attrition_floor.py:40` `\"zero_detection_media_count\" in encoded or ...` — the…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "8080",
+          "task_ref": "VLM-6-REV-r0812b28e-HARM-A",
+          "score": 0.6266036033630371,
+          "snippet": "Have predicted_left_to_right and labeled_left_to_right call _leftmost_unique_names; extract one gt_box_is_named(box) predicate (with the '' case decided ONCE) shared by face_assignment.collect_matched_faces and…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "8136",
+          "task_ref": "VLM-6",
+          "score": 0.6266036033630371,
+          "snippet": "Have predicted_left_to_right and labeled_left_to_right call _leftmost_unique_names; extract one gt_box_is_named(box) predicate (with the '' case decided ONCE) shared by face_assignment.collect_matched_faces and…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "4209",
+          "task_ref": "VLM-6",
+          "score": 0.6217554807662964,
+          "snippet": "Verdict: **fail**. Round r08116b50, scope e7f1d164..6b50ddde (Slice 2A items 1-4). Run **fell back to branch_diff scope** — no slice_complete_* packets exist, 2A was delivered as four offload items. Harmonization skipped per skill step 7…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "8706",
+          "task_ref": "FIR-8",
+          "score": 0.6142387390136719,
+          "snippet": "_ident_counts None-skip on mixed recognition_enabled corpus untested; add mixed-corpus fixture asserting identification n.",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "SUBJECT-EVIDENCE-1",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    "isError": false
+  },
+  "executor_codemap": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"project\":\"bakecache-executor-fifth-composed-map\",\"total_nodes\":141,\"total_edges\":475,\"node_labels\":{\"cols\":[\"label\",\"count\"],\"rows\":[[\"Function\",91],[\"Variable\",31],[\"Class\",5],[\"Method\",5],[\"File\",3],[\"Module\",3],[\"Branch\",1],[\"Decorator\",1],[\"Project\",1]]},\"edge_types\":{\"cols\":[\"type\",\"count\"],\"rows\":[[\"CALLS\",213],[\"DEFINES\",147],[\"USAGE\",56],[\"TESTS\",32],[\"WRITES\",14],[\"DECORATES\",8],[\"CONTAINS_FILE\",3],[\"CALL_REFERENCE\",1],[\"HAS_BRANCH\",1]]},\"languages\":{\"cols\":[\"language\",\"files\"],\"rows\":[[\"Python\",2]]},\"packages\":{\"cols\":[\"name\",\"nodes\",\"fan_in\",\"fan_out\"],\"rows\":[[\"test_eval_harness_bakeoff_runner\",65,0,0],[\"test_eval_harness_owned_executor\",24,0,0],[\"str\",3,0,0],[\"list\",3,0,0],[\"dict\",2,0,0],[\"int\",1,0,0],[\"range\",1,0,0],[\"len\",1,0,0],[\"print\",1,0,0]]},\"hotspots\":{\"cols\":[\"qn\",\"fan_in\"],\"rows\":[[\"builtins.len\",14],[\"builtins.list.append\",4]]},\"boundaries\":{\"cols\":[\"from\",\"to\",\"calls\"],\"rows\":[[\"test_eval_harness_bakeoff_runner\",\"str\",16],[\"test_eval_harness_owned_executor\",\"str\",6],[\"test_eval_harness_bakeoff_runner\",\"len\",6],[\"test_eval_harness_bakeoff_runner\",\"list\",6],[\"test_eval_harness_owned_executor\",\"len\",5],[\"test_eval_harness_owned_executor\",\"list\",3],[\"test_eval_harness_bakeoff_runner\",\"int\",3],[\"test_eval_harness_owned_executor\",\"int\",2],[\"test_eval_harness_owned_executor\",\"dict\",1],[\"test_eval_harness_bakeoff_runner\",\"dict\",1]]},\"layers\":{\"cols\":[\"name\",\"layer\",\"reason\"],\"rows\":[[\"dict\",\"leaf\",\"only inbound calls, no outbound\"],[\"int\",\"core\",\"high fan-in (5 in, 0 out)\"],[\"len\",\"core\",\"high fan-in (11 in, 0 out)\"],[\"list\",\"core\",\"high fan-in (9 in, 0 out)\"],[\"str\",\"core\",\"high fan-in (22 in, 0 out)\"],[\"test_eval_harness_bakeoff_runner\",\"entry\",\"only outbound calls\"],[\"test_eval_harness_owned_executor\",\"entry\",\"only outbound calls\"]]},\"clusters\":{\"cols\":[\"id\",\"label\",\"members\",\"cohesion\",\"top_nodes\",\"packages\",\"edge_types\"],\"rows\":[[11,\"test_eval_harness_bakeoff_runner\",24,0.7796610169491526,[\"_entry\",\"_registry\",\"_recipe\",\"test_owned_shell_preserves_outputs_and_score_control\",\"test_skip_notes_name_vram_and_not_competing\"],[\"test_eval_harness_bakeoff_runner\"],[\"CALLS\"]],[0,\"test_eval_harness_owned_executor\",22,0.7068965517241379,[\"len\",\"_er_driver_contract\",\"_er_fixture\",\"_er_driver\",\"_er_receipts\"],[\"test_eval_harness_owned_executor\",\"len\",\"int\",\"dict\",\"test_eval_harness_bakeoff_runner\"],[\"CALLS\"]],[4,\"test_eval_harness_bakeoff_runner\",19,0.5769230769230769,[\"str\",\"_er_fixture\",\"_er_driver\",\"_er_exclusive\",\"append\"],[\"str\",\"list\",\"test_eval_harness_bakeoff_runner\"],[\"CALLS\"]],[12,\"test_eval_harness_bakeoff_runner\",14,0.6521739130434783,[\"_sample_registry\",\"test_vllm_stack_skipped_unless_explicitly_requested\",\"_mutate_entry\",\"test_unsupported_competing_rows_become_durable_serving_gate_failures\",\"test_artifact_over_budget_raises_vram_error\"],[\"test_eval_harness_bakeoff_runner\"],[\"CALLS\"]],[1,\"test_eval_harness_owned_executor\",6,1.0,[\"_er_isolated\",\"test_success_error_interrupt_cleanup\",\"test_unknown_exit_blocks_eviction\",\"test_missing_subprocess_is_typed\",\"test_collector_armed_before_exec\"],[\"test_eval_harness_owned_executor\"],[\"CALLS\"]],[5,\"test_eval_harness_bakeoff_runner\",4,0.3333333333333333,[\"list\",\"test_run_argv_pins_warmup_on_every_plan\",\"test_run_argv_round_trip_rejects_limit_zero\",\"test_run_argv_round_trips_through_bakeoff_parser\"],[\"list\",\"test_eval_harness_bakeoff_runner\"],[\"CALLS\"]]]}}"
+      }
+    ],
+    "structuredContent": {
+      "project": "bakecache-executor-fifth-composed-map",
+      "total_nodes": 141,
+      "total_edges": 475,
+      "node_labels": {
+        "cols": [
+          "label",
+          "count"
+        ],
+        "rows": [
+          [
+            "Function",
+            91
+          ],
+          [
+            "Variable",
+            31
+          ],
+          [
+            "Class",
+            5
+          ],
+          [
+            "Method",
+            5
+          ],
+          [
+            "File",
+            3
+          ],
+          [
+            "Module",
+            3
+          ],
+          [
+            "Branch",
+            1
+          ],
+          [
+            "Decorator",
+            1
+          ],
+          [
+            "Project",
+            1
+          ]
+        ]
+      },
+      "edge_types": {
+        "cols": [
+          "type",
+          "count"
+        ],
+        "rows": [
+          [
+            "CALLS",
+            213
+          ],
+          [
+            "DEFINES",
+            147
+          ],
+          [
+            "USAGE",
+            56
+          ],
+          [
+            "TESTS",
+            32
+          ],
+          [
+            "WRITES",
+            14
+          ],
+          [
+            "DECORATES",
+            8
+          ],
+          [
+            "CONTAINS_FILE",
+            3
+          ],
+          [
+            "CALL_REFERENCE",
+            1
+          ],
+          [
+            "HAS_BRANCH",
+            1
+          ]
+        ]
+      },
+      "languages": {
+        "cols": [
+          "language",
+          "files"
+        ],
+        "rows": [
+          [
+            "Python",
+            2
+          ]
+        ]
+      },
+      "packages": {
+        "cols": [
+          "name",
+          "nodes",
+          "fan_in",
+          "fan_out"
+        ],
+        "rows": [
+          [
+            "test_eval_harness_bakeoff_runner",
+            65,
+            0,
+            0
+          ],
+          [
+            "test_eval_harness_owned_executor",
+            24,
+            0,
+            0
+          ],
+          [
+            "str",
+            3,
+            0,
+            0
+          ],
+          [
+            "list",
+            3,
+            0,
+            0
+          ],
+          [
+            "dict",
+            2,
+            0,
+            0
+          ],
+          [
+            "int",
+            1,
+            0,
+            0
+          ],
+          [
+            "range",
+            1,
+            0,
+            0
+          ],
+          [
+            "len",
+            1,
+            0,
+            0
+          ],
+          [
+            "print",
+            1,
+            0,
+            0
+          ]
+        ]
+      },
+      "hotspots": {
+        "cols": [
+          "qn",
+          "fan_in"
+        ],
+        "rows": [
+          [
+            "builtins.len",
+            14
+          ],
+          [
+            "builtins.list.append",
+            4
+          ]
+        ]
+      },
+      "boundaries": {
+        "cols": [
+          "from",
+          "to",
+          "calls"
+        ],
+        "rows": [
+          [
+            "test_eval_harness_bakeoff_runner",
+            "str",
+            16
+          ],
+          [
+            "test_eval_harness_owned_executor",
+            "str",
+            6
+          ],
+          [
+            "test_eval_harness_bakeoff_runner",
+            "len",
+            6
+          ],
+          [
+            "test_eval_harness_bakeoff_runner",
+            "list",
+            6
+          ],
+          [
+            "test_eval_harness_owned_executor",
+            "len",
+            5
+          ],
+          [
+            "test_eval_harness_owned_executor",
+            "list",
+            3
+          ],
+          [
+            "test_eval_harness_bakeoff_runner",
+            "int",
+            3
+          ],
+          [
+            "test_eval_harness_owned_executor",
+            "int",
+            2
+          ],
+          [
+            "test_eval_harness_owned_executor",
+            "dict",
+            1
+          ],
+          [
+            "test_eval_harness_bakeoff_runner",
+            "dict",
+            1
+          ]
+        ]
+      },
+      "layers": {
+        "cols": [
+          "name",
+          "layer",
+          "reason"
+        ],
+        "rows": [
+          [
+            "dict",
+            "leaf",
+            "only inbound calls, no outbound"
+          ],
+          [
+            "int",
+            "core",
+            "high fan-in (5 in, 0 out)"
+          ],
+          [
+            "len",
+            "core",
+            "high fan-in (11 in, 0 out)"
+          ],
+          [
+            "list",
+            "core",
+            "high fan-in (9 in, 0 out)"
+          ],
+          [
+            "str",
+            "core",
+            "high fan-in (22 in, 0 out)"
+          ],
+          [
+            "test_eval_harness_bakeoff_runner",
+            "entry",
+            "only outbound calls"
+          ],
+          [
+            "test_eval_harness_owned_executor",
+            "entry",
+            "only outbound calls"
+          ]
+        ]
+      },
+      "clusters": {
+        "cols": [
+          "id",
+          "label",
+          "members",
+          "cohesion",
+          "top_nodes",
+          "packages",
+          "edge_types"
+        ],
+        "rows": [
+          [
+            11,
+            "test_eval_harness_bakeoff_runner",
+            24,
+            0.7796610169491526,
+            [
+              "_entry",
+              "_registry",
+              "_recipe",
+              "test_owned_shell_preserves_outputs_and_score_control",
+              "test_skip_notes_name_vram_and_not_competing"
+            ],
+            [
+              "test_eval_harness_bakeoff_runner"
+            ],
+            [
+              "CALLS"
+            ]
+          ],
+          [
+            0,
+            "test_eval_harness_owned_executor",
+            22,
+            0.7068965517241379,
+            [
+              "len",
+              "_er_driver_contract",
+              "_er_fixture",
+              "_er_driver",
+              "_er_receipts"
+            ],
+            [
+              "test_eval_harness_owned_executor",
+              "len",
+              "int",
+              "dict",
+              "test_eval_harness_bakeoff_runner"
+            ],
+            [
+              "CALLS"
+            ]
+          ],
+          [
+            4,
+            "test_eval_harness_bakeoff_runner",
+            19,
+            0.5769230769230769,
+            [
+              "str",
+              "_er_fixture",
+              "_er_driver",
+              "_er_exclusive",
+              "append"
+            ],
+            [
+              "str",
+              "list",
+              "test_eval_harness_bakeoff_runner"
+            ],
+            [
+              "CALLS"
+            ]
+          ],
+          [
+            12,
+            "test_eval_harness_bakeoff_runner",
+            14,
+            0.6521739130434783,
+            [
+              "_sample_registry",
+              "test_vllm_stack_skipped_unless_explicitly_requested",
+              "_mutate_entry",
+              "test_unsupported_competing_rows_become_durable_serving_gate_failures",
+              "test_artifact_over_budget_raises_vram_error"
+            ],
+            [
+              "test_eval_harness_bakeoff_runner"
+            ],
+            [
+              "CALLS"
+            ]
+          ],
+          [
+            1,
+            "test_eval_harness_owned_executor",
+            6,
+            1,
+            [
+              "_er_isolated",
+              "test_success_error_interrupt_cleanup",
+              "test_unknown_exit_blocks_eviction",
+              "test_missing_subprocess_is_typed",
+              "test_collector_armed_before_exec"
+            ],
+            [
+              "test_eval_harness_owned_executor"
+            ],
+            [
+              "CALLS"
+            ]
+          ],
+          [
+            5,
+            "test_eval_harness_bakeoff_runner",
+            4,
+            0.3333333333333333,
+            [
+              "list",
+              "test_run_argv_pins_warmup_on_every_plan",
+              "test_run_argv_round_trip_rejects_limit_zero",
+              "test_run_argv_round_trips_through_bakeoff_parser"
+            ],
+            [
+              "list",
+              "test_eval_harness_bakeoff_runner"
+            ],
+            [
+              "CALLS"
+            ]
+          ]
+        ]
+      }
+    },
+    "isError": false
+  },
+  "lifecycle_discovery": {
+    "content": [
+      {
+        "type": "text",
+        "text": "results: 0  (cols: qn label file lines in out)\nhint: \"No nodes match; check spelling or broaden the regex.\"\ntotal: 0\nreturned: 0\nhas_more: false\ntruncated: false\n"
+      }
+    ],
+    "isError": false
+  }
+}

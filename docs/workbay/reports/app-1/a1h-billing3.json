@@ -1,0 +1,38 @@
+{
+  "lane": "a1h-billing3",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_repository.py recognition/tests/unit/test_app1_checkout_service.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "not_run",
+      "detail": "uv exited 2 before pytest started: failed to remove shared alembic executable because the filesystem is read-only (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_namespace.py recognition/tests/unit/test_app1_billing_repository.py recognition/tests/unit/test_app1_checkout_service.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_composition.py",
+      "result": "fail",
+      "detail": "45 progress dots appeared before Timeout (0:04:00)! in test_first_checkout_persists_before_provider_and_returns_pending while TestClient.__enter__ was blocked at recognition/tests/unit/test_app1_portal_checkout_router.py:327; pytest produced no final summary and was interrupted (exit 130)."
+    },
+    {
+      "command": "PostgreSQL integration tests in recognition/tests/integration/test_app1_billing_namespace_postgres.py",
+      "result": "not_run",
+      "detail": "Database unavailable in this sandbox per lane brief; source reviewed for TEST-15."
+    },
+    {
+      "command": "PostgreSQL integration tests in recognition/tests/integration/test_app1_billing_reconcile_postgres.py",
+      "result": "not_run",
+      "detail": "Database unavailable in this sandbox per lane brief; source reviewed for TEST-15."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15927,
+      "finding_id": "APP1-CHECKOUT-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/services/checkout_service.py:114 - ValueError returns false from rejected-error classification, so a malformed successful provider response reaches mark_ambiguous at lines 378-380 instead of FAILED. The regression test asserts AMBIGUOUS state and one POST after retry at test_app1_checkout_service.py:371,386.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_checkout_service.py::test_polar_http_200_malformed_body_stays_ambiguous_and_retry_does_not_post"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The recovered checkout correction holds: malformed HTTP 200 responses remain ambiguous and retries do not post again. Router verification timed out entering TestClient, and both PostgreSQL integration files were not run because the sandbox lacks a database; no new code defect was confirmed."
+}

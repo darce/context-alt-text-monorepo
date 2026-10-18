@@ -1,0 +1,12 @@
+{
+  "js/admin/main.tsx": {
+    "file": "assets/admin-test.js",
+    "isEntry": true,
+    "css": ["assets/admin-test.css"]
+  },
+  "js/attachment-edit/main.tsx": {
+    "file": "assets/attachment-edit-test.js",
+    "isEntry": true,
+    "css": ["assets/attachment-edit-test.css"]
+  }
+}

@@ -1,0 +1,28 @@
+---
+title: Job Progress Streaming (Backend)
+---
+sequenceDiagram
+    participant Client as SSE Client
+    participant API as /recognition/jobs/{id}/stream
+    participant JobRepo as JobRepository
+    participant ScanRepo as ScanQueueRepository
+    participant DB as PostgreSQL
+    participant Worker as ScanWorker / Job Handlers
+
+    Note over Client,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Client,DB: Mini-map: ENTRY: GET /recognition/jobs/{id}/stream -> JobRepository + ScanQueueRepository, Code: recognition/interface_adapters/http/routers/analyze.py
+
+    Client->>API: ENTRY: GET /recognition/jobs/{id}/stream
+
+    loop Poll (100ms)
+        API->>JobRepo: get(job_id)
+        JobRepo->>DB: SELECT identity_scan_jobs / identity_clustering_jobs
+        API->>ScanRepo: get_job_item_status_counts(job_id)
+        ScanRepo->>DB: SELECT identity_scan_job_items (counts)
+        alt Progress changed or heartbeat
+            API-->>Client: SSE "progress" {status, completed, total, phase, images_processed, faces_found}
+        end
+    end
+
+    Worker->>DB: Update job progress (scan items / clustering jobs)
+    API-->>Client: SSE "done" when status completed/failed

@@ -1,0 +1,56 @@
+{
+  "lane": "hrev-eval-face",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_eval_harness_face_bakeoff.py scene/tests/test_florence_describe.py scripts/eval_harness/tests/test_eval_harness_report.py",
+      "result": "fail",
+      "detail": "uv could not remove a shared alembic executable because the filesystem is read-only (os error 30); retried with --no-sync as instructed."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal scene/tests/test_eval_harness_face_bakeoff.py scene/tests/test_florence_describe.py scripts/eval_harness/tests/test_eval_harness_report.py",
+      "result": "pass",
+      "detail": "93 passed, 1 skipped, 4 warnings in 7.57s."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16862,
+      "finding_id": "DADJ-5236",
+      "was": "open",
+      "verdict": "NOW_FIXED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/face_bakeoff.py:391-418 — the function declares `score_threshold: float | None = None` and passes an explicit value to OrtYuNetDetector; apps/prototype-description-service/scripts/eval_harness/cli.py:3289-3295 exposes --score-threshold with the detector default documented. recognition/config/settings.py:334-337 also uses the env-backed default_factory.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_eval_harness_face_bakeoff.py::test_build_candidate_leg_passes_optional_score_threshold; apps/prototype-description-service/scene/tests/test_eval_harness_cli.py::test_cli_face_bakeoff_forwards_score_threshold; apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_knobs.py::test_knob_env_ingestion"
+    },
+    {
+      "db_id": 16861,
+      "finding_id": "DADJ-5605",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/report.py:1459-1515 — the metadata dimensions include revision, seed, prompt, task, and decoding stamps; multiple values or mixed known/missing stamps raise ReportError with ‘refusing aggregate score’.",
+      "guard_test": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py::test_score_run_record_refuses_mixed_model_or_run_stamps"
+    },
+    {
+      "db_id": 16800,
+      "finding_id": "DADJ-5607",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/florence_describe.py:162-184 — get_oci_instance_identity documents ‘Read the authenticated OCI instance metadata identity; refuse local hosts.’ and validates the instance OCID, region, and shape; :555-558 refuses before load_captioner on identity failure, and :448-451 stamps the identity into output rows.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_florence_describe.py::test_oci_identity_uses_authenticated_instance_metadata; apps/prototype-description-service/scene/tests/test_florence_describe.py::test_main_refuses_model_load_without_oci_identity"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/report.py",
+      "line": 1496,
+      "title": "Per-item run stamps can contradict top-level provenance",
+      "defect": "When a successful item's describe object contains a run-configuration stamp, _model_provenance uses it without checking a value for the same key in run_provenance. score_run_record later spreads the original run provenance and also adds the model summary, so the same score can publish conflicting values.",
+      "failure_scenario": "The run record has provenance.seed=17 and two successful items each have describe.seed=42. Scoring succeeds and emits provenance.seed as 17 while provenance.model.seeds is [42], misidentifying the treatment used for the captions.",
+      "fix": "When a run-level stamp is present, compare its canonical value with the homogeneous item-level value and raise ReportError on disagreement; add a regression test for a conflicting seed (and exercise another stamp dimension if the check is shared).",
+      "test_file": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "One open finding is now fixed and two prior fixes hold. The lane suite passed with 93 passed and 1 skipped; integration review found one medium before-merge provenance mismatch when item and run-level stamps disagree."
+}

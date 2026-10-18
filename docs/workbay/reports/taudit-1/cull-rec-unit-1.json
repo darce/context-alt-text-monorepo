@@ -1,0 +1,28 @@
+{
+  "lane": "cull-rec-unit-1",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 41,
+  "tests_in_partition": 353,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_reservation_path_locks_entitlement_before_check_and_insert",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py:112-115 uses inspect.getsource and substring checks for with_for_update and reservation status names; it does not verify that the locking query executes before the usage check. A regression that leaves those strings in dead code while executing an unlocked query would pass.",
+      "canon": "TEST-15",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_repository_is_the_sqlalchemy_implementation",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py:538 compares the imported class __name__ to the same literal name. Replacing the repository implementation with a same-named stub would pass this assertion and miss an implementation regression.",
+      "canon": "TEST-15",
+      "confidence": "medium",
+      "cost": "cheap"
+    }
+  ]
+}

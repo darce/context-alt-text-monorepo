@@ -1,0 +1,259 @@
+{
+  "workbay_analysis_receipt": {
+    "tool": "workbay-orchestrator-mcp.lane_dag",
+    "ok": true,
+    "task_ref": "DEMOHEAL-1",
+    "analysis_date": "2026-09-21",
+    "graph_node_count": 18,
+    "layer_widths": [
+      10,
+      2,
+      1,
+      2,
+      1,
+      1,
+      1
+    ],
+    "critical_path": [
+      "S1A",
+      "S1B",
+      "S2A",
+      "S2B",
+      "S3C",
+      "INTEGRATE",
+      "GATE"
+    ],
+    "unit_weight_floor": 7,
+    "resource_edges": [
+      {
+        "from": "S1B",
+        "to": "S2A",
+        "kind": "resource",
+        "constraint": "owned_paths:apps/prototype-wp-alt-context/src/api/class-retention-controller.php",
+        "precedence": false
+      },
+      {
+        "from": "S2A",
+        "to": "S3A",
+        "kind": "resource",
+        "constraint": "owned_paths:apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php",
+        "precedence": false
+      }
+    ],
+    "note": "Analysis included independent defect-review groups and the attempted remote lane; not a worker provisioning receipt. Temporary analyzer nodes removed from runtime manifest after capture."
+  },
+  "schema_version": 1,
+  "task_ref": "DEMOHEAL-1",
+  "kind": "planning_dependency_dag",
+  "dispatchable": false,
+  "baseline": "11fe4dea7",
+  "rules": [
+    "GRPH-01",
+    "GRPH-09",
+    "GRPH-31",
+    "GRPH-32",
+    "GRPH-33"
+  ],
+  "task_nodes": {
+    "S1A": {
+      "title": "Export API route manifest",
+      "depends_on": [],
+      "owned_path_seeds": [
+        "apps/prototype-description-service/scripts/export_route_manifest.py",
+        "apps/prototype-description-service/api/tests/test_route_manifest_fresh.py"
+      ],
+      "output": "sorted method/path fixture"
+    },
+    "S1B": {
+      "title": "Correct retention callers",
+      "depends_on": [
+        "S1A"
+      ],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/src/api/class-proxy-routes.php",
+        "apps/prototype-wp-alt-context/src/api/class-retention-controller.php"
+      ],
+      "output": "route map, route-level 404 metadata, actual emission tests"
+    },
+    "S2A": {
+      "title": "Shared PHP envelope",
+      "depends_on": [
+        "S1B"
+      ],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/src/api/class-retention-controller.php",
+        "apps/prototype-wp-alt-context/src/api/class-gpu-control-controller.php",
+        "apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php"
+      ],
+      "output": "reason vocabulary and producer fixtures"
+    },
+    "S2B": {
+      "title": "Shared SPA notice",
+      "depends_on": [
+        "S2A"
+      ],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/js/admin/components/ServiceUnavailableNotice.tsx",
+        "apps/prototype-wp-alt-context/js/admin/api/recognition/retentionApi.ts"
+      ],
+      "output": "notice and consumer fixtures"
+    },
+    "S3A": {
+      "title": "WP diagnostics and breaker",
+      "depends_on": [
+        "S2A"
+      ],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php",
+        "apps/prototype-wp-alt-context/src/api/class-connection-controller.php"
+      ],
+      "output": "diagnostic response fixtures"
+    },
+    "S3B": {
+      "title": "API request-id logging",
+      "depends_on": [],
+      "owned_path_seeds": [
+        "apps/prototype-description-service/api/main.py",
+        "apps/prototype-description-service/api/tests/test_request_id.py"
+      ],
+      "output": "echo and access-log proof"
+    },
+    "S3C": {
+      "title": "Settings diagnostics",
+      "depends_on": [
+        "S2B",
+        "S3A"
+      ],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/js/admin/pages/settings/ConnectionCheckCard.tsx"
+      ],
+      "output": "card consumes notice and diagnostic fixtures"
+    },
+    "S4": {
+      "title": "Warming observation deadline",
+      "depends_on": [],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts",
+        "apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts",
+        "apps/prototype-wp-alt-context/js/admin/utils/warmingDeadline.ts"
+      ],
+      "output": "fake-timer and remount proof"
+    },
+    "S5": {
+      "title": "Reclaimer liveness",
+      "depends_on": [],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-maintenance-service.php",
+        "apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-drain.php",
+        "apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php"
+      ],
+      "output": "tenant success and backlog fixtures, concurrency proof"
+    },
+    "INTEGRATE": {
+      "title": "Shared registration and combined proof",
+      "depends_on": [
+        "S3B",
+        "S3C",
+        "S4",
+        "S5"
+      ],
+      "owned_path_seeds": [
+        "apps/prototype-wp-alt-context/uninstall.php",
+        "apps/prototype-wp-alt-context/src/admin/class-admin.php"
+      ],
+      "output": "registered/localized behavior and combined proofs"
+    },
+    "GATE": {
+      "title": "Harmonizing review",
+      "depends_on": [
+        "INTEGRATE"
+      ],
+      "owned_path_seeds": [],
+      "output": "review verdict"
+    }
+  },
+  "defect_groups": {
+    "A": [
+      "F1",
+      "F2",
+      "F3"
+    ],
+    "B": [
+      "F4",
+      "F5"
+    ],
+    "C": [
+      "F6",
+      "F7"
+    ],
+    "D": [
+      "F8",
+      "F9"
+    ],
+    "E": [
+      "F10"
+    ]
+  },
+  "defect_edges": [
+    [
+      "A",
+      "ADJUDICATE"
+    ],
+    [
+      "B",
+      "ADJUDICATE"
+    ],
+    [
+      "C",
+      "ADJUDICATE"
+    ],
+    [
+      "D",
+      "ADJUDICATE"
+    ],
+    [
+      "E",
+      "ADJUDICATE"
+    ]
+  ],
+  "epic_edges": [
+    [
+      "DEMOHEAL-1-request-id-contract",
+      "DEMOHEAL-4-correlation-proof"
+    ]
+  ],
+  "conflicts": [
+    {
+      "nodes": [
+        "S1B",
+        "S2A"
+      ],
+      "path": "class-retention-controller.php",
+      "resolution": "existing data edge orders integration"
+    },
+    {
+      "nodes": [
+        "S2A",
+        "S3A"
+      ],
+      "path": "class-abstract-recognition-proxy-controller.php",
+      "resolution": "existing vocabulary edge orders integration"
+    },
+    {
+      "nodes": [
+        "S3C",
+        "S5"
+      ],
+      "path": "shared registration/uninstall/UX mirrors",
+      "resolution": "INTEGRATE owns shared files; lanes supply declarative additions"
+    },
+    {
+      "nodes": [
+        "S3B",
+        "DEMOHEAL-4"
+      ],
+      "path": "api/main.py",
+      "resolution": "single API integrator; independent review/test work"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "lane": "hrev-docs-fir7",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "python3 -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 2.09s"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16840,
+      "finding_id": "DADJ-5233",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:127 — the 84/90 cell is explicitly UNDER-FLOOR / DIRECTIONAL and cannot support ship PASS; :146 gives the K=3 alpha rule. The prose is corrected, but no current executable assertion guards the gate spec.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16838,
+      "finding_id": "DADJ-5736",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:484 — Merge Order places FIR-11 Slices 1–2 before the branch refresh and Slice-0a freeze. No current test asserts this cross-plan ordering.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 17053,
+      "finding_id": "DFADJ3-08751e89d5c8aed3-M-ba606c8ee7231a0a584069c4",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py:295-311 — the identity parity test is no longer xfailed and asserts no drift against the full golden; :314-337 mutates a scratch identity and asserts the shared comparison detects it.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py::test_entries_present_identities_match_golden_corpus; test_present_identity_comparison_goes_red_on_scratch_drift"
+    },
+    {
+      "db_id": 16841,
+      "finding_id": "DADJ-5246",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:146 — the intersection-union rule sets alpha_floor equal to alpha_candidate (0.05/3) and explicitly says not to divide by F. No current executable gate-spec test asserts those values.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16821,
+      "finding_id": "DADJ-5235",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-6-calibration-quality-switchover-task-plan.md:148 — S6 leaves PGVECTOR_DIM at 512 and defers migration to a separate operator-gated decision. No current test guards this plan change.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16891,
+      "finding_id": "DADJ-5740",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/scopes/cpu-gpu-lane-control-plane.md:115-122 — the scope names the current acx-eval/v1 envelope and its fetch_run_record/bakeoff.py implementation, then states there is no altq-1 merge-order dependency. No current test asserts these scope anchors.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16839,
+      "finding_id": "DADJ-5739",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:79-82 — the preflight names the score-face subcommand and says the content grep must not assume a one-line add_parser call. The assertion is planned, but no current test verifies it against the CLI.",
+      "guard_test": ""
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "docs/tasks/fir/FIR-9-workbench-curation-atlas-task-plan.md",
+      "line": 527,
+      "title": "Final stale-run checklist omits runtime fingerprint comparison",
+      "defect": "The stale-run definition at line 67 requires comparing embedding_model and numeric_runtime_fingerprint, but the final acceptance checklist only requires marking stale when embedding_model differs. An implementation can satisfy the checklist while omitting the new runtime stale check.",
+      "failure_scenario": "The active embedding_model remains unchanged across an OpenCV/ONNX/NumPy runtime change; the list path follows the checklist, reports the old atlas run as fresh, and carries its similarity_threshold/suggestion_floor bands across the changed embedding runtime.",
+      "fix": "Update the final checklist to require list-time comparison of the persisted numeric_runtime_fingerprint as well as embedding_model, and add a same-model/different-fingerprint stale-run assertion.",
+      "test_file": "apps/prototype-description-service/recognition/tests/test_atlas_repository.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Six prior findings are PARTIAL because their corrected documentation has no current regression guard; the golden identity parity correction HOLDS with a direct assertion. FIR-9 retains one medium stale-run checklist gap, and the lane test passed (26 tests)."
+}

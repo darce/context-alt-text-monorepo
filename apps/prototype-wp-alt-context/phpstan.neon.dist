@@ -1,0 +1,17 @@
+includes:
+  - vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+  tmpDir: .phpstan-cache
+  level: 5
+  paths:
+    - src
+    - alt-context.php
+  phpVersion: 80200
+  scanDirectories:
+    - tests/stubs
+  bootstrapFiles:
+    - tests/stubs/wp.php
+    - tests/stubs/acx-constants.php
+  treatPhpDocTypesAsCertain: false
+  reportUnmatchedIgnoredErrors: false

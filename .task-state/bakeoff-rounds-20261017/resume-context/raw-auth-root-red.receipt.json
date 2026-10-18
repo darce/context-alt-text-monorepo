@@ -1,0 +1,29 @@
+{
+  "exit": 0,
+  "result": {
+    "audit": "/tmp/bakeoff-root-raw-auth-red-7ad7253589",
+    "unit": "bakeoff-root-raw-auth-red-7ad7253589",
+    "native_exit": 1,
+    "expected_red_reproduced": true,
+    "cases": 50,
+    "failed": 45,
+    "passed": 5,
+    "errors": 0,
+    "skipped": 0,
+    "failure_types": {
+      "null": 45
+    },
+    "source_before": {
+      "apps/prototype-description-service/scripts/eval_harness/bakeoff.py": "f50cc3670964a9f13f05081785525ede736b8098e0bedbd5fbb9111e0f64d082",
+      "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    },
+    "source_after": {
+      "apps/prototype-description-service/scripts/eval_harness/bakeoff.py": "f50cc3670964a9f13f05081785525ede736b8098e0bedbd5fbb9111e0f64d082",
+      "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e"
+    },
+    "public_capability_red_not_future_behavior": true,
+    "all_clients_fds_fixture_cleanup": "pytest normal teardown plus transient bounded unit completion; inspect outputs for closure concerns"
+  },
+  "stderr_tail": "",
+  "at": 1792284909.999646
+}

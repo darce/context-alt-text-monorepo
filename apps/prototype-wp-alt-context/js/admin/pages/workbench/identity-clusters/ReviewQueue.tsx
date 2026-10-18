@@ -1,0 +1,2505 @@
+/**
+ * E21-5 Slice 1b–6 — card-at-a-time review queue + hold + person-commit + multi-select bulk + bands.
+ *
+ * Renders exactly one review card + KIND/band filter chips + N-of-M + prev/next + selection tray.
+ * Index + selection are controlled (lifted to ScanTabContent); kind/band mirrored via props/`rq=`.
+ * Accept/reject rides the Slice-2 hold/flush/gated-advance mutation choreography.
+ * Person-commit (Slice 3) is flush-then-immediate; no undo window.
+ * Multi-select bulk (Slice 5): sequential per-id accepts, PR-30 state machine, PR-38 labels.
+ * Band chips (Slice 6 ④): preset similarity filters; bulk preview/commit = selection ∩ filters (M2).
+ */
+
+import React from 'react';
+import { __, _n, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
+
+import { DATA_SOURCE } from '../../../api/recognition/types';
+import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
+import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
+import {
+  bandParamToBand,
+  bandToBandParam,
+  filterToKindParam,
+  kindParamToFilter,
+  type ReviewQueueBandParam,
+  type ReviewQueueKindParam,
+} from '../../../hooks/workbenchQueueUrl';
+import { faceOverlayDomId } from '../../../../components/ui/FaceOverlayLayer';
+import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
+import { EmptyStateWarning } from './EmptyStateWarning';
+import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
+import { MergeSuggestionCard } from './MergeSuggestionCard';
+import { PersonCommitControl } from './PersonCommitControl';
+import { MODEL_OUTPUT_DISCLOSURE, viewInRosterHref } from './personCommitCopy';
+import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
+import {
+  CloseMatchAcceptOffer,
+  closeMatchAcceptedAnnouncement,
+} from './CloseMatchAcceptOffer';
+import { LightboxNameFace, LIGHTBOX_NAME_SAVED_ANNOUNCE } from './LightboxNameFace';
+import { ReviewCardLightbox } from './ReviewCardLightbox';
+import {
+  clampQueueIndex,
+  closeMatchGroupForAccept,
+  filterReviewQueueComposite,
+  intersectSelectionWithFilters,
+  NEXT_ACTION_CHIP_LABEL,
+  NEXT_ACTION_KIND,
+  REVIEW_QUEUE_BAND,
+  REVIEW_QUEUE_BAND_CHIP_LABEL,
+  REVIEW_QUEUE_FILTER,
+  type AssignmentQueueItem,
+  type ReviewQueueBand,
+  type ReviewQueueFilter,
+  type ReviewQueueItem,
+} from './reviewQueueDriver';
+import { gatedClusterCopy, repairGatedCount } from './representativeVocabulary';
+import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
+import { ReviewCardGroupShell } from './reviewCardGroupAccname';
+import { isStoredFaceApprovalBlocked } from './storedFaceReviewGate';
+import { TopClusterCard } from './TopClusterCard';
+import {
+  createEmptyHAIReviewState,
+  markStoredFaceReviewPresented as markStoredFaceReviewPresentedState,
+  recordFirstNameJudgment,
+  toggleNameSuggestionReveal,
+  type HAIReviewState,
+} from './haiReviewState';
+import {
+  BULK_COMMIT_PHASE,
+  useBulkReviewCommit,
+  type BulkCommitItem,
+} from './useBulkReviewCommit';
+import { useMergeSurvivors } from './MergeSurvivorContext';
+import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
+import { useSuggestionReviewData } from './useSuggestionReviewData';
+import {
+  COMMIT_HOLD_PHASE,
+  HOLD_COMMITTING_STATUS_COPY,
+  HOLD_STATUS_COPY,
+  PERSON_COMMIT_PHASE,
+  type CommitHoldPhase,
+  type PersonCommitRequest,
+  type PersonCommitResult,
+  type PersonCommitState,
+  type ScheduleCommitResult,
+  type SuggestionCommitKind,
+} from './useSuggestionReviewMutations';
+import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
+import { useAriaAnnounce } from './useAriaAnnounce';
+import { useLiveReviewTarget } from './useLiveReviewTarget';
+import { useWorkbenchFindings } from './useWorkbenchFindings';
+import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
+
+/** aria-live position line — carries the loaded-page / filtered scope (A11Y-21). */
+export const REVIEW_QUEUE_POSITION_PAGE = '%1$d of %2$d on this page';
+export const REVIEW_QUEUE_POSITION_FILTERED = '%1$d of %2$d shown';
+
+export const REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE = 'Name saved. Back to review suggestions.';
+
+/** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
+const itemClusterId = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+    case NEXT_ACTION_KIND.NAME:
+    case NEXT_ACTION_KIND.CLUSTER:
+      return item.clusterId;
+    case NEXT_ACTION_KIND.MERGE:
+      return null;
+  }
+};
+
+const isEnabledFocusTarget = (el: HTMLElement | null): el is HTMLElement => {
+  if (!el) {
+    return false;
+  }
+  if (el.hasAttribute('disabled') || (el as HTMLButtonElement).disabled) {
+    return false;
+  }
+  if (el.getAttribute('aria-disabled') === 'true') {
+    return false;
+  }
+  return true;
+};
+
+const LOW_CONFIDENCE_THRESHOLD = 0.6;
+
+export interface ReviewQueueHandle {
+  focusCurrentCard: () => void;
+}
+
+export interface ReviewQueueProps {
+  /** Controlled queue index (lifted — survives panel unmount). */
+  index: number;
+  /**
+   * Absolute clamp after queue length is known. Parent MUST dispatch
+   * `CLAMP_INDEX` (not `SET_INDEX`) so NaN/negatives cannot wipe `rq`.
+   */
+  onClampIndex: (index: number) => void;
+  /**
+   * Relative next/prev. Parent MUST reduce `STEP_INDEX {delta, length}`
+   * against pending queue state so two taps before re-render advance by 2.
+   */
+  onStepIndex: (delta: number, length: number) => void;
+  /**
+   * Controlled kind filter from URL.
+   * Parent MUST reset index to 0 on kind change (reducer SET_KIND does this).
+   */
+  kind: ReviewQueueKindParam;
+  onKindChange: (kind: ReviewQueueKindParam) => void;
+  /**
+   * Controlled band filter from URL (`rq=` band enum).
+   * Parent MUST reset index to 0 on band change (reducer SET_BAND does this).
+   */
+  band: ReviewQueueBandParam;
+  onBandChange: (band: ReviewQueueBandParam) => void;
+  /**
+   * UXW2-1: single-write escape hatch — clears kind AND band (and resets the
+   * index) in ONE owner dispatch. Never wire this to per-filter callbacks.
+   */
+  onClearFilters: () => void;
+  /**
+   * PR-31: id-keyed selection set lifted to ScanTabContent (survives panel
+   * unmount). Default empty; controlled prop pair into bulk hooks.
+   */
+  selectedIds: ReadonlySet<string>;
+  onSelectedIdsChange: (next: Set<string>) => void;
+  /** HAI-15 session state; omit this pair for isolated/local queue usage. */
+  haiReviewState?: HAIReviewState;
+  onHAIReviewStateChange?: (next: HAIReviewState) => void;
+  onReview?: (clusterId: string) => void;
+  /** Opens the labeling panel for merge / split / correct-group. */
+  onLabel?: (clusterId: string) => void;
+  /** Anchor div for drain-focus (tabIndex=-1). */
+  emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * §7 / BR-75/BR-82: reports whether the queue currently owns the viewport's single
+   * accent primary — either the review card's marked primary (accept / person-commit
+   * Confirm) or the bulk-commit button (BR-82) is rendered AND marked. ScanTabContent
+   * uses this — NOT findings totals — to drive footer demotion, so the SAME signal
+   * that places the queue's `data-acx-accent-primary` marker also demotes the footer
+   * CTAs → exactly one accent primary per rendered viewport.
+   */
+  onCardPrimaryPresenceChange?: (present: boolean) => void;
+}
+
+/** Suggestion id for bulk-selectable queue items; null for CLUSTER (no accept POST). */
+const itemSuggestionId = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+    case NEXT_ACTION_KIND.MERGE:
+    case NEXT_ACTION_KIND.NAME:
+      return item.suggestionId;
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+/** Target cluster for truncation gate — merge has none; plain accepts without cluster are ungated. */
+const itemTargetClusterId = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return item.clusterId;
+    case NEXT_ACTION_KIND.NAME:
+      return item.clusterId;
+    case NEXT_ACTION_KIND.MERGE:
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+const itemBulkLabel = (item: ReviewQueueItem): string | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return item.label;
+    case NEXT_ACTION_KIND.NAME:
+      return null;
+    case NEXT_ACTION_KIND.MERGE:
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+const itemCommitKind = (item: ReviewQueueItem): SuggestionCommitKind | null => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return 'accept';
+    case NEXT_ACTION_KIND.MERGE:
+      return 'acceptMerge';
+    case NEXT_ACTION_KIND.NAME:
+      return 'acceptName';
+    case NEXT_ACTION_KIND.CLUSTER:
+      return null;
+  }
+};
+
+const itemPreviewLabel = (item: ReviewQueueItem): string => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return item.label ?? __('Close match', 'alt-context');
+    case NEXT_ACTION_KIND.MERGE:
+      return __('Possible duplicate', 'alt-context');
+    case NEXT_ACTION_KIND.NAME:
+      return __('Suggested name', 'alt-context');
+    case NEXT_ACTION_KIND.CLUSTER:
+      return __('Unlabeled group', 'alt-context');
+  }
+};
+
+const queueItemKey = (item: ReviewQueueItem): string => {
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT:
+      return `assignment:${item.suggestionId}`;
+    case NEXT_ACTION_KIND.MERGE:
+      return `merge:${item.suggestionId}`;
+    case NEXT_ACTION_KIND.NAME:
+      return `name:${item.suggestionId}`;
+    case NEXT_ACTION_KIND.CLUSTER:
+      return `cluster:${item.clusterId}`;
+  }
+};
+
+const flattenAssignmentSuggestions = (
+  reviewItems: ReturnType<typeof useSuggestionReviewData>['reviewItems'],
+): Map<string, ReviewSuggestion> => {
+  const map = new Map<string, ReviewSuggestion>();
+  for (const item of reviewItems) {
+    if (item.type === 'group') {
+      for (const suggestion of item.suggestions) {
+        map.set(suggestion.suggestionId, suggestion);
+      }
+    } else {
+      map.set(item.suggestion.suggestionId, item.suggestion);
+    }
+  }
+  return map;
+};
+
+export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>(
+  function ReviewQueue(
+    {
+      index,
+      onClampIndex,
+      onStepIndex,
+      kind,
+      onKindChange,
+      band,
+      onBandChange,
+      onClearFilters,
+      selectedIds,
+      onSelectedIdsChange,
+      haiReviewState,
+      onHAIReviewStateChange,
+      onReview,
+      onLabel,
+      emptyStateAnchorRef,
+      onCardPrimaryPresenceChange,
+    },
+    ref,
+  ): React.JSX.Element | null {
+    const findings = useWorkbenchFindings();
+    const data = useSuggestionReviewData();
+    const { topUnlabeledClusters } = useSuggestionReviewQueries();
+    const { resolveSurvivor } = useMergeSurvivors();
+    const cardRegionRef = React.useRef<HTMLDivElement>(null);
+    const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
+    const [lightboxNaming, setLightboxNaming] = React.useState(false);
+    const [closeMatchOffer, setCloseMatchOffer] = React.useState<{
+      acceptedId: string;
+      label: string | null;
+      included: AssignmentQueueItem[];
+      omitted: number;
+      truncated: boolean;
+    } | null>(null);
+    const closeMatchAnnounceRef = React.useRef<{ count: number; omitted: number } | null>(null);
+    const closeMatchBulkPhaseRef = React.useRef<string>(BULK_COMMIT_PHASE.IDLE);
+    // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02.
+    // The hook clears then restores repeated copy in one persistent live node.
+    //
+    // FEBT1-LD-02: two independently owned polite regions, not one shared slot.
+    // `setLiveMessage` carries *outcomes* (saved / failed / accepted / target
+    // retired); `setLivePositionMessage` carries *where you are and what is here*
+    // (queue position, empty / filtered / repair copy, selection count). They used
+    // to share one `useAriaAnnounce` slot, so any extra re-render — e.g. a hook
+    // subscribing to a query success transition — let the positional announcement
+    // silently overwrite "Saved. Moving to next review item." before AT ever saw
+    // it, and the operator lost their save confirmation (A11Y-24, RLSE-04).
+    // Two sibling regions each with their own stable node is the in-repo idiom:
+    // ScanTabContent.tsx:209 already mounts `.acx-review-lifecycle-announce`
+    // alongside this one from its own useAriaAnnounce instance.
+    const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
+    const {
+      message: livePositionMessage,
+      seq: livePositionSeq,
+      announce: setLivePositionMessage,
+    } = useAriaAnnounce();
+    const [selectionOpen, setSelectionOpen] = React.useState(false);
+    // HAI-15 state is controlled by ScanTabContent in the workbench and local for
+    // isolated queue consumers. It is browser-session state, not a roster write.
+    const [localHAIReviewState, setLocalHAIReviewState] = React.useState<HAIReviewState>(
+      () => createEmptyHAIReviewState(),
+    );
+    const effectiveHAIReviewState =
+      haiReviewState !== undefined && onHAIReviewStateChange !== undefined
+        ? haiReviewState
+        : localHAIReviewState;
+    const updateHAIReviewState = React.useCallback(
+      (next: HAIReviewState): void => {
+        if (haiReviewState !== undefined && onHAIReviewStateChange !== undefined) {
+          onHAIReviewStateChange(next);
+          return;
+        }
+        setLocalHAIReviewState(next);
+      },
+      [haiReviewState, onHAIReviewStateChange],
+    );
+    const recordNameJudgment = React.useCallback((id: string, judgment: string): void => {
+      updateHAIReviewState(recordFirstNameJudgment(effectiveHAIReviewState, id, judgment));
+    }, [effectiveHAIReviewState, updateHAIReviewState]);
+    const markStoredFaceReviewPresented = React.useCallback((suggestionId: string): void => {
+      updateHAIReviewState(
+        markStoredFaceReviewPresentedState(effectiveHAIReviewState, suggestionId),
+      );
+    }, [effectiveHAIReviewState, updateHAIReviewState]);
+    const toggleNameSuggestion = React.useCallback((suggestionId: string): void => {
+      updateHAIReviewState(toggleNameSuggestionReveal(effectiveHAIReviewState, suggestionId));
+    }, [effectiveHAIReviewState, updateHAIReviewState]);
+    /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
+    const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
+    // REV4-02: RQ v5 isLoading stays false while an already-errored query
+    // refetches; track retry locally and inspect settled isError.
+    const [retrying, setRetrying] = React.useState(false);
+    const [retryFailed, setRetryFailed] = React.useState(false);
+    const previousItemKeyRef = React.useRef<string | null>(null);
+    const repairAnnouncedRef = React.useRef(false);
+    const repairAnnouncedMessageRef = React.useRef<string | null>(null);
+    const pendingFocusAfterRemovalRef = React.useRef(false);
+
+    const filter: ReviewQueueFilter = kindParamToFilter(kind);
+    const activeBand: ReviewQueueBand = bandParamToBand(band);
+    // KIND ∩ band (④ composition = intersection).
+    const filteredQueue = React.useMemo(
+      () => filterReviewQueueComposite(findings.queue, filter, activeBand),
+      [findings.queue, filter, activeBand],
+    );
+
+    const queueBySuggestionId = React.useMemo(() => {
+      const map = new Map<string, ReviewQueueItem>();
+      for (const item of findings.queue) {
+        const sid = itemSuggestionId(item);
+        if (sid) {
+          map.set(sid, item);
+        }
+      }
+      return map;
+    }, [findings.queue]);
+
+    const assignmentById = React.useMemo(
+      () => flattenAssignmentSuggestions(data.reviewItems),
+      [data.reviewItems],
+    );
+    const mergeById = React.useMemo(() => {
+      const map = new Map<string, PendingMergeSuggestion>();
+      for (const suggestion of data.mergeSuggestions) {
+        map.set(suggestion.id, suggestion);
+      }
+      return map;
+    }, [data.mergeSuggestions]);
+    const nameById = React.useMemo(() => {
+      const map = new Map<string, PendingNameSuggestion>();
+      for (const suggestion of data.nameSuggestions) {
+        map.set(suggestion.id, suggestion);
+      }
+      return map;
+    }, [data.nameSuggestions]);
+
+    /**
+     * M2: bulk preview/commit resolves only selection ∩ active filters.
+     * Ids selected while unfiltered stay selected, but commit/preview ignore
+     * those outside the current KIND ∩ band view.
+     */
+    const filteredSelectedIds = React.useMemo(
+      () => intersectSelectionWithFilters(selectedIds, findings.queue, filter, activeBand),
+      [selectedIds, findings.queue, filter, activeBand],
+    );
+
+    const resolveBulkItems = React.useCallback(
+      (ids: readonly string[]): BulkCommitItem[] => {
+        // Guard: only ids still visible under active filters (M2).
+        const allowed = new Set(
+          intersectSelectionWithFilters(ids, findings.queue, filter, activeBand),
+        );
+        const items: BulkCommitItem[] = [];
+        for (const id of ids) {
+          if (!allowed.has(id)) {
+            continue;
+          }
+          const item = queueBySuggestionId.get(id);
+          if (!item) {
+            continue;
+          }
+          const commitKind = itemCommitKind(item);
+          if (!commitKind) {
+            continue;
+          }
+          items.push({
+            suggestionId: id,
+            commitKind,
+            label: itemBulkLabel(item),
+          });
+        }
+        return items;
+      },
+      [
+        queueBySuggestionId,
+        findings.queue,
+        filter,
+        activeBand,
+      ],
+    );
+
+    // HAI-15 readiness is checked by the same predicate at initiation, hold
+    // fire, retry, and unmount-drain through useBulkReviewCommit. Keep every
+    // selected item in the resolved batch so a mixed selection fails closed as
+    // one unit instead of silently dropping an unready NAME item.
+    const isBulkApprovalBlocked = React.useCallback(
+      (suggestionId: string): boolean => {
+        const item = queueBySuggestionId.get(suggestionId);
+        if (!item) {
+          return true;
+        }
+        switch (item.kind) {
+          case NEXT_ACTION_KIND.ASSIGNMENT: {
+            const suggestion = assignmentById.get(suggestionId);
+            return suggestion
+              ? isStoredFaceApprovalBlocked(
+                  suggestion,
+                  effectiveHAIReviewState.reviewedStoredFaceSuggestionIds,
+                )
+              : true;
+          }
+          case NEXT_ACTION_KIND.MERGE:
+            return !mergeById.has(suggestionId);
+          case NEXT_ACTION_KIND.NAME:
+            return (
+              !nameById.has(suggestionId) ||
+              !effectiveHAIReviewState.nameJudgments.has(suggestionId) ||
+              !effectiveHAIReviewState.revealedNameSuggestionIds.has(suggestionId)
+            );
+          case NEXT_ACTION_KIND.CLUSTER:
+            return true;
+        }
+      },
+      [
+        assignmentById,
+        effectiveHAIReviewState,
+        mergeById,
+        nameById,
+        queueBySuggestionId,
+      ],
+    );
+
+    const bulk = useBulkReviewCommit({
+      selectedIds,
+      onSelectedIdsChange,
+      resolveItems: resolveBulkItems,
+      flushHeldSingle: data.flushHeld,
+      commitOne: data.commitOneNow,
+      heldSingleSuggestionId: data.hold.suggestionId,
+      setBulkActionActive: data.setBulkActionActive,
+      onBulkSequenceSettled: () => {
+        data.invalidateSuggestionQueries();
+        data.invalidateMediaIdentities();
+      },
+      isBulkActiveRef: data.isBulkActiveRef,
+      awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
+      isApprovalBlocked: isBulkApprovalBlocked,
+    });
+
+    React.useEffect(() => {
+      const previous = closeMatchBulkPhaseRef.current;
+      closeMatchBulkPhaseRef.current = bulk.bulk.phase;
+      const pending = closeMatchAnnounceRef.current;
+      if (!pending) {
+        return;
+      }
+      if (
+        previous === BULK_COMMIT_PHASE.COMMITTING &&
+        bulk.bulk.phase === BULK_COMMIT_PHASE.IDLE
+      ) {
+        setLiveMessage(closeMatchAcceptedAnnouncement(pending.count, pending.omitted));
+        closeMatchAnnounceRef.current = null;
+        return;
+      }
+      if (bulk.bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED) {
+        closeMatchAnnounceRef.current = null;
+        return;
+      }
+      if (
+        previous === BULK_COMMIT_PHASE.HOLDING &&
+        bulk.bulk.phase === BULK_COMMIT_PHASE.IDLE
+      ) {
+        closeMatchAnnounceRef.current = null;
+      }
+    }, [bulk.bulk.phase, setLiveMessage]);
+
+    // BR-59: the truncation gate targets only the clusters the commit can fire —
+    // the filter-intersected selection, not the full selectedIds set.
+    const selectedTargetClusterIds = React.useMemo(() => {
+      const ids: string[] = [];
+      for (const sid of filteredSelectedIds) {
+        const item = queueBySuggestionId.get(sid);
+        if (!item) {
+          continue;
+        }
+        const clusterId = itemTargetClusterId(item);
+        if (clusterId) {
+          ids.push(clusterId);
+        }
+      }
+      return ids;
+    }, [queueBySuggestionId, filteredSelectedIds]);
+
+    const truncation = useSelectedClusterTruncation(selectedTargetClusterIds);
+
+    // Drop selected ids that left the projection; announce count update.
+    const pruneMissingIds = bulk.pruneMissingIds;
+    React.useEffect(() => {
+      const present = new Set<string>();
+      for (const item of findings.queue) {
+        const sid = itemSuggestionId(item);
+        if (sid) {
+          present.add(sid);
+        }
+      }
+      const dropped = pruneMissingIds(present);
+      if (dropped > 0) {
+        setLiveMessage(
+          sprintf(
+            /* translators: %d: number of items removed from selection */
+            __('%d selected item(s) no longer available — selection updated.', 'alt-context'),
+            dropped,
+          ),
+        );
+      }
+    }, [findings.queue, pruneMissingIds, setLiveMessage]);
+
+    // BR-63: when the selection extends beyond the active KIND ∩ band view,
+    // render/announce the split count; otherwise keep the simple count.
+    const selectionCountMessage =
+      selectedIds.size !== filteredSelectedIds.length
+        ? sprintf(
+            /* translators: 1: total selected review items, 2: selected items within active filters */
+            __('%1$d selected — %2$d in current filter', 'alt-context'),
+            selectedIds.size,
+            filteredSelectedIds.length,
+          )
+        : sprintf(
+            /* translators: %d: number of selected review items */
+            __('%d selected', 'alt-context'),
+            selectedIds.size,
+          );
+
+    // BR-54/BR-63: announce tray count changes (select/deselect, filter split)
+    // via polite live region. Ref-compare skips the mount announce.
+    const prevSelectionMessageRef = React.useRef(selectionCountMessage);
+    React.useEffect(() => {
+      const prev = prevSelectionMessageRef.current;
+      prevSelectionMessageRef.current = selectionCountMessage;
+      if (prev === selectionCountMessage) {
+        return;
+      }
+      setLivePositionMessage(selectionCountMessage);
+    }, [selectionCountMessage, setLivePositionMessage]);
+
+    // Reset truncation confirm when selection or gate changes.
+    React.useEffect(() => {
+      setTruncationConfirmed(false);
+    }, [selectedIds, truncation.isTruncationGated]);
+
+    const length = filteredQueue.length;
+    // [COG-03] design to the goal filter — false "all caught up" when filters hide work.
+    const filtersActive = filter !== REVIEW_QUEUE_FILTER.ALL || activeBand !== REVIEW_QUEUE_BAND.ALL;
+    const filteredEmptyWithWork = length === 0 && filtersActive && findings.queue.length > 0;
+    const safeIndex = clampQueueIndex(index, length);
+    // BR-06: gate clamp on all four source queries settled — partial
+    // assignment+merge resolve must not wipe a restored rq= index.
+    const queueSettled = findings.queueSettled;
+
+    // Clamp restored/oversized index back to parent (PR-54 / R1-03).
+    React.useEffect(() => {
+      if (!queueSettled) {
+        return;
+      }
+      if (length > 0 && index !== safeIndex) {
+        onClampIndex(safeIndex);
+      } else if (length === 0 && index !== 0) {
+        onClampIndex(0);
+      }
+    }, [index, safeIndex, length, onClampIndex, queueSettled]);
+
+    const currentItem = length > 0 ? filteredQueue[safeIndex] : null;
+    const currentKey = currentItem ? queueItemKey(currentItem) : null;
+
+    // Lightweight open-target guard on the head card's cluster (when present).
+    // Announce retirement; do NOT fight projection-driven index advance (removal ≠ retirement).
+    const headClusterId = currentItem ? itemClusterId(currentItem) : null;
+    const { status: headLiveStatus, error: headLiveError } = useLiveReviewTarget(headClusterId, {
+      resolveSurvivor: (retiredId) => resolveSurvivor(retiredId),
+      onAnnounce: (message) => setLiveMessage(message),
+      // Queue does not own a bound review pane — projection re-derivation advances the card.
+      onRebind: undefined,
+      onClose: undefined,
+    });
+
+    const topClustersById = React.useMemo(() => {
+      const map = new Map<string, TopUnlabeledCluster>();
+      for (const cluster of topUnlabeledClusters) {
+        map.set(cluster.id, cluster);
+      }
+      return map;
+    }, [topUnlabeledClusters]);
+
+    // BR-27 / R6-02: NAME/CLUSTER prefer person-commit. Combobox first so a
+    // prefilled Save cannot take Enter/Space before the operator reads the name.
+    const focusPrimaryInCard = React.useCallback((): void => {
+      const root = cardRegionRef.current;
+      if (!root) {
+        emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+        return;
+      }
+
+      const preferPersonCommit =
+        currentItem?.kind === NEXT_ACTION_KIND.NAME ||
+        currentItem?.kind === NEXT_ACTION_KIND.CLUSTER;
+
+      const personCommitSelectors = [
+        '.acx-person-commit [role="combobox"]:not([disabled])',
+        '.acx-person-commit__confirm:not([disabled])',
+        '.acx-person-commit button:not([disabled])',
+        '.acx-person-commit a[href]',
+      ] as const;
+      const acceptSelectors = [
+        '.acx-suggestion-card__accept:not([disabled])',
+        '.acx-top-cluster-card__title-action:not([disabled])',
+        '.acx-top-cluster-card__review-btn:not([disabled])',
+        '.acx-button--primary:not([disabled])',
+        'button.button-primary:not([disabled])',
+        'button:not([disabled])',
+      ] as const;
+
+      const selectors = preferPersonCommit
+        ? [...personCommitSelectors, ...acceptSelectors]
+        : [...acceptSelectors, ...personCommitSelectors];
+
+      for (const selector of selectors) {
+        const candidate = root.querySelector<HTMLElement>(selector);
+        if (isEnabledFocusTarget(candidate)) {
+          candidate.focus({ preventScroll: true });
+          return;
+        }
+      }
+      emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+    }, [currentItem?.kind, emptyStateAnchorRef]);
+
+    const focusCurrentCard = React.useCallback((): void => {
+      if (length === 0) {
+        emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+        return;
+      }
+      focusPrimaryInCard();
+    }, [emptyStateAnchorRef, focusPrimaryInCard, length]);
+
+    React.useImperativeHandle(ref, () => ({ focusCurrentCard }), [focusCurrentCard]);
+
+    const prevFilteredEmptyRef = React.useRef(filteredEmptyWithWork);
+
+    // Card transition announce + post-removal focus placement.
+    React.useEffect(() => {
+      const recoveredFromFilteredEmpty = prevFilteredEmptyRef.current && !filteredEmptyWithWork;
+      prevFilteredEmptyRef.current = filteredEmptyWithWork;
+      if (currentKey && currentKey !== previousItemKeyRef.current) {
+        if (previousItemKeyRef.current !== null || recoveredFromFilteredEmpty) {
+          setLivePositionMessage(
+            sprintf(
+              /* translators: 1: current 1-based position, 2: total */
+              __('Review item %1$d of %2$d', 'alt-context'),
+              safeIndex + 1,
+              length,
+            ),
+          );
+        }
+        previousItemKeyRef.current = currentKey;
+        repairAnnouncedRef.current = false;
+        repairAnnouncedMessageRef.current = null;
+        if (pendingFocusAfterRemovalRef.current) {
+          pendingFocusAfterRemovalRef.current = false;
+          requestAnimationFrame(() => focusPrimaryInCard());
+        }
+        return;
+      }
+
+      if (!currentKey) {
+        const repairCopy = findings.repairPending
+          ? gatedClusterCopy(
+              repairGatedCount(
+                findings.zeroEvidenceClusterCount,
+                findings.counts.unlabeledClusters,
+              ),
+              findings.topUnlabeledTruncated,
+              topUnlabeledClusters.length,
+            )
+          : null;
+        const repairCopyChanged =
+          repairCopy !== null &&
+          !data.isTopUnlabeledError &&
+          !filteredEmptyWithWork &&
+          repairAnnouncedMessageRef.current !== null &&
+          repairAnnouncedMessageRef.current !== repairCopy;
+        if (
+          previousItemKeyRef.current !== null ||
+          (findings.repairPending && !repairAnnouncedRef.current) ||
+          (!findings.repairPending && repairAnnouncedRef.current) ||
+          repairCopyChanged
+        ) {
+          previousItemKeyRef.current = null;
+          // UI-04: drain copy is for a successful empty only — projection failure
+          // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+          // [rg-003] the outage must not silence the filtered-empty announcement:
+          // when filters hide real work, AT hears both the failure and the hint
+          // that an escape hatch exists, matching the visual (both are rendered).
+          // R8-02 / A11Y-21: latch the announced sentence, not only a boolean, so a
+          // count or wording change re-fires and an identical rerender stays quiet.
+          if (data.isTopUnlabeledError) {
+            const errorCopy = __('Unable to load unlabeled faces.', 'alt-context');
+            const nextEmptyMessage = filteredEmptyWithWork
+              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
+              : errorCopy;
+            setLivePositionMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (filteredEmptyWithWork) {
+            const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
+            setLivePositionMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (findings.repairPending && repairCopy) {
+            setLivePositionMessage(repairCopy);
+            repairAnnouncedRef.current = true;
+            repairAnnouncedMessageRef.current = repairCopy;
+          } else {
+            setLivePositionMessage(__('All caught up — no items need review', 'alt-context'));
+            repairAnnouncedRef.current = false;
+            repairAnnouncedMessageRef.current = null;
+          }
+          if (pendingFocusAfterRemovalRef.current) {
+            pendingFocusAfterRemovalRef.current = false;
+            requestAnimationFrame(() => {
+              emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+            });
+          }
+        }
+      }
+    }, [
+      currentKey,
+      data.isTopUnlabeledError,
+      emptyStateAnchorRef,
+      filteredEmptyWithWork,
+      findings.zeroEvidenceClusterCount,
+      findings.repairPending,
+      findings.counts.unlabeledClusters,
+      findings.topUnlabeledTruncated,
+      focusPrimaryInCard,
+      length,
+      safeIndex,
+      setLivePositionMessage,
+      topUnlabeledClusters.length,
+    ]);
+
+    const markAdvanceFocus = React.useCallback((): void => {
+      pendingFocusAfterRemovalRef.current = true;
+    }, []);
+
+    const clearAdvanceFocus = React.useCallback((): void => {
+      pendingFocusAfterRemovalRef.current = false;
+    }, []);
+
+    /**
+     * BR-16: leaving a held card (prev/next/filter) flushes the hold first.
+     * Advance is gated on success; failure re-surfaces on the held card.
+     * Slice-5: also flush/wait bulk hold/sequence before navigating (PR-30).
+     */
+    const navigateAfterFlush = React.useCallback(
+      (navigate: () => void): void => {
+        clearAdvanceFocus();
+        // BR-29: leave succeeded/failed person-commit surface when leaving the card.
+        data.clearPersonCommitSuccess();
+
+        const afterSingleFlush = (
+          result: ScheduleCommitResult | null | undefined,
+        ): void => {
+          if (result == null || result.outcome === 'committed') {
+            if (result?.outcome === 'committed') {
+              setLiveMessage(__('Saved. Moving to next review item.', 'alt-context'));
+            }
+            navigate();
+            return;
+          }
+          if (result.outcome === 'failed') {
+            setLiveMessage(
+              result.kind.startsWith('reject')
+                ? __('Reject failed. Retry to try again.', 'alt-context')
+                : __('Accept failed. Retry to try again.', 'alt-context'),
+            );
+          }
+        };
+
+        // Bulk active: flush/wait sequence first, then any single hold, then navigate.
+        if (bulk.isBulkActive) {
+          void bulk.awaitBulkIdleOrFlush().then(() => {
+            if (data.hold.phase === COMMIT_HOLD_PHASE.HOLDING) {
+              void data.flushHeld().then(afterSingleFlush);
+              return;
+            }
+            navigate();
+          });
+          return;
+        }
+
+        // Original single-hold fast path (BR-16) — sync check, no bulk await.
+        if (data.hold.phase !== COMMIT_HOLD_PHASE.HOLDING) {
+          navigate();
+          return;
+        }
+        void data.flushHeld().then(afterSingleFlush);
+      },
+      [bulk, clearAdvanceFocus, data, setLiveMessage],
+    );
+
+    // BR-52: fetch error fails closed — confirm cannot clear an error gate.
+    const truncationBlocksCommit =
+      selectedIds.size > 0 &&
+      (truncation.isError ||
+        (truncation.isTruncationGated && !truncationConfirmed && !truncation.isError));
+    const truncationReason = truncation.isError
+      ? __('Could not verify group sizes. Retry before accepting selected items.', 'alt-context')
+      : truncation.isTruncationGated
+        ? sprintf(
+            /* translators: 1: total members, 2: hidden count beyond first page */
+            __(
+              'Selection includes groups with %1$d total faces (%2$d not shown). Expand or confirm before accepting.',
+              'alt-context',
+            ),
+            truncation.gatedTotal,
+            truncation.gatedHiddenCount,
+          )
+        : null;
+
+    // M2: preview enumerates the filter-intersected selection only.
+    const selectedPreviewItems = React.useMemo(() => {
+      const rows: { id: string; label: string }[] = [];
+      for (const id of filteredSelectedIds) {
+        const item = queueBySuggestionId.get(id);
+        if (!item) {
+          continue;
+        }
+        rows.push({ id, label: itemPreviewLabel(item) });
+      }
+      return rows;
+    }, [queueBySuggestionId, filteredSelectedIds]);
+
+    // BR-30: when person-commit fails/succeeds after the card advanced away, surface
+    // alert/status in queue chrome (card-scoped phase never mounts).
+    const currentClusterId = currentItem ? itemClusterId(currentItem) : null;
+    const personCommitSurfacedOnCard =
+      data.personCommit.clusterId != null && data.personCommit.clusterId === currentClusterId;
+    const showQueuePersonCommitFallback =
+      (data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED || data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED) &&
+      data.personCommit.clusterId != null &&
+      !personCommitSurfacedOnCard;
+
+    // UXW2-1: ONE callback per click — the owner resets the index inside the
+    // reducer; a second same-tick write would read a stale URL snapshot.
+    const handleFilterClick = (nextFilter: ReviewQueueFilter): void => {
+      navigateAfterFlush(() => {
+        // BR-14: KIND chips toggle — active chip returns to unfiltered/all.
+        if (nextFilter === filter) {
+          onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
+          return;
+        }
+        onKindChange(filterToKindParam(nextFilter));
+      });
+    };
+
+    const handleBandClick = (nextBand: ReviewQueueBand): void => {
+      navigateAfterFlush(() => {
+        // Band chips toggle like KIND chips — active → all.
+        if (nextBand === activeBand) {
+          onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+          return;
+        }
+        onBandChange(bandToBandParam(nextBand));
+      });
+    };
+
+    const handlePrev = (): void => {
+      navigateAfterFlush(() => {
+        onStepIndex(-1, length);
+      });
+    };
+
+    const handleNext = (): void => {
+      navigateAfterFlush(() => {
+        onStepIndex(1, length);
+      });
+    };
+
+    const retrySuggestionQueries = (): void => {
+      if (retrying) {
+        return;
+      }
+      setRetrying(true);
+      setRetryFailed(false);
+      // REV2-08: name suggestions feed counts.names and the review queue.
+      void Promise.all([
+        data.refetchAssignment(),
+        data.refetchMerge(),
+        data.refetchName(),
+        data.refetchTopUnlabeled(),
+      ])
+        .catch(() => undefined)
+        .then((results) => {
+          setRetrying(false);
+          setRetryFailed(settledRefetchFailed(results));
+        });
+    };
+
+    // §7 render-branch flags, hoisted above the early returns so the card-primary
+    // presence signal is computed in every state (BR-75).
+    const showUnavailableWarning =
+      length === 0 && data.assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
+    const showEndpointErrorWarning =
+      length === 0 && data.assignmentDataSource === DATA_SOURCE.ENDPOINT_ERROR;
+    // REV6-01: retryFailed is local. A sibling findings-panel retry can
+    // recover the same four queries without touching this latch. Reset
+    // when the query-error boolean is false. Key on that boolean, not
+    // isErrorBranch — isErrorBranch includes retryFailed and would clear
+    // a genuine failure the instant it is set. Re-run when the unavailable
+    // / endpoint-error mask drops so a latched retryFailed cannot leak
+    // onto a recovered queue (suggestionQueriesErrored stays false on
+    // the UNAVAILABLE path).
+    const suggestionQueriesErrored = data.isError && findings.isError;
+    React.useEffect(() => {
+      if (!suggestionQueriesErrored) {
+        setRetryFailed(false);
+      }
+    }, [suggestionQueriesErrored, showUnavailableWarning, showEndpointErrorWarning]);
+    // Criterion 4: suppress head-card body once the open cluster is known retired.
+    const suppressRetiredHead =
+      headClusterId != null && (headLiveStatus === 'retired' || headLiveStatus === 'rebound');
+
+    // Hide the queue only while a source is still failing-to-load without a
+    // settled assignment+merge error. RQ v5 failureCount stays 1 when
+    // retry:false, so a `failureCount <= 2` gate made the error Retry dead
+    // (REV4-02). Once data.isError is set, show the error branch. Stay on
+    // that surface while a local retry is in-flight — refetch can clear
+    // query isError before it settles. REV5-02: unavailable / endpoint-error
+    // EmptyStateWarning stays mounted across retry so the focused Retry is
+    // not swapped for the generic error-branch control.
+    const isErrorBranch =
+      !showUnavailableWarning &&
+      !showEndpointErrorWarning &&
+      (retrying || retryFailed || (data.isError && findings.isError));
+    const isInitialFailureBranch =
+      data.hasInitialFailure && !data.isError && !isErrorBranch;
+    const isLoadingBranch = data.isLoading || findings.isLoading;
+    // Outcome channel. Never carries positional copy, so a save confirmation
+    // cannot be replaced by "Review item 1 of 1".
+    const liveRegion = (
+      <div
+        className="acx-review-queue__live"
+        role="status"
+        aria-live="polite"
+        data-announce-seq={liveSeq}
+      >
+        {isErrorBranch ? (
+          <p id="acx-review-queue-error" className="acx-review-queue__status">
+            {retrying ? null : (
+              <>
+                <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
+                {retryFailed
+                  ? QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS
+                  : QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS}
+              </>
+            )}
+          </p>
+        ) : (
+          liveMessage
+        )}
+      </div>
+    );
+
+    // Position / inventory channel — independently owned so it can never clobber
+    // the outcome region above (FEBT1-LD-02).
+    const livePositionRegion = (
+      <div
+        className="acx-review-queue__live-position"
+        role="status"
+        aria-live="polite"
+        data-announce-seq={livePositionSeq}
+      >
+        {livePositionMessage}
+      </div>
+    );
+
+    // The current queue item resolves to a real card (its suggestion/cluster is in
+    // the by-id map) — guards the rare projection race where an item is queued but
+    // its detail row is not yet loaded (CurrentCard would render a bodyless "no
+    // longer available" note with no primary action).
+    const currentCardResolvable = ((): boolean => {
+      if (!currentItem) {
+        return false;
+      }
+      switch (currentItem.kind) {
+        case NEXT_ACTION_KIND.ASSIGNMENT:
+          return assignmentById.has(currentItem.suggestionId);
+        case NEXT_ACTION_KIND.MERGE:
+          return mergeById.has(currentItem.suggestionId);
+        case NEXT_ACTION_KIND.NAME:
+          return nameById.has(currentItem.suggestionId);
+        case NEXT_ACTION_KIND.CLUSTER:
+          return topClustersById.has(currentItem.clusterId);
+      }
+    })();
+
+    // BR-81: for NAME/CLUSTER the accent marker rides the person-commit Confirm, which
+    // is replaced by a markerless success surface once the commit succeeds. CLUSTER
+    // lingers in `topClustersById` until the async invalidation refetch, so across that
+    // window `currentCardResolvable` stays true while NO marked primary renders —
+    // presence must be false there so the footer re-owns the single accent.
+    const personCommitSucceededOnCurrentCard =
+      currentItem !== null &&
+      isPersonCommitPrimaryKind(currentItem.kind) &&
+      data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED &&
+      (data.personCommit.clusterId === null ||
+        data.personCommit.clusterId === currentClusterId);
+
+    const blockedBulkSelectionIds = filteredSelectedIds.filter(isBulkApprovalBlocked);
+    const selectionApprovalBlocksCommit = blockedBulkSelectionIds.length > 0;
+    const blockedNameSelection = blockedBulkSelectionIds.some((suggestionId) =>
+      queueBySuggestionId.get(suggestionId)?.kind === NEXT_ACTION_KIND.NAME,
+    );
+    const blockedAssignmentSelection = blockedBulkSelectionIds.some((suggestionId) =>
+      queueBySuggestionId.get(suggestionId)?.kind === NEXT_ACTION_KIND.ASSIGNMENT,
+    );
+    const selectionApprovalReason =
+      blockedNameSelection && blockedAssignmentSelection
+        ? __(
+            'Record an independent judgment and reveal every selected name suggestion, and review the stored faces for every selected assignment, before accepting.',
+            'alt-context',
+          )
+        : blockedNameSelection
+          ? __(
+              'Record an independent judgment and reveal every selected name suggestion before accepting.',
+              'alt-context',
+            )
+          : blockedAssignmentSelection
+            ? __('Review the stored faces for every selected suggestion before accepting.', 'alt-context')
+            : __('Review every selected suggestion before accepting.', 'alt-context');
+    const selectionApprovalReasonId = 'acx-review-queue-selection-approval-reason';
+    const truncationReasonId = 'acx-review-queue-truncation-reason';
+    const bulkCommitNativeDisabled =
+      filteredSelectedIds.length === 0 ||
+      bulk.isBulkActive ||
+      bulk.bulkInitiatePending ||
+      truncationBlocksCommit ||
+      truncation.isLoading;
+
+    // BR-75: a single accent-primary card action is on screen iff CurrentCard's real
+    // branch renders its marked primary. This is the SAME condition that mounts the
+    // marker, so the footer demotion it drives cannot disagree with the card marker.
+    const cardPrimaryPresent =
+      !isInitialFailureBranch &&
+      !isLoadingBranch &&
+      !isErrorBranch &&
+      !showUnavailableWarning &&
+      !showEndpointErrorWarning &&
+      length > 0 &&
+      currentItem !== null &&
+      !suppressRetiredHead &&
+      currentCardResolvable &&
+      !personCommitSucceededOnCurrentCard;
+
+    // BR-82: when the bulk-commit button is on screen with a committable, non-ambiguous
+    // selection it is the viewport's single accent primary (the user is committing the
+    // selection); the per-card primary steps down to neutral. While the selection is
+    // truncation-ambiguous the bulk commit is never the accent (COL-03 / UI-06 §7.7),
+    // so the card keeps it. Guarded so exactly one element carries the accent.
+    const bulkCommitOwnsAccent =
+      selectionOpen &&
+      filteredSelectedIds.length > 0 &&
+      !truncationBlocksCommit &&
+      !selectionApprovalBlocksCommit;
+    const closeMatchOfferOwnsAccent = closeMatchOffer !== null;
+
+    // The queue owns the viewport's single accent primary when either the card marker
+    // renders or the bulk commit does — this is what drives footer demotion.
+    const queueOwnsAccentPrimary =
+      (cardPrimaryPresent && !closeMatchOfferOwnsAccent) ||
+      bulkCommitOwnsAccent ||
+      closeMatchOfferOwnsAccent;
+
+    // BR-80: report presence in a layout effect (fires before paint) so the footer
+    // demotion and the card/bulk marker commit in the SAME visual frame — no transient
+    // frame of two accents (card + still-primary footer) on entry, nor zero on drain.
+    React.useLayoutEffect(() => {
+      onCardPrimaryPresenceChange?.(queueOwnsAccentPrimary);
+    }, [queueOwnsAccentPrimary, onCardPrimaryPresenceChange]);
+    // Report absence on unmount (e.g. a panel replaces the queue) so a stale "present"
+    // never lingers in the parent's footer-demotion state. Layout-effect cleanup runs
+    // before paint so the footer re-owns the accent in the same frame the panel mounts.
+    React.useLayoutEffect(
+      () => () => {
+        onCardPrimaryPresenceChange?.(false);
+      },
+      [onCardPrimaryPresenceChange],
+    );
+
+    if (isErrorBranch) {
+      return (
+        <div className="acx-review-queue acx-review-queue--error">
+          {liveRegion}
+          <QueryRetryButton
+            describedBy="acx-review-queue-error"
+            retrying={retrying}
+            retryingLabel={QUERY_RETRY_COPY.RETRYING_SUGGESTIONS}
+            statusId="acx-review-queue-retrying"
+            statusClassName="acx-review-queue__status"
+            onClick={retrySuggestionQueries}
+            className="button"
+          />
+        </div>
+      );
+    }
+
+    if (isInitialFailureBranch) {
+      return <div className="acx-review-queue">{liveRegion}</div>;
+    }
+
+    if (isLoadingBranch) {
+      return (
+        <div className="acx-review-queue acx-review-queue--loading">
+          {liveRegion}
+          <p>{__('Loading review queue…', 'alt-context')}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
+        {liveRegion}
+        {livePositionRegion}
+        {/*
+          `unverified` covers both "the probe has not settled yet" and "the probe
+          failed", so status alone cannot gate an alert — an in-flight probe would
+          shout at every operator on first paint. The reason channel disambiguates:
+          announce only once there is something to announce (RLSE-05 / AGT-10).
+        */}
+        {headLiveStatus === 'auth_expired' || (headLiveStatus === 'unverified' && headLiveError !== null) ? (
+          <UserFacingErrorNotice
+            className="acx-review-queue__auth-expired"
+            error={headLiveError}
+            fallback={__('Unable to verify this review target.', 'alt-context')}
+          />
+        ) : null}
+        <header className="acx-review-queue__header">
+          <h3 id="acx-workbench-queue-heading" className="acx-review-queue__title">
+            {__('Review Suggestions', 'alt-context')}
+          </h3>
+          {length > 0 ? (
+            <span className="acx-review-queue__count" aria-hidden="true">
+              {sprintf(
+                filtersActive
+                  ? _n('%d shown', '%d shown', length, 'alt-context')
+                  : _n(
+                      '%d left to review on this page',
+                      '%d left to review on this page',
+                      length,
+                      'alt-context',
+                    ),
+                length,
+              )}
+            </span>
+          ) : null}
+        </header>
+
+        <div className="acx-review-queue__chrome">
+          <div className="acx-review-queue__chip-groups">
+            <div
+              className="acx-review-queue__chips"
+              role="group"
+              aria-label={__('Filter review queue', 'alt-context')}
+            >
+              <button
+                type="button"
+                className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.ASSIGNMENT ? ' is-active' : ''}`}
+                aria-pressed={filter === REVIEW_QUEUE_FILTER.ASSIGNMENT}
+                onClick={() => handleFilterClick(REVIEW_QUEUE_FILTER.ASSIGNMENT)}
+              >
+                {NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.ASSIGNMENT]}
+              </button>
+              <button
+                type="button"
+                className={`acx-review-queue__chip${filter === REVIEW_QUEUE_FILTER.MERGE ? ' is-active' : ''}`}
+                aria-pressed={filter === REVIEW_QUEUE_FILTER.MERGE}
+                onClick={() => handleFilterClick(REVIEW_QUEUE_FILTER.MERGE)}
+              >
+                {NEXT_ACTION_CHIP_LABEL[NEXT_ACTION_KIND.MERGE]}
+              </button>
+            </div>
+            {/* ④ band chips — second group; pure similarity predicate (post-eligibility). */}
+            <div
+              className="acx-review-queue__chips acx-review-queue__chips--band"
+              role="group"
+              aria-label={__('Filter by match strength', 'alt-context')}
+            >
+              <button
+                type="button"
+                className={`acx-review-queue__chip${activeBand === REVIEW_QUEUE_BAND.STRONG ? ' is-active' : ''}`}
+                aria-pressed={activeBand === REVIEW_QUEUE_BAND.STRONG}
+                onClick={() => handleBandClick(REVIEW_QUEUE_BAND.STRONG)}
+              >
+                {REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.STRONG]}
+              </button>
+              <button
+                type="button"
+                className={`acx-review-queue__chip${activeBand === REVIEW_QUEUE_BAND.WEAKER ? ' is-active' : ''}`}
+                aria-pressed={activeBand === REVIEW_QUEUE_BAND.WEAKER}
+                onClick={() => handleBandClick(REVIEW_QUEUE_BAND.WEAKER)}
+              >
+                {REVIEW_QUEUE_BAND_CHIP_LABEL[REVIEW_QUEUE_BAND.WEAKER]}
+              </button>
+            </div>
+          </div>
+
+          <div className="acx-review-queue__nav">
+            <span className="acx-review-queue__position" aria-live="polite">
+              {length === 0
+                ? data.isTopUnlabeledError || findings.repairPending || filteredEmptyWithWork
+                  ? // [A11Y] a bare em dash announces as punctuation and loses the
+                    // position entirely; state the unmeasurable count explicitly.
+                    // R5-03: repair-empty is not an authoritative drain — same
+                    // unmeasurable-count copy as the projection-failure path.
+                    // R7-04 / RLSE-04: filtered-empty-with-work is also not 0 of 0.
+                    __('Position unavailable', 'alt-context')
+                  : __('0 of 0', 'alt-context')
+                : sprintf(
+                    /* translators: 1: current 1-based position, 2: loaded count on this page or in the active filter */
+                    filtersActive
+                      ? __('%1$d of %2$d shown', 'alt-context')
+                      : __('%1$d of %2$d on this page', 'alt-context'),
+                    safeIndex + 1,
+                    length,
+                  )}
+            </span>
+            <button
+              type="button"
+              className="acx-review-queue__nav-button"
+              onClick={handlePrev}
+              disabled={length === 0 || safeIndex <= 0}
+              aria-label={__('Previous review item', 'alt-context')}
+            >
+              {__('Previous', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="acx-review-queue__nav-button"
+              onClick={handleNext}
+              disabled={length === 0 || safeIndex >= length - 1}
+              aria-label={__('Next review item', 'alt-context')}
+            >
+              {__('Next', 'alt-context')}
+            </button>
+          </div>
+
+          {/* G3 selection tray — chrome, not a review card (PA-14 one-card invariant). */}
+          <div
+            className="acx-review-queue__selection-tray"
+            data-testid="acx-review-selection-tray"
+          >
+            <span className="acx-review-queue__selection-count">
+              {selectionCountMessage}
+            </span>
+            <button
+              type="button"
+              className="acx-review-queue__selection-review"
+              disabled={selectedIds.size === 0}
+              aria-expanded={selectionOpen}
+              onClick={() => setSelectionOpen((open) => !open)}
+            >
+              {__('Review selection', 'alt-context')}
+            </button>
+          </div>
+        </div>
+
+        {selectionApprovalBlocksCommit ? (
+          <p
+            id={selectionApprovalReasonId}
+            className="acx-review-queue__selection-approval-reason"
+          >
+            {selectionApprovalReason}
+          </p>
+        ) : null}
+
+        {selectionOpen && selectedIds.size > 0 ? (
+          <div
+            className="acx-review-queue__selection-panel"
+            data-testid="acx-review-selection-panel"
+          >
+            <ul className="acx-review-queue__selection-preview">
+              {selectedPreviewItems.map((row) => (
+                <li key={row.id} className="acx-review-queue__selection-preview-row">
+                  <span className="acx-review-queue__selection-preview-label">{row.label}</span>
+                </li>
+              ))}
+            </ul>
+
+            {truncationReason ? (
+              <p id={truncationReasonId} className="acx-review-queue__truncation-reason">
+                {truncationReason}
+              </p>
+            ) : null}
+
+            {truncation.isError ? (
+              <button
+                type="button"
+                className="button acx-review-queue__truncation-retry"
+                data-testid="acx-truncation-retry"
+                onClick={() => truncation.refetch()}
+              >
+                {__('Retry', 'alt-context')}
+              </button>
+            ) : null}
+
+            {truncationBlocksCommit && !truncation.isError ? (
+              <button
+                type="button"
+                className="button acx-review-queue__truncation-confirm"
+                onClick={() => setTruncationConfirmed(true)}
+              >
+                {sprintf(
+                  /* translators: 1: total members across gated clusters, 2: hidden count */
+                  __('Confirm %1$d total (%2$d not shown)', 'alt-context'),
+                  truncation.gatedTotal,
+                  truncation.gatedHiddenCount,
+                )}
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              // BR-82: the bulk commit carries the accent chrome + single-primary marker
+              // only when it owns the accent (committable, non-ambiguous selection);
+              // otherwise it renders neutral so it is never a second chromatic primary.
+              className={
+                bulkCommitOwnsAccent
+                  ? 'button button-primary acx-review-queue__bulk-commit acx-accent-primary-action'
+                  : 'button acx-review-queue__bulk-commit'
+              }
+              data-testid="acx-bulk-commit"
+              // BR-74: selection approval gate uses aria-disabled + onClick, never HTML
+              // disabled — that would drop the describedby reason from tab order.
+              disabled={bulkCommitNativeDisabled}
+              aria-disabled={
+                bulkCommitNativeDisabled || selectionApprovalBlocksCommit ? true : undefined
+              }
+              aria-describedby={
+                selectionApprovalBlocksCommit
+                  ? selectionApprovalReasonId
+                  : truncationBlocksCommit
+                    ? truncationReasonId
+                    : undefined
+              }
+              {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
+              onClick={() => {
+                if (selectionApprovalBlocksCommit) {
+                  return;
+                }
+                void bulk.initiateBulk();
+              }}
+            >
+              {bulk.commitLabelForSelection}
+            </button>
+          </div>
+        ) : null}
+
+        {bulk.bulk.phase === BULK_COMMIT_PHASE.HOLDING || bulk.bulk.phase === BULK_COMMIT_PHASE.COMMITTING ? (
+          <div
+            className="acx-review-queue__hold acx-review-queue__bulk-hold"
+            role="status"
+            aria-live="polite"
+            data-testid="acx-bulk-hold"
+            onFocusCapture={() => bulk.setBulkHoldPaused(true)}
+            onBlurCapture={(event) => {
+              const related = event.relatedTarget;
+              if (!(related instanceof Node) || !event.currentTarget.contains(related)) {
+                bulk.setBulkHoldPaused(false);
+              }
+            }}
+            onPointerEnter={() => bulk.setBulkHoldPaused(true)}
+            onPointerLeave={() => bulk.setBulkHoldPaused(false)}
+          >
+            <span className="acx-review-queue__hold-message">{bulk.bulkHoldAnnounce}</span>
+            {bulk.bulk.phase === BULK_COMMIT_PHASE.HOLDING ? (
+              <button
+                type="button"
+                className="button acx-review-queue__undo"
+                onClick={() => bulk.undoBulk()}
+              >
+                {__('Undo', 'alt-context')}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {bulk.bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED && bulk.bulk.partialFailure ? (
+          <div
+            className="acx-review-queue__failure acx-review-queue__bulk-failure"
+            role="alert"
+            data-testid="acx-bulk-partial-failure"
+          >
+            <p className="acx-review-queue__failure-message">{bulk.bulk.partialFailure.message}</p>
+            <button
+              type="button"
+              className="button acx-review-queue__retry"
+              aria-disabled={selectionApprovalBlocksCommit ? true : undefined}
+              aria-describedby={
+                selectionApprovalBlocksCommit ? selectionApprovalReasonId : undefined
+              }
+              onClick={() => {
+                if (selectionApprovalBlocksCommit) {
+                  return;
+                }
+                void bulk.retryBulk();
+              }}
+            >
+              {__('Retry', 'alt-context')}
+            </button>
+          </div>
+        ) : null}
+
+        {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED ? (
+          <div
+            className="acx-review-queue__person-commit-fallback acx-person-commit__failure"
+            role="alert"
+            data-testid="acx-person-commit-queue-fallback"
+          >
+            <p className="acx-person-commit__failure-message">
+              {data.personCommit.errorMessage ?? __('Could not save the name. Retry to try again.', 'alt-context')}
+            </p>
+            <button
+              type="button"
+              className="button acx-person-commit__retry"
+              onClick={() => {
+                void data.retryPersonCommit();
+              }}
+              disabled={data.personCommitPending}
+            >
+              {__('Retry', 'alt-context')}
+            </button>
+          </div>
+        ) : null}
+        {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED ? (
+          <div
+            className="acx-review-queue__person-commit-fallback acx-person-commit--success"
+            role="status"
+            data-testid="acx-person-commit-queue-fallback"
+          >
+            <p className="acx-person-commit__success-message">
+              {__('Name saved.', 'alt-context')}
+            </p>
+            <a className="acx-person-commit__roster-link" href={viewInRosterHref(data.personCommit.personUuid)}>
+              {__('View in roster →', 'alt-context')}
+            </a>
+          </div>
+        ) : null}
+
+        <div ref={cardRegionRef} className="acx-review-queue__card-region">
+          {showUnavailableWarning ? (
+            <EmptyStateWarning
+              title={__('Suggestion service not configured', 'alt-context')}
+              message={__(
+                'Check the recognition service connection, then retry loading suggestions.',
+                'alt-context',
+              )}
+              onRetry={retrySuggestionQueries}
+              retrying={retrying}
+            />
+          ) : showEndpointErrorWarning ? (
+            <EmptyStateWarning
+              title={__('Suggestion service error', 'alt-context')}
+              message={__(
+                'The recognition service responded with an error. Retry now or check the service logs.',
+                'alt-context',
+              )}
+              onRetry={retrySuggestionQueries}
+              retrying={retrying}
+            />
+          ) : length === 0 || !currentItem ? (
+            // [rg-003] the outage and the Clear-filters escape hatch coexist: a
+            // top-unlabeled 500 must never remove a primary control that reaches
+            // real pending work. Only the true-drain copy is suppressed by it.
+            <>
+              {data.isTopUnlabeledError ? (
+                // RLSE-05: top-unlabeled 500 must not read as an empty/caught-up queue.
+                <div
+                  className="acx-review-queue__error"
+                  role="alert"
+                  data-testid="acx-review-queue-top-unlabeled-error"
+                >
+                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => void data.refetchTopUnlabeled()}
+                  >
+                    {__('Retry', 'alt-context')}
+                  </button>
+                </div>
+              ) : null}
+              {filteredEmptyWithWork ? (
+                // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
+                <div className="acx-review-queue__empty">
+                  <p>{__('No items match the current filters.', 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      navigateAfterFlush(() => {
+                        pendingFocusAfterRemovalRef.current = true;
+                        onClearFilters();
+                      });
+                    }}
+                  >
+                    {__('Clear filters', 'alt-context')}
+                  </button>
+                </div>
+              ) : data.isTopUnlabeledError ? null : (
+                <>
+                  {!findings.repairPending ? (
+                    <p className="acx-review-queue__empty">
+                      {__('All caught up — no items need review', 'alt-context')}
+                    </p>
+                  ) : null}
+                  {findings.repairPending ? (
+                    <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
+                      <p id="acx-review-queue-repair-copy">
+                        <AlertTriangle aria-hidden="true" size={16} />
+                        {gatedClusterCopy(
+                          repairGatedCount(
+                            findings.zeroEvidenceClusterCount,
+                            findings.counts.unlabeledClusters,
+                          ),
+                          findings.topUnlabeledTruncated,
+                          topUnlabeledClusters.length,
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() => void data.refetchTopUnlabeled()}
+                        aria-describedby="acx-review-queue-repair-copy"
+                        aria-label={__('Resync review queue', 'alt-context')}
+                      >
+                        {__('Resync', 'alt-context')}
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </>
+          ) : suppressRetiredHead ? (
+            <p className="acx-review-queue__retired" data-testid="acx-review-queue-retired-head">
+              {liveMessage ?? __('This review target is no longer available.', 'alt-context')}
+            </p>
+          ) : (
+            <>
+              {data.isTopUnlabeledError &&
+              !(
+                currentItem.kind === NEXT_ACTION_KIND.CLUSTER &&
+                !topClustersById.has(currentItem.clusterId)
+              ) ? (
+                <div
+                  className="acx-review-queue__error"
+                  role="alert"
+                  data-testid="acx-review-queue-top-unlabeled-error"
+                >
+                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => void data.refetchTopUnlabeled()}
+                  >
+                    {__('Retry', 'alt-context')}
+                  </button>
+                </div>
+              ) : null}
+            <CurrentCard
+              item={currentItem}
+              nameJudgments={effectiveHAIReviewState.nameJudgments}
+              recordNameJudgment={recordNameJudgment}
+              revealedNameSuggestionIds={effectiveHAIReviewState.revealedNameSuggestionIds}
+              onToggleNameSuggestion={toggleNameSuggestion}
+              // BR-82: the card primary steps down to neutral while the bulk commit owns
+              // the accent, so exactly one element carries the accent per viewport.
+              accentPrimary={!bulkCommitOwnsAccent && !closeMatchOfferOwnsAccent}
+              reviewQueueItems={findings.queue}
+              onCloseMatchOffer={setCloseMatchOffer}
+              // BR-35: same 1-based numbers as the visible position span; omit when the
+              // REVIEW_QUEUE_POSITION_UNAVAILABLE outage path makes count unmeasurable
+              // (length===0 — CurrentCard is not mounted then, but keep the gate explicit).
+              queuePosition={length > 0 ? safeIndex + 1 : undefined}
+              queueTotal={length > 0 ? length : undefined}
+              assignmentById={assignmentById}
+              mergeById={mergeById}
+              nameById={nameById}
+              topClustersById={topClustersById}
+              isTopUnlabeledError={data.isTopUnlabeledError}
+              onRetryTopUnlabeled={() => void data.refetchTopUnlabeled()}
+              isCardPending={(suggestionId, kinds) =>
+                // BR-47: selected cards cannot open a single hold (bulk exclusion).
+                data.isCardPending(suggestionId, kinds) ||
+                bulk.isBulkActive ||
+                bulk.isIdInBulkSelection(suggestionId)
+              }
+              cardActionsDisabledReason={
+                itemSuggestionId(currentItem) &&
+                bulk.isIdInBulkSelection(itemSuggestionId(currentItem)!)
+                  ? __(
+                      'Deselect this item to accept or reject it individually.',
+                      'alt-context',
+                    )
+                  : bulk.isBulkActive
+                    ? __('Bulk accept in progress.', 'alt-context')
+                    : null
+              }
+              hold={data.hold}
+              retryPending={data.retryPending}
+              personCommit={data.personCommit}
+              personCommitPending={data.personCommitPending}
+              isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
+              onReview={onReview}
+              reviewedStoredFaceSuggestionIds={effectiveHAIReviewState.reviewedStoredFaceSuggestionIds}
+              onStoredFaceReviewPresented={markStoredFaceReviewPresented}
+              onLabel={onLabel}
+              onOpenOriginal={(target) => {
+                setLightboxNaming(false);
+                if (currentItem.kind === NEXT_ACTION_KIND.ASSIGNMENT) {
+                  setLightbox({
+                    ...target,
+                    ...(currentItem.clusterId ? { clusterId: currentItem.clusterId } : {}),
+                  });
+                  return;
+                }
+                setLightbox(target);
+              }}
+              markAdvanceFocus={markAdvanceFocus}
+              clearAdvanceFocus={clearAdvanceFocus}
+              announce={setLiveMessage}
+              scheduleAccept={data.scheduleAccept}
+              scheduleReject={data.scheduleReject}
+              scheduleAcceptMerge={data.scheduleAcceptMerge}
+              scheduleRejectMerge={data.scheduleRejectMerge}
+              scheduleAcceptName={data.scheduleAcceptName}
+              scheduleRejectName={data.scheduleRejectName}
+              schedulePersonCommit={data.schedulePersonCommit}
+              retryPersonCommit={data.retryPersonCommit}
+              undoHold={data.undoHold}
+              retryFailure={data.retryFailure}
+              setHoldPaused={data.setHoldPaused}
+              isSelected={
+                itemSuggestionId(currentItem)
+                  ? bulk.isIdSelected(itemSuggestionId(currentItem)!)
+                  : false
+              }
+              isSelectDisabled={
+                !itemSuggestionId(currentItem) ||
+                !bulk.isIdSelectable(itemSuggestionId(currentItem)!)
+              }
+              onToggleSelect={
+                itemSuggestionId(currentItem)
+                  ? () => bulk.toggleSelect(itemSuggestionId(currentItem)!)
+                  : undefined
+              }
+            />
+            <CloseMatchAcceptOffer
+              open={closeMatchOffer !== null}
+              count={closeMatchOffer?.included.length ?? 0}
+              omitted={closeMatchOffer?.omitted ?? 0}
+              truncated={closeMatchOffer?.truncated ?? false}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setCloseMatchOffer(null);
+                }
+              }}
+              onConfirm={() => {
+                if (!closeMatchOffer) {
+                  return;
+                }
+                const items: BulkCommitItem[] = [
+                  {
+                    suggestionId: closeMatchOffer.acceptedId,
+                    commitKind: 'accept',
+                    label: closeMatchOffer.label,
+                  },
+                  ...closeMatchOffer.included.map((row) => ({
+                    suggestionId: row.suggestionId,
+                    commitKind: 'accept' as const,
+                    label: row.label,
+                  })),
+                ];
+                closeMatchAnnounceRef.current = {
+                  count: closeMatchOffer.included.length,
+                  omitted: closeMatchOffer.omitted,
+                };
+                setCloseMatchOffer(null);
+                markAdvanceFocus();
+                void bulk.initiateBulkFromItems(items);
+              }}
+              onSkip={() => {
+                const acceptedId = closeMatchOffer?.acceptedId;
+                setCloseMatchOffer(null);
+                if (!acceptedId) {
+                  return;
+                }
+                markAdvanceFocus();
+                void data.scheduleAccept(acceptedId).then((result) => {
+                  if (result.outcome !== 'committed') {
+                    clearAdvanceFocus();
+                  }
+                  if (result.outcome === 'not_attempted_prior_failed') {
+                    setLiveMessage(
+                      __('Retry the item that failed to save before reviewing another.', 'alt-context'),
+                    );
+                  }
+                });
+              }}
+              accentPrimary={closeMatchOfferOwnsAccent}
+            />
+            </>
+          )}
+        </div>
+
+        {lightbox ? (
+          <ReviewCardLightbox
+            open
+            onOpenChange={(open) => {
+              if (!open) {
+                setLightbox(null);
+                setLightboxNaming(false);
+              }
+            }}
+            mediaUrl={lightbox.mediaUrl}
+            bbox={lightbox.bbox}
+            label={lightbox.label}
+            mediaId={lightbox.mediaId}
+            activeFaceId={lightbox.identityId}
+            onReviewFaceActivate={() => {
+              if (lightbox.clusterId) {
+                setLightboxNaming(true);
+              }
+            }}
+            reviewNaming={
+              lightboxNaming && lightbox.clusterId ? (
+                <LightboxNameFace
+                  clusterId={lightbox.clusterId}
+                  phase={
+                    data.personCommit.clusterId === null ||
+                    data.personCommit.clusterId === lightbox.clusterId
+                      ? data.personCommit.phase
+                      : PERSON_COMMIT_PHASE.IDLE
+                  }
+                  errorMessage={
+                    data.personCommit.clusterId === lightbox.clusterId
+                      ? data.personCommit.errorMessage
+                      : null
+                  }
+                  disabled={
+                    data.personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING ||
+                    data.personCommitPending
+                  }
+                  onCommit={(request) => {
+                    void data.schedulePersonCommit(request).then((result) => {
+                      if (result.outcome === 'committed') {
+                        setLiveMessage(LIGHTBOX_NAME_SAVED_ANNOUNCE);
+                        setLightboxNaming(false);
+                        setLightbox(null);
+                      } else if (result.outcome === 'not_attempted_prior_failed') {
+                        setLiveMessage(
+                          __(
+                            'Retry the item that failed to save before assigning a person.',
+                            'alt-context',
+                          ),
+                        );
+                      }
+                    });
+                  }}
+                  onCancel={() => {
+                    setLightboxNaming(false);
+                    if (lightbox.identityId) {
+                      document.getElementById(faceOverlayDomId(lightbox.identityId))?.focus();
+                    }
+                  }}
+                  onRetry={() => {
+                    void data.retryPersonCommit();
+                  }}
+                />
+              ) : null
+            }
+          />
+        ) : null}
+      </div>
+    );
+  },
+);
+
+interface CurrentCardProps {
+  item: ReviewQueueItem;
+  nameJudgments: ReadonlyMap<string, string>;
+  recordNameJudgment: (id: string, judgment: string) => void;
+  revealedNameSuggestionIds: ReadonlySet<string>;
+  onToggleNameSuggestion: (suggestionId: string) => void;
+  /**
+   * §7: when true, this mounted card's single per-kind primary (accept for
+   * ASSIGNMENT/MERGE, person-commit Confirm for NAME/CLUSTER) carries the
+   * `data-acx-accent-primary` marker + accent chrome. BR-82: false while the
+   * bulk-commit button owns the accent, so the card steps down to neutral and
+   * exactly one element carries the accent per viewport.
+   */
+  accentPrimary: boolean;
+  /**
+   * BR-35: 1-based queue position from the same state as the visible
+   * `%1$d of %2$d` chrome. Omit (with `queueTotal`) when position is unavailable.
+   */
+  queuePosition?: number;
+  /** BR-35: filtered queue length paired with `queuePosition`. */
+  queueTotal?: number;
+  assignmentById: Map<string, ReviewSuggestion>;
+  mergeById: Map<string, PendingMergeSuggestion>;
+  nameById: Map<string, PendingNameSuggestion>;
+  topClustersById: Map<string, TopUnlabeledCluster>;
+  /** Projection outage on top-unlabeled — distinct from retired-cluster empty. */
+  isTopUnlabeledError: boolean;
+  onRetryTopUnlabeled: () => void;
+  isCardPending: (suggestionId: string, kinds: readonly SuggestionCommitKind[]) => boolean;
+  /** BR-47: title/reason when Accept/Reject disabled due to selection or bulk. */
+  cardActionsDisabledReason: string | null;
+  hold: ReturnType<typeof useSuggestionReviewData>['hold'];
+  retryPending: boolean;
+  personCommit: PersonCommitState;
+  personCommitPending: boolean;
+  /** BR-48: disable person-commit while bulk hold/sequence is active. */
+  isBulkActive: boolean;
+  onReview?: (clusterId: string) => void;
+  reviewedStoredFaceSuggestionIds: ReadonlySet<string>;
+  onStoredFaceReviewPresented: (suggestionId: string) => void;
+  onLabel?: (clusterId: string) => void;
+  onOpenOriginal: (target: FaceOriginalTarget) => void;
+  markAdvanceFocus: () => void;
+  clearAdvanceFocus: () => void;
+  /** C-05: live-region announce for a refused action (single failed-slot occupied). */
+  announce: (message: string) => void;
+  scheduleAccept: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleReject: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleAcceptMerge: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleRejectMerge: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleAcceptName: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  scheduleRejectName: (suggestionId: string) => Promise<ScheduleCommitResult>;
+  schedulePersonCommit: (request: PersonCommitRequest) => Promise<PersonCommitResult>;
+  retryPersonCommit: () => Promise<PersonCommitResult> | null;
+  undoHold: () => void;
+  retryFailure: () => Promise<ScheduleCommitResult> | null;
+  setHoldPaused: (paused: boolean) => void;
+  isSelected: boolean;
+  isSelectDisabled: boolean;
+  onToggleSelect?: () => void;
+  reviewQueueItems: readonly ReviewQueueItem[];
+  onCloseMatchOffer: (offer: {
+    acceptedId: string;
+    label: string | null;
+    included: AssignmentQueueItem[];
+    omitted: number;
+    truncated: boolean;
+  }) => void;
+}
+
+/** Per-card Select affordance (PA-14) — accumulates into the lifted selection set. */
+const SelectToggle = ({
+  selected,
+  disabled,
+  onToggle,
+}: {
+  selected: boolean;
+  disabled: boolean;
+  onToggle?: () => void;
+}): React.JSX.Element | null => {
+  if (!onToggle) {
+    return null;
+  }
+  return (
+    <button
+      type="button"
+      className={`acx-review-queue__select${selected ? ' is-selected' : ''}`}
+      data-testid="acx-review-select"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onToggle}
+    >
+      {selected ? __('Selected', 'alt-context') : __('Select', 'alt-context')}
+    </button>
+  );
+};
+
+const holdMatchesCard = (
+  hold: CurrentCardProps['hold'],
+  kinds: readonly SuggestionCommitKind[],
+  suggestionId: string,
+): boolean =>
+  hold.suggestionId === suggestionId && hold.kind !== null && kinds.includes(hold.kind);
+
+/** Hold region: status announce + Undo; countdown pauses on focus/hover (A11Y-16). */
+export const CommitHoldRegion = ({
+  phase,
+  errorMessage,
+  onUndo,
+  onRetry,
+  onPausedChange,
+  retryPending = false,
+}: {
+  phase: Exclude<CommitHoldPhase, typeof COMMIT_HOLD_PHASE.IDLE>;
+  errorMessage: string | null;
+  onUndo: () => void;
+  onRetry: () => void;
+  onPausedChange: (paused: boolean) => void;
+  retryPending?: boolean;
+}): React.JSX.Element => {
+  if (phase === COMMIT_HOLD_PHASE.FAILED) {
+    return (
+      <div className="acx-review-queue__failure" role="alert">
+        <p className="acx-review-queue__failure-message">
+          {errorMessage ?? __('Save failed. Retry to try again.', 'alt-context')}
+        </p>
+        <button
+          type="button"
+          className="button acx-review-queue__retry"
+          onClick={onRetry}
+          disabled={retryPending}
+        >
+          {__('Retry', 'alt-context')}
+        </button>
+      </div>
+    );
+  }
+
+  const holdMessage =
+    phase === COMMIT_HOLD_PHASE.COMMITTING
+      ? HOLD_COMMITTING_STATUS_COPY
+      : HOLD_STATUS_COPY;
+
+  return (
+    <div
+      className="acx-review-queue__hold"
+      role="status"
+      aria-live="polite"
+      onFocusCapture={() => onPausedChange(true)}
+      onBlurCapture={(event) => {
+        const related = event.relatedTarget;
+        if (!(related instanceof Node) || !event.currentTarget.contains(related)) {
+          onPausedChange(false);
+        }
+      }}
+      onPointerEnter={() => onPausedChange(true)}
+      onPointerLeave={() => onPausedChange(false)}
+    >
+      <span className="acx-review-queue__hold-message">{holdMessage}</span>
+      {phase === COMMIT_HOLD_PHASE.HOLDING ? (
+        <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
+          {__('Undo', 'alt-context')}
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
+const CurrentCard = ({
+  item,
+  nameJudgments,
+  recordNameJudgment,
+  revealedNameSuggestionIds,
+  onToggleNameSuggestion,
+  accentPrimary,
+  queuePosition,
+  queueTotal,
+  assignmentById,
+  mergeById,
+  nameById,
+  topClustersById,
+  isTopUnlabeledError,
+  onRetryTopUnlabeled,
+  isCardPending,
+  cardActionsDisabledReason,
+  hold,
+  retryPending,
+  personCommit,
+  personCommitPending,
+  isBulkActive,
+  onReview,
+  reviewedStoredFaceSuggestionIds,
+  onStoredFaceReviewPresented,
+  onLabel,
+  onOpenOriginal,
+  markAdvanceFocus,
+  clearAdvanceFocus,
+  announce,
+  scheduleAccept,
+  scheduleReject,
+  scheduleAcceptMerge,
+  scheduleRejectMerge,
+  scheduleAcceptName,
+  scheduleRejectName,
+  schedulePersonCommit,
+  retryPersonCommit,
+  undoHold,
+  retryFailure,
+  setHoldPaused,
+  isSelected,
+  isSelectDisabled,
+  onToggleSelect,
+  reviewQueueItems,
+  onCloseMatchOffer,
+}: CurrentCardProps): React.JSX.Element | null => {
+  const [independentNameDraft, setIndependentNameDraft] = React.useState('');
+  const draftItemId = itemSuggestionId(item);
+  React.useEffect(() => setIndependentNameDraft(''), [draftItemId]);
+  const currentNameJudgment =
+    item.kind === NEXT_ACTION_KIND.NAME ? nameJudgments.get(item.suggestionId) : undefined;
+  const showSuggestionRef = React.useRef<HTMLButtonElement>(null);
+  const observedNameJudgmentRef = React.useRef<{
+    id: string | null;
+    judgment: string | undefined;
+  }>({ id: draftItemId, judgment: currentNameJudgment });
+  React.useEffect(() => {
+    const previous = observedNameJudgmentRef.current;
+    observedNameJudgmentRef.current = { id: draftItemId, judgment: currentNameJudgment };
+    if (
+      item.kind !== NEXT_ACTION_KIND.NAME ||
+      currentNameJudgment === undefined ||
+      previous.id !== draftItemId ||
+      previous.judgment !== undefined
+    ) {
+      return;
+    }
+    announce(__('Independent judgment recorded. You can now show the suggestion.', 'alt-context'));
+    showSuggestionRef.current?.focus({ preventScroll: true });
+  }, [announce, currentNameJudgment, draftItemId, item.kind]);
+  // Arm focus before the POST so removal→key-change can place it; clear on
+  // undo/failure (BR-13) so a later key change does not surprise-focus.
+  const runScheduled = (schedule: () => Promise<ScheduleCommitResult>): void => {
+    markAdvanceFocus();
+    void schedule().then((result) => {
+      if (result.outcome !== 'committed') {
+        clearAdvanceFocus();
+      }
+      // C-05: the single failed-item slot refused this action because another item's
+      // save is still failed. Announce it instead of a silent no-op (the click would
+      // otherwise look dead and invite a retry/double-click).
+      if (result.outcome === 'not_attempted_prior_failed') {
+        announce(__('Retry the item that failed to save before reviewing another.', 'alt-context'));
+      }
+    });
+  };
+
+  const holdRegionFor = (kinds: readonly SuggestionCommitKind[], suggestionId: string) => {
+    if (!holdMatchesCard(hold, kinds, suggestionId)) {
+      return null;
+    }
+    if (hold.phase === COMMIT_HOLD_PHASE.IDLE) {
+      return null;
+    }
+    return (
+      <CommitHoldRegion
+        key={hold.phase}
+        phase={
+          hold.phase === COMMIT_HOLD_PHASE.FAILED
+            ? COMMIT_HOLD_PHASE.FAILED
+            : hold.phase === COMMIT_HOLD_PHASE.COMMITTING
+              ? COMMIT_HOLD_PHASE.COMMITTING
+              : COMMIT_HOLD_PHASE.HOLDING
+        }
+        errorMessage={hold.errorMessage}
+        onUndo={undoHold}
+        onRetry={() => {
+          void retryFailure()?.then((result) => {
+            if (result.outcome === 'committed') {
+              markAdvanceFocus();
+            } else {
+              clearAdvanceFocus();
+            }
+          });
+        }}
+        onPausedChange={setHoldPaused}
+        retryPending={retryPending}
+      />
+    );
+  };
+
+  const personCommitFor = (
+    clusterId: string | null | undefined,
+    kind: ReviewQueueItem['kind'],
+    options?: { suggestedCreateName?: string | null },
+  ): React.ReactNode => {
+    if (!shouldShowPersonCommit(kind, clusterId) || !clusterId) {
+      return null;
+    }
+    // Only surface phase UI for this card's cluster (or idle — show chrome).
+    const phaseForCard =
+      personCommit.clusterId === null || personCommit.clusterId === clusterId
+        ? personCommit.phase
+        : PERSON_COMMIT_PHASE.IDLE;
+    const errorForCard =
+      personCommit.clusterId === clusterId ? personCommit.errorMessage : null;
+    const isPrimary = isPersonCommitPrimaryKind(kind);
+    return (
+      <PersonCommitControl
+        clusterId={clusterId}
+        isPrimary={isPrimary}
+        // §7: person-commit confirm is the accent primary only when it is the card's
+        // primary kind (NAME/CLUSTER) — never doubled with an accept button.
+        accentPrimary={accentPrimary && isPrimary}
+        phase={phaseForCard}
+        errorMessage={errorForCard}
+        // Stay interactive during accept hold — schedulePersonCommit flushes first.
+        // BR-25: disable on schedule (personCommitPending), not only phase==='committing'.
+        // BR-48: disable while bulk hold/sequence is active (ordering via awaitBulk).
+        disabled={
+          personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING || personCommitPending || isBulkActive
+        }
+        suggestedCreateName={options?.suggestedCreateName}
+        hasEligiblePendingProposal={
+          kind === NEXT_ACTION_KIND.NAME || kind === NEXT_ACTION_KIND.ASSIGNMENT
+        }
+        committedPersonUuid={personCommit.personUuid}
+        onCurateGroup={onLabel}
+        onCommit={(request) => {
+          // BR-27: the successful mutation removes NAME before its promise resolves,
+          // so arm focus before starting it and disarm only when no removal occurred.
+          markAdvanceFocus();
+          void schedulePersonCommit(request).then((result) => {
+            if (result.outcome !== 'committed') {
+              clearAdvanceFocus();
+            }
+            if (result.outcome === 'not_attempted_prior_failed') {
+              // C-05: refused because an accept/reject failure is unresolved.
+              announce(__('Retry the item that failed to save before assigning a person.', 'alt-context'));
+            }
+          });
+        }}
+        onRetry={() => {
+          markAdvanceFocus();
+          void retryPersonCommit()?.then((result) => {
+            if (result?.outcome !== 'committed') {
+              clearAdvanceFocus();
+            }
+          });
+        }}
+      />
+    );
+  };
+
+  switch (item.kind) {
+    case NEXT_ACTION_KIND.ASSIGNMENT: {
+      const suggestion = assignmentById.get(item.suggestionId);
+      if (!suggestion) {
+        return (
+          <p className="acx-review-queue__empty">{__('This suggestion is no longer available.', 'alt-context')}</p>
+        );
+      }
+      const remainingInRun = item.runSize - item.runIndex - 1;
+      const runHint =
+        item.runSize > 1 && remainingInRun > 0 && item.label
+          ? sprintf(
+              /* translators: 1: remaining count after this card, 2: person label */
+              __('%1$d more for %2$s', 'alt-context'),
+              remainingInRun,
+              item.label,
+            )
+          : null;
+      const assignmentKinds = ['accept', 'reject'] as const;
+      const assignmentHold = holdRegionFor(assignmentKinds, suggestion.suggestionId);
+      // BR-34: item.clusterId authoritative — no suggestion.clusterId fallback (null-hide matrix).
+      return (
+        <>
+          {runHint ? <p className="acx-review-queue__run-hint">{runHint}</p> : null}
+          <SelectToggle
+            selected={isSelected}
+            disabled={isSelectDisabled}
+            onToggle={onToggleSelect}
+          />
+          <SuggestionCard
+            suggestion={suggestion}
+            isStoredFaceReviewComplete={reviewedStoredFaceSuggestionIds.has(
+              suggestion.suggestionId,
+            )}
+            onStoredFaceReviewPresented={onStoredFaceReviewPresented}
+            accentPrimary={accentPrimary}
+            // BR-41: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
+            lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
+            onAccept={() => {
+              const group = closeMatchGroupForAccept(reviewQueueItems, item);
+              if (group.included.length === 0) {
+                runScheduled(() => scheduleAccept(suggestion.suggestionId));
+                return;
+              }
+              const offer = {
+                acceptedId: suggestion.suggestionId,
+                label: item.label,
+                included: group.included,
+                omitted: group.omitted,
+                truncated: group.truncated,
+              };
+              // Open after the Yes click finishes so Radix does not treat that
+              // pointer as an outside-dismiss of the new dialog.
+              window.setTimeout(() => {
+                onCloseMatchOffer(offer);
+              }, 0);
+            }}
+            onReject={() => {
+              runScheduled(() => scheduleReject(suggestion.suggestionId));
+            }}
+            onReview={(clusterId) => {
+              if (onReview && clusterId) {
+                onReview(clusterId);
+              }
+            }}
+            onOpenOriginal={onOpenOriginal}
+            isPending={isCardPending(suggestion.suggestionId, assignmentKinds)}
+            disabledReason={cardActionsDisabledReason}
+            actionAccessory={assignmentHold}
+            actionAccessoryAfter={hold.kind === 'reject' ? 'reject' : 'accept'}
+          />
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.ASSIGNMENT)}
+        </>
+      );
+    }
+    case NEXT_ACTION_KIND.MERGE: {
+      const suggestion = mergeById.get(item.suggestionId);
+      if (!suggestion) {
+        return (
+          <p className="acx-review-queue__empty">{__('This suggestion is no longer available.', 'alt-context')}</p>
+        );
+      }
+      const mergeKinds = ['acceptMerge', 'rejectMerge'] as const;
+      const mergeHold = holdRegionFor(mergeKinds, suggestion.id);
+      return (
+        <>
+          <SelectToggle
+            selected={isSelected}
+            disabled={isSelectDisabled}
+            onToggle={onToggleSelect}
+          />
+          <MergeSuggestionCard
+            suggestion={suggestion}
+            accentPrimary={accentPrimary}
+            // BR-35: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
+            onAccept={() => {
+              runScheduled(() => scheduleAcceptMerge(suggestion.id));
+            }}
+            onReject={() => {
+              runScheduled(() => scheduleRejectMerge(suggestion.id));
+            }}
+            onOpenOriginal={onOpenOriginal}
+            isPending={isCardPending(suggestion.id, mergeKinds)}
+            disabledReason={cardActionsDisabledReason}
+            actionAccessory={mergeHold}
+            actionAccessoryAfter={hold.kind === 'acceptMerge' ? 'accept' : 'reject'}
+          />
+          {/* MERGE: never person-commit (matrix). */}
+        </>
+      );
+    }
+    case NEXT_ACTION_KIND.NAME: {
+      const suggestion = nameById.get(item.suggestionId);
+      if (!suggestion) {
+        return (
+          <p className="acx-review-queue__empty">{__('This suggestion is no longer available.', 'alt-context')}</p>
+        );
+      }
+      const isLow =
+        suggestion.confidence_score !== null &&
+        suggestion.confidence_score !== undefined &&
+        suggestion.confidence_score < LOW_CONFIDENCE_THRESHOLD;
+      const nameKinds = ['acceptName', 'rejectName'] as const;
+      const nameHold = holdRegionFor(nameKinds, suggestion.id);
+      const afterAccept = hold.kind === 'acceptName' || hold.kind === null;
+      // BR-29 belt: disable accept/reject while person-commit succeeded for this cluster.
+      const namePersonCommitDone =
+        personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
+      const namePending =
+        isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
+      const independentJudgment = nameJudgments.get(suggestion.id);
+      const isNameSuggestionRevealed = independentJudgment !== undefined && revealedNameSuggestionIds.has(suggestion.id);
+      const suggestionDisclosureId = `acx-name-suggestion-${suggestion.id}`;
+      return (
+        <ReviewCardGroupShell
+          kind="name"
+          labelId={`acx-name-pos-${suggestion.id}`}
+          // BR-41: pass ordinal only when both are defined (position chrome available).
+          queuePosition={queuePosition}
+          queueTotal={queueTotal}
+          className="acx-suggestion-card acx-name-suggestion-card"
+          data-testid="acx-review-card"
+          data-review-kind="name"
+          data-suggestion-consulted={isNameSuggestionRevealed || undefined}
+        >
+          <SelectToggle
+            selected={isSelected}
+            disabled={isSelectDisabled || independentJudgment === undefined}
+            onToggle={onToggleSelect}
+          />
+          {independentJudgment === undefined ? (
+            <div data-testid="acx-independent-judgment">
+              <p>{__('Record your own judgment before viewing the suggestion. This does not save a name.', 'alt-context')}</p>
+              <label htmlFor={`acx-independent-name-${suggestion.id}`}>{__('Independent name judgment', 'alt-context')}</label>
+              <input id={`acx-independent-name-${suggestion.id}`} value={independentNameDraft}
+                onChange={(event) => setIndependentNameDraft(event.target.value)} disabled={namePending} autoComplete="off" />
+              <button type="button" className="button" disabled={namePending || !independentNameDraft.trim()}
+                onClick={() => recordNameJudgment(suggestion.id, independentNameDraft)}>
+                {__('Record judgment', 'alt-context')}
+              </button>
+              <button type="button" className="button" disabled={namePending}
+                onClick={() => recordNameJudgment(suggestion.id, __('I cannot identify this person', 'alt-context'))}>
+                {__('I cannot identify this person', 'alt-context')}
+              </button>
+            </div>
+          ) : <p>{__('Your independent judgment:', 'alt-context')} <strong>{independentJudgment}</strong></p>}
+          <div className="acx-suggestion-card__content">
+            <button
+              type="button"
+              className="button button-link"
+              ref={showSuggestionRef}
+              aria-expanded={isNameSuggestionRevealed}
+              aria-controls={suggestionDisclosureId}
+              disabled={independentJudgment === undefined}
+              onClick={() => {
+                if (independentJudgment === undefined) return;
+                onToggleNameSuggestion(suggestion.id);
+                announce(
+                  isNameSuggestionRevealed
+                    ? __('Suggestion hidden.', 'alt-context')
+                    : __('Suggestion revealed.', 'alt-context'),
+                );
+              }}
+            >
+              {isNameSuggestionRevealed
+                ? __('Hide suggestion', 'alt-context')
+                : __('Show suggestion', 'alt-context')}
+            </button>
+            {isNameSuggestionRevealed ? (
+              <div id={suggestionDisclosureId}>
+                <p className="acx-suggestion-card__question">
+                  {__('Suggested name:', 'alt-context')}{' '}
+                  <strong>{suggestion.suggested_name}</strong>
+                </p>
+                {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined ? (
+                  <p className="acx-suggestion-card__match">
+                    <span
+                      className={`acx-suggestion-confidence${isLow ? ' acx-suggestion-confidence--low' : ''}`}
+                    >
+                      {Math.round(suggestion.confidence_score * 100)}%
+                    </span>
+                  </p>
+                ) : null}
+                <p className="acx-person-commit__disclosure">
+                  {MODEL_OUTPUT_DISCLOSURE}
+                </p>
+              </div>
+            ) : null}
+          </div>
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME)}
+          <div className="acx-name-suggestion-card__actions acx-suggestion-card__actions">
+            <button
+              type="button"
+              className="button acx-suggestion-card__accept"
+              disabled={namePending || !isNameSuggestionRevealed}
+              title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
+              onClick={() => {
+                if (!isNameSuggestionRevealed) return;
+                runScheduled(() => scheduleAcceptName(suggestion.id));
+              }}
+            >
+              {__('Accept suggestion', 'alt-context')}
+            </button>
+            {afterAccept ? nameHold : null}
+            <button
+              type="button"
+              className="button acx-suggestion-card__reject"
+              disabled={namePending}
+              title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
+              onClick={() => {
+                runScheduled(() => scheduleRejectName(suggestion.id));
+              }}
+            >
+              {__('Reject', 'alt-context')}
+            </button>
+            {!afterAccept ? nameHold : null}
+          </div>
+        </ReviewCardGroupShell>
+      );
+    }
+    case NEXT_ACTION_KIND.CLUSTER: {
+      const cluster = topClustersById.get(item.clusterId);
+      if (!cluster) {
+        // RLSE-05: projection 500 must not read as "cluster retired".
+        if (isTopUnlabeledError) {
+          return (
+            <div
+              className="acx-review-queue__error"
+              role="alert"
+              data-testid="acx-review-queue-top-unlabeled-error"
+            >
+              <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
+              <button type="button" className="button" onClick={onRetryTopUnlabeled}>
+                {__('Retry', 'alt-context')}
+              </button>
+            </div>
+          );
+        }
+        return (
+          <p className="acx-review-queue__empty">{__('These faces are no longer available.', 'alt-context')}</p>
+        );
+      }
+      return (
+        <>
+          {/* isReadOnly: person-commit is primary; label demoted to tertiary below. */}
+          <TopClusterCard
+            cluster={cluster}
+            isReadOnly
+            onReview={onReview}
+            // BR-41: pass ordinal only when both are defined (position chrome available).
+            queuePosition={queuePosition}
+            queueTotal={queueTotal}
+          />
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.CLUSTER, {
+            suggestedCreateName: cluster.suggested_label,
+          })}
+        </>
+      );
+    }
+    default:
+      return null;
+  }
+};

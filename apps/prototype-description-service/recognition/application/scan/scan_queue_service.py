@@ -1,0 +1,388 @@
+"""Scan queue service.
+
+This service owns enqueueing scan jobs and processing queued items. It is used by:
+- the HTTP API (`POST /recognition/analyze`) to enqueue work
+- the scan worker process to claim and execute work
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+
+from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
+from recognition.application.settings.scan import ScanSettings
+from recognition.config import get_settings
+from recognition.domain.job import JobStatus, ScanItemStatus
+
+_STALLED_JOB_BATCH_SIZE = 100
+
+
+@dataclass(frozen=True, slots=True)
+class EnqueueScanResult:
+    """Result returned after enqueueing a scan job."""
+
+    job_id: uuid.UUID
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
+class JobProgressResult:
+    """Outcome of a ``refresh_job_progress`` call.
+
+    Attributes:
+        transitioned: True iff this call moved the job into a terminal state. An
+            already-terminal job (e.g. failed/stalled by another worker replica)
+            yields False so a stall/failure reason is never overwritten.
+        status: the terminal status reached; set only when ``transitioned``.
+    """
+
+    transitioned: bool = False
+    status: JobStatus | None = None
+
+    @property
+    def triggers_followups(self) -> bool:
+        """Whether this terminal transition should fan out to downstream
+        clustering + per-job ObjectStore cleanup.
+
+        Jobs that produced at least one successful item (COMPLETED or
+        COMPLETED_WITH_ERRORS) do; an all-failed FAILED job does not — there is
+        nothing to cluster and the uploads are retained for diagnosis.
+        """
+        return self.transitioned and self.status in {
+            JobStatus.COMPLETED,
+            JobStatus.COMPLETED_WITH_ERRORS,
+        }
+
+
+def _format_queue_message(enqueued: int, total: int) -> str:
+    return f"Queueing {enqueued}/{total} items"
+
+
+def _chunk_items(items: Sequence[tuple[int, str]], chunk_size: int) -> Iterable[Sequence[tuple[int, str]]]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    for start in range(0, len(items), chunk_size):
+        yield items[start : start + chunk_size]
+
+
+@dataclass(frozen=True, slots=True)
+class TerminatedJobIdentity:
+    """Exact stalled job identity for usage settlement. [RES-01][DATA-03]"""
+
+    job_id: uuid.UUID
+    tenant_id: uuid.UUID
+
+
+class ScanQueueService:
+    """Coordinates scan queue persistence and processing."""
+
+    def __init__(self, repository: ScanQueueRepository, settings: ScanSettings | None = None) -> None:
+        self._repository = repository
+        self._settings = settings or get_settings().scan
+
+    async def create_scan_job_record(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        total: int,
+        created_by_user_id: int | None = None,
+        job_id: uuid.UUID | None = None,
+    ) -> uuid.UUID:
+        """Create a scan job record without enqueueing items.
+
+        Args:
+            tenant_id: Tenant UUID.
+            total: Total number of items expected for the job.
+            created_by_user_id: Optional WP user id for audit.
+            job_id: Optional pre-generated UUID. When provided the
+                repository persists it verbatim so on-disk paths
+                (e.g. ObjectStore blobs under <tenant>/<job_id>/) match
+                the DB row. Used by the multipart upload route, which
+                must know the job_id at upload time.
+
+        Returns:
+            Newly created or echoed job UUID.
+        """
+        if total <= 0:
+            raise ValueError("total must be positive")
+        message = _format_queue_message(0, total)
+        new_job_id = await self._repository.create_job_with_message(
+            tenant_id=tenant_id,
+            media_ids=[],
+            total=total,
+            message=message,
+            created_by_user_id=created_by_user_id,
+            job_id=job_id,
+        )
+        return new_job_id
+
+    async def populate_scan_job_items(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        media_items: Sequence[tuple[int, str]],
+        chunk_size: int | None = None,
+        commit_hook: Callable[[], Awaitable[None]] | None = None,
+        correlation_id: str | None = None,
+    ) -> int:
+        """Populate scan job items in batches.
+
+        Args:
+            job_id: Parent scan job id.
+            tenant_id: Tenant UUID.
+            media_items: Sequence of (media_id, media_url).
+            chunk_size: Max items to enqueue per batch.
+            commit_hook: Optional async callback to persist each chunk.
+
+        Returns:
+            Total number of enqueued items.
+        """
+        if not media_items:
+            return 0
+        total = len(media_items)
+        enqueued_total = 0
+        media_ids: list[int] = []
+        chunk_size = chunk_size or self._settings.enqueue_chunk_size
+        for chunk in _chunk_items(media_items, chunk_size):
+            created = await self._repository.enqueue_items(
+                job_id=job_id, tenant_id=tenant_id, items=chunk, correlation_id=correlation_id
+            )
+            enqueued_total += created
+            media_ids.extend(media_id for media_id, _ in chunk)
+            await self._repository.update_job_message(
+                job_id=job_id,
+                message=_format_queue_message(enqueued_total, total),
+            )
+            if commit_hook:
+                await commit_hook()
+        await self._repository.finalize_job_queue(
+            job_id=job_id,
+            media_ids=media_ids,
+            message=f"Queued {total} items",
+        )
+        if commit_hook:
+            await commit_hook()
+        return enqueued_total
+
+    async def enqueue_scan_job(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        media_items: Sequence[tuple[int, str]],
+        created_by_user_id: int | None = None,
+    ) -> EnqueueScanResult:
+        """Create a scan job and enqueue all items.
+
+        Args:
+            tenant_id: Tenant UUID.
+            media_items: Sequence of (media_id, media_url).
+            created_by_user_id: Optional WP user id for audit.
+
+        Returns:
+            EnqueueScanResult containing job id and total count.
+
+        Raises:
+            ValueError: When no media items are provided.
+        """
+        if not media_items:
+            raise ValueError("media_items required")
+        job_id = await self.create_scan_job_record(
+            tenant_id=tenant_id,
+            total=len(media_items),
+            created_by_user_id=created_by_user_id,
+        )
+        await self.populate_scan_job_items(job_id=job_id, tenant_id=tenant_id, media_items=media_items)
+        return EnqueueScanResult(job_id=job_id, total=len(media_items))
+
+    async def process_next_batch(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        limit: int,
+    ) -> list[ScanQueueItem]:
+        """Claim and return the next batch of pending items.
+
+        This method only claims work. A worker should process returned items and then
+        mark each item completed/failed, updating job progress accordingly.
+        """
+        now = datetime.now(tz=UTC)
+        items = await self._repository.claim_pending_items(tenant_id=tenant_id, job_id=job_id, limit=limit, now=now)
+        if items:
+            await self._repository.mark_job_running(job_id=job_id, started_at=now)
+        return items
+
+    async def refresh_job_progress(self, *, job_id: uuid.UUID) -> JobProgressResult:
+        """Recompute job progress and finalize job status when appropriate.
+
+        Rules:
+        - processed_media counts terminal item states: completed/failed/skipped/cancelled
+        - identities_detected sums completed item identities_detected
+        - when no pending/processing remain:
+          - FAILED when every processed item failed (no successful output to keep)
+          - COMPLETED_WITH_ERRORS when at least one item succeeded and at least one failed
+          - COMPLETED otherwise
+
+        Returns:
+            JobProgressResult describing whether this call transitioned the job
+            and the terminal status it reached. All finalizers are terminal-
+            guarded, so an already-terminal job yields ``transitioned=False``.
+        """
+        counts = await self._repository.get_job_item_status_counts(job_id=job_id)
+        terminal = ("completed", "failed", "skipped", "cancelled")
+        processed_media = sum(counts.get(status, 0) for status in terminal)
+        identities_detected = await self._repository.get_job_item_identities_detected(job_id=job_id)
+        await self._repository.update_job_progress(
+            job_id=job_id,
+            processed_media=processed_media,
+            identities_detected=identities_detected,
+        )
+
+        pending = counts.get("pending", 0)
+        processing = counts.get("processing", 0)
+        failed = counts.get("failed", 0)
+        completed = counts.get("completed", 0)
+
+        if pending == 0 and processing == 0 and processed_media > 0:
+            now = datetime.now(tz=UTC)
+            if failed > 0 and completed == 0:
+                # No item succeeded: finalize terminal FAILED rather than
+                # completed_with_errors, which reads as a partial success.
+                transitioned = await self._repository.fail_job_if_active(
+                    job_id=job_id,
+                    completed_at=now,
+                    error_message="no items completed successfully",
+                )
+                return JobProgressResult(transitioned=transitioned, status=JobStatus.FAILED if transitioned else None)
+            if failed > 0:
+                transitioned = await self._repository.complete_job_with_errors(
+                    job_id=job_id,
+                    completed_at=now,
+                    error_message="one or more items failed",
+                )
+                return JobProgressResult(
+                    transitioned=transitioned,
+                    status=JobStatus.COMPLETED_WITH_ERRORS if transitioned else None,
+                )
+            # Only signal success when this call actually transitioned the job;
+            # an already-terminal job (e.g. failed/stalled by another worker)
+            # yields transitioned=False.
+            transitioned = await self._repository.complete_job(job_id=job_id, completed_at=now)
+            return JobProgressResult(transitioned=transitioned, status=JobStatus.COMPLETED if transitioned else None)
+        return JobProgressResult()
+
+    async def terminate_stalled_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime | None = None,
+    ) -> int:
+        """Transition stale running jobs to terminal ``failed(stalled)`` state.
+
+        A job is stalled when it has been running longer than
+        ``stale_after_seconds`` while items remain pending or processing.
+        """
+        if stale_after_seconds <= 0:
+            return 0
+        effective_now = now or datetime.now(tz=UTC)
+        return await self._repository.fail_stalled_running_jobs(
+            stale_after_seconds=stale_after_seconds,
+            now=effective_now,
+        )
+
+    async def terminate_stalled_jobs_with_identities(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime | None = None,
+    ) -> list[TerminatedJobIdentity]:
+        """Fail stalled running jobs and return their persisted job/tenant IDs."""
+        if stale_after_seconds <= 0:
+            return []
+        effective_now = now or datetime.now(tz=UTC)
+        identities = await self._list_stalled_running_identities(
+            stale_after_seconds=stale_after_seconds,
+            now=effective_now,
+        )
+        transition_with_identities = getattr(self._repository, "fail_stalled_running_jobs_with_identities", None)
+        if callable(transition_with_identities):
+            transitions = await transition_with_identities(
+                stale_after_seconds=stale_after_seconds,
+                now=effective_now,
+            )
+            snapshot_by_id = {identity.job_id: identity for identity in identities}
+            transitioned_identities: list[TerminatedJobIdentity] = []
+            for transition in transitions:
+                if isinstance(transition, tuple):
+                    job_id, tenant_id = transition
+                    transitioned_identities.append(TerminatedJobIdentity(job_id=job_id, tenant_id=tenant_id))
+                else:
+                    # Repositories that return only transitioned job IDs can
+                    # resolve tenants from the bounded pre-transition snapshot.
+                    identity = snapshot_by_id.get(transition)
+                    if identity is not None:
+                        transitioned_identities.append(identity)
+            return transitioned_identities
+
+        await self._repository.fail_stalled_running_jobs(stale_after_seconds=stale_after_seconds, now=effective_now)
+        return identities
+
+    async def _list_stalled_running_identities(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: datetime,
+    ) -> list[TerminatedJobIdentity]:
+        session = getattr(self._repository, "_session", None)
+        if session is None:
+            return []
+        from sqlalchemy import exists, select
+
+        from db.models import IdentityScanJob, IdentityScanJobItem
+
+        stale_before = now - timedelta(seconds=stale_after_seconds)
+        incomplete_items = exists(
+            select(IdentityScanJobItem.id).where(
+                IdentityScanJobItem.job_id == IdentityScanJob.id,
+                IdentityScanJobItem.status.in_(
+                    (
+                        ScanItemStatus.PENDING.value,
+                        ScanItemStatus.PROCESSING.value,
+                    )
+                ),
+            )
+        )
+        stmt = (
+            select(IdentityScanJob.id, IdentityScanJob.tenant_id)
+            .where(
+                IdentityScanJob.status == JobStatus.RUNNING.value,
+                IdentityScanJob.started_at.is_not(None),
+                IdentityScanJob.started_at < stale_before,
+                incomplete_items,
+            )
+            .order_by(IdentityScanJob.started_at, IdentityScanJob.id)
+            .limit(_STALLED_JOB_BATCH_SIZE)
+        )
+        rows = (await session.execute(stmt)).all()
+        return [TerminatedJobIdentity(job_id=job_id, tenant_id=tenant_id) for job_id, tenant_id in rows]
+
+    async def get_job_tenant_id(self, *, job_id: uuid.UUID) -> uuid.UUID | None:
+        return await self._repository.get_job_tenant_id(job_id=job_id)
+
+    async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
+        """Cancel any pending items for a scan job.
+
+        Returns:
+            Number of items cancelled.
+        """
+        now = datetime.now(tz=UTC)
+        cancelled = await self._repository.cancel_pending_items(job_id=job_id, cancelled_at=now)
+
+        await self.refresh_job_progress(job_id=job_id)
+
+        await self._repository.fail_job(job_id=job_id, completed_at=now, error_message="canceled")
+        return cancelled

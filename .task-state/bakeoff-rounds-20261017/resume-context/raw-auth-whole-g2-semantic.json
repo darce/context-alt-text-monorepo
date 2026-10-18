@@ -1,0 +1,196 @@
+{
+  "retrieval": {
+    "content": [],
+    "structuredContent": {
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17763",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.6215981245040894,
+          "snippet": "All3actualthirdauthorsnativeexit0. REG adds196cases(152valid44invalid), old2933IDs/order/fullpayload/categories/helperdriver preserved; actualoldsource42rejectionsRED/154pass inclall152valid. Rootindependentremoteexactselectorexit1…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17813",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.6057322025299072,
+          "snippet": "Root remotely read/rehashverified exact current sourcec678e0b6, witnesslogd9f92c48 andordinarycontrollogbc8404b0 from/tmp/memory-source-g2. Witness contains_read236→252 secondValueError and…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17737",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5974197387695312,
+          "snippet": "Verified permanent results/bcpr-review-inputs-v1:28 original/review/map/provenance/composed-source files, per-file hashes, manifestSHA256d432d48088eb4d78a2d65bfad158cd6107c3c52a2e805dbf2d496ccafec95be3. Final gate/six-map audit sources and…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17758",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5850988030433655,
+          "snippet": "Remote HIGH integration native0, actual full P-checkGREEN2933IDs(484valid/2435invalid+14checks), all2745oldIDs/order/payloads/categories preserved plus188 independent additions. Source formatter no byte change, TestREADONLY. Verified…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17759",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5822684168815613,
+          "snippet": "Measured the actual private directory /tmp/bcpi-integrate-20261017-02e2ea3b, then copied39auditfiles/24,278,380 bytes under explicit12MB/file26MBtotal bounds with every hash verified. Permanent results/BCPI-integration-audits…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17765",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5815221667289734,
+          "snippet": "BCPI-R3-INTEGRATE actualnativeexit0 implementation_complete_pending_review, only4metadatafileschanged; sourceRuffASTequiv/no bytechange andTESTreadonlyheld.…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17804",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5773525834083557,
+          "snippet": "Wave41guard preview/apply actual9reaped/live0locked0, logical14,740,625,276B, no physicalgainclaim. Beforecleanup sevenprivateauditdirs4998regularfiles156819303B/no-symlinks…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17762",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.5739202499389648,
+          "snippet": "Read-only /proc inspection confirms3distinctownedR3sandboxes each runningactualvendorcodexexec -m gpt-6.1-sol xhigh service_tierdefault; parent/node/boundary processes are not extra lanes. VMremainingcapacity doesnotcreateindependentwork…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    "isError": false
+  },
+  "reinjection": {
+    "content": [],
+    "structuredContent": {
+      "ok": true,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "status": "selected",
+      "skip_reason": null,
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null,
+      "relevant_lines": [
+        "relevant:",
+        "- Raw authenticated route characterization comple…: QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]",
+        "- RAW-AUTH-TEST-G1-03: At the real CLI boundary, make attempted credential reads observable for the existing [finding:19139]",
+        "- bakeoff_native_admission_preserves_co_tenants: First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]",
+        "- cdx_decision_bakerounds_after_c8_parallel_test_…: C8exactcontractadoptedcanonical499fec78/rootE/P/Cagreement17843 afterindependent1484PASS0; [decision:17844]",
+        "- RAW-AUTH-TEST-G1-02: Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]",
+        "- RAW-AUTH-TEST-G1-02: Five malformed-file privacy checks track KEY after replacing the file with unrelated bytes, so [finding:19138]",
+        "- Intake subject whole-source PASS, authority map…: SwholeG2 terminal0 rawPASS0 [decision:17928]",
+        "- WorkBay next-wave DAG compiled10nodes/9realdata…: GRPH06 partitions disjoint artifact ownership; GRPH32 edges name packet fields. Integration consumes [decision:17650]"
+      ],
+      "semantic_reinjection": {
+        "anchor_sources": [
+          "visible_text"
+        ],
+        "chars_budget": 10000,
+        "chars_used": 1166,
+        "effective_config": {
+          "candidate_pool": 32,
+          "max_concepts": 8,
+          "max_redundancy": 0.92,
+          "max_score_drop": 0.2,
+          "min_score": 0.35,
+          "mmr_relevance_weight": 0.7,
+          "notify_allowance_chars": 220,
+          "refresh_budget_chars": 1500,
+          "snippet_chars": 120
+        },
+        "fallback_scope": null,
+        "model_id": "gte-base-en-v1.5",
+        "score_hi": 0.6601086854934692,
+        "score_lo": 0.5719430446624756,
+        "selected": [
+          {
+            "emitted_chars": 177,
+            "id": "17912",
+            "kind": "decision",
+            "label": "Raw authenticated route characterization comple…",
+            "score": 0.6601086854934692,
+            "snippet": "QWEN-RAW-AUTH-ROUTE terminal0 custody689f349a actual publicBakeoffClient anonymousv3twopass works, [decision:17912]"
+          },
+          {
+            "emitted_chars": 125,
+            "id": "19139",
+            "kind": "finding",
+            "label": "RAW-AUTH-TEST-G1-03",
+            "score": 0.653948187828064,
+            "snippet": "At the real CLI boundary, make attempted credential reads observable for the existing [finding:19139]"
+          },
+          {
+            "emitted_chars": 164,
+            "id": "17641",
+            "kind": "decision",
+            "label": "bakeoff_native_admission_preserves_co_tenants",
+            "score": 0.609809935092926,
+            "snippet": "First all6admission deferred CPU61.57-62.98>=55, no modelturn launched. FreshlaterCPU43.50/IO9.04 [decision:17641]"
+          },
+          {
+            "emitted_chars": 160,
+            "id": "17844",
+            "kind": "decision",
+            "label": "cdx_decision_bakerounds_after_c8_parallel_test_…",
+            "score": 0.61993408203125,
+            "snippet": "C8exactcontractadoptedcanonical499fec78/rootE/P/Cagreement17843 afterindependent1484PASS0; [decision:17844]"
+          },
+          {
+            "emitted_chars": 139,
+            "id": "19138",
+            "kind": "finding",
+            "label": "RAW-AUTH-TEST-G1-02",
+            "score": 0.6589232683181763,
+            "snippet": "Place an independently observable unique credential sentinel in each nonempty malformed payload and [finding:19138]"
+          },
+          {
+            "emitted_chars": 134,
+            "id": "19138",
+            "kind": "finding",
+            "label": "RAW-AUTH-TEST-G1-02",
+            "score": 0.5928378105163574,
+            "snippet": "Five malformed-file privacy checks track KEY after replacing the file with unrelated bytes, so [finding:19138]"
+          },
+          {
+            "emitted_chars": 97,
+            "id": "17928",
+            "kind": "decision",
+            "label": "Intake subject whole-source PASS, authority map…",
+            "score": 0.6363693475723267,
+            "snippet": "SwholeG2 terminal0 rawPASS0 [decision:17928]"
+          },
+          {
+            "emitted_chars": 170,
+            "id": "17650",
+            "kind": "decision",
+            "label": "WorkBay next-wave DAG compiled10nodes/9realdata…",
+            "score": 0.5719430446624756,
+            "snippet": "GRPH06 partitions disjoint artifact ownership; GRPH32 edges name packet fields. Integration consumes [decision:17650]"
+          }
+        ],
+        "skip_reason": null,
+        "status": "selected"
+      }
+    },
+    "isError": false
+  }
+}

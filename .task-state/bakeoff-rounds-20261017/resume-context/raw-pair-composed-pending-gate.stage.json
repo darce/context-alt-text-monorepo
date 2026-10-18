@@ -1,0 +1,24 @@
+{
+  "sha": "7fc36769be893051159b4cf18e9bbe53191b52dc",
+  "tree": "a0f0d9921a9ce5903f0cd1f9cb79c975433d4e4d",
+  "branch": "feature/bakerounds-20261017-raw-pair-composed-pending-gate",
+  "base": "f0591fa84dce5d1acb94de244341ee7e324371d9",
+  "target_path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+  "source_blob": "480bb103a05482b94127376814c4fd89046829b7",
+  "source_sha256": "1c4b5504a33f9982502b86bed41be6cdbf19c69006db322d2af5aa3d7e103185",
+  "proposed_blob": "43058b1b1f8689a6202f318fe4a5cfd42f434e40",
+  "proposed_sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e",
+  "maps": [
+    "2c2111d0c7c4d7420e7b445c6ad6da39ead1cf99",
+    "a4af844bbddaaab7ab06d8a3079582c3f985d4a8"
+  ],
+  "edit_count": 13,
+  "commuting_orders": 2,
+  "composition_receipt": ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-R2-COMPOSITION.receipt.json",
+  "composition_method": "immutable-source-sha-bound-offset-cores/v1",
+  "standalone_patch_bytes_preserved": true,
+  "adopted": false,
+  "expected_cases": 50,
+  "expected_public_red": 45,
+  "expected_controls_green": 5
+}

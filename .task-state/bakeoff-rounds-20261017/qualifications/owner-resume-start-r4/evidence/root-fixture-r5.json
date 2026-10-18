@@ -1,0 +1,110 @@
+{
+  "status": "SOURCE_IMPLEMENTED_ROOT_QUALIFICATION_PENDING",
+  "source_sha": "5f51d422c3370090faf7ed75a9a64f8b6d15162e",
+  "finding": "OWNER-RESUME-START-G1-01/MCP19187",
+  "native_review": 1540,
+  "canon_proposal": 18398,
+  "test_first": {
+    "original_plan_sha256": "af04894dd77f287ad44d44d51affcce3c07b0c039764cc20a691a5d9a68c1be5",
+    "initial_test_sha256": "9325230681940560cca358f1752aba1ca1038ae6f5e23c8a439463219123aa68",
+    "observed_old_exit_code": 1,
+    "observed_old_errors": [
+      "valid stacked overlay refused at /run",
+      "inherited tmpfs reached stage sentinel"
+    ],
+    "final_test_count": 28,
+    "final_exit_code": 0
+  },
+  "creator_preparation": "For the eventual authorized Root run, Root seals the reviewed coordinator, driver, complete original FLOW-R2 and input manifest under root0700/root0400 custody. In each fresh namespace PID1, after the original private-propagation/proc setup and immediately around the WHOLE unchanged original fixture(), the coordinator holds directory descriptors and captures before/after mount inventories without native children. It requires new mount IDs and backing devices absent from the same-namespace before inventory. PID1 writes creator starttime, namespace IDs, inventories and its receipt FD number to a root0400 memfd, applies WRITE/GROW/SHRINK/SEAL seals, retains the FD, and archives a root0400 copy. After genuine AUTO4 and native quiescence, it passes the sealed FD only to its direct driver child. The driver checks PID1 identity, sole child, identical creator-held receipt inode, seals, namespaces and fresh backing, then matches its own held visible descriptors to the receipt. Covered lower rows are allowed. This preparation is implemented in source and has not been run as Root.",
+  "substituted_boundaries": [
+    "UID/EUID/PID/PPID and ubuntu passwd",
+    "parent file metadata and contents",
+    "proc namespaces/status/mountinfo/fdinfo/native-child inventory",
+    "directory open/close/fstat and descriptor device/inode metadata",
+    "receipt fstat/fcntl/pread and creator FD stat",
+    "coordinator full-harness/source-custody/memfd write/fchmod/seal calls and umask"
+  ],
+  "actual_uid": 1002,
+  "kernel_memfd_qualification": false,
+  "root_qualification": "PENDING",
+  "live_use_approval": false,
+  "closure": {
+    "status": "HASH_CLOSURE_PASS",
+    "unchanged_landed_count": 17,
+    "unchanged_landed_sha256": {
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/approved-scripts.json": "991aa72e923562bec93659190e87f9d223514da3073b424df5d36a60f1e77406",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/approved-scripts.json": "70831dc4247ebd31b34094f915aadf36534116ff0aaa26339ad3abdaccbfef26",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/owner-custody.py": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/owner-window.py": "a2bbcccbc02e61a081e58d0de1a793d7b90ee0c2bb2ee15c9ea9722f47a8fc0c",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/owner-custody.py": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/owner-window.py": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_resume_start.py": "d4acb4713c998db0f0ce538a10aba15511998419c8f9125c5b480d12255c8b00"
+    },
+    "original_flow_sha256": "369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062",
+    "unchanged_driver_stage_and_custody_suffix": true,
+    "owned_sha256": {
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py": "16c730f143fe5fc3c06527bce02ff2edbff97adf2a53c8cfa287b6189286f2ec",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py": "e205e0734719043456af3acba7cfce88254c4d322fc96b4c4e45c379cd6950d5",
+      ".task-state/bakeoff-rounds-20261017/root_resume_fixture_coordinator.py": "f790afcd533f7ce2233f94fe2e2400e516c4ca2ebb0efe2aad1273b19921749e",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/pins.json": "6afcf8c4a2eef104b60dc61f94544a25c1622c50abddd22fea317de8710e2444"
+    }
+  },
+  "closure_script": "import ast\nimport hashlib\nimport json\nfrom pathlib import Path\nimport subprocess\n\nroot = Path('.task-state/bakeoff-rounds-20261017')\nq = root / 'qualifications/owner-resume-start-r4'\ndigest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()\nlanded = json.loads((root/'resume-context/owner-root-fixture-r5/parser-landed.json').read_text())['paths']\nassert len(landed) == 17\nclosure = {}\nfor name in landed:\n    raw = Path(name).read_bytes()\n    assert raw == subprocess.check_output(['git', 'show', 'e9b72808da5dc8998ecb765eac9bcd534e726025:' + name])\n    closure[name] = hashlib.sha256(raw).hexdigest()\npins = json.loads((q/'evidence/pins.json').read_text())\nfor kind, directory, key in [('baseline', q/'evidence/baseline-source', 'baseline_manifest_sha256'), ('candidate', q, 'candidate_manifest_sha256')]:\n    manifest = directory/'approved-scripts.json'\n    assert digest(manifest) == pins[key]\n    assert json.loads(manifest.read_text()) == pins[kind]\n    assert all(digest(directory/name) == expected for name, expected in pins[kind].items())\nflow = root/'resume-context/resume-start-r4/OWNER-FLOW-CONTROLS-R2.py'\nassert digest(flow) == '369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062'\nassert flow.read_bytes() == subprocess.check_output(['git', 'show', 'e9b72808da5dc8998ecb765eac9bcd534e726025:' + str(flow)])\nold = subprocess.check_output(['git', 'show', 'e9b72808da5dc8998ecb765eac9bcd534e726025:' + str(q/'root_fixture_plan.py')]).decode()\nnew = (q/'root_fixture_plan.py').read_text()\nassert old[old.index('    stage, window, output ='):old.index(\"\\n\\nif __name__\")] == new[new.index('    stage, window, output ='):new.index(\"\\n\\nif __name__\")]\nfiles = {'root_plan_sha256': q/'root_fixture_plan.py', 'root_fixture_test_sha256': q/'test_root_fixture_isolation.py', 'root_coordinator_sha256': root/'root_resume_fixture_coordinator.py'}\nfor key, path in files.items():\n    ast.parse(path.read_text())\n    assert digest(path) == pins[key]\nprint(json.dumps({'status': 'HASH_CLOSURE_PASS', 'unchanged_landed_count': 17,\n                  'unchanged_landed_sha256': closure, 'original_flow_sha256': digest(flow),\n                  'unchanged_driver_stage_and_custody_suffix': True,\n                  'owned_sha256': {str(p): digest(p) for p in [*files.values(), q/'evidence/pins.json']}}, indent=2))\n",
+  "tests": [
+    {
+      "command": "timeout 30s python3 -B .task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py",
+      "exit_code": 1,
+      "summary": "TEST FIRST, original driver af04894dd77f287ad44d44d51affcce3c07b0c039764cc20a691a5d9a68c1be5: two expected regression errors. Valid stacked /run raises private tmpfs overlay required; inherited tmpfs wrongly reaches the stage sentinel. Initial test SHA256 9325230681940560cca358f1752aba1ca1038ae6f5e23c8a439463219123aa68."
+    },
+    {
+      "command": "timeout 30s python3 -B .task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py",
+      "exit_code": 1,
+      "summary": "Intermediate import failed because this sandbox lacks fcntl.F_SEAL_WRITE. Fixed plan portability using Linux seal ABI constants; no privileged execution occurred."
+    },
+    {
+      "command": "timeout 30s python3 -B .task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py",
+      "exit_code": 0,
+      "summary": "Final GREEN: 28 safe stdlib tests. Fresh stacked overlays, inherited backing with new mount ID, wrong descriptor/visible mount/device, stale creator/namespace/receipt, missing seals and custody, existing entry refusals, private propagation, sole PID1/native child, and passive coordinator receipt preparation. UID/proc/filesystem/memfd/harness boundaries explicitly substituted."
+    },
+    {
+      "command": "timeout 10s python3 -B .task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py --plan",
+      "exit_code": 0,
+      "summary": "Printed PLAN_ONLY_ROOT_PENDING, including creator receipt preparation and inherited FD contract; no fixture executed."
+    },
+    {
+      "command": "python3 -B /tmp/owner-root-fixture-r5-closure.py",
+      "exit_code": 0,
+      "summary": "17 landed files unchanged; both complete seven-script manifests and all pins match; original FLOW-R2 unchanged; driver stage/custody/continuation suffix unchanged; modified Python parses; updated code/test pins match. Exact script and hash results retained in evidence/root-fixture-r5.json."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "No whitespace errors in tracked owned changes."
+    }
+  ],
+  "preserved": [
+    "Root and ubuntu credentials; root0700 stage/root0400 pins/files",
+    "separate MNT/PID/NET and private propagation",
+    "private tmpfs backing, genuine AUTO4, consumed authority and published custody",
+    "complete original FLOW-R2 and native writers; retained PID1 on UNKNOWN",
+    "QOA19117 fences, QOA19118 phase-sensitive reads, QOA19120 caller/result separation, QOA19122 immutable custody"
+  ],
+  "semantic_context": {
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "supplied_frozen_graph": "bakeoff-owner-resume-r4-2e3146f7",
+    "nodes": 374,
+    "edges": 1313,
+    "fresh_graph_query": false
+  }
+}

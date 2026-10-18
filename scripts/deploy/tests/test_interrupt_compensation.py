@@ -10,6 +10,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
 
 
@@ -57,6 +59,20 @@ recognition_edge_assert_if_active() {{ return 0; }}
 recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+# Keep real restore orchestration; model only its external admission RPC.
+# Native admission/ownership/generation is exercised in test_aura_d5_restore_admission.py.
+FIXTURE_ADMISSION_RC=0
+recognition_edge_remote() {{
+  printf 'recognition_edge_remote' >>"$RECORDS"
+  printf ' %q' "$@" >>"$RECORDS"
+  printf '\\n' >>"$RECORDS"
+  if [[ $# != 3 || ${{1:-}} != admit-runtime || ${{2:-}} != dev ||
+        ( ${{3:-}} != current-only && ${{3:-}} != '' ) ]]; then
+    printf 'unmodeled compensation admission call\\n' >&2
+    return 97
+  fi
+  return "$FIXTURE_ADMISSION_RC"
+}}
 deploy_env_lease() {{ return 0; }}
 cleanup_remote_build_generation_on_exit() {{ record cleanup_remote_build_generation_on_exit "$@"; }}
 _purge_deploy_ocir_docker_config() {{ record _purge_deploy_ocir_docker_config "$@"; }}
@@ -320,6 +336,70 @@ restore_runtime_topology dev
     assert "restore_topology_backups dev" in records
     assert "restore_edge_backups dev" in records
     assert "abort_cutover_candidate dev" in records
+
+
+@pytest.mark.parametrize("restore_mode", ["current-only", ""])
+@pytest.mark.parametrize("admission_rc", [0, 75], ids=["admitted", "refused"])
+def test_runtime_restore_admission_precedes_every_writer(
+    tmp_path: Path, restore_mode: str, admission_rc: int
+) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r"""
+recognition_edge_assert_if_active() { record ownership; }
+restore_topology_backups() { record restore_topology_backups "$@"; }
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+"""
+        + f"\nFIXTURE_ADMISSION_RC={admission_rc}\nrestore_runtime_topology dev {shlex.quote(restore_mode)}\n",
+    )
+    assert result.returncode == admission_rc, result.stdout + result.stderr
+    expected = ["ownership", f"recognition_edge_remote admit-runtime dev {shlex.quote(restore_mode)}"]
+    if admission_rc == 0:
+        suffix = f" {restore_mode}" if restore_mode else ""
+        expected += [f"restore_topology_backups dev{suffix}", f"restore_edge_backups dev{suffix}"]
+        if not restore_mode:
+            expected.append("abort_cutover_candidate dev")
+    assert result.records == expected  # type: ignore[attr-defined]
+
+
+def test_repo_shipped_admission_refusal_skips_topology_writers(tmp_path: Path) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r"""
+restore_topology_backups() { record restore_topology_backups "$@"; }
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+restore_prior_image_repo_env() { record restore_prior_image_repo_env "$@"; }
+FIXTURE_ADMISSION_RC=75
+ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130
+""",
+    )
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert result.records == [  # type: ignore[attr-defined]
+        "cleanup_remote_build_generation_on_exit",
+        "recognition_edge_remote admit-runtime dev current-only",
+        "restore_prior_image_repo_env",
+        "_purge_deploy_ocir_docker_config",
+        "_purge_deploy_snapshot",
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        "restore dev current-only",
+        "admit-runtime dev",
+        "admit-runtime dev current-only extra",
+        "admit-runtime staging current-only",
+        "admit-runtime dev unknown-mode",
+    ],
+)
+def test_compensation_admission_double_refuses_unmodeled_calls(tmp_path: Path, arguments: str) -> None:
+    result = _run_real_driver(tmp_path, f"recognition_edge_remote {arguments}\n")
+    assert result.returncode == 97, result.stdout + result.stderr
+    assert "unmodeled compensation admission call" in result.stderr
+    assert result.records == [f"recognition_edge_remote {arguments}"]  # type: ignore[attr-defined]
 
 
 def test_interrupt_during_canonical_restart_leaves_candidate_serving(tmp_path: Path) -> None:

@@ -54,6 +54,7 @@ import math
 import mimetypes
 import os
 import re
+import stat
 import sys
 import time
 from collections.abc import Mapping
@@ -64,13 +65,13 @@ from typing import Any
 
 import httpx
 
+from ._pathtext import _printable_message, _printable_path
 from .bench_capture import (
     LoadLoop,
     VramSampler,
     collect_item_latencies,
     summarize_latencies,
 )
-from ._pathtext import _printable_message, _printable_path
 from .cli import (
     DEFAULT_KEEP,
     DEFAULT_STALL_LIMIT,
@@ -83,8 +84,6 @@ from .cli import (
     fetch_run_record,
     prune_out_dir,
 )
-from .face_metrics import named_box_name
-from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .depiction_lexicon import (
     DETAIL_LEVELS,
     KNOWN_FAMILIES,
@@ -93,7 +92,9 @@ from .depiction_lexicon import (
     LexiconError,
     load_depiction_lexicon,
 )
-from .remote_client import RemoteClientError, RemoteSceneClient
+from .face_metrics import named_box_name
+from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
+from .remote_client import CircuitOpenError, RemoteClientError, RemoteSceneClient
 from .report import EVAL_MODES, RosterEpoch
 from .schema import SCHEMA, DocKind
 
@@ -110,6 +111,48 @@ _FACTS_BEGIN = "<<<FACTS>>>"
 _FACTS_END = "<<<END_FACTS>>>"
 _LONG_BEGIN = "<<<DESCRIPTION>>>"
 _LONG_END = "<<<END_DESCRIPTION>>>"
+
+
+def _validate_server_api_key(key: str) -> str:
+    if not isinstance(key, str) or not key or any(not 33 <= ord(char) <= 126 for char in key):
+        raise ValueError("invalid server API credential")
+    return key
+
+
+def _load_server_api_key(path: str) -> str:
+    """Validate the held descriptor before reading any credential bytes."""
+    key: str | None = None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            metadata = os.fstat(fd)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) not in {0o400, 0o600}
+            ):
+                raise ValueError("unsafe credential file")
+            content = b""
+            while len(content) < 4097:
+                chunk = os.read(fd, 4097 - len(content))
+                if not chunk:
+                    break
+                content += chunk
+            if len(content) > 4096:
+                raise ValueError("credential file too large")
+            if content.endswith(b"\n"):
+                content = content[:-1]
+            key = _validate_server_api_key(content.decode("ascii"))
+        finally:
+            os.close(fd)
+    except (OSError, ValueError):
+        pass
+    # Raise outside the handler: neither the path nor rejected bytes belong in
+    # an exception chain (including UnicodeDecodeError.object).
+    if key is None:
+        raise ValueError("invalid server API credential file")
+    return key
+
 
 # --- ALTQ-1 Slice 2: prompt-variant registry ---------------------------------
 # Named system-prompt variants, selected via --prompt-variant and stamped into
@@ -530,6 +573,7 @@ class BakeoffClient(RemoteSceneClient):
         base_url: str,
         *,
         model_id: str,
+        server_api_key: str | None = None,
         model_version: str | None = None,
         model_revision: str | None = None,
         seed: int | None = None,
@@ -548,6 +592,8 @@ class BakeoffClient(RemoteSceneClient):
         face_fixtures: dict[int, list[dict[str, Any]]] | None = None,
         depiction_lexicon: DepictionLexicon | None = None,
     ) -> None:
+        self._server_api_key = None if server_api_key is None else _validate_server_api_key(server_api_key)
+        self._response_private_values = (self._server_api_key,) if self._server_api_key is not None else ()
         kwargs: dict[str, Any] = {"transport": transport}
         if timeout_s is not None:
             kwargs["timeout_s"] = timeout_s
@@ -605,6 +651,52 @@ class BakeoffClient(RemoteSceneClient):
         self.face_fixtures = face_fixtures or {}
         self.depiction_lexicon = depiction_lexicon
         self.prompt_sha256 = self._prompt_fingerprint()
+
+    def _request(self, method: str, url: str, **kwargs: Any) -> Any:
+        if self._server_api_key is None:
+            return super()._request(method, url, **kwargs)
+        headers = httpx.Headers(kwargs.pop("headers", None))
+        headers["Authorization"] = f"Bearer {self._server_api_key}"
+        kwargs["headers"] = headers
+        kwargs["follow_redirects"] = False
+        failure: RemoteClientError | None = None
+        try:
+            payload = super()._request(method, url, **kwargs)
+        except RemoteClientError as exc:
+            # Preserve the parent's classification and accounting, but discard
+            # reflected reason phrases, URLs and transport exception chains.
+            message = "circuit open" if isinstance(exc, CircuitOpenError) else "raw request failed"
+            if exc.status_code is not None:
+                message += f" (HTTP {exc.status_code})"
+            failure = type(exc)(message, status_code=exc.status_code)
+        if failure is not None:
+            raise failure
+        return self._redact_response(payload)
+
+    def _redact_response(self, value: Any) -> Any:
+        """Scrub reflections before captions, parser errors or records see them."""
+        if isinstance(value, str):
+            # Chat content can itself be JSON, with escaped credential bytes.
+            # Scrub its decoded values before a downstream parser exposes them.
+            try:
+                embedded = json.loads(value)
+            except ValueError:
+                embedded = None
+            if isinstance(embedded, (dict, list)):
+                redacted = self._redact_response(embedded)
+                if redacted != embedded:
+                    return json.dumps(redacted)
+            for private in self._response_private_values:
+                for spelling in sorted(
+                    {private, json.dumps(private)[1:-1], repr(private)[1:-1]}, key=len, reverse=True
+                ):
+                    value = value.replace(spelling, "[redacted]")
+            return value
+        if isinstance(value, list):
+            return [self._redact_response(item) for item in value]
+        if isinstance(value, dict):
+            return {self._redact_response(key): self._redact_response(item) for key, item in value.items()}
+        return value
 
     def describe(
         self,
@@ -989,9 +1081,7 @@ def _load_weave_bench_source(path: Path) -> tuple[dict[str, Any], str]:
             f"--weave-bench source {_printable_path(path)} is not readable JSON: {_printable_exc(exc)}"
         ) from exc
     if not isinstance(record, dict):
-        raise WeaveBenchRecordError(
-            f"--weave-bench source {_printable_path(path)} must contain a JSON object"
-        )
+        raise WeaveBenchRecordError(f"--weave-bench source {_printable_path(path)} must contain a JSON object")
     kind = record.get("kind")
     if kind is not None and kind != DocKind.RUN_RECORD.value:
         raise WeaveBenchRecordError(
@@ -999,14 +1089,10 @@ def _load_weave_bench_source(path: Path) -> tuple[dict[str, Any], str]:
             "(did you pass a report file?)"
         )
     if not isinstance(record.get("provenance"), dict):
-        raise WeaveBenchRecordError(
-            f"--weave-bench source {_printable_path(path)} has no provenance block"
-        )
+        raise WeaveBenchRecordError(f"--weave-bench source {_printable_path(path)} has no provenance block")
     items = record.get("items")
     if not isinstance(items, list) or not items:
-        raise WeaveBenchRecordError(
-            f"--weave-bench source {_printable_path(path)} carries no items to replay"
-        )
+        raise WeaveBenchRecordError(f"--weave-bench source {_printable_path(path)} carries no items to replay")
     return record, hashlib.sha256(raw_bytes).hexdigest()
 
 
@@ -1014,8 +1100,7 @@ def _weave_bench_facts(item: dict[str, Any]) -> str:
     """Pass-1 facts from a source item's ``describe.passes[0]`` (the ``describe_facts`` pass)."""
     if item.get("error"):
         raise WeaveBenchSourceError(
-            "source item recorded a fetch error, nothing to replay: "
-            f"{_printable_message(str(item['error']))}"
+            f"source item recorded a fetch error, nothing to replay: {_printable_message(str(item['error']))}"
         )
     describe = item.get("describe")
     passes = describe.get("passes") if isinstance(describe, dict) else None
@@ -1117,8 +1202,7 @@ def weave_bench_run_record(
             # No usable media_id => the OUTPUT record would be unscoreable; that is
             # a malformed source (whole-run abort), not a per-item degrade.
             raise WeaveBenchRecordError(
-                "--weave-bench source item without a usable media_id: "
-                f"{_weave_bench_source_item_excerpt(source_item)}"
+                f"--weave-bench source item without a usable media_id: {_weave_bench_source_item_excerpt(source_item)}"
             ) from exc
         raw_path = source_item.get("path")
         if isinstance(raw_path, (str, Path)):
@@ -1313,9 +1397,10 @@ def _timeout_s_of(client: BakeoffClient) -> float | None:
 
 def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
     """Throwaway client with the same endpoint/config; isolated breaker state."""
-    return BakeoffClient(
+    clone = BakeoffClient(
         client.base_url,
         model_id=client.model_id,
+        server_api_key=client._server_api_key,
         model_version=client.model_version,
         no_think=client.no_think,
         timeout_s=_timeout_s_of(client),
@@ -1331,6 +1416,8 @@ def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
         face_fixtures=client.face_fixtures,
         depiction_lexicon=client.depiction_lexicon,
     )
+    clone._response_private_values = client._response_private_values
+    return clone
 
 
 def _empty_warmup() -> dict[str, Any]:
@@ -1488,10 +1575,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--endpoint", required=True, help="candidate llama.cpp base URL, e.g. http://host:8080")
+    parser.add_argument(
+        "--server-api-key-file", metavar="PATH", help="runner-owned 0400/0600 file containing the raw server Bearer key"
+    )
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--model-version", default=None, help="e.g. GGUF quant tag Q4_K_M")
     parser.add_argument("--model-revision", default=None, help="operator-supplied checkpoint/GGUF revision or digest")
-    parser.add_argument("--seed", type=int, default=None, help="optional fixed completion seed (default: server-selected)")
+    parser.add_argument(
+        "--seed", type=int, default=None, help="optional fixed completion seed (default: server-selected)"
+    )
     parser.add_argument("--no-think", action="store_true", help="append /no_think (reasoning-tuned candidates)")
     parser.add_argument("--manifest", default="scene/tests/seed/bakeoff_golden.json")
     parser.add_argument("--limit", type=_limit_arg, default=None, help="cap images (must be >= 1)")
@@ -1650,6 +1742,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    server_api_key = None
+    if args.server_api_key_file is not None:
+        server_api_key = _load_server_api_key(args.server_api_key_file)
 
     if args.weave_bench is not None and (args.two_pass or args.dual_length):
         sys.exit("--weave-bench replays recorded pass-1 facts through pass-2 only; drop --two-pass/--dual-length")
@@ -1738,6 +1833,7 @@ def main(argv: list[str] | None = None) -> None:
     client = BakeoffClient(
         args.endpoint,
         model_id=args.model_id,
+        server_api_key=server_api_key,
         model_version=args.model_version,
         model_revision=args.model_revision,
         seed=args.seed,
@@ -1755,6 +1851,8 @@ def main(argv: list[str] | None = None) -> None:
         face_fixtures=face_fixtures,
         depiction_lexicon=depiction_lexicon,
     )
+    if args.server_api_key_file is not None:
+        client._response_private_values += (args.server_api_key_file, Path(args.server_api_key_file).name)
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
     out_dir = Path(__file__).parent / "out"
@@ -1839,10 +1937,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         _stamp_stage_costs(exc.partial_record, hourly_rate=args.hourly_rate)
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
-        sys.exit(
-            "BoundedStallError: "
-            f"{_printable_exc(exc)} — partial record saved to {_printable_path(aborted_path)}"
-        )
+        sys.exit(f"BoundedStallError: {_printable_exc(exc)} — partial record saved to {_printable_path(aborted_path)}")
     finally:
         client.close()
         if sampler is not None and gpu_block is None:

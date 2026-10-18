@@ -42,6 +42,7 @@ TENANT_TABLES = [
     "portal_tenant_invitation",
     "describe_operations",
     "describe_demand_leases",
+    "face_observations",
     "media_identities",
     "identity_clusters",
     "identity_members",
@@ -172,6 +173,7 @@ EXPECTED_SCHEMA_TABLES = [
     "portal_tenant_invitation",
     "demo_instances",
     "worker_capabilities",
+    "face_observations",
     "media_identities",
     "curation_replay_records",
     "identity_clusters",
@@ -251,6 +253,7 @@ DOWNGRADE_TABLE_ORDER = [
     "identity_constraints",
     "identity_clusters",
     "media_identities",
+    "face_observations",
     "demo_instances",
     "api_keys",
     "tenants",
@@ -1830,6 +1833,15 @@ def ensure_tables(op) -> None:
 
     _ensure_table(
         op,
+        "face_observations",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("identity_namespace_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("attachment_id", sa.Integer(), nullable=False),
+        sa.Column("evidence", sa.dialects.postgresql.JSONB(), nullable=False),
+    )
+    _ensure_table(
+        op,
         "media_identities",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -1846,6 +1858,12 @@ def ensure_tables(op) -> None:
         ),
         sa.Column("media_id", sa.Integer(), nullable=False),
         sa.Column("media_url", sa.Text(), nullable=False),
+        sa.Column(
+            "face_observation_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("face_observations.id"),
+            nullable=True,
+        ),
         sa.Column("bbox_x", sa.Integer(), nullable=False),
         sa.Column("bbox_y", sa.Integer(), nullable=False),
         sa.Column("bbox_width", sa.Integer(), nullable=False),
@@ -3544,6 +3562,18 @@ def ensure_refresh_queue(op) -> None:
 
 def ensure_triggers(op) -> None:
     """(Re)create the centroid-dirty functions and triggers (CREATE OR REPLACE)."""
+    op.execute("""
+        CREATE OR REPLACE FUNCTION reject_face_observation_update() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'face observations are immutable';
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+    op.execute("DROP TRIGGER IF EXISTS face_observations_immutable ON face_observations")
+    op.execute("""
+        CREATE TRIGGER face_observations_immutable BEFORE UPDATE OR DELETE ON face_observations
+        FOR EACH ROW EXECUTE FUNCTION reject_face_observation_update()
+    """)
     op.execute(
         """
         CREATE OR REPLACE FUNCTION notify_cluster_centroid_dirty(target_cluster uuid)
@@ -4316,3 +4346,4 @@ def downgrade() -> None:
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
     for table in DOWNGRADE_TABLE_ORDER:
         op.drop_table(table)
+    op.execute("DROP FUNCTION IF EXISTS reject_face_observation_update()")

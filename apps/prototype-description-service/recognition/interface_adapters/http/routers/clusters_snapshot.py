@@ -232,8 +232,88 @@ def _build_cluster_responses(
     return responses
 
 
+def _measurement_for_snapshot(identity):
+    """Export complete registry measurements only when current row binding validates.
+
+    Never attest lifecycle, current attachment revision, or preview availability.
+    """
+    from recognition.domain.face_evidence import FaceEvidence
+    from recognition.interface_adapters.http.schemas.responses import FaceEvidenceResponse
+
+    observation = getattr(identity, "face_observation", None)
+    if observation is None:
+        return None
+    if (
+        observation.tenant_id != identity.tenant_id
+        or observation.attachment_id != int(identity.media_id)
+        or observation.id != identity.face_observation_id
+    ):
+        return None
+    try:
+        measurement = FaceEvidence(**observation.evidence)
+        bbox = (
+            identity.bbox_x,
+            identity.bbox_y,
+            identity.bbox_x + identity.bbox_width,
+            identity.bbox_y + identity.bbox_height,
+        )
+        bounded = measurement.for_bbox(bbox)
+        if bounded is None or tuple(measurement.region) != bounded.region:
+            return None
+        return FaceEvidenceResponse(
+            identity_namespace_id=str(observation.identity_namespace_id),
+            observation_id=str(observation.id),
+            **measurement.to_dict(),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+async def _load_snapshot_measurements(session, tenant_id, members_with_identities):
+    """Repository domain projections intentionally omit ORM evidence.
+
+    Read the authority here, within the export session, and require equality
+    against the membership view. Never infer proof from the domain UUID/box.
+    """
+    from uuid import UUID
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from db.models.identity import MediaIdentity
+
+    identities = {str(identity.id): identity for _, identity in members_with_identities}
+    proofs = {}
+    ids = list(identities)
+    for offset in range(0, len(ids), 500):
+        result = await session.execute(
+            select(MediaIdentity)
+            .where(
+                MediaIdentity.tenant_id == UUID(str(tenant_id)),
+                MediaIdentity.id.in_([UUID(value) for value in ids[offset : offset + 500]]),
+            )
+            .options(selectinload(MediaIdentity.face_observation))
+        )
+        for row in result.scalars().all():
+            incoming = identities.get(str(row.id))
+            if incoming is None:
+                continue
+            if (
+                str(incoming.tenant_id) != str(row.tenant_id)
+                or str(incoming.media_id) != str(row.media_id)
+                or (incoming.bbox_x, incoming.bbox_y, incoming.bbox_width, incoming.bbox_height)
+                != (row.bbox_x, row.bbox_y, row.bbox_width, row.bbox_height)
+            ):
+                continue
+            proof = _measurement_for_snapshot(row)
+            if proof is not None:
+                proofs[str(row.id)] = proof
+    return proofs
+
+
 def _build_member_responses(
     members_with_identities: list,
+    measurements: dict | None = None,
 ) -> list[ClusterSnapshotMemberResponse]:
     """Build member snapshot responses from member/identity pairs."""
     responses: list[ClusterSnapshotMemberResponse] = []
@@ -244,14 +324,16 @@ def _build_member_responses(
 
         # Note: MediaIdentity doesn't store full image dimensions.
         # Consumer resolves dimensions from WordPress media metadata (wp_postmeta).
-        image_width = 0
-        image_height = 0
-
+        proof = measurements.get(str(identity.id)) if measurements is not None else _measurement_for_snapshot(identity)
+        image_width = proof.raster_width if proof else 0
+        image_height = proof.raster_height if proof else 0
         responses.append(
             ClusterSnapshotMemberResponse(
-                identity_uuid=identity.id,
-                cluster_uuid=member.cluster_id,
+                identity_uuid=str(identity.id),
+                cluster_uuid=str(member.cluster_id),
                 attachment_id=int(identity.media_id),
+                face_evidence_v1=proof,
+                face_evidence_status=("measured_lifecycle_unavailable" if proof else "unavailable"),
                 bbox=FaceBoxResponse(
                     x=bbox_x,
                     y=bbox_y,
@@ -363,7 +445,8 @@ async def get_tenant_cluster_snapshot(
     cluster_responses = _build_cluster_responses(clusters)
     clustering_settings = resolve_effective_clustering_settings()
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
-    member_responses = _build_member_responses(members_with_identities)
+    measurements = await _load_snapshot_measurements(session, tenant_id, members_with_identities)
+    member_responses = _build_member_responses(members_with_identities, measurements)
 
     return ClusterSnapshotResponse(
         tenant_id=tenant_uuid,
@@ -383,6 +466,7 @@ async def get_tenant_targeted_cluster_snapshot(
     auth=Depends(require_auth),
     repo=Depends(get_cluster_repository),
     job_service=Depends(get_persisted_cluster_job_service),
+    session=Depends(get_session),
 ) -> ClusterSnapshotResponse:
     """Get a targeted cluster snapshot for a subset of cluster ids."""
     tenant_id = tenant_uuid
@@ -407,7 +491,10 @@ async def get_tenant_targeted_cluster_snapshot(
         source_job_id=latest_clustering_job.id if latest_clustering_job is not None else None,
         generated_at=datetime.now(tz=UTC),
         clusters=_build_cluster_responses(clusters),
-        members=_build_member_responses(members_with_identities),
+        members=_build_member_responses(
+            members_with_identities,
+            await _load_snapshot_measurements(session, tenant_id, members_with_identities),
+        ),
     )
 
 
@@ -438,7 +525,10 @@ async def get_tenant_cluster_delta(
         snapshot_version=snapshot_version,
         generated_at=datetime.now(tz=UTC),
         clusters=cluster_responses,
-        members=_build_member_responses(members_with_identities),
+        members=_build_member_responses(
+            members_with_identities,
+            await _load_snapshot_measurements(session, tenant_id, members_with_identities),
+        ),
     )
 
 

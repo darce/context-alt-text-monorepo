@@ -1,0 +1,82 @@
+{
+  "status": "PROPOSED_FOR_WHOLE_G2",
+  "summary": "Prepared 10 source-pinned read-order/descriptor-observer edits; checkout target untouched. Independent observer controls: 138 passed. Actual current public tests: 45 expected RED / 5 GREEN. Root whole G2 and sibling privacy composition remain required.",
+  "source_sha": "e368068d50f16987106b74e5d56495e285c22df0",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-R2-READ-ORDER.json",
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-R2-READ-ORDER.md",
+    ".task-state/bakeoff-rounds-20261017/adjudications/RAW-AUTH-R2-READ-ORDER.edits.json"
+  ],
+  "commits": [
+    "59de164613eab3fa8876a06570a90c795614faeb"
+  ],
+  "findings": [
+    {
+      "id": "RAW-AUTH-TEST-G1-01",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "description": "Original observer counts requested sizes and misses direct FileIO reads, rejecting valid bounded readers.",
+      "evidence": "Reproduced requests [4097,4033] returning only [64,0] and unobserved FileIO.read(4097). Revised external controls accept both, count actual bytes/read-ahead and detect real cumulative overflow.",
+      "fix": "Proposed shared observer and narrow descriptor test replacement; retain 4097 cap, validated descriptor/path replacement, one open, exact original-key requests and closure. Add one >4097-byte CLI overflow case."
+    },
+    {
+      "id": "RAW-AUTH-TEST-G1-03",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "description": "Original foreign-owner/mode negatives allow content read followed by private refusal.",
+      "evidence": "Original negative observers allow 64-byte reads on foreign-owner/0640 files. Revised controls detect all read attempts, including EOF/error reads and standard streams, while 0400/0600 parents consume bytes and pass.",
+      "fix": "Proposed independent credential_reads fixture at existing invalid/strict-mode and matched valid CLI boundaries. Assert zero attempts for invalid metadata after caller return, then eligible metadata, actual content bound and descriptor closure; finally close proven owned leftovers."
+    }
+  ],
+  "tests": [
+    {
+      "command": "timeout 60s /home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-r2--61dd0675/.venv/bin/python -B /tmp/raw-auth-r2-read-order/scripts/prior-public_and_oracles.py",
+      "exit_code": 0,
+      "summary": "Reproduced original short-read-loop and FileIO false rejections, five unchanged privacy false negatives, and 403/breaker/redirect/configured-timeout/service controls: 22 observations, 14 external HTTP exchanges; no future loader GREEN."
+    },
+    {
+      "command": "timeout 60s /home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-r2--61dd0675/.venv/bin/python -B /tmp/raw-auth-r2-read-order/scripts/prior-metadata_oracle.py",
+      "exit_code": 0,
+      "summary": "Original observers permit 64-byte reads on foreign-owner/0640 files as well as matched 0400/0600 parents; original private-refusal/no-network/no-output assertions still pass. Real owned FDs only."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-read-order/scripts/pytest_run.py oracles-final oracles",
+      "exit_code": 0,
+      "summary": "138 independent real-FD observer controls passed in 11.20s: valid 0400/0600 parents, short-read EOF loop, FileIO/buffered/text/open/fdopen/readinto/vectored readers; invalid metadata/order, real overflow/multiread/read-ahead, reopen and closure sensitivity. Oracle qualification only."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-read-order/scripts/pytest_run.py whole-final whole",
+      "exit_code": 1,
+      "summary": "50 cases: all original 49 preserved plus one large overflow case; 45 expected public missing-keyword/parser RED, 5 GREEN in 24.60s; no setup/teardown failures, 8 clients closed. Normal copied service configuration/conftests and required pytest-timeout loaded."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-read-order/scripts/pytest_run.py controls",
+      "exit_code": 0,
+      "summary": "Five existing anonymous/refusal/service controls passed separately in 14.80s with real current source and MockTransport."
+    },
+    {
+      "command": "bash -c '.venv/bin/ruff check --no-cache --stdin-filename apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py - < /tmp/raw-auth-r2-read-order/private-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py'",
+      "exit_code": 0,
+      "summary": "Focused private-copy lint passed using the original logical filename and unchanged root configuration."
+    },
+    {
+      "command": "bash -c '.venv/bin/ruff format --check --no-cache --stdin-filename apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py - < /tmp/raw-auth-r2-read-order/private-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py'",
+      "exit_code": 0,
+      "summary": "Private-copy format check passed; no formatting edits."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-r2-read-order/scripts/verify.py",
+      "exit_code": 0,
+      "summary": "Verified exact source blob/SHA256, 10 unique nonoverlapping byte spans, equal forward/reverse application, all original case IDs/privacy calls/payloads, exact Canon release entries, actual import hashes and 21,572 unchanged prior files."
+    }
+  ],
+  "limitations": [
+    "Proposal only: root must compose the sibling PRIVACY map, validate both inter-map application orders, independently review the whole G2 specification and acknowledge actual remote RED before any initial LOW source author. Neither finding is closed; no checkout target edit, source implementation, dispatch, adoption, main merge or live effect occurred.",
+    "Actual public API remains RED. The 138 passing cases qualify external observer sensitivity on real FDs, not future credential-loader behavior. Existing malformed-payload construction and no_leak arguments are unchanged; G1-02 remains outside this map and its original counterexamples still reproduce.",
+    "Coverage is explicit for dynamic os.read/readv/pread/preadv and builtins.open/io.open/os.fdopen/io.FileIO descriptor paths, including buffered read-ahead measured by regular-file offset deltas. Arbitrary cached pre-instrumentation aliases, mmap/native extensions and concurrent shared-offset readers are not qualified. No private loader name, implementation stat representation or replacement consumer is required.",
+    "Logical input 5a26bab08c1ba7c984a8515a06725728b9de44c1 is absent locally. source_sha names honest native base e368068d50f16987106b74e5d56495e285c22df0 with exact requested tree 09b6903c4d3e8f1ec44f864e9c7f2007957721c6; equal trees establish bytes, not ancestry.",
+    "Supplied semantic packets are verified gte-base-en-v1.5 with no degradation and selected reinjection; no live MCP/graph/ONNX retrieval was exposed or claimed. Supplied code map excludes scripts; full source and syntactic AST fallback were used without completeness claims. Eight supplied Canon v0.26.2 bodies and four original distillations were read/hash-verified, not refreshed books.",
+    "Pinned llama.cpp d261223d24e97f2df50220e4a5b7f0adb69bba81 supports Bearer compatibility only. Runtime identity/acceptance, real socket deadlines, boot, admission, inference and quality remain unqualified. Only synthetic credentials, zero-byte image fixtures and external MockTransport were used.",
+    "Complete audit remains /tmp/raw-auth-r2-read-order. Earlier buffer-control/lint setup failures are retained and labelled; final sources have stable before/after hashes. Proven owned descriptors/clients were closed and command children reaped. No installs, broad suites, foreign signals, prior-root deletion, credential/trust/shared-service changes or nested agents. Actual cgroup is 1GiB and 25000/100000 CPU; requested model/HIGH/STANDARD/1500s metadata is not independently attested. commits points to the substantive artifact commit; a later JSON-only commit records it without self-reference."
+  ]
+}

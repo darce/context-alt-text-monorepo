@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-job.schema.json",
+  "title": "Recognition Job",
+  "description": "Recognition job status payload returned by the service.",
+  "type": "object",
+  "required": ["id", "type", "status", "progress", "started_at", "finished_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique job identifier (UUID)."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["analyze", "clustering", "curation", "split"],
+      "description": "Job type."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "completed", "completed_with_errors", "failed"],
+      "description": "Current job status. completed_with_errors is a terminal partial-success (some items succeeded, some failed) emitted by the description-service; consumers must treat it as a completed scan (BND-1)."
+    },
+    "progress": {
+      "type": ["object", "null"],
+      "description": "Progress tracking for the job.",
+      "required": ["completed", "total"],
+      "properties": {
+        "completed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Completed item count."
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total item count."
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["queued", "detecting", "clustering", "retrying", "awaiting_projection", "failed", "complete"],
+          "description": "Current pipeline phase when available."
+        },
+        "images_processed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of images processed for detection."
+        },
+        "faces_found": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Running count of detected faces/identities."
+        },
+        "clusters_created": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of clusters created during clustering jobs."
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of times this job has been retried."
+        },
+        "current_stage": {
+          "type": "string",
+          "description": "Machine-readable stage label for the current processing phase."
+        },
+        "last_successful_processed_identities": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Identity count at the last durable checkpoint."
+        },
+        "last_error_code": {
+          "type": "string",
+          "description": "Error code from the most recent failed attempt."
+        },
+        "current_chunk_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Adaptive chunk size in use at the last durable checkpoint."
+        },
+        "last_error_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the most recent failed attempt."
+        }
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when job started."
+    },
+    "finished_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when job finished."
+    },
+    "message": {
+      "type": ["string", "null"],
+      "description": "Optional job status message."
+    }
+  }
+}

@@ -1,0 +1,1820 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Tests\Unit;
+
+use AltContext\Sovereign\Sync\CrossPlaneSequencer;
+use AltContext\Sovereign\Sync\OutboxDispatcher;
+use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
+use AltContext\Sovereign\Sync\OutboxQueryRepository;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
+use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
+use AltContext\Tests\Support\FindsSqlQueries;
+use AltContext\Tests\TestCase;
+use RuntimeException;
+
+class OutboxDrainTest extends TestCase
+{
+	use FindsSqlQueries;
+
+	private mixed $originalDb;
+
+	protected function setUp(): void
+	{
+		parent::setUp();
+		$this->originalDb = $GLOBALS['wpdb'];
+		// phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Lane-local database fixture.
+		$GLOBALS['wpdb'] = new OutboxDrainDb();
+	}
+
+	protected function tearDown(): void
+	{
+		// phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the shared fixture.
+		$GLOBALS['wpdb'] = $this->originalDb;
+		parent::tearDown();
+	}
+
+	public function testRegisterRegistersHookAndSchedulesWhenPendingExists(): void
+	{
+		global $wpdb;
+		$wpdb->mockVar = '9';
+
+		$drain = new OutboxDrain();
+		$drain->register();
+
+		$this->assertArrayHasKey('acx_sync_drain_curation_outbox', $GLOBALS['__ac_actions']);
+		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testRegisterSchedulesPurgeThroughActionSchedulerWhenAvailable(): void
+	{
+		global $wpdb;
+		$wpdb->mockVar = '0';
+
+		$drain = new OutboxDrain();
+		$drain->register();
+
+		$this->assertNotFalse(as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync'));
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+	}
+
+	public function testRegisterDoesNotDuplicateActionSchedulerPurge(): void
+	{
+		global $wpdb;
+		$wpdb->mockVar = '0';
+
+		$drain = new OutboxDrain();
+		$drain->register();
+		$existing = as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync');
+		$scheduledCount = count($GLOBALS['__ac_action_scheduler']);
+
+		$drain->register();
+
+		$this->assertSame($existing, as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync'));
+		$this->assertCount($scheduledCount, $GLOBALS['__ac_action_scheduler']);
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+	}
+
+	public function testClearScheduledPurgeClearsWpCronAndActionSchedulerForResolvedGroup(): void
+	{
+		$group = 'custom-acx-sync';
+		add_filter('acx_outbox_action_scheduler_group', static fn (): string => $group);
+		wp_schedule_event(time() + 300, 'daily', 'acx_sync_purge_terminal_rows', []);
+		as_schedule_single_action(time() + 300, 'acx_sync_purge_terminal_rows', [], $group);
+
+		OutboxDrain::clear_scheduled_purge();
+
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+		$this->assertFalse(as_next_scheduled_action('acx_sync_purge_terminal_rows', [], $group));
+	}
+
+	public function testClearScheduledPurgeWorksWithoutAnActionSchedulerAction(): void
+	{
+		wp_schedule_event(time() + 300, 'daily', 'acx_sync_purge_terminal_rows', []);
+
+		OutboxDrain::clear_scheduled_purge();
+
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+		$this->assertFalse(as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync'));
+	}
+
+	public function testMaybeScheduleDrainFallsBackToWpCronWhenActionSchedulerEnqueueFails(): void
+	{
+		$GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+
+		OutboxDrain::maybe_schedule_drain();
+
+		$this->assertFalse(as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync'));
+		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testInlinePurgeUsesRecordedWpCronModeWhenActionSchedulerIsAvailable(): void
+	{
+		$purgeCalls = array();
+		$this->setOption('acx_reclaimer_purge_scheduler', ReclaimerLiveness::SCHEDULER_WP_CRON);
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,array{tenant_id:string,batch_cap:?int,scheduler_mode:?string}> */
+			private array $purgeCalls;
+
+			/** @param array<int,array{tenant_id:string,batch_cap:?int,scheduler_mode:?string}> $purgeCalls */
+			public function __construct( array &$purgeCalls ) {
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = array(
+					'tenant_id' => $tenant_id,
+					'batch_cap' => $batch_cap,
+					'scheduler_mode' => $scheduler_mode,
+				);
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$this->assertSame(
+			array( 'outbox' => 0, 'conflicts' => 0 ),
+			$drain->purge_terminal_rows_for_tenant( 'tenant-test-123', 7 )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'tenant_id' => 'tenant-test-123',
+					'batch_cap' => 7,
+					'scheduler_mode' => ReclaimerLiveness::SCHEDULER_WP_CRON,
+				),
+			),
+			$purgeCalls
+		);
+	}
+
+	public function testInlinePurgeUsesActionSchedulerCapabilityWhenNothingWasBooked(): void
+	{
+		$purgeCalls = array();
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,string|null> */
+			private array $schedulerModes;
+
+			/** @param array<int,string|null> $schedulerModes */
+			public function __construct( array &$schedulerModes ) {
+				$this->schedulerModes =& $schedulerModes;
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->schedulerModes[] = $scheduler_mode;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows_for_tenant( 'tenant-test-123', 7 );
+
+		$this->assertSame(
+			array( ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER ),
+			$purgeCalls
+		);
+	}
+
+	public function testDrainMarksAcknowledgedOperations(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return array_fill(0, count($operations), [
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				]);
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
+		$this->assertStringContainsString('acknowledged_version = 33', $updateQuery);
+	}
+
+	public function testDrainMarksConflictsAndPersistsConflictRows(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'conflict',
+					'conflict_code' => 'version_conflict',
+					'backend_version' => 12,
+					'machine_payload' => ['cluster_uuid' => 'cluster-1', 'person_uuid' => 'remote-person'],
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
+		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'conflict'", $updateQuery);
+	}
+
+	public function testDrainKeepsRetryableFailuresPendingBeforeMaxAttempts(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'timeout',
+					'error_message' => 'gateway timeout',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'pending'", $updateQuery);
+		$this->assertStringContainsString("last_error_code = 'timeout'", $updateQuery);
+		// CON-3: the retryable/failed terminal write is also guarded on the in_flight claim.
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $updateQuery);
+	}
+
+	public function testDrainMarksFailedWhenAttemptsReachHardCapBackstop(): void
+	{
+		// E15-35 Slice 1: the count terminal is a hard-cap backstop (default 40), replacing the
+		// superseded count-only acx_outbox_max_attempts=5 terminal that dead-lettered the incident.
+		global $wpdb;
+
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 39;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 3600);
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'timeout',
+					'error_message' => 'gateway timeout',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 40', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $updateQuery);
+	}
+
+	public function testRetryableFailureSetsFirstFailedAtAndBoundedAdditiveJitterBackoff(): void
+	{
+		// E15-35 Slice 1 proof: first retryable failure stamps first_failed_at = last_attempted_at
+		// and schedules next_attempt_at = now + base(60s) + additive jitter [0, 0.1*delay], so the
+		// row can never be re-claimed immediately (next_attempt_at strictly > now at attempts=1).
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'pending'", $updateQuery);
+
+		$attemptedAt = $this->extractDatetimeColumn($updateQuery, 'last_attempted_at');
+		$firstFailedAt = $this->extractDatetimeColumn($updateQuery, 'first_failed_at');
+		$nextAttemptAt = $this->extractDatetimeColumn($updateQuery, 'next_attempt_at');
+		$this->assertSame($attemptedAt, $firstFailedAt);
+
+		$delay = strtotime($nextAttemptAt) - strtotime($attemptedAt);
+		$this->assertGreaterThanOrEqual(60, $delay, 'next_attempt_at must be at least base seconds ahead');
+		$this->assertLessThanOrEqual(66, $delay, 'jitter must stay within +10% of the delay');
+	}
+
+	public function testRetryableFailureBackoffRampDoublesAndCapsAtHourlyCeiling(): void
+	{
+		// E15-35 Slice 1 proof: exponential ramp 60,120,240,... capped at 3600s per attempt.
+		global $wpdb;
+
+		$scenarios = [
+			// attempts pre-increment 2 -> post-increment n=3 -> delay 240s (+ jitter <= 24s).
+			['attempts' => 2, 'min' => 240, 'max' => 264],
+			// attempts pre-increment 9 -> n=10 -> raw 30720s, capped to 3600s (+ jitter <= 360s).
+			['attempts' => 9, 'min' => 3600, 'max' => 3960],
+		];
+
+		foreach ($scenarios as $scenario) {
+			$wpdb->reset();
+			$row = $this->pendingOperationRow();
+			$row['attempts'] = $scenario['attempts'];
+			$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 600);
+			$wpdb->mockResults = [$row];
+
+			$dispatcher = new class() extends OutboxDispatcher {
+				public function dispatch_batch(array $operations): array {
+					return [[
+						'status' => 'failed',
+						'error_code' => 'remote_error',
+						'error_message' => 'backend unavailable',
+						'retryable' => true,
+					],];
+				}
+			};
+
+			$drain = new OutboxDrain($dispatcher);
+			$drain->drain();
+
+			$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+			$this->assertStringContainsString("status = 'pending'", $updateQuery);
+
+			$attemptedAt = $this->extractDatetimeColumn($updateQuery, 'last_attempted_at');
+			$nextAttemptAt = $this->extractDatetimeColumn($updateQuery, 'next_attempt_at');
+			$delay = strtotime($nextAttemptAt) - strtotime($attemptedAt);
+			$this->assertGreaterThanOrEqual($scenario['min'], $delay);
+			$this->assertLessThanOrEqual($scenario['max'], $delay);
+		}
+	}
+
+	public function testRetryWindowTerminalFiresBeforeHardCap(): void
+	{
+		// E15-35 Slice 1 proof: the 24h retry window is the primary terminal — a row first failed
+		// 25h ago dead-letters even though attempts (29) is far below the hard cap (40).
+		global $wpdb;
+
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 28;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - (25 * 3600));
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 29', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testNonRetryableFailureDeadLettersImmediatelyAtFirstAttempt(): void
+	{
+		// E15-35 Slice 1: NO behavior change for the non-retryable class (401/403/4xx/invalid
+		// payload) — still dead-letters at attempt 1 with no backoff schedule.
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'unauthorized',
+					'error_message' => 'auth rejected',
+					'retryable' => false,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 1', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testRetryableOperationThatRecoversWithinWindowAcknowledges(): void
+	{
+		// E15-35 Slice 1 proof: an op mid-backoff (first_failed_at 1h old, attempts=3) that gets a
+		// healthy response acknowledges and clears its retry-schedule bookkeeping.
+		global $wpdb;
+
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 3;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 3600);
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'acknowledged',
+					'backend_version' => 44,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
+		$this->assertStringContainsString('first_failed_at = NULL', $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testHardCapFilterOverrideLowersCountBackstop(): void
+	{
+		// E15-35 Slice 1: hard cap is filter-overridable (replaces acx_outbox_max_attempts, PR-12).
+		add_filter(
+			'acx_outbox_retry_hard_cap_attempts',
+			static fn (): int => 3
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 2;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - 600);
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('attempts = 3', $updateQuery);
+	}
+
+	public function testInvalidTunableFiltersFallBackToDefaultsAndKeepCeilingEnforced(): void
+	{
+		// E15-35 Slice 1 proof (rg-008): a bad filter can never disable the terminal ceiling —
+		// invalid window/hard-cap values fall back to defaults, so a 25h-old failure still
+		// dead-letters by the default 24h window.
+		add_filter(
+			'acx_outbox_retry_window_seconds',
+			static fn (): int => -1
+		);
+		add_filter(
+			'acx_outbox_retry_hard_cap_attempts',
+			static fn (): string => 'not-a-number'
+		);
+		add_filter(
+			'acx_outbox_retry_backoff_base_seconds',
+			static fn (): float => INF
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['attempts'] = 1;
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - (25 * 3600));
+		$wpdb->mockResults = [$row];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $updateQuery);
+		$this->assertStringContainsString('next_attempt_at = NULL', $updateQuery);
+	}
+
+	public function testInvalidBackoffBaseFilterFallsBackToDefaultDelay(): void
+	{
+		// E15-35 Slice 1 (rg-008): an invalid backoff base cannot zero-out the delay — the
+		// schedule falls back to the 60s default.
+		add_filter(
+			'acx_outbox_retry_backoff_base_seconds',
+			static fn (): int => 0
+		);
+
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'failed',
+					'error_code' => 'remote_error',
+					'error_message' => 'backend unavailable',
+					'retryable' => true,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$attemptedAt = $this->extractDatetimeColumn($updateQuery, 'last_attempted_at');
+		$nextAttemptAt = $this->extractDatetimeColumn($updateQuery, 'next_attempt_at');
+		$delay = strtotime($nextAttemptAt) - strtotime($attemptedAt);
+		$this->assertGreaterThanOrEqual(60, $delay);
+		$this->assertLessThanOrEqual(66, $delay);
+	}
+
+	public function testDrainSchedulesNextDrainAtEarliestPendingAttemptWhenNoRowIsDue(): void
+	{
+		// E15-35 Slice 1 proof: pending rows all mid-backoff -> the drain schedules a single
+		// future event at the earliest next_attempt_at instead of busy-looping immediately.
+		// Action Scheduler is available in the suite, so the schedule lands on the AS path
+		// and no WP-Cron duplicate is booked (E15-35-BR-02).
+		$this->configurePendingBacklog(time() + 600);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled, 'Expected a future single drain action for the earliest pending attempt.');
+		$this->assertGreaterThanOrEqual(time() + 595, $scheduled);
+		$this->assertLessThanOrEqual(time() + 605, $scheduled);
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'), 'AS path succeeded: no WP-Cron duplicate.');
+	}
+
+	public function testDrainSchedulesNextDrainViaWpCronWhenActionSchedulerScheduleFails(): void
+	{
+		// E15-35-BR-02: AS-failure fall-through — as_schedule_single_action returning a
+		// non-positive id must land the future drain on WP-Cron instead.
+		$GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+		$this->configurePendingBacklog(time() + 600);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$this->assertFalse($this->actionSchedulerDrainTimestamp());
+		$scheduled = wp_next_scheduled('acx_sync_drain_curation_outbox');
+		$this->assertNotFalse($scheduled, 'Expected the WP-Cron fallback to book the future drain.');
+		$this->assertGreaterThanOrEqual(time() + 595, (int) $scheduled);
+		$this->assertLessThanOrEqual(time() + 605, (int) $scheduled);
+	}
+
+	public function testDrainAdvancesLaterParkedDrainToEarlierPendingAttempt(): void
+	{
+		// E15-35-BR-01: a drain parked at a later backoff anchor must be advanced when the
+		// backlog's earliest pending attempt is now earlier.
+		as_schedule_single_action(time() + 3900, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+		$this->configurePendingBacklog(time() + 600);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled);
+		$this->assertGreaterThanOrEqual(time() + 595, $scheduled);
+		$this->assertLessThanOrEqual(time() + 605, $scheduled, 'Later parked drain must advance to the earlier pending attempt.');
+	}
+
+	public function testDrainKeepsEarlierExistingScheduleWhenBacklogIsDueLater(): void
+	{
+		// Dedup preserved: an existing drain already booked EARLIER than the backlog's
+		// earliest attempt stays put — backoff wake-ups never stack (E15-35-BR-01).
+		as_schedule_single_action(time() + 60, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+		$existing = $this->actionSchedulerDrainTimestamp();
+		$this->configurePendingBacklog(time() + 600);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$this->assertSame($existing, $this->actionSchedulerDrainTimestamp(), 'Earlier existing schedule must be kept.');
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testMaybeScheduleDrainAdvancesParkedFutureActionSchedulerDrainToNow(): void
+	{
+		// E15-35-BR-01 block scenario A: OutboxWriter::enqueue during a parked backoff anchor.
+		// The parked future drain must be advanced so due-now work dispatches immediately.
+		as_schedule_single_action(time() + 3900, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+
+		OutboxDrain::maybe_schedule_drain();
+
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled);
+		$this->assertLessThanOrEqual(time(), $scheduled, 'Parked future drain must be advanced to now for due-now work.');
+	}
+
+	public function testMaybeScheduleDrainKeepsAlreadyDueActionSchedulerDrain(): void
+	{
+		as_schedule_single_action(time() - 5, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+		$existing = $this->actionSchedulerDrainTimestamp();
+
+		OutboxDrain::maybe_schedule_drain();
+
+		$this->assertSame($existing, $this->actionSchedulerDrainTimestamp(), 'Already-due drain must be kept (dedup).');
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testMaybeScheduleDrainAdvancesParkedFutureWpCronDrainWhenActionSchedulerFails(): void
+	{
+		// WP-Cron mirror of the advance: parked future WP-Cron event + AS unable to enqueue.
+		$GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+		wp_schedule_single_event(time() + 3900, 'acx_sync_drain_curation_outbox', []);
+
+		OutboxDrain::maybe_schedule_drain();
+
+		$scheduled = wp_next_scheduled('acx_sync_drain_curation_outbox');
+		$this->assertNotFalse($scheduled);
+		$this->assertLessThanOrEqual(time(), (int) $scheduled, 'Parked future WP-Cron drain must be advanced to now.');
+	}
+
+	public function testRetryFailedOperationDuringParkedBackoffSchedulesImmediateDrain(): void
+	{
+		// E15-35-BR-01 block scenario B: operator retry clears next_attempt_at to make the row
+		// due NOW; a parked backoff anchor must not defer the dispatch by up to ~1.1h.
+		$tenantId = 'tenant-test-123';
+		$this->configureSyncMetricQueries($tenantId, ['pending' => 1]);
+		$this->configureFailedRetryRow($tenantId);
+		as_schedule_single_action(time() + 3900, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$this->assertTrue($drain->retry_failed_operation(9, $tenantId));
+
+		$scheduled = $this->actionSchedulerDrainTimestamp();
+		$this->assertIsInt($scheduled);
+		$this->assertLessThanOrEqual(time(), $scheduled, 'Retry made the row due now: parked drain must advance to now.');
+	}
+
+	public function testDrainClaimsPendingRowAsInFlightBeforeDispatch(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return array_fill(0, count($operations), [
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				]);
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		// CON-3: claim transitions pending -> in_flight gated on the pending status, so a row
+		// already claimed by a peer drain is updated by 0 rows (no double dispatch).
+		$claim = $this->findQueryContaining($wpdb->queries, "UPDATE wp_acx_sync_outbox SET status = 'in_flight'");
+		$this->assertStringContainsString('claimed_at = ', $claim);
+		$this->assertStringContainsString('claim_token = ', $claim);
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'pending'", $claim);
+	}
+
+	public function testDrainApplyResultGuardsTerminalWriteOnInFlightClaim(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return array_fill(0, count($operations), [
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				]);
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		// Ownership requires the unique claim token as well as the in-flight status.
+		$apply = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $apply);
+		$this->assertStringContainsString("WHERE id = 7 AND status = 'in_flight'", $apply);
+		$this->assertMatchesRegularExpression("/WHERE id = 7 AND status = 'in_flight' AND claim_token = '[a-f0-9]{64}'/", $apply);
+	}
+
+	public function testDrainSkipsDispatchAndApplyWhenClaimIsLostToPeerDrain(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+		// Simulate a peer drain already owning the row: every claim UPDATE matches 0 rows.
+		$wpdb->defaultUpdateResult = 0;
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public int $dispatchCalls = 0;
+
+			public function dispatch_batch(array $operations): array {
+				++$this->dispatchCalls;
+				return array_fill(0, count($operations), [
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				]);
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		// Claim attempted but lost -> no dispatch, no terminal write (so attempts is not bumped twice).
+		$this->assertStringContainsString(
+			"UPDATE wp_acx_sync_outbox SET status = 'in_flight'",
+			$this->findQueryContaining($wpdb->queries, "UPDATE wp_acx_sync_outbox SET status = 'in_flight'")
+		);
+		$this->assertSame(0, $dispatcher->dispatchCalls);
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'acknowledged'"));
+	}
+
+	public function testDrainSkipsReplayPlaneTopologyOperationBlockedByEarlierSplitCommand(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'cluster_merged';
+		$row['payload'] = '{"target_cluster_id":"cluster-target"}';
+		$row['created_at'] = '2026-03-10 12:00:01';
+		$wpdb->mockResults = [$row];
+		$wpdb->mockVar = '1';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public int $dispatchCalls = 0;
+
+			public function dispatch_batch(array $operations): array {
+				++$this->dispatchCalls;
+				return parent::dispatch_batch($operations);
+			}
+		};
+		$topologyRepository = new class() implements TopologyCommandRepositoryInterface {
+			public function enqueue(string $tenant_id, string $command_type, string $entity_key, int $expected_base_version, array $payload, ?string $idempotency_key = null): int|false {
+				return false;
+			}
+			public function find_pending(?string $tenant_id = null, int $limit = 25): array {
+				return []; }
+			public function find_reconcilable(?string $tenant_id = null, int $limit = 25): array {
+				return [[
+					'id' => 3,
+					'tenant_id' => 'tenant-test-123',
+					'command_type' => 'cluster_split',
+					'entity_key' => 'cluster-1',
+					'status' => 'pending',
+					'payload_json' => ['cluster_id' => 'cluster-1'],
+					'result_json' => null,
+					'created_at' => '2026-03-10 12:00:00',
+				],];
+			}
+			public function claim_command(int $command_id, string $expected_status): bool {
+				return true; }
+			public function update_status(int $command_id, string $status, ?array $result_payload = null, ?string $backend_command_id = null, ?string $expected_status = null): bool {
+				return true; }
+			public function record_dispatch_result(int $command_id, array $response, ?string $expected_status = null): bool {
+				return true; }
+			public function mark_reconciled(int $command_id, ?array $result_payload = null, ?string $expected_status = null): bool {
+				return true; }
+			public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true, ?string $expected_status = null): bool {
+				return true; }
+			public function record_reconcile_failure(int $command_id, string $status, string $error_code, string $error_message, ?string $expected_status = null): bool {
+				return true; }
+		};
+
+		$drain = new OutboxDrain(
+			$dispatcher,
+			null,
+			null,
+			new CrossPlaneSequencer($topologyRepository),
+		);
+		$drain->drain();
+
+		$this->assertSame(0, $dispatcher->dispatchCalls);
+		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+		// CON-3-FU-1: reclaim runs on entry, but the blocked operation is never claimed/dispatched.
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'in_flight'"));
+	}
+
+	public function testDrainReturnsImmediatelyWhenNoPendingOperationsExist(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [];
+		$wpdb->mockVar = '0';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public int $dispatchCalls = 0;
+
+			public function dispatch_batch(array $operations): array {
+				++$this->dispatchCalls;
+				return [];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$this->assertSame(0, $dispatcher->dispatchCalls);
+		$this->assertFalse($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+		// CON-3-FU-1: the drain reclaims stale in_flight rows on entry, but with nothing pending
+		// it claims and dispatches nothing.
+		$this->assertNotSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'pending', claimed_at = NULL"));
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, "SET status = 'in_flight'"));
+	}
+
+	public function testDrainDispatchesMergeTopologyOperationAndMarksAcknowledged(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'cluster_merged';
+		$row['entity_key'] = 'cluster-source';
+		$row['payload'] = '{"target_cluster_id":"cluster-target"}';
+		$wpdb->mockResults = [$row];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->queueHttpResponse([
+			'response' => ['code' => 200, 'message' => 'OK'],
+			'body' => wp_json_encode([
+				'id' => 'cluster-target',
+				'tenant_id' => 'tenant-test-123',
+				'label' => 'Target',
+				'is_labeled' => true,
+				'is_auto_label' => false,
+				'identity_count' => 4,
+				'backend_version' => 55,
+				'representatives' => [],
+			]),
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$calls = $this->getHttpCalls();
+		$this->assertCount(1, $calls);
+		$this->assertStringContainsString('/recognition/clusters/cluster-source/merge', $calls[0]['url']);
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
+		$this->assertStringContainsString('acknowledged_version = 55', $updateQuery);
+	}
+
+	public function testDrainDispatchesRevertMergeTopologyOperationAndMarksConflict(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'revert_merge_cluster';
+		$row['entity_key'] = 'cluster-target';
+		$row['payload'] = '{"target_cluster_id":"cluster-target","desired_source_cluster_id":"cluster-restored","moved_identity_ids":["identity-1"]}';
+		$wpdb->mockResults = [$row];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->queueHttpResponse([
+			'response' => ['code' => 409, 'message' => 'Conflict'],
+			'body' => wp_json_encode([
+				'conflict_code' => 'cluster_version_conflict',
+				'backend_version' => 18,
+				'machine_payload' => [
+					'entity_type' => 'cluster',
+					'entity_key' => 'cluster-target',
+					'backend_version' => 18,
+				],
+			]),
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$calls = $this->getHttpCalls();
+		$this->assertCount(1, $calls);
+		$this->assertStringContainsString('/recognition/clusters/revert-merge', $calls[0]['url']);
+
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
+		$this->assertStringContainsString("'cluster_version_conflict'", $conflictInsert);
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'conflict'", $updateQuery);
+	}
+
+	public function testReEnqueueWithCurrentBaseCanPersistMergedValueInPayload(): void
+	{
+		global $wpdb;
+		$wpdb->mockRow = [
+			'id' => 51,
+			'tenant_id' => 'tenant-test-123',
+			'operation_type' => 'cluster_label_updated',
+			'entity_type' => 'cluster',
+			'entity_key' => 'cluster-51',
+			'status' => 'conflict',
+			'attempts' => 2,
+			'expected_base_version' => 9,
+			'local_revision' => 4,
+			'payload' => '{"label":"Local Name"}',
+			'created_at' => '2026-03-11 10:00:00',
+			'last_attempted_at' => null,
+			'acknowledged_at' => null,
+		];
+
+		$drain = new OutboxDrain();
+		$result = $drain->re_enqueue_with_current_base(51, 13, 'tenant-test-123', 'Merged Name');
+
+		$this->assertTrue($result);
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'pending'", $updateQuery);
+		$this->assertStringContainsString('expected_base_version = 13', $updateQuery);
+		$this->assertStringContainsString('\"merged_value\":\"Merged Name\"', $updateQuery);
+		$this->assertStringContainsString('payload =', $updateQuery);
+	}
+
+	public function testDrainDispatchesAssignOutlierTopologyOperationAndMarksAcknowledged(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'assign_outlier_to_cluster';
+		$row['entity_key'] = 'cluster-target';
+		$row['payload'] = '{"identity_id":"identity-1","similarity":0.42}';
+		$wpdb->mockResults = [$row];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->queueHttpResponse([
+			'response' => ['code' => 200, 'message' => 'OK'],
+			'body' => wp_json_encode([
+				'id' => 'cluster-target',
+				'tenant_id' => 'tenant-test-123',
+				'label' => 'Target',
+				'is_labeled' => true,
+				'is_auto_label' => false,
+				'identity_count' => 3,
+				'backend_version' => 29,
+				'representatives' => [],
+			]),
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$calls = $this->getHttpCalls();
+		$this->assertCount(1, $calls);
+		$this->assertStringContainsString('/recognition/clusters/cluster-target/assign', $calls[0]['url']);
+
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $updateQuery);
+		$this->assertStringContainsString('acknowledged_version = 29', $updateQuery);
+	}
+
+	public function testDrainDispatchesLabelMutationToCurationSyncAndRefreshesMetrics(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'cluster_label_updated';
+		$row['entity_key'] = 'cluster-label';
+		$row['payload'] = '{"cluster_uuid":"cluster-label","label":"Renamed Cluster"}';
+		$wpdb->mockResults = [$row];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->configureSyncMetricQueries('tenant-test-123', [
+			'pending' => 0,
+			'failed' => 0,
+			'conflicts' => 0,
+			'acknowledged_at' => '2026-03-10 14:00:00',
+		]);
+		$this->queueHttpResponse([
+			'response' => ['code' => 200, 'message' => 'OK'],
+			'body' => wp_json_encode([
+				'status' => 'acknowledged',
+				'backend_version' => 61,
+			]),
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$calls = $this->getHttpCalls();
+		$this->assertCount(1, $calls);
+		$this->assertStringContainsString('/roster/curation/sync', $calls[0]['url']);
+		$this->assertStringContainsString('"operation_type":"cluster_label_updated"', (string) ($calls[0]['body'] ?? ''));
+
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'acknowledged'", $outboxUpdate);
+		$this->assertStringContainsString('acknowledged_version = 61', $outboxUpdate);
+
+		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
+		$this->assertStringContainsString('pending_curation_operations = 0', $syncStateUpdate);
+		$this->assertStringContainsString('failed_curation_operations = 0', $syncStateUpdate);
+		$this->assertStringContainsString('conflict_count = 0', $syncStateUpdate);
+		$this->assertStringContainsString("last_curation_acknowledged_at = '2026-03-10 14:00:00'", $syncStateUpdate);
+	}
+
+	public function testDrainRecordsConflictForStaleLabelMutationAndRefreshesConflictMetrics(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'cluster_label_updated';
+		$row['entity_key'] = 'cluster-label';
+		$row['payload'] = '{"cluster_uuid":"cluster-label","label":"Renamed Cluster"}';
+		$wpdb->mockResults = [$row];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->configureSyncMetricQueries('tenant-test-123', [
+			'pending' => 0,
+			'failed' => 0,
+			'conflicts' => 1,
+			'conflict_at' => '2026-03-10 14:05:00',
+		]);
+		$this->queueHttpResponse([
+			'response' => ['code' => 409, 'message' => 'Conflict'],
+			'body' => wp_json_encode([
+				'conflict_code' => 'version_conflict',
+				'backend_version' => 77,
+				'machine_payload' => [
+					'cluster_uuid' => 'cluster-label',
+					'current_label' => 'Backend Label',
+				],
+			]),
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$conflictInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
+		$this->assertStringContainsString("'version_conflict'", $conflictInsert);
+
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'conflict'", $outboxUpdate);
+
+		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
+		$this->assertStringContainsString('conflict_count = 1', $syncStateUpdate);
+		$this->assertStringContainsString("last_curation_conflict_at = '2026-03-10 14:05:00'", $syncStateUpdate);
+	}
+
+	public function testDrainMarksStateOperationFailedAfterRepeatedServerErrorsAndRefreshesFailedMetrics(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'cluster_label_updated';
+		$row['entity_key'] = 'cluster-label';
+		$row['payload'] = '{"cluster_uuid":"cluster-label","label":"Renamed Cluster"}';
+		$row['attempts'] = 4;
+		// E15-35 Slice 1: repeated 5xx no longer dead-letters by count alone — the op terminates
+		// once its first failure is older than the 24h retry window.
+		$row['first_failed_at'] = gmdate('Y-m-d H:i:s', time() - (25 * 3600));
+		$wpdb->mockResults = [$row];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->configureSyncMetricQueries('tenant-test-123', [
+			'pending' => 0,
+			'failed' => 1,
+			'conflicts' => 0,
+			'failed_at' => '2026-03-10 14:10:00',
+		]);
+		$response = [
+			'response' => ['code' => 503, 'message' => 'Unavailable'],
+			'body' => wp_json_encode([
+				'message' => 'backend unavailable',
+			]),
+		];
+		$this->queueHttpResponse($response);
+		$this->queueHttpResponse($response);
+		$this->queueHttpResponse($response);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $outboxUpdate);
+		$this->assertStringContainsString("last_error_code = 'remote_error'", $outboxUpdate);
+		$this->assertStringContainsString('last_error_retryable = 1', $outboxUpdate);
+
+		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
+		$this->assertStringContainsString('failed_curation_operations = 1', $syncStateUpdate);
+		$this->assertStringContainsString("last_curation_failed_at = '2026-03-10 14:10:00'", $syncStateUpdate);
+	}
+
+	public function testDrainPersistsNonRetryableDecisionForUnauthorizedResponse(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->queueHttpResponse([
+			'response' => ['code' => 401, 'message' => 'Unauthorized'],
+			'body' => wp_json_encode([
+				'message' => 'authentication failed',
+			]),
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $outboxUpdate);
+		$this->assertStringContainsString("last_error_code = 'remote_error'", $outboxUpdate);
+		$this->assertStringContainsString('last_error_retryable = 0', $outboxUpdate);
+	}
+
+	public function testFindFailedOperationsReturnsDecodedRowsOrderedByDate(): void
+	{
+		global $wpdb;
+
+		$tenantId = 'tenant-test-123';
+		$rows = [
+			[
+				'id' => 12,
+				'tenant_id' => $tenantId,
+				'operation_type' => 'cluster_label_updated',
+				'entity_type' => 'cluster',
+				'entity_key' => 'cluster-2',
+				'status' => 'failed',
+				'attempts' => 5,
+				'expected_base_version' => 8,
+				'local_revision' => 3,
+				'last_error_code' => 'dispatch_failed',
+				'last_error_message' => 'newer failure',
+				'payload' => '{"cluster_uuid":"cluster-2"}',
+				'created_at' => '2026-03-10 12:05:00',
+				'last_attempted_at' => '2026-03-10 12:06:00',
+				'acknowledged_at' => null,
+			],
+			[
+				'id' => 11,
+				'tenant_id' => $tenantId,
+				'operation_type' => 'cluster_dismissed',
+				'entity_type' => 'cluster',
+				'entity_key' => 'cluster-1',
+				'status' => 'failed',
+				'attempts' => 4,
+				'expected_base_version' => 7,
+				'local_revision' => 2,
+				'last_error_code' => 'remote_error',
+				'last_error_message' => 'older failure',
+				'payload' => '{"cluster_uuid":"cluster-1"}',
+				'created_at' => '2026-03-10 12:00:00',
+				'last_attempted_at' => '2026-03-10 12:01:00',
+				'acknowledged_at' => null,
+			],
+		];
+
+		$wpdb->mockResults = $rows;
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$result = $drain->find_failed_operations($tenantId);
+
+		$this->assertSame([12, 11], array_column($result, 'id'));
+		$this->assertSame(['cluster_uuid' => 'cluster-2'], $result[0]['payload']);
+		$this->assertSame('dispatch_failed', $result[0]['last_error_code']);
+	}
+
+	public function testRetryFailedOperationResetsStateRefreshesMetricsAndSchedulesDrain(): void
+	{
+		global $wpdb;
+
+		$tenantId = 'tenant-test-123';
+		$this->configureSyncMetricQueries($tenantId, [
+			'pending' => 1,
+			'failed' => 0,
+			'conflicts' => 0,
+		]);
+		$this->configureFailedRetryRow($tenantId);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$result = $drain->retry_failed_operation(9, $tenantId);
+
+		$this->assertTrue($result);
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'pending'", $updateQuery);
+		$this->assertStringContainsString('attempts = 0', $updateQuery);
+		$this->assertStringContainsString('last_error_code = NULL', $updateQuery);
+
+		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
+		$this->assertStringContainsString('pending_curation_operations = 1', $syncStateUpdate);
+		$this->assertStringContainsString('failed_curation_operations = 0', $syncStateUpdate);
+		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testOutboxDrainDelegatesToExtractedCollaboratorsAndSplitLoopPhases(): void
+	{
+		$this->assertTrue(class_exists(OutboxQueryRepository::class));
+		$this->assertTrue(class_exists(OutboxMaintenanceService::class));
+
+		$privateMethods = array_map(
+			static fn (\ReflectionMethod $method): string => $method->getName(),
+			(new \ReflectionClass(OutboxDrain::class))->getMethods(\ReflectionMethod::IS_PRIVATE)
+		);
+
+		foreach (['process_operation_batch', 'refresh_curation_metrics_for_tenants', 'purge_terminal_rows_for_tenants'] as $expectedMethod) {
+			$this->assertContains($expectedMethod, $privateMethods, $expectedMethod);
+		}
+	}
+
+	public function testPurgeTerminalRowsContinuesAfterTenantThrowable(): void
+	{
+		$purgeCalls = array();
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/** @param array<int,string> $purgeCalls */
+			public function __construct( array &$purgeCalls ) {
+				$this->purgeCalls = &$purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				return array( 'tenant-bad', 'tenant-good' );
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				if ( 'tenant-bad' === $tenant_id ) {
+					throw new RuntimeException( 'purge failed' );
+				}
+
+				return array(
+					'outbox' => 1,
+					'conflicts' => 0,
+				);
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( array( 'tenant-bad', 'tenant-good' ), $purgeCalls );
+		$this->assertTrue( $this->isHookScheduled( 'acx_sync_purge_terminal_rows' ) );
+	}
+
+	public function testPurgeTerminalRowsPersistsAndReusesTenantCursor(): void
+	{
+		$requests = array();
+		$purgeCalls = array();
+		$maintenance = new class( $requests, $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,array{0:?int,1:string}> */
+			private array $requests;
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/**
+			 * @param array<int,array{0:?int,1:string}> $requests
+			 * @param array<int,string> $purgeCalls
+			 */
+			public function __construct( array &$requests, array &$purgeCalls ) {
+				$this->requests  =& $requests;
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				$this->requests[] = array( $limit, $after_tenant_id );
+				$first = '' === $after_tenant_id ? 1 : 26;
+
+				return array_map(
+					static fn( int $index ): string => sprintf( 'tenant-%02d', $index ),
+					range( $first, $first + 24 )
+				);
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+		$drain->purge_terminal_rows();
+
+		$this->assertSame(
+			array(
+				array( 25, '' ),
+				array( 25, 'tenant-25' ),
+			),
+			$requests
+		);
+		$this->assertSame( 'tenant-50', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertSame( false, $GLOBALS['__ac_option_autoload']['acx_sync_purge_tenant_cursor'] );
+		$this->assertCount( 50, $purgeCalls );
+	}
+
+	public function testPurgeTerminalRowsResetsCursorAfterShortPage(): void
+	{
+		$this->setOption( 'acx_sync_purge_tenant_cursor', 'tenant-25' );
+		$requests = array();
+		$purgeCalls = array();
+		$maintenance = new class( $requests, $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,array{0:?int,1:string}> */
+			private array $requests;
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/** @param array<int,array{0:?int,1:string}> $requests @param array<int,string> $purgeCalls */
+			public function __construct( array &$requests, array &$purgeCalls ) {
+				$this->requests  =& $requests;
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				$this->requests[] = array( $limit, $after_tenant_id );
+				return array( 'tenant-26' );
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( array( array( 25, 'tenant-25' ) ), $requests );
+		$this->assertSame( '', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertSame( false, $GLOBALS['__ac_option_autoload']['acx_sync_purge_tenant_cursor'] );
+		$this->assertSame( array( 'tenant-26' ), $purgeCalls );
+	}
+
+	public function testPurgeTerminalRowsResetsCursorAfterEmptyMidCycleWithoutFallback(): void
+	{
+		$this->setOption( 'acx_sync_purge_tenant_cursor', 'tenant-25' );
+		$purgeCalls = array();
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/** @param array<int,string> $purgeCalls */
+			public function __construct( array &$purgeCalls ) {
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				return array();
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( '', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertSame( array(), $purgeCalls );
+	}
+
+	public function testPurgeTerminalRowsAdvancesCursorAfterTenantFailureAndStillReschedules(): void
+	{
+		$purgeCalls = array();
+		$tenantIds = array_merge(
+			array( 'tenant-bad' ),
+			array_map( static fn( int $index ): string => sprintf( 'tenant-good-%02d', $index ), range( 1, 24 ) )
+		);
+		$maintenance = new class( $purgeCalls, $tenantIds ) extends OutboxMaintenanceService {
+			/** @var array<int,string> */
+			private array $purgeCalls;
+			/** @var array<int,string> */
+			private array $tenantIds;
+
+			/** @param array<int,string> $purgeCalls @param array<int,string> $tenantIds */
+			public function __construct( array &$purgeCalls, array $tenantIds ) {
+				$this->purgeCalls =& $purgeCalls;
+				$this->tenantIds = $tenantIds;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				return $this->tenantIds;
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				if ( 'tenant-bad' === $tenant_id ) {
+					throw new RuntimeException( 'purge failed' );
+				}
+
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( $tenantIds, $purgeCalls );
+		$this->assertSame( 'tenant-good-24', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertTrue( $this->isHookScheduled( 'acx_sync_purge_terminal_rows' ) );
+	}
+
+	public function testDrainReschedulesWhenPurgeThrowsForProcessedTenant(): void
+	{
+		add_filter(
+			'acx_outbox_drain_batch_size',
+			static fn (): int => 1
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$wpdb->mockResults = array( $row );
+		$wpdb->mockVar = '8';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch( array $operations ): array {
+				return array(
+					array(
+						'status' => 'acknowledged',
+						'backend_version' => 12,
+					),
+				);
+			}
+		};
+
+		$maintenance = new class() extends OutboxMaintenanceService {
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				throw new RuntimeException( 'purge failed' );
+			}
+		};
+
+		$drain = new OutboxDrain( $dispatcher, null, null, null, null, null, $maintenance );
+		$drain->drain();
+
+		$this->assertTrue( $this->isHookScheduled( 'acx_sync_drain_curation_outbox' ) );
+	}
+
+	public function testDrainInvokesTerminalPurgeForProcessedTenants(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+		$wpdb->mockVar = '1';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'acknowledged',
+					'backend_version' => 12,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$this->assertNotSame(
+			'',
+			$this->findFirstQueryContaining($wpdb->queries, 'DELETE FROM `wp_acx_sync_outbox`')
+		);
+		$this->assertArrayNotHasKey( 'acx_sync_purge_tenant_cursor', $GLOBALS['__ac_options'] );
+	}
+
+	public function testDrainReschedulesWhenBatchLeavesMorePendingOperations(): void
+	{
+		add_filter(
+			'acx_outbox_drain_batch_size',
+			static fn (): int => 1
+		);
+
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$wpdb->mockResults = [$row];
+		$wpdb->mockVar = '8';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [[
+					'status' => 'acknowledged',
+					'backend_version' => 33,
+				],];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testDrainIsolatesRetryableFailureAndContinuesProcessingPeerOperation(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [
+			$this->pendingOperationRow(['id' => 7, 'idempotency_key' => 'idem-1']),
+			$this->pendingOperationRow(['id' => 8, 'idempotency_key' => 'idem-2']),
+		];
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public function dispatch_batch(array $operations): array {
+				return [
+					[
+						'status' => 'failed',
+						'error_code' => 'timeout',
+						'error_message' => 'gateway timeout',
+						'retryable' => true,
+					],
+					[
+						'status' => 'acknowledged',
+						'backend_version' => 41,
+					],
+				];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$pendingUpdate = $this->findFirstQueryContaining($wpdb->queries, "status = 'pending'");
+		$acknowledgedUpdate = $this->findFirstQueryContaining($wpdb->queries, "status = 'acknowledged'");
+		$this->assertNotSame('', $pendingUpdate);
+		$this->assertNotSame('', $acknowledgedUpdate);
+	}
+
+	public function testDiscardOperationMarksDiscardedAndRefreshesMetrics(): void
+	{
+		global $wpdb;
+
+		$tenantId = 'tenant-test-123';
+		$operationId = 15;
+		$this->configureSyncMetricQueries($tenantId, [
+			'pending' => 0,
+			'failed' => 0,
+			'conflicts' => 0,
+		]);
+		$wpdb->mockRow = [
+			'id' => $operationId,
+			'tenant_id' => $tenantId,
+			'operation_type' => 'cluster_label_updated',
+			'entity_type' => 'cluster',
+			'entity_key' => 'cluster-1',
+			'status' => 'failed',
+			'attempts' => 5,
+			'expected_base_version' => 8,
+			'local_revision' => 3,
+			'last_error_code' => 'dispatch_failed',
+			'last_error_message' => 'dead letter',
+			'payload' => '{"cluster_uuid":"cluster-1"}',
+			'created_at' => '2026-03-10 12:00:00',
+			'last_attempted_at' => '2026-03-10 12:05:00',
+			'acknowledged_at' => null,
+		];
+		$wpdb->mockResults = [];
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$result = $drain->discard_operation($operationId, $tenantId);
+
+		$this->assertTrue($result);
+		$updateQuery = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'discarded'", $updateQuery);
+
+		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
+		$this->assertStringContainsString('failed_curation_operations = 0', $syncStateUpdate);
+	}
+
+	/**
+	 * @param array<string,mixed> $overrides
+	 * @return array<string,mixed>
+	 */
+	private function pendingOperationRow(array $overrides = []): array
+	{
+		return array_merge([
+			'id' => 7,
+			'tenant_id' => 'tenant-test-123',
+			'operation_type' => 'cluster_person_bound',
+			'entity_type' => 'cluster',
+			'entity_key' => 'cluster-1',
+			'idempotency_key' => 'idem-1',
+			'expected_base_version' => 11,
+			'local_revision' => 4,
+			'payload' => '{"cluster_uuid":"cluster-1","person_uuid":"person-1"}',
+			'attempts' => 0,
+			'last_error_retryable' => null,
+			'first_failed_at' => null,
+			'next_attempt_at' => null,
+			'created_at' => '2026-03-10 12:00:00',
+		], $overrides);
+	}
+
+	private function configureFailedRetryRow(string $tenantId): void
+	{
+		global $wpdb;
+
+		$wpdb->mockRow = array_merge(
+			$this->pendingOperationRow([
+				'id' => 9,
+				'tenant_id' => $tenantId,
+			]),
+			[
+				'status' => 'failed',
+				'attempts' => 3,
+				'last_error_code' => 'remote_error',
+				'last_error_message' => 'Remote curation replay failed.',
+				'last_error_retryable' => 1,
+				'last_attempted_at' => '2026-03-10 12:01:00',
+				'first_failed_at' => '2026-03-10 12:00:00',
+				'next_attempt_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+			]
+		);
+	}
+
+	private function extractDatetimeColumn(string $query, string $column): string
+	{
+		$matched = preg_match('/' . preg_quote($column, '/') . " = '([^']+)'/", $query, $matches);
+		$this->assertSame(1, $matched, sprintf('Expected a quoted datetime for column "%s" in: %s', $column, $query));
+
+		return $matches[1];
+	}
+
+	private function findFirstQueryContaining(array $queries, string $needle): string
+	{
+		foreach ($queries as $query) {
+			if (str_contains($query, $needle)) {
+				return $query;
+			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * First outbox UPDATE that is not the CON-3 row-claim (claim sets status='in_flight').
+	 *
+	 * @param array<int,string> $queries
+	 */
+	private function findOutboxStatusUpdate(array $queries): string
+	{
+		foreach ($queries as $query) {
+			if (! str_contains($query, 'UPDATE wp_acx_sync_outbox SET')) {
+				continue;
+			}
+			if (str_contains($query, "SET status = 'in_flight'")) {
+				continue;
+			}
+
+			return $query;
+		}
+
+		$this->fail('Unable to find a non-claim outbox status UPDATE.');
+	}
+
+	/**
+	 * @param array<string,int|string|null> $overrides
+	 */
+	private function configureSyncMetricQueries(string $tenantId, array $overrides = []): void
+	{
+		global $wpdb;
+
+		$wpdb->mockRow = [
+			'last_curation_acknowledged_at' => null,
+			'last_curation_conflict_at' => null,
+			'last_curation_failed_at' => null,
+		];
+
+		$pending = (int) ($overrides['pending'] ?? 0);
+		$failed = (int) ($overrides['failed'] ?? 0);
+		$conflicts = (int) ($overrides['conflicts'] ?? 0);
+		$acknowledgedAt = (string) ($overrides['acknowledged_at'] ?? '');
+		$conflictAt = (string) ($overrides['conflict_at'] ?? '');
+		$failedAt = (string) ($overrides['failed_at'] ?? '');
+
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND status = %s',
+			'wp_acx_sync_outbox',
+			$tenantId,
+			'pending'
+		)] = $pending;
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND status = %s',
+			'wp_acx_sync_outbox',
+			$tenantId,
+			'failed'
+		)] = $failed;
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND resolution_status = %s',
+			'wp_acx_sync_conflicts',
+			$tenantId,
+			'open'
+		)] = $conflicts;
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT MAX(acknowledged_at) FROM %i WHERE tenant_id = %s AND status = %s',
+			'wp_acx_sync_outbox',
+			$tenantId,
+			'acknowledged'
+		)] = $acknowledgedAt;
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT MAX(created_at) FROM %i WHERE tenant_id = %s AND resolution_status = %s',
+			'wp_acx_sync_conflicts',
+			$tenantId,
+			'open'
+		)] = $conflictAt;
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT MAX(last_attempted_at) FROM %i WHERE tenant_id = %s AND status = %s',
+			'wp_acx_sync_outbox',
+			$tenantId,
+			'failed'
+		)] = $failedAt;
+	}
+
+	/**
+	 * Mock a pending backlog whose rows are all mid-backoff: nothing loadable now,
+	 * has_pending_operations() true, earliest attempt at the given epoch.
+	 */
+	private function configurePendingBacklog(int $earliestTimestamp): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [];
+
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
+			'wp_acx_sync_outbox',
+			'pending'
+		)] = '5';
+		$wpdb->queryResults[$wpdb->prepare(
+			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+			'wp_acx_sync_outbox',
+			'pending'
+		)] = gmdate('Y-m-d H:i:s', $earliestTimestamp);
+	}
+
+	/**
+	 * @return int|bool Action Scheduler drain timestamp, or false when none is scheduled.
+	 */
+	private function actionSchedulerDrainTimestamp(): int|bool
+	{
+		$scheduled = as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync');
+
+		return is_int($scheduled) || is_bool($scheduled) ? $scheduled : false;
+	}
+
+	private function isHookScheduled(string $hook): bool
+	{
+		foreach (array_keys($GLOBALS['__ac_scheduled']) as $key) {
+			if (str_starts_with($key, $hook . '::')) {
+				return true;
+			}
+		}
+
+		foreach (array_keys($GLOBALS['__ac_action_scheduler'] ?? []) as $key) {
+			if (str_starts_with($key, $hook . '::')) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+}
+
+/** Add claim snapshot/engine reads without changing the shared test adapter. */
+final class OutboxDrainDb extends \WPDBStub
+{
+    private array $claims = [];
+
+    public function update(string $table, array $data, array $where, $format = null, $whereFormat = null)
+    {
+        $updated = parent::update($table, $data, $where, $format, $whereFormat);
+        if ($updated !== false && (int) $updated > 0 && ($data['status'] ?? null) === 'in_flight') {
+            foreach ($this->mockResults as $row) {
+                if ((int) $row['id'] === (int) $where['id']) {
+                    $this->claims[(int) $row['id']] = array_replace($row, $data);
+                }
+            }
+        }
+        return $updated;
+    }
+
+    public function get_row($query, $output = OBJECT, $y = 0)
+    {
+        if (preg_match("/WHERE id = (\d+) AND status = 'in_flight' AND claim_token = '([^']+)'/", $query, $match)) {
+            $this->queries[] = $query;
+            $row = $this->claims[(int) $match[1]] ?? null;
+            return ($row['claim_token'] ?? null) === $match[2] ? $row : null;
+        }
+        return parent::get_row($query, $output, $y);
+    }
+
+    public function get_var($query, $x = 0, $y = 0)
+    {
+        if (str_contains($query, 'information_schema.TABLES')) {
+            $this->queries[] = $query;
+            return 'InnoDB';
+        }
+        return parent::get_var($query, $x, $y);
+    }
+
+    public function reset(): void
+    {
+        parent::reset();
+        $this->claims = [];
+    }
+}

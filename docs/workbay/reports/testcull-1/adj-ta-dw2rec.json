@@ -1,0 +1,412 @@
+{
+  "lane": "ta-dw2rec",
+  "base": "0bab00ad2cb771fac909c1afc16cdc0bfac69f7c",
+  "dispatch_base": "773138f240b3c38511cb26b8e51a0e0253d8f4b1",
+  "baseline": {
+    "command": ".venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_dw2_recognitio_1.py scripts/deploy/tests/test_dw2_recognitio_2.py --durations=15",
+    "result": "pass: 19 passed, 0 failed in 9.29s (13 named tests with parametrization)",
+    "slowest_tests": [
+      {
+        "test": "test_sticky_env_restore_clamps_mode_to_0600",
+        "seconds": 2.18
+      },
+      {
+        "test": "test_sticky_env_ship_clamps_mode_to_0600",
+        "seconds": 1.32
+      },
+      {
+        "test": "test_redacts_curl_and_wget_user_credentials[curl-unquoted]",
+        "seconds": 0.68
+      },
+      {
+        "test": "test_render_unit_enables_vault_bootstrap_only_for_oci_vault",
+        "seconds": 0.58
+      },
+      {
+        "test": "test_lease_ttl_covers_restart_probes_and_gpu_gate_timeouts",
+        "seconds": 0.51
+      },
+      {
+        "test": "test_sanitizer_works_without_gnu_sed_case_insensitive_flag",
+        "seconds": 0.49
+      },
+      {
+        "test": "test_model_preflight_sanitizes_combined_ssh_diagnostic",
+        "seconds": 0.47
+      },
+      {
+        "test": "test_env_unit_install_does_not_probe_vault_hook",
+        "seconds": 0.27
+      },
+      {
+        "test": "test_redacts_curl_and_wget_user_credentials[wget-quoted]",
+        "seconds": 0.27
+      },
+      {
+        "test": "test_redacts_yaml_secret_block_contents[folded]",
+        "seconds": 0.24
+      },
+      {
+        "test": "test_redacts_unquoted_values_through_whitespace",
+        "seconds": 0.24
+      },
+      {
+        "test": "test_redacts_json_secret_scalar_on_following_line[adjacent-colon]",
+        "seconds": 0.23
+      },
+      {
+        "test": "test_redacts_curl_and_wget_user_credentials[wget-unquoted]",
+        "seconds": 0.22
+      },
+      {
+        "test": "test_redacts_yaml_secret_block_contents[literal]",
+        "seconds": 0.21
+      },
+      {
+        "test": "test_vault_unit_install_refuses_missing_bootstrap_hook",
+        "seconds": 0.2
+      }
+    ]
+  },
+  "items": [
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_1.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_redacts_yaml_secret_block_contents",
+        "test_redacts_curl_and_wget_user_credentials",
+        "test_redacts_unquoted_values_through_whitespace",
+        "test_redacts_json_secret_scalar_on_following_line"
+      ],
+      "target": "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py",
+      "seam": "scripts/deploy/recognition-service.sh:sanitize_deploy_diagnostic",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_recognitio_1.py",
+            "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py"
+          ],
+          "do": "Move all four named tests with every parameter and preservation assertion into the sanitizer suite, adapting only the runner name to _run_sanitizer. Remove their definitions from the source. Keep the source module until its remaining unit and sticky groups have moved. Do not deduplicate merely similar inputs.",
+          "red_proof": "Implementation must show each destination test red with a temporary sanitizer mutation that respectively leaves YAML continuation secrets, curl/wget credentials, comma/brace tails of quoted-key unquoted values, or next-line JSON scalars unredacted; benign siblings must still be asserted. Restore mutations and show green. These proofs are required, not executed in this report-only lane.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:15 - _sanitize_source slices the sanitizer function body; _sanitize at line 22 executes it.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:41 - YAML cases assert secret absence and safe sibling preservation.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:56 - curl/wget cases include both quoted whitespace credentials and unquoted forms.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:62 - quoted mapping-key values must redact through punctuation while preserving tail=visible.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:77 - two next-line JSON scalar layouts retain visible sibling.",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py:16 - target uses the same sliced function-body seam.",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py:121 - target covers bare SECRET= and TOKEN= punctuation; source uses quoted mapping keys and a benign tail, so it is not an equivalent duplicate.",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py:459 - pretty JSON composites are arrays/objects, not the source scalar layouts; no same-input YAML or curl/wget guard found."
+      ],
+      "canon": [
+        "DBG-02",
+        "REF-10",
+        "TEST-15"
+      ],
+      "risk": "high",
+      "seam_kind": "function body sliced out of a script",
+      "target_tests": [
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_redacts_yaml_secret_block_contents",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_redacts_curl_and_wget_user_credentials",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_redacts_unquoted_values_through_whitespace",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_redacts_json_secret_scalar_on_following_line"
+      ],
+      "expected_suite_time_change": "Approximately zero: retain all collected cases; no sleeps or production changes. Timing noise only."
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_1.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_render_unit_enables_vault_bootstrap_only_for_oci_vault",
+        "test_vault_unit_install_refuses_missing_bootstrap_hook",
+        "test_vault_unit_install_enables_bootstrap_hook_when_present",
+        "test_env_unit_install_does_not_probe_vault_hook"
+      ],
+      "target": "scripts/deploy/tests/test_recognition_deploy.py",
+      "seam": "scripts/deploy/recognition-service.sh:render_unit / install_rendered_unit",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_recognitio_1.py",
+            "scripts/deploy/tests/test_recognition_deploy.py"
+          ],
+          "do": "Move the four named tests and _render_unit/_run_unit_install harnesses into the recognition deploy suite. Preserve sourced-script execution, SSH fake, refused-install assertion, and rendered-unit assertions. Remove this group from the source; retirement waits for both sticky groups.",
+          "red_proof": "Independently force the vault pre-start line to remain commented, bypass the missing-hook refusal, and probe the hook for env backend: the corresponding destination guards must fail; restoring production yields green. No mutation performed by this lane.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:84 - source full script and call render_unit; SSH fakes remote backend read.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:95 - assert actual rendered artifact for vault versus env.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:104 - installation harness calls real install_rendered_unit and captures installed unit.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:133 - absent hook must refuse before unit-install; line 144 checks present-hook install; line 153 checks env skips probe.",
+        "scripts/deploy/recognition-service.sh:1866 - documented renderer emits checked-in template to stdout.",
+        "scripts/deploy/recognition-service.sh:1884 - install checks executable vault hook before writing unit.",
+        "scripts/deploy/tests/test_recognition_deploy.py:3261 - existing failed candidate-unit start regression does not cover vault backend rendering or hook admission; search found no fetch-vault-bootstrap/install_rendered_unit test."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high",
+      "seam_kind": "rendered artifact and sourced shell functions (not CLI)",
+      "target_tests": [
+        "scripts/deploy/tests/test_recognition_deploy.py::test_render_unit_enables_vault_bootstrap_only_for_oci_vault",
+        "scripts/deploy/tests/test_recognition_deploy.py::test_vault_unit_install_refuses_missing_bootstrap_hook",
+        "scripts/deploy/tests/test_recognition_deploy.py::test_vault_unit_install_enables_bootstrap_hook_when_present",
+        "scripts/deploy/tests/test_recognition_deploy.py::test_env_unit_install_does_not_probe_vault_hook"
+      ],
+      "expected_suite_time_change": "Approximately zero: retain all collected cases; no sleeps or production changes. Timing noise only."
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_1.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_sticky_env_ship_clamps_mode_to_0600"
+      ],
+      "target": "scripts/deploy/tests/test_recognition_deploy.py",
+      "seam": "scripts/deploy/recognition-service.sh:ship_remote_image_repo_env / image_repo_resource",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_recognitio_1.py",
+            "scripts/deploy/tests/test_recognition_deploy.py"
+          ],
+          "do": "Move the named guard and sticky harnesses into the recognition suite, retaining real resource logic. After _sticky_claim returns, chmod the .env back to 0644 immediately before _sticky_ship, and assert the setup mode is 0644. Retain the final 0600 assertion. Reuse these harnesses for the restore move; no new production seam.",
+          "red_proof": "Temporarily change image_repo_resource chmod for action ship only to preserve metadata.st_mode rather than force 0600. The old test can remain green because claim already clamped permissions; the corrected destination test must fail (0644), then pass with the mutation removed. Simply deleting fchmod is not sufficient: mkstemp starts at 0600. This is a required implementation proof, not a performed mutation.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:206 - ship guard chmods 0644 before claim at line 210, not after it.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:168 - sticky harness sources full script, executes remote resource command locally, and bypasses deadline/preflight plumbing.",
+        "scripts/deploy/recognition-service.sh:2089 - mkstemp creates staged file; line 2092 forces 0600 for claim as well as ship/restore.",
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:212 - ship starts with claim already having clamped mode, masking preservation of prior permissions.",
+        "scripts/deploy/tests/test_recognition_deploy.py:582 - convergence test fakes image_repo_resource and ship_remote_image_repo_env, so it cannot replace a real filesystem permission guard."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "seam_kind": "sourced shell function and real filesystem artifact",
+      "target_tests": [
+        "scripts/deploy/tests/test_recognition_deploy.py::test_sticky_env_ship_clamps_mode_to_0600"
+      ],
+      "expected_suite_time_change": "Approximately zero: retain all collected cases; no sleeps or production changes. Timing noise only."
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_1.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_sticky_env_restore_clamps_mode_to_0600"
+      ],
+      "target": "scripts/deploy/tests/test_recognition_deploy.py",
+      "seam": "scripts/deploy/recognition-service.sh:restore_prior_image_repo_env / image_repo_resource",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_recognitio_1.py",
+            "scripts/deploy/tests/test_recognition_deploy.py"
+          ],
+          "do": "Move the named restore guard into the recognition suite, reusing the sticky harnesses moved with ship. Preserve chmod 0644 after shipping and before restoring. This group depends on the ship group harness move; after all source-1 groups land, delete test_dw2_recognitio_1.py. No existing target test is removed.",
+          "red_proof": "Temporarily preserve metadata.st_mode for resource action restore only: destination must observe 0644 and fail the 0600 assertion. Restore mutation and show green. Keep claim/ship unchanged; removing fchmod alone is insufficient because mkstemp starts at 0600.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_recognitio_1.py:218 - restore test ships real resource then resets mode at line 225 before invoking restore at line 227.",
+        "scripts/deploy/recognition-service.sh:1827 - restore_prior_image_repo_env delegates to real resource restore.",
+        "scripts/deploy/recognition-service.sh:2092 - atomic replacement forces mode 0600.",
+        "scripts/deploy/tests/test_recognition_deploy.py:582 - existing convergence guard substitutes resource and ship functions rather than exercising permission changes."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-19"
+      ],
+      "risk": "high",
+      "seam_kind": "sourced shell function and real filesystem artifact",
+      "target_tests": [
+        "scripts/deploy/tests/test_recognition_deploy.py::test_sticky_env_restore_clamps_mode_to_0600"
+      ],
+      "expected_suite_time_change": "Approximately zero: retain all collected cases; no sleeps or production changes. Timing noise only."
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_2.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_lease_ttl_covers_restart_probes_and_gpu_gate_timeouts"
+      ],
+      "target": "scripts/deploy/tests/test_deploy_env_lease.py",
+      "seam": "scripts/deploy/recognition-service.sh:deploy_env_lease",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_recognitio_2.py",
+            "scripts/deploy/tests/test_deploy_env_lease.py"
+          ],
+          "do": "Move the named exact-floor guard and its explicit timeout/attempt/sleep configuration into the lease suite. Adapt to _run_driver if desired but keep values and 3392 refusal/3393 acceptance. Preserve zero sleeps and real lease logic. Remove its source definitions; source-2 retirement waits for both diagnostic groups.",
+          "red_proof": "Temporarily omit either restart remote-command timeout contribution or GPU gate timeout contribution from ttl_margin: below-floor 3392 must be incorrectly admitted and make the destination test fail. Restore and require both boundary assertions green.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:27 - source full script; fake SSH executes real acquire resource locally.",
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:62 - rejects 3392 with expected floor 3393 and accepts exactly 3393.",
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:45 - push/pull 1000, remote-command timeout 7, GPU timeout 11 and nondefault attempt counts exercise combined formula.",
+        "scripts/deploy/tests/test_deploy_env_lease.py:30 - existing _run_driver uses same sourced deploy_env_lease and local SSH seam.",
+        "scripts/deploy/tests/test_deploy_env_lease.py:272 - existing exact-floor guard checks 39200 from long sleeps, not nondefault per-probe timeout contributions.",
+        "scripts/deploy/recognition-service.sh:2180 - ttl_margin includes (2*cutover+canonical)*remote timeout and gpu attempts*gate timeout."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-08",
+        "TEST-24"
+      ],
+      "risk": "high",
+      "seam_kind": "sourced shell function and lease admission outcome",
+      "target_tests": [
+        "scripts/deploy/tests/test_deploy_env_lease.py::test_lease_ttl_covers_restart_probes_and_gpu_gate_timeouts"
+      ],
+      "expected_suite_time_change": "Approximately zero: retain all collected cases; no sleeps or production changes. Timing noise only."
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_2.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "MOVE",
+      "tests": [
+        "test_model_preflight_sanitizes_combined_ssh_diagnostic"
+      ],
+      "target": "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py",
+      "seam": "scripts/deploy/recognition-service.sh:preflight_remote_face_pipeline_models",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_recognitio_2.py",
+            "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py"
+          ],
+          "do": "Move the named preflight diagnostic guard and its sourced runner to sanitizer suite, keeping real preflight and sanitizer logic. Replace the existing domain-helper stubs with a single SSH fake that returns correct ACX_IMAGE_TAG, RECOGNITION_FACE_PIPELINE_MODELS_DIR and ACX_MODELS_PATH reads, and emits DIR_FAIL stdout plus hostile Authorization stderr for bash -s. Use real env_to_remote_dir, _remote_dotenv_value and assert_remote_env_image_tag. Keep failure, secret absence, control-byte removal and prefix assertions.",
+          "red_proof": "Temporarily bypass sanitization of combined stdout/stderr, or omit remote stderr from sanitization while emitting it raw: destination must fail secret/control-byte assertions. Also assert a harmless stdout and stderr sentinel survives with diagnostic prefix so dropping either stream cannot masquerade as redaction. Restore mutations and show green.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:71 - full-script preflight invocation; SSH emits DIR_FAIL stdout and bearer secret/escape stderr.",
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:77 - current harness substitutes domain helpers, so restrict relocation adaptation to real helpers plus external SSH fake (TEST-19).",
+        "scripts/deploy/recognition-service.sh:1118 - dotenv helper reads via SSH; no production incision needed.",
+        "scripts/deploy/recognition-service.sh:1196 - remote stderr captured then combined with stdout before sanitizer at line 1210.",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py:23 - isolated sanitizer runner does not exercise preflight stream composition.",
+        "scripts/deploy/tests/test_recognition_deploy.py:614 - existing auth guard calls ocir_login_or_fail, a different seam."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "seam_kind": "sourced preflight function and emitted diagnostic",
+      "target_tests": [
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_model_preflight_sanitizes_combined_ssh_diagnostic"
+      ],
+      "expected_suite_time_change": "Approximately zero: retain all collected cases; no sleeps or production changes. Timing noise only."
+    },
+    {
+      "path": "scripts/deploy/tests/test_dw2_recognitio_2.py",
+      "claimed": "MERGE",
+      "ruling": "MODIFY",
+      "action": "REWRITE",
+      "tests": [
+        "test_sanitizer_works_without_gnu_sed_case_insensitive_flag"
+      ],
+      "target": "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py",
+      "seam": "scripts/deploy/recognition-service.sh:preflight_remote_face_pipeline_models",
+      "production_change": "none",
+      "steps": [
+        {
+          "files": [
+            "scripts/deploy/tests/test_dw2_recognitio_2.py",
+            "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py"
+          ],
+          "do": "Move and narrowly rewrite this named guard to source full recognition-service.sh and invoke model preflight under the existing sed wrapper rejecting *gI*. Reuse the previous diagnostic group SSH fake (depends on that group); do not slice sanitizer source or stub sanitizer/domain logic. Fake valid dotenv reads, then emit hostile bearer diagnostic from remote bash -s. Require expected nonzero preflight exit, secret absent, diagnostic prefix, explicit [REDACTED], and harmless remote sentinel preserved. After lease and both diagnostic groups land, delete test_dw2_recognitio_2.py.",
+          "red_proof": "Temporarily reintroduce a sanitizer sed substitution using GNU-only gI: wrapper must reject it and destination fail explicit [REDACTED]/preserved-sentinel assertions, even if preflight catches sanitizer failure with diagnostic unavailable. Restore mutation and show green. Also make bearer secret survive unchanged and require failure. Do not demand overall success from intentionally failing preflight.",
+          "after": []
+        }
+      ],
+      "pins_to_update": [],
+      "evidence": [
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:100 - external sed wrapper rejects GNU *gI* but delegates all other arguments to installed sed.",
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:116 - current test slices sanitizer body, contrary to proposed preflight seam description.",
+        "scripts/deploy/tests/test_dw2_recognitio_2.py:133 - current success/redaction/prefix assertions guard portability and redaction.",
+        "scripts/deploy/recognition-service.sh:1150 - existing sourced preflight is an available second-use seam.",
+        "scripts/deploy/recognition-service.sh:1210 - sanitizer failure falls back to diagnostic unavailable; secret absence alone would give false confidence.",
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py:16 - existing sliced sanitizer runner is not a preflight portability guard."
+      ],
+      "canon": [
+        "REF-10",
+        "TEST-12",
+        "TEST-16",
+        "TEST-04",
+        "TEST-15",
+        "TEST-19",
+        "REF-12"
+      ],
+      "risk": "high",
+      "seam_kind": "current: sliced sanitizer body; proposed: sourced preflight and emitted diagnostic",
+      "target_tests": [
+        "scripts/deploy/tests/test_sanitize_deploy_diagnostic.py::test_sanitizer_works_without_gnu_sed_case_insensitive_flag"
+      ],
+      "expected_suite_time_change": "Approximately zero: retain all collected cases; no sleeps or production changes. Timing noise only."
+    }
+  ],
+  "verification": {
+    "lane_gate": ".venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q: 26 passed in 12.56s",
+    "import_origin": "Skipped: report-only shell-test lane owns no importable Python package; root pyproject.toml has tool.uv.package=false. Managed lane-root .venv was used.",
+    "pins_search": "rg searched both exact source stems and broader dw2_recognitio patterns in *.py, *.mk, Makefile, *.json, *.toml including hidden paths; excluded docs/workbay/reports, .git, .venv. No source-module references/pins found."
+  },
+  "implementation_order": {
+    "source_1": "Sanitizer move, unit move, ship arrangement correction with harness move, then restore move and source deletion. Each step edits only source and one destination (2 files).",
+    "source_2": "Lease move, model-preflight diagnostic move, then BSD portability rewrite reusing diagnostic harness and source deletion. Each step edits only source and one destination (2 files).",
+    "acceptance": "Retain 19 collected guards across destinations, show specified mutation proofs, rerun affected destination suites and source-name pin search. No suite speedup is claimed; filename retirement is the reason for relocation."
+  },
+  "item_summaries": [
+    "scripts/deploy/tests/test_dw2_recognitio_1.py [test_redacts_yaml_secret_block_contents, test_redacts_curl_and_wget_user_credentials, test_redacts_unquoted_values_through_whitespace, test_redacts_json_secret_scalar_on_following_line]: MODIFY -> MOVE, steps 1 (DBG-02, REF-10, TEST-15)",
+    "scripts/deploy/tests/test_dw2_recognitio_1.py [test_render_unit_enables_vault_bootstrap_only_for_oci_vault, test_vault_unit_install_refuses_missing_bootstrap_hook, test_vault_unit_install_enables_bootstrap_hook_when_present, test_env_unit_install_does_not_probe_vault_hook]: MODIFY -> MOVE, steps 1 (REF-10, TEST-15, TEST-19)",
+    "scripts/deploy/tests/test_dw2_recognitio_1.py [test_sticky_env_ship_clamps_mode_to_0600]: MODIFY -> REWRITE, steps 1 (REF-10, TEST-15, TEST-19, REF-12)",
+    "scripts/deploy/tests/test_dw2_recognitio_1.py [test_sticky_env_restore_clamps_mode_to_0600]: MODIFY -> MOVE, steps 1 (REF-10, TEST-15, TEST-19)",
+    "scripts/deploy/tests/test_dw2_recognitio_2.py [test_lease_ttl_covers_restart_probes_and_gpu_gate_timeouts]: MODIFY -> MOVE, steps 1 (REF-10, TEST-15, TEST-08, TEST-24)",
+    "scripts/deploy/tests/test_dw2_recognitio_2.py [test_model_preflight_sanitizes_combined_ssh_diagnostic]: MODIFY -> MOVE, steps 1 (REF-10, TEST-15, TEST-19, REF-12)",
+    "scripts/deploy/tests/test_dw2_recognitio_2.py [test_sanitizer_works_without_gnu_sed_case_insensitive_flag]: MODIFY -> REWRITE, steps 1 (REF-10, TEST-12, TEST-16, TEST-04, TEST-15, TEST-19, REF-12)"
+  ]
+}

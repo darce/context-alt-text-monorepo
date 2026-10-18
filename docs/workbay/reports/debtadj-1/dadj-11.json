@@ -1,0 +1,216 @@
+{
+  "lane": "dadj-11",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 6336,
+      "finding_id": "STAT-05",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:310-330 - the tier resolver checks exhaustiveness, floor, half-width ≤ δ/2, and primary/Holm eligibility before CONFIRMATORY; test_precision_precondition.py exercises the half-width demotion.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6337,
+      "finding_id": "STAT-06",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1148 - each report cell stamps the resampling unit from its own bootstrap interval; test_precision_precondition.py:45-74 asserts occasion-level and mixed occasion+image units.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6338,
+      "finding_id": "STAT-07",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:321-330 - the primary bypasses Holm/significance and is CONFIRMATORY once width and bootstrap-status gates pass; test_precision_precondition.py:131-148 explicitly confirms it with holm_significant=false.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score_report.py",
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Define and stamp whether the primary supports a superiority or equivalence claim, then gate and test each claim type explicitly."
+    },
+    {
+      "db_id": 6339,
+      "finding_id": "STAT-08",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:24-28 - legal endpoints are a metric×frame×label-map product including detection aliases; score_report.py:986-988 reuses detection rows and :1096-1107 puts declared endpoint IDs into the Holm family.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/stack_pair.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py",
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py",
+      "size": "M",
+      "related": [6389],
+      "fix_hint": "Canonicalize detection endpoint IDs across irrelevant frame and label-map dimensions and reject aliases before Holm adjustment."
+    },
+    {
+      "db_id": 6389,
+      "finding_id": "XSRF-05",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "DUPLICATE",
+      "duplicate_of": 6339,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:24-28 - detection endpoints still accept label-map variants although detection rows do not depend on label mapping; this is the same alias-in-Holm defect as db 6339.",
+      "severity": "medium",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6340,
+      "finding_id": "STAT-09",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1085-1091 - the score path calls bootstrap_paired_delta without occasion_ids or occasion_full_size, so it always uses image units despite the helper's occasion support.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score_report.py",
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Derive occasion IDs and full occasion sizes per scoring population, pass them to each bootstrap call, and cover the integrated score path."
+    },
+    {
+      "db_id": 6341,
+      "finding_id": "STAT-10",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "NOT_DEFECT",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:573-608 - an entry joins accepted_set only when both legs succeed and its detection population is a subset of that shared set, so leg-asymmetric unit membership cannot occur.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6342,
+      "finding_id": "STAT-11",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "NOT_DEFECT",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:127 - the config has one required head_to_head_delta value, and score_report.py:1135 applies that same δ to each cell; there is no unsupported per-cell delta map.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6343,
+      "finding_id": "STAT-12",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:135-147 - percentile_linear uses k=(n−1)q and interpolates between floor/ceiling order statistics, which pins the requested linear percentile method.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6360,
+      "finding_id": "TEST-02",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:486-501 - the zero-export media has pred_faces=0 and labeled_faces=1 on both frames, and each detection recall calculation records a false negative.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6361,
+      "finding_id": "TEST-03",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:23-42 - the RED fixture bootstraps six scalar means, one per image, with no multiple-face structure to distinguish face-level from image-level resampling.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add a multi-face-per-image fixture where face-level resampling turns RED green but image-level resampling remains RED, and assert it through the micro-ratio bootstrap."
+    },
+    {
+      "db_id": 6362,
+      "finding_id": "TEST-04",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:460-483 - the unlabeled raw cluster label is mapped by overlap to Alice Q, and the identification metric gains a true positive over the unmapped primary frame.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    },
+    {
+      "db_id": 6363,
+      "finding_id": "TEST-05",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:190 routes matching through bench score.hungarian_iou_matches; test_detection_localization.py uses single-GT/single-pred geometry, so a greedy matcher can pass the suite.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add a multi-box IoU matrix where descending-IoU greedy matching strands a GT but Hungarian matching recovers the full optimal count."
+    },
+    {
+      "db_id": 6364,
+      "finding_id": "TEST-06",
+      "task": "MAINT-fir8-v67-gate-20260730",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:30-57 - the localization GREEN test uses one inline GT box and one prediction, then asserts one match; the localization fixture no longer depends on the multi-face manifest entry.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": ""
+    }
+  ]
+}

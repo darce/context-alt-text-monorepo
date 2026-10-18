@@ -1,0 +1,11 @@
+{
+  "map_ref": "invalid-empty-structure",
+  "product": "prototype-wp-alt-context",
+  "goals": [],
+  "jobs": [{ "id": "", "label": "" }],
+  "screens": [],
+  "flows": [],
+  "actions": [],
+  "open_questions": [],
+  "not_doing": []
+}

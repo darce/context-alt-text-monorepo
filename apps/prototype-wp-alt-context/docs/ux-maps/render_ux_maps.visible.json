@@ -1,0 +1,49 @@
+{
+  "maps": {
+    "dashboard": {
+      "projection_sha256": "6e65af9fb7d71cd0d5396af87ca4e2be53c64aca48a388cf51bb650fb59c189d",
+      "source_sha256": "4de444cbf7c7283ec6761a07344bd70b436f82b4553c8044243cbc9cce25f29f"
+    },
+    "describe-gpu-tier": {
+      "projection_sha256": "ea294261c4dde64d4302d72bf50a71d196452e7db7c6945a29d804fb4dabed2d",
+      "source_sha256": "9f77bfc7ff9e602f8902f40fd1e4549a6da05a5947102344994aca5e7abce761"
+    },
+    "febt-1-job-error-states": {
+      "projection_sha256": "3d179180800c5d1293240477022f00165164b5ffc238221a5d0b53b8932ea415",
+      "source_sha256": "dea5305316cdcf6386a1bbf8afe5ae636902ee3391ef995b1a8fa54564612d23"
+    },
+    "gpu-operator-control": {
+      "projection_sha256": "47b911e0e3f43b12bc7413f0a340d6db22acc1007f1d5411999db24dcdf472f0",
+      "source_sha256": "7ffcc2b0e6fda30b3735e92e43d6575a94665def7454a37da9a5a047d96ef580"
+    },
+    "guided-prototype": {
+      "projection_sha256": "19fbbfed27852133db21acc1aa95991bb61b466940e1583dee6466aab7907dd3",
+      "source_sha256": "264e382a0aac38ea840a50e5e1a92e6e3e237fc3c1cfaebd2a18cb24d7d17eb4"
+    },
+    "public-demo-describe": {
+      "projection_sha256": "c36c30e4c5abaade7c4a3b2948bd12369f23a22729c613432da36c0f77f7d1c2",
+      "source_sha256": "b0b3761f20ece84f20b512cde30a970277ed831a8f705da77665f76715429257"
+    },
+    "public-guide": {
+      "projection_sha256": "64c8e4e63714e803203bff74fae6cacf5511fd68ec2dbc2e53a2b2cdb446517c",
+      "source_sha256": "62bcfe0b31339eb731593aa3479b924a159e5d4b32c669e178eef731906c974c"
+    },
+    "roster-people": {
+      "projection_sha256": "28b5f730204a1fcd6c877eb44a8c04556af60e87c37a9d4ae7c7314d7def21a1",
+      "source_sha256": "3e4cb3a201bf6c691e452d6cc67efbb38722fdd0a9eee2e1cf2555dc24167a66"
+    },
+    "workbench-2pane": {
+      "projection_sha256": "1e4b27e6b40e976ca3fad27623e9b88626fb79cab3d520a68bcb32b4d673fc6c",
+      "source_sha256": "41ea3a91f0c157b70e15b3efcfb2259d42453eb931f8e51fc69a3b41ce518dfc"
+    },
+    "workbench-identity-chips": {
+      "projection_sha256": "22d25b9e7f15b5e1d8d72419e6ad87f19d36ff18f72ff878f99b56331452688c",
+      "source_sha256": "c8b81fe67a3e9fcb17081faf5d892edca1fb5f1236a83fd55967551c07770c81"
+    },
+    "workbench-operator-loop": {
+      "projection_sha256": "7fec3c6b231ce9b1f96d0200db2233abd8669f8991cff1688c76fc6333118c56",
+      "source_sha256": "212cdd11e9ead270891f86eb53daf039a9eccc2a43c954f0bcd2b8bf81543a30"
+    }
+  },
+  "version": 1
+}

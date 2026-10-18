@@ -1,0 +1,162 @@
+{
+  "models": {
+    "models": [
+      {
+        "name": "/models/qwen3-vl-30b-a3b-instruct-q4.gguf",
+        "model": "/models/qwen3-vl-30b-a3b-instruct-q4.gguf",
+        "modified_at": "",
+        "size": "",
+        "digest": "",
+        "type": "model",
+        "description": "",
+        "tags": [
+          ""
+        ],
+        "capabilities": [
+          "completion",
+          "multimodal"
+        ],
+        "parameters": "",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "",
+          "families": [
+            ""
+          ],
+          "parameter_size": "",
+          "quantization_level": ""
+        }
+      }
+    ],
+    "object": "list",
+    "data": [
+      {
+        "id": "/models/qwen3-vl-30b-a3b-instruct-q4.gguf",
+        "aliases": [
+          "/models/qwen3-vl-30b-a3b-instruct-q4.gguf"
+        ],
+        "tags": [],
+        "object": "model",
+        "created": 1788998557,
+        "owned_by": "llamacpp",
+        "meta": {
+          "vocab_type": 2,
+          "n_vocab": 151936,
+          "n_ctx": 8192,
+          "n_ctx_train": 262144,
+          "n_embd": 2048,
+          "n_params": 30532122624,
+          "size": 18550716416,
+          "ftype": "Q4_K - Medium"
+        }
+      }
+    ]
+  },
+  "variants": {
+    "both": {
+      "context": {
+        "page_title": "Tribeca Festival 2026: red carpet photos",
+        "page_context": "A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.",
+        "editor_reviewed_names": "The person on the left is Justin Trudeau. The person on the right is Katy Perry."
+      },
+      "result": {
+        "caption": "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
+        "objects": [],
+        "ocr_text": null,
+        "alt_text_draft": "Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival, standing in front of a backdrop with the event's logo. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. Perry has her arm around Trudeau and is smiling, showing off a ring on her left hand.",
+        "context_sources": [
+          "context.page_title",
+          "context.page_context",
+          "context.editor_reviewed_names"
+        ],
+        "context_applied": true,
+        "phrase_boxes": [],
+        "alt_text_long": null
+      },
+      "started_at": 1788998557.5360665,
+      "duration_seconds": 0.7516448497772217
+    },
+    "none": {
+      "context": {
+        "page_title": "Tribeca Festival 2026: red carpet photos",
+        "page_context": "A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.",
+        "editor_reviewed_names": "No names are approved for inclusion."
+      },
+      "result": {
+        "caption": "A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.",
+        "objects": [],
+        "ocr_text": null,
+        "alt_text_draft": "A man and a woman pose together on a red carpet in front of a backdrop featuring the Tribeca Festival and 10 Lives Studios logos. The man wears a black tuxedo with a white shirt, and the woman is in a white sleeveless dress with a draped design, smiling as she places her hand on his chest.",
+        "context_sources": [
+          "context.page_title",
+          "context.page_context",
+          "context.editor_reviewed_names"
+        ],
+        "context_applied": true,
+        "phrase_boxes": [],
+        "alt_text_long": null
+      },
+      "started_at": 1788998558.2881432,
+      "duration_seconds": 0.6194312572479248
+    },
+    "justin-trudeau": {
+      "context": {
+        "page_title": "Tribeca Festival 2026: red carpet photos",
+        "page_context": "A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.",
+        "editor_reviewed_names": "The person on the left is Justin Trudeau. Leave the person on the right unnamed."
+      },
+      "result": {
+        "caption": "Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating \"Tribeca Festival\" and \"10 Lives Studios\" logos.",
+        "objects": [],
+        "ocr_text": null,
+        "alt_text_draft": "Justin Trudeau stands on a red carpet at the Tribeca Festival, posing with a woman in a white dress. He is wearing a black tuxedo with a white shirt, and she has her hand on his chest, showing a ring on her finger. The background is a white wall with repeating \"Tribeca Festival\" and \"10 Lives Studios\" logos.",
+        "context_sources": [
+          "context.page_title",
+          "context.page_context",
+          "context.editor_reviewed_names"
+        ],
+        "context_applied": true,
+        "phrase_boxes": [],
+        "alt_text_long": null
+      },
+      "started_at": 1788998558.9083996,
+      "duration_seconds": 0.6673336029052734
+    },
+    "katy-perry": {
+      "context": {
+        "page_title": "Tribeca Festival 2026: red carpet photos",
+        "page_context": "A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.",
+        "editor_reviewed_names": "The person on the right is Katy Perry. Leave the person on the left unnamed."
+      },
+      "result": {
+        "caption": "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
+        "objects": [],
+        "ocr_text": null,
+        "alt_text_draft": "Katy Perry and a man pose together on a red carpet in front of a backdrop for the Tribeca Festival. Perry, on the right, wears a white dress and smiles while placing her hand on the man's chest. The man, on the left, wears a black tuxedo and white shirt. The background features repeating logos for \"TRIBECA FESTIVAL\" and \"10 LIVES STUDIOS.\"",
+        "context_sources": [
+          "context.page_title",
+          "context.page_context",
+          "context.editor_reviewed_names"
+        ],
+        "context_applied": true,
+        "phrase_boxes": [],
+        "alt_text_long": null
+      },
+      "started_at": 1788998559.5768578,
+      "duration_seconds": 0.7599139213562012
+    }
+  },
+  "provenance": {
+    "environment": "dev",
+    "adapter": "gpu",
+    "model_id": "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639",
+    "model_version": "Q4_K_M",
+    "prompt_or_task_version": "3",
+    "image_sha256": "a45bc3a4227a28e9fd9e790e45a238dcd7005cdd0c10b975dafcefe6ea48f40e",
+    "generation_date_utc": "2026-09-10",
+    "generation_date_toronto": "2026-09-09",
+    "method": "Four fresh calls through the deployed dev get_gpu_description_adapter; no response-cache layer. Editor-reviewed names supplied per variant.",
+    "completed_bulk_run_id": "1071f039-af92-42b4-bd18-280ae3ce8fac"
+  }
+}

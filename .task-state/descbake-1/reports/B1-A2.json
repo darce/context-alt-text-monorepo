@@ -1,0 +1,124 @@
+{
+  "status": "completed",
+  "summary": "DESCBAKE-1 B1 second dispatch: DG1-01, DG1-02, DG1-03 and DG1-09 confirmed and fixed within the four owned paths. Behavioral RED committed before the smallest production fix: 16 failed/56 passed, then 2 additional injected-fetch failures. GREEN: all 74 owner tests pass; six-file read-only Ruff check passes. Four exact Unsloth source-only links recovered; interrupted HTTP reads and invalid Unicode yield per-row typed outcomes; complete reports replace destinations atomically with concise write-error diagnostics. Original B1 report retained unchanged, including its incorrect source-absence claim. No model-quality, promotion, or deployment claim.",
+  "changed_files": [
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.json",
+    ".task-state/descbake-1/reports/B1-A2.json"
+  ],
+  "commits": [
+    "33d1c4f41c055bb9cb7bea358ec4b0b96be25b5f",
+    "f50fd2b92842b10bc746bb0e5c6ad89ed12c0b93"
+  ],
+  "tests": [
+    {
+      "command": "Historical first B1 attempt, supplied and retained only: cd apps/prototype-description-service && .venv/bin/python -m pytest scene/tests/test_eval_harness_bakeoff_intake.py -q -p no:cacheprovider",
+      "exit_code": 2,
+      "summary": "Original missing-module collection RED: ModuleNotFoundError, zero behavioral tests executed. Not causal behaviorRED proof; not rerun or reclassified. Original report B1.json retained byte-identically."
+    },
+    {
+      "command": "Historical first B1 GREEN attempt, supplied and retained only: same original owner-module command",
+      "exit_code": 1,
+      "summary": "46 passed, 1 failed: research markdown separator had 12 columns against an 11-column header. Original author fixed before original final GREEN (47 passed). Neither historical outcome is current acceptance evidence."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py apps/prototype-description-service/scripts/eval_harness/semantic_selection_eval.py apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py apps/prototype-description-service/scene/tests/test_semantic_selection_eval.py apps/prototype-description-service/scene/tests/test_name_binding_eval.py",
+      "exit_code": 1,
+      "summary": "Pre-edit reproduction: one I001 import-order failure at owner test file line 8; other five files passed. Exact original criticism confirmed."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a2-red scene/tests/test_eval_harness_bakeoff_intake.py -q",
+      "exit_code": 1,
+      "summary": "Before production edits: 16 failed, 56 passed in 9.77s; no collection errors. Observed AssertionError: supplied docs links were lost; real truncated chunked HTTPResponse.read raised IncompleteRead(0 bytes read), chained from IncompleteRead(7 bytes read, 93 more expected); JSON raised PydanticSerializationError wrapping UnicodeEncodeError; markdown raised UnicodeEncodeError; missing output parent failed the concise-error assertion with a raw traceback; synthetic partial write raised OSError and left the prior file as the first 20 report characters; replace-failure probe returned 0 because no replacement was attempted; success probe found no atomic replacement. Transport and serializer exception classes matched the pre-run prediction; detailed byte counts/positions were not predicted. Existing valid Unicode and malformed-response controls passed. Full log retained in /tmp/descbake-b1-a2-red.log for this workspace."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a2-red-injected scene/tests/test_eval_harness_bakeoff_intake.py -q -k injected_fetch_cannot_bypass_unicode_validation",
+      "exit_code": 1,
+      "summary": "Before production edits: 2 failed, 72 deselected in 1.87s. Both injected FetchResult paths (pipeline_tag and cardData.license) raised the explicitly predicted PydanticSerializationError wrapping UnicodeEncodeError for lone surrogate U+D800. Log: /tmp/descbake-b1-a2-red-injected.log. All causal RED tests committed together in 33d1c4f before f50fd2b."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff check --no-cache --select I --fix apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+      "exit_code": 0,
+      "summary": "One import-order issue corrected only in the owned test file. No behavioral test changes after RED; candidate-loader imports now precede intake imports."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff format --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+      "exit_code": 0,
+      "summary": "Both files already formatted; no formatting changes."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a2-green scene/tests/test_eval_harness_bakeoff_intake.py -q",
+      "exit_code": 0,
+      "summary": "74 passed in 8.04s. Real HTTPResponse parser/read behind mocked urlopen; truncated chunk, high/low lone surrogates in pipeline/license, array/null/invalid UTF-8/bad SHA controls; both CLI renderers retain one record for each of 26 rows and keep the other 25 unchanged. Injected fetches cannot bypass Unicode rejection; valid multilingual/non-BMP text survives. Missing-parent subprocess tests return 1 without traceback. Synthetic write and replacement failures preserve prior bytes and clean temporary siblings; success replaces only after a complete sibling is closed. Existing sealed/intake output-path protections pass, with the former restoration write removed so tests never write sealed files."
+    },
+    {
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python -m ruff check --no-cache scripts/eval_harness/bakeoff_intake.py scripts/eval_harness/semantic_selection_eval.py scripts/eval_harness/name_binding_eval.py scene/tests/test_eval_harness_bakeoff_intake.py scene/tests/test_semantic_selection_eval.py scene/tests/test_name_binding_eval.py",
+      "exit_code": 0,
+      "summary": "Same six-file read-only gate lint scope: all checks passed; only B1 owned paths modified."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff format --no-cache --check apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+      "exit_code": 0,
+      "summary": "2 files already formatted."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "No whitespace errors."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (offline source-tree, changed-path, retained-report and intake-content assertions) PY",
+      "exit_code": 0,
+      "summary": "Sandbox base tree equals authoritative source tree 8bd578b568b5eedcefc8418d177ec3c3eb5c7079. All changed paths are owned. B1.json retained SHA-256 9284f753b2c7f6abded4c60365ddbb7c03fa2caf667fe914b990dc06a01cbcfe; sealed YAML retained SHA-256 8c7f828f49178213a3f803dd88ab5a41729bee2985827716865c6f4f1391cef6. Parsed intake differs only in docs_links; observations and model rows unchanged."
+    },
+    {
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c 'import json,jsonschema; from pathlib import Path; jsonschema.Draft202012Validator(json.loads(Path(\".schema.json\").read_text())).validate(json.loads(Path(\".task-state/descbake-1/reports/B1-A2.json\").read_text()))'",
+      "exit_code": 0,
+      "summary": "Follow-up report validated against repository .schema.json with Draft202012Validator; all required fields and item shapes satisfied, no additional properties."
+    }
+  ],
+  "findings": [
+    {
+      "id": "DG1-01",
+      "description": "Confirmed original criticism: recovered docs_links=[] omitted all four supplied Unsloth sources, and historical B1-F3 incorrectly claimed no URLs had been supplied. Corrected without fetching links, adding models, or promoting research rows.",
+      "evidence": "Authoritative source tree intake.json:10 has docs_links=[]. Retained .task-state/descbake-1/reports/B1.json findings[B1-F3] and limitations contain the false absence claim. Current intake.json:10-15 restores https://unsloth.ai/docs, https://unsloth.ai/docs/models/qwen3.8, https://unsloth.ai/docs/models/muse-glimmer and https://unsloth.ai/docs/models/qwen3.8-next as DocsLink(kind=docs). Owner test:595 failed with supplied docs links were lost, then passed; proves both renderers expose links and roster counts remain 16 sealed/10 pending, never-runnable research. Canon GRPH-14 (supplied v0.26.2): https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-14",
+      "status": "confirmed_fixed; historical B1-F3 corrected here, original preserved",
+      "owner": "B1"
+    },
+    {
+      "id": "DG1-02",
+      "description": "Confirmed original criticism: an incomplete HTTP read escaped default_fetch and a valid JSON escape for an unpaired surrogate entered AuditRecord and crashed rendering. Fixed by bounded transport classification and rejection at the audit metadata boundary.",
+      "evidence": "Original bakeoff_intake.py:295-314 catches HTTPError/URLError/TimeoutError/OSError but not IncompleteRead; original :317-318 accepts every Python str; :384-386 passes pipeline/license through. RED owner tests:651 reproduced real chunked HTTPResponse.read failure and both serializer failures, and :717 reproduced injected FetchResult bypass. Current module:309 maps IncompleteRead to existing unverified/network_error via :369-370; :320-325 and :391-396 reject non-UTF8-encodable pipeline/license with error/malformed_json and no remote text. Full refresh tests retain all 26 typed records, including remaining rows, and serialize JSON/markdown offline. No new enum or schema version needed; malformed_json covers unusable Unicode scalar metadata, valid Unicode preserved. Canon CAL-02 and CARD-03 (supplied v0.26.2): https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#cal-02 ; https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md",
+      "status": "confirmed_fixed",
+      "owner": "B1"
+    },
+    {
+      "id": "DG1-03",
+      "description": "Confirmed original criticism: --output wrote directly outside the handler, missing parents caused a traceback, and a partial write truncated an existing audit. Fixed with serialize-first, complete temporary sibling, close, atomic os.replace and concise OSError return 1.",
+      "evidence": "Original module:638-645 serializes then directly Path.write_text outside the error handler. RED tests:737 observed subprocess tracebacks for both formats; :753 injected a real partial text write in /tmp and observed unhandled OSError, leaving bytes b'{\\n  \"schema\": \"bakeo'; replacement/success probes showed no atomic call. Current module:620-637 writes a temporary sibling, closes it, replaces via os.replace and cleans in finally; :668-679 serializes first, returns 1 with only FAIL: cannot write report on OSError. GREEN tests:753/:812 prove prior bytes unchanged during write/replace failure, complete JSON before replacement, no residual siblings, and no secret/path/body echo. Registry/intake protection at :660-662 is preserved. Canon CARD-03: https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md",
+      "status": "confirmed_fixed",
+      "owner": "B1"
+    },
+    {
+      "id": "DG1-09",
+      "description": "Confirmed original criticism: combined candidate failed configured Ruff import order despite historical lane lint success. Sorted only the owned test import block and repeated the six-file read-only check.",
+      "evidence": "Pre-edit Ruff check exited 1 with I001 at original test file:8, candidate-loader import incorrectly after intake import. Current owner test:28 imports bakeoff_candidates before bakeoff_intake at :29. Final same six-file check (with --no-cache) exits 0: All checks passed. Historical lane lint claim retained as historical evidence, not substituted for current check.",
+      "status": "confirmed_fixed",
+      "owner": "B1"
+    }
+  ],
+  "limitations": [
+    "Only the three owned B1 code/data/test paths and this report were changed. DG1-04/DG1-05 (B2) and DG1-06/DG1-07/DG1-08 (B3) were supplied as global context, are not adjudicated here, and remain their owners' work. No outside-scope implementation was needed; no blocker/proposal required.",
+    "No network/model calls, GPU, private database, deployment, production routing, shared environment mutation, or subagents. Existing lane .venv used read-only, with PYTHONDONTWRITEBYTECODE=1 and no installs. All HTTP and filesystem failure data are explicitly synthetic contract probes, not model observations or empirical quality evidence.",
+    "Only owner-module tests ran. Pytest --noconftest, disabled plugin autoload and required_plugins override isolate DB/global hooks. Three known unknown-config warnings (collection_scope_receipt, timeout, timeout_method) retained; independent outer timeout300s bounded every test run and each child subprocess used timeout30s. No full suite, B2/B3 tests, sealed-loader test module, live refresh or mutation campaign was run.",
+    "BehaviorRED was observed in this dispatch before production edits and committed in 33d1c4f; the first run contained both expected passing controls and failing regressions. Pre-run prediction named failure classes, not every exact exception message/byte position; the real parser wraps the seven-byte truncated chunk into an outer IncompleteRead(0 bytes read). Additional injected-fetch tests recorded their exact class/message prediction before first execution. Original logs remain in /tmp for this workspace, with decisive outcomes retained in this committed report.",
+    "First B1/B2/B3 reports and prior failed attempts remain unchanged in the source snapshot. The original B1 collection error is not behavioral evidence; the original markdown test failure, 47-pass final run and reported four mutation kills remain historical lane evidence only. The erroneous original no-Unsloth-input statements are superseded by DG1-01 here, without rewriting history.",
+    "Report schema stays bakeoff-intake-report/v1. Existing error/malformed_json represents unusable Unicode in emitted remote metadata; incomplete reads use existing unverified/network_error. These are unknown/error states, not absence proof or zero-error acceptance. Research rows remain pending_verification/runnable=false. No threshold, denominator, model pin or fixture score was changed to manufacture a pass.",
+    "Atomic sibling replacement protects prior reports on ordinary write/close/replace failure. It does not add fsync/power-loss durability or guarantees when filesystem permissions prevent temporary-file cleanup. CLI deliberately omits raw OSError details to avoid leaking paths or credentials.",
+    "Canon source was the supplied v0.26.2 packet, read offline; no URLs were fetched. Applied TEST-06 (https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-06), GRPH-14, CAL-02, CARD-03, CARD-06 and CARD-11 / Principles 13, 15, 18. CARD-11: https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md . B2 embedding-space and B3 image-lineage/GT concerns remain outside B1 scope.",
+    "Source identity is source_commit=69e73d648bcad3144a23c82dbbb8847a4fad77f1, source_tree=8bd578b568b5eedcefc8418d177ec3c3eb5c7079 in .workbay-source-provenance. History-stripped local base 5369de82a7ea5f4ce0b869b654d2d339b5c6ea7c has that exact tree; it is not substituted for the source SHA.",
+    "The report packaging commit follows the two listed RED/GREEN commits and cannot self-record its own SHA. It is included in the final response. No author/Co-Authored trailers added. Report force-added because .task-state is ignored."
+  ],
+  "source_sha": "69e73d648bcad3144a23c82dbbb8847a4fad77f1"
+}

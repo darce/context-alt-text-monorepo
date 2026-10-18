@@ -1,0 +1,34 @@
+{
+  "states": [
+    {
+      "state": "unknown",
+      "label": "Service: not reported",
+      "tone": "muted"
+    },
+    {
+      "state": "stopped",
+      "label": "Service: stopped",
+      "tone": "pending"
+    },
+    {
+      "state": "starting",
+      "label": "Service: starting",
+      "tone": "pending"
+    },
+    {
+      "state": "warming",
+      "label": "Service: warming",
+      "tone": "running"
+    },
+    {
+      "state": "ready",
+      "label": "Service: ready",
+      "tone": "success"
+    },
+    {
+      "state": "degraded",
+      "label": "Service: degraded",
+      "tone": "warning"
+    }
+  ]
+}

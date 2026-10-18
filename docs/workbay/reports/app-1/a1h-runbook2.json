@@ -1,0 +1,53 @@
+{
+  "lane": "a1h-runbook2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-runbook2-e37a24a9/.venv/bin/python -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 5.33s"
+    },
+    {
+      "command": "/home/gate/workbay-sandbox/feature-app-1-a1h-runbook2-e37a24a9/.venv/bin/python -m pytest apps/prototype-description-service/recognition/tests/schema/test_identity_schema_heal_pg.py -q",
+      "result": "not_run",
+      "detail": "Not run per sandbox constraint: the PostgreSQL integration database is unavailable. Read the tenant-isolation assertion in test_heal_isolates_checkout_and_usage_reservations_across_tenants and the duplicate-key/no-row-deletion assertions in test_heal_refuses_duplicate_seller_wide_checkout_keys_without_deleting_rows."
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "docs/runbooks/app1-usage-schema-upgrade.md",
+      "line": 52,
+      "title": "Drained-writer heal command has no production execution context",
+      "defect": "The runbook gives `ACX_USAGE_SCHEMA_WRITERS_DRAINED=1 python -m scripts.sync_identity_schema` without a working directory or container context. In production, the host stack directory contains Compose files while the heal module is packaged in the backend image at /app/scripts (apps/prototype-description-service/Dockerfile:159-168), so host Python from /opt/acx-backend/prod cannot import it.",
+      "failure_scenario": "After draining writers, an operator runs the documented command from /opt/acx-backend/prod; Python cannot resolve scripts.sync_identity_schema and the schema upgrade is not applied.",
+      "fix": "Document a production container invocation from /opt/acx-backend/prod, such as `docker compose -f docker-compose.env.yml -f docker-compose.admin.yml run --rm -e ACX_USAGE_SCHEMA_WRITERS_DRAINED=1 api python -m scripts.sync_identity_schema`; state the service-directory context if retaining a local invocation.",
+      "test_file": "",
+      "urgency": "before_merge"
+    },
+    {
+      "severity": "medium",
+      "file": "docs/runbooks/prod-identity-rls-remediation.md",
+      "line": 143,
+      "title": "Column-drift recovery probe is not a runnable URL check",
+      "defect": "The runbook says `curl -s .../recognition/tenant/whoami`; the ellipsis is not a URL, and `-s` does not make an HTTP status visible even though the text says to confirm HTTP 200.",
+      "failure_scenario": "An operator copies the recovery probe after healing; curl rejects the literal ellipsis target, so the runbook provides no endpoint result to confirm the repair.",
+      "fix": "Replace the ellipsis with the deployed API base URL, then use curl with --fail, --silent, --show-error, and --write-out so HTTP errors fail and the status code is visible.",
+      "test_file": "",
+      "urgency": "before_merge"
+    },
+    {
+      "severity": "medium",
+      "file": "docs/runbooks/prod-identity-rls-remediation.md",
+      "line": 147,
+      "title": "Local reset script path does not resolve from the repository root",
+      "defect": "The runbook names `scripts/reset_dev_db.sh` as the local reset command, but the script exists at `apps/prototype-description-service/scripts/reset_dev_db.sh`; there is no root-level scripts/reset_dev_db.sh.",
+      "failure_scenario": "A local operator follows the reset note from the repository root and gets a missing-file error, leaving the documented greenfield recovery path unperformed.",
+      "fix": "Use the repository-root-relative path `apps/prototype-description-service/scripts/reset_dev_db.sh` or explicitly direct the operator to change into apps/prototype-description-service before running `scripts/reset_dev_db.sh`.",
+      "test_file": "",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The RLS audit now includes billing_checkout_attempt, and the inspected schema tests assert tenant isolation and seller-wide duplicate protection; three documented commands still cannot run as written. The assigned lane check passed, while the PostgreSQL integration suite was recorded not_run because this sandbox has no database."
+}

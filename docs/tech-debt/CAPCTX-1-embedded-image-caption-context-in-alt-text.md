@@ -1,0 +1,86 @@
+# Tech Debt: CAPCTX-1 metadata names and off-frame facts in generated alt text
+
+**Status:** implementation deferred; continued exposure requires the boundary below · **Owners:** description service (authorization, GPU composition, fusion, cache, contract and eval) + WordPress plugin (collection, cleanup and operator evidence); product owner accepts naming policy and exposure · **Origin:** operator investigation of demo attachment 16 dated 2026-10-16. Recommendations use Canon v0.26.2.
+
+## What is deferred
+
+Source-aware naming authorization, attribution of retained record claims, and caption cleanup before context composition remain deferred. Closure must cover the emitted text, not just identity-insertion provenance. This entry does not authorize continued public application of unchecked drafts.
+
+**SOURCE-READ:** `apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php:1004-1060` forwards attachment title, caption, description, existing alt and filename, plus eligible public-parent context. The caption passes through `bounded_string(..., 500)`; that helper trims and cuts text without cleanup or a truncation signal (`:1246-1265`). The four metadata categories default to eligible when the option is absent; a malformed option falls back to attachment (`:1062-1107`). Identity context has a separate tenant-bound naming signal (`:1154-1163`).
+
+**SOURCE-READ:** `apps/prototype-description-service/scene/infrastructure/vlm/gpu_remote_adapter.py:54-63` combines “only visible” with an instruction to weave supplied names and facts into the description. Its delimiters label evidence; they do not enforce naming authorization or attribute output clauses. The adapter returns model prose as `alt_text_draft` (`:263-291,594-601`). Fusion records some fields as non-visible caption facts but does not rewrite that prose (`scene/application/fusion/reconcile.py:458-535`, under the same service root).
+
+**SOURCE-READ, operator assertion only:** the original entry reports a Keystone caption naming Audrey Hepburn and “Portrait vom Mai 1953”, with licensing/account/keyword text, and published alt presenting the name/date without attribution. Neither attachment bytes nor current publication were reproduced here. WordPress core's claimed IPTC-to-post mapping is external to this tree. These observations motivate a fixture; they are not proof of present deployment state or of the prompt's causal effect.
+
+## Required boundary at closure
+
+The existing operator promise is identity-free Describe output when recognition is off, with names sourced from the People roster only when recognition is enabled (`apps/prototype-wp-alt-context/js/admin/pages/settings/SettingsForm.tsx:437-443`; `settingsConstants.ts:3-7` in that directory). Preserve it. Recognition off, naming agreement off, unavailable policy and revocation must prevent personal identities regardless of metadata source. Record-only names without an independently eligible confirmed roster binding are denied, including deceased-person names. A string match is not identity evidence. Any broader exception needs a prior product decision covering living-person consent, revocation, suppression and operator-copy changes; attribution alone cannot authorize it.
+
+A **proposed source-aware authorization contract** must join plugin `build_identity_context()` / `build_context_pack()` to backend composition and output checks. It is not the existing per-face API: `apps/prototype-description-service/scene/application/identity_merge/policy.py:64-69,100-113` requires a `ConfirmedFace`, roster binding, agreement, suppression eligibility and detection confidence. Keep those conditions; never fabricate recognition evidence for a caption name. `identity_merge/merge.py:254-265` leaves the input caption unchanged on denial, and `visual_facts_service.py:294-315,686-716` composes or reuses prose before/around that gate. Therefore fresh and cached returned/writable drafts must satisfy the policy themselves, including older caches without an unnamed base. Refusing later insertion alone cannot close this debt.
+
+Preserve the original source record and its naming decision. Authorize public output separately; denied names are omitted without replacing the person with an invented plight-type. Permitted names and other off-frame facts need an identifiable record frame, such as “the attachment caption identifies …”, or are omitted. Visible description must remain useful. A date cannot become visible evidence merely because a caption supplies it. Conflicting record claims are omitted pending resolution; neither first-field order nor fluent model wording settles the conflict.
+
+The **proposed provenance grain is per source field and retained fact**, sufficient for mixed-origin title/caption values and a walk from an emitted contextual clause to its source. Existing model/version/context hashes and fusion tags remain useful; they are not clause attribution.
+
+### Input inventory
+
+This is the required closure inventory, not current enforcement. Paths refer to `context_pack`. “Plugin” means currently assembled; “API only” means accepted by the service schema but not assembled by this plugin. Evidence remains untrusted and policy-filtered.
+
+| Fields | Current entry surface | Proposed role |
+| --- | --- | --- |
+| `attachment.title/caption/description/alt_text` | Plugin | Candidate record claims; naming authorization and attribution apply independently to each leaf |
+| `attachment.filename` | Plugin | File token; excluded from model evidence, even when it resembles a name |
+| `post.title/excerpt`, `product.name`, `taxonomy_terms[].name` | Plugin, subject to category/public-parent eligibility | Candidate record claims; same authorization and attribution boundary |
+| `product.short_description` | API only | Candidate record claims; same boundary |
+| `post.post_type/status`, `taxonomy_terms[].taxonomy/slug` | Plugin | Validated structural selectors, not prose evidence |
+| `product.sku/price` | API only | Identifier/commerce data excluded from this caption-evidence scope |
+| `identity.identities[].name` | Plugin | Roster identity evidence only after independent policy and face/roster eligibility |
+| `identity.identities[].identity_id/cluster_id/source` | Plugin | Validated join/provenance data; caller strings cannot confer authority |
+| `identity.policy.person_naming` | Plugin | Policy signal checked against authoritative tenant controls; absent/unknown/conflicting policy denies naming |
+| `identity.review_reasons[]` | Plugin | Validated operator reason data; arbitrary strings excluded from model evidence |
+| legacy `context` | API only, unrestricted dictionary today | Normalize to this allowlist or reject before composition; never forward unknown strings as evidence |
+
+**SOURCE-READ:** inventory from `apps/prototype-description-service/scene/interface_adapters/http/schemas/requests.py:11-116`, plugin assembly above and `class-describe-media-service.php:1127-1228`. The single-item route chooses typed context or legacy context (`scene/interface_adapters/http/routers/describe.py:979-989`); the bulk route currently sends no metadata context (`describe_run.py:345-360` in that directory). The closure guarantee covers accepted metadata paths and cached outputs; it does not claim that bulk currently receives IPTC.
+
+### Cleanup and related work
+
+Cleanup must select useful, policy-eligible caption content before the 500-character bound. Remove only recognized licensing/account/keyword boilerplate; preserve legitimate numbers, dates and narrative. Keep the CMS original. Selected facts late in a caption need the same opportunity as early ones; if they cannot fit, omit them explicitly rather than cut a partial claim. Use valid Unicode and complete sentence/field boundaries. A **proposed operator-visible plugin cleanup/truncation report**, tied to attachment/request and source field, must expose what category was removed or omitted, whether bounding occurred and the cleanup revision, without logging raw account/licensing data. It is local evidence, not an assumed new API key.
+
+Structured IPTC by-line/date/location acquisition is explicitly deferred beyond this text-field correction. No such wire members exist in the strict request schema. Adding them later requires plugin collection ownership and a reviewed schema/contract mapping first. A by-line identifies a creator, not necessarily the depicted person; absent fields must never be invented. For the current correction, neither structured-field preference nor free-text precedence may silently resolve disagreement.
+
+CAPCTX-1 extends the unimplemented [DEPICT-1 proposal](../tasks/depiction/DEPICT-1-context-voice-and-register-contract-task-plan.md): it owns the production consumer boundary left outside that task (`:333-341`) and requires field/fact provenance instead of its proposed object-only grain (`:25-47`). The service contract owner must reconcile that grain before any incompatible contract change. Proposed `ContextVoice`, `iter_context_facts` and `DescriptionRegister` are not shipped APIs. The inventory above retains filename/review-reason exclusion from DEPICT-1 (`:521-546`) and additionally requires that those raw values cannot leak through prompt rendering.
+
+The [depiction assessment](../assessments/current/depiction-canon-fit-captioning-pipeline-2026-07-27.md) directly critiques the same weave instruction (lines 124-157); its oppressive-language warrant does not establish that the reported agency caption is oppressive. Generic record attribution here is a product requirement supported by the identity/off-frame mechanisms below. Historical DEMOLIVE-1 finding 10161 concerned seeded fixture-adapter selection/provenance, with metadata-hint overlap; its default-profile scenario is recorded fixed (`docs/workbay/reports/debtfix-1/dfadj-06.json:5-17`), consistent with `apps/prototype-description-service/api/main.py:286-288`. It is not direct evidence of this GPU failure.
+
+## Canon basis
+
+- [FM-01] **Instruction-authority contract**: metadata is evidence, never permission to name. Source: AI Engineering.
+- [SEC-01] **Validate at every trust boundary**: enforce the operator boundary across plugin, service, model and output/cache use. Source: The Developer's Playbook for LLM Security, ch. 3.
+- [ATTRIB-02] **Captions explain or falsify identity**: retained contextual identity needs a record frame or omission. Source: Regarding the Pain of Others, ch. 1.
+- [ATTRIB-05] **Honor source identity decisions**: preserve the named source record; separately authorize its use in public output. This object partition preserves the record without making it a consent grant. Source: Regarding the Pain of Others, ch. 5.
+- [BOUND-01] **Assertable set is bounded**: source or omit off-frame claims; a still does not prove its portrait date. Source: Ways of Seeing, ch. 1 + On Photography + Regarding the Pain of Others, ch. 8 + Image Music Text, ch. 3 + The Civil Contract of Photography, ch. 6 + Under the Sign of Saturn, §syberbergs-hitler.
+- [WRIT-26] **Restore a needed attribution**: identify the bearer of a retained record claim. Attribution restores ownership; it does not supply missing warrant. Source: The Sense of Style, ch. 2.
+- [PROV-01] **Every output walks back to its evidence**: retain input, cleanup, policy, prompt and model derivation alongside clause-to-field traceability. Source: Model Cards + AI Engineering.
+- [FM-04] **Structured output is a contract**: the existing merge parses caption phrases (`scene/application/identity_merge/merge.py:274-277` under the service root); any new machine-consumed fact/decision payload must be schema-constrained, validated and carry its schema id. Ordinary alt prose is not a closed vocabulary. Source: AI Engineering.
+- [A11Y-34] **Auto-specified content is accessible (B.1.1)**: generated output must preserve useful visible description and author checking/control. Source: Authoring Tool Accessibility Guidelines (ATAG) 2.0, § B.1.1.2.
+
+## Acceptance criteria
+
+Closure requires source-backed policy/contract decisions and these falsifiable artifacts; none is claimed complete by this entry.
+
+- An image-backed fixture for the reported case, or an explicitly labelled surrogate, has a stable manifest `media_id`, image path/hash and human-checked visible inventory. The exact attachment observation remains unreproduced if only a surrogate is available. Every evidence leaf in the inventory has an independent name/off-frame case; structural, policy and legacy inputs have exclusion/validation cases. A caption-only test cannot establish the full boundary.
+- Real plugin/service checks cover recognition off, agreement off, unavailable/missing policy, tenant mismatch, suppressed eligible roster identities and later revocation. Include living-person record-only names, fresh generation and cached drafts with and without an unnamed base. No denied identity may remain in any returned/writable text. Positive eligible roster cases preserve permitted naming with its source frame. An empty draft or loss of purpose-serving visibles fails.
+- Cleanup cases distinguish boilerplate from legitimate numbers/narrative, decisive facts late in the input, Unicode near the bound, and missing structured fields. They prove selection precedes bounding, retained claims are complete, conflicts are omitted, and the operator report exposes removal/truncation. Account/keyword tails cannot become narrative; absent IPTC fields cannot appear as generated facts.
+- CARD-18 review checks every person/identity/date clause against the image and named source. Non-visual claims require an adequate bearer or omission; field-level fusion tags alone do not pass. Human-reviewed gold includes both attributed and deceptively unattributed paraphrases.
+- CARD-23 evidence uses the existing `scripts/eval_harness/manifest.py` and `bakeoff.py` entry points under the service root: same image IDs/hashes and candidate settings, with genuinely empty `{}` versus supplied context. Name ablation is not full context removal. Gold declares allowed, required and prohibited fact units after policy/cleanup, before model runs. Off-frame units are optional unless explicitly required by the image's purpose and policy; valid omission earns no insertion penalty. Report required-unit insertion over gold required units (N/A when none), and fixture-case rates for contradiction, invention and missing attribution over fixed, predeclared case counts. Every required unit must survive; any prohibited, contradicted, unsupported or unattributed retained claim fails the bounded fixture suite. Human validation must establish that the rubric measures these outcomes before candidate selection; presence/trap scorers alone cannot do so.
+- The paired report records production/harness prompt and context-rendering parity, model/prompt/decoding/preprocessing lineage, policy/cleanup versions and cache invalidation for changed semantics. Select on the context contract; report bare-arm fluency separately. Harness `_apply_face_gate` is a simulation, not proof of the real policy path. Use human review plus bounded assertions here; `--llm-judge` is currently a rejected stub (`scripts/eval_harness/cli.py:1019-1026`), not an available scorer. Preserve preview/write choice and an author check of the exact proposed output.
+
+## Deferral boundary and trigger
+
+Continued deferral is conditional on a dated product/operator record of restricted captioning exposure, human checking before new public application, and disposition of already published affected alt. That condition is unverified here. The original “no production users” statement is a 2026-10-16 operator assertion, not established by this snapshot. One correct celebrity example and an old greenfield policy do not bound living-person or accessibility risk.
+
+Removing `attachment` from a valid `acx_description_context_categories` list is an available mitigation for that channel only. It also removes attachment title/description/alt/filename, leaves post/product/taxonomy and separately governed identity context, and does not repair published alt or cached drafts. No source evidence establishes that mitigation is enabled. A valid empty list removes the four metadata categories; malformed values restore attachment, so the effective setting must be checked.
+
+**Exposure review is due now** because the origin reports published output. The product owner must record the current boundary and mitigation/disposition in handoff before further public context-informed caption writes. If that boundary cannot be demonstrated, or unchecked/living-person use is found, reconsider deferral immediately and contain the affected channel/public writes.
+
+Implementation pickup is also due with the next change to `_SYSTEM_PROMPT` or `build_context_pack()`, or before a **proposed CAPCTX-1 captioning-exposure sign-off**, whichever is first. That sign-off is a dated product-owner handoff decision citing service/plugin acceptance evidence. It is distinct from the recognition-only E15 go-live already recorded on 2026-07-05 (`docs/tasks/15.0/E15-29-demo-smoke-log.md:5-7,34-41`). No new runtime restriction or deployment change is claimed here.

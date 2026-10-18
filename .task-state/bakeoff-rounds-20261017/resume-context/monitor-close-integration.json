@@ -1,0 +1,195 @@
+{
+  "observed_utc": "2026-10-17T20:05:10.119515+00:00",
+  "all_four_complete": true,
+  "active_monitored_remote_scopes": 0,
+  "lanes": [
+    {
+      "lane": "C8-WRITER-PROOF-CONTRACT",
+      "exec_session_id": 5917,
+      "remote_host": "gate@acx-backend.tail1a44b8.ts.net",
+      "native_scope": "workbay-lane-feature-bakerounds-20261017-c8-writer-pr-e7fb18e3.scope",
+      "status": "completed",
+      "terminal": {
+        "lane": "C8-WRITER-PROOF-CONTRACT",
+        "exit": 0,
+        "branch": "feature/bakerounds-20261017-c8-writer-proof-contract",
+        "finished": 1792267433.675908,
+        "route": "codex-remote gpt-6.1-sol xhigh standard"
+      },
+      "result_status": "map_pending_independent_planning",
+      "input_sha": "50a35894bf5cf695f672738b9c444d05dace6cc9",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "service_tier": "standard requested; native tier not exposed",
+      "cpu_cap": "50%",
+      "memory_cap": "1GiB",
+      "helper_timeout_seconds": 1800,
+      "model_timeout_seconds": 1500,
+      "do_not_redispatch": true,
+      "raw_result": ".task-state/bakeoff-rounds-20261017/C8-WRITER-PROOF-CONTRACT.result.json",
+      "raw_log": ".task-state/bakeoff-rounds-20261017/C8-WRITER-PROOF-CONTRACT.build.log"
+    },
+    {
+      "lane": "E5-EXECUTOR-LIFETIME",
+      "exec_session_id": 50515,
+      "remote_host": "gate@acx-backend.tail1a44b8.ts.net",
+      "native_scope": "workbay-lane-feature-bakerounds-20261017-e5-executor--93ddc484.scope",
+      "status": "completed",
+      "terminal": {
+        "lane": "E5-EXECUTOR-LIFETIME",
+        "exit": 0,
+        "branch": "feature/bakerounds-20261017-e5-executor-lifetime",
+        "finished": 1792266931.741857,
+        "route": "codex-remote gpt-6.1-sol xhigh standard"
+      },
+      "result_status": "map_pending_independentwholegate",
+      "input_sha": "c503cbf165d8bafec643113f9d0d3ce25d41643e",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "service_tier": "standard requested; native tier not exposed",
+      "cpu_cap": "25%",
+      "memory_cap": "1GiB",
+      "helper_timeout_seconds": 1800,
+      "model_timeout_seconds": 1500,
+      "do_not_redispatch": true,
+      "raw_result": ".task-state/bakeoff-rounds-20261017/E5-EXECUTOR-LIFETIME.result.json",
+      "raw_log": ".task-state/bakeoff-rounds-20261017/E5-EXECUTOR-LIFETIME.build.log"
+    },
+    {
+      "lane": "E5-RUNNER-LIFETIME",
+      "exec_session_id": 39161,
+      "remote_host": "gate@acx-backend.tail1a44b8.ts.net",
+      "native_scope": "workbay-lane-feature-bakerounds-20261017-e5-runner-li-98aea700.scope",
+      "status": "completed",
+      "terminal": {
+        "lane": "E5-RUNNER-LIFETIME",
+        "exit": 0,
+        "branch": "feature/bakerounds-20261017-e5-runner-lifetime",
+        "finished": 1792267089.5880919,
+        "route": "codex-remote gpt-6.1-sol xhigh standard"
+      },
+      "result_status": "map_pending_independentwholegate",
+      "input_sha": "aa8904c36e3c3170ccf44631c58eb2817a752522",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "service_tier": "standard requested; native tier not exposed",
+      "cpu_cap": "25%",
+      "memory_cap": "1GiB",
+      "helper_timeout_seconds": 1800,
+      "model_timeout_seconds": 1500,
+      "do_not_redispatch": true,
+      "raw_result": ".task-state/bakeoff-rounds-20261017/E5-RUNNER-LIFETIME.result.json",
+      "raw_log": ".task-state/bakeoff-rounds-20261017/E5-RUNNER-LIFETIME.build.log"
+    },
+    {
+      "lane": "S-EVIDENCE-TEST-GATE",
+      "exec_session_id": 6672,
+      "remote_host": "gate@acx-backend.tail1a44b8.ts.net",
+      "native_scope": "workbay-lane-feature-bakerounds-20261017-s-evidence-t-e3ba916a.scope",
+      "status": "completed",
+      "terminal": {
+        "lane": "S-EVIDENCE-TEST-GATE",
+        "exit": 0,
+        "branch": "feature/bakerounds-20261017-s-evidence-test-gate",
+        "finished": 1792266959.182785,
+        "route": "codex-remote gpt-6.1-sol xhigh standard"
+      },
+      "result_status": "revise",
+      "input_sha": "52e7732877ec803cf231ab262911776657f03b6e",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "service_tier": "standard requested; native tier not exposed",
+      "cpu_cap": "50%",
+      "memory_cap": "1GiB",
+      "helper_timeout_seconds": 1800,
+      "model_timeout_seconds": 1500,
+      "do_not_redispatch": true,
+      "raw_result": ".task-state/bakeoff-rounds-20261017/S-EVIDENCE-TEST-GATE.result.json",
+      "raw_log": ".task-state/bakeoff-rounds-20261017/S-EVIDENCE-TEST-GATE.build.log"
+    }
+  ],
+  "integrated_results": {
+    "E5_combined_candidate": {
+      "sha": "4e1b9bf833294ad3bf12b6935d01944828076bf4",
+      "tree": "26b0808a099fe3966a56e09a85319feb706dcfe3",
+      "branch": "feature/bakerounds-20261017-e5-composed-pending-gate",
+      "base": "6a273d5c61c5fb29bdc9a533bf8e7140b06509a9",
+      "case_count_from_authors": 233,
+      "legacy83_claim_preserved_pending_whole_gate": true,
+      "validation": [
+        {
+          "path": "apps/prototype-description-service/scene/tests/test_eval_harness_owned_executor.py",
+          "test_function_count": 5,
+          "old_assertions": 215,
+          "new_assertions": 215,
+          "sha256": "17515d63b70ceadd7175f5b2a09e68bc2f183c50a2612d8c57460767fa1938e7"
+        },
+        {
+          "path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_runner.py",
+          "test_function_count": 45,
+          "old_assertions": 476,
+          "new_assertions": 476,
+          "sha256": "350532478efc0d11ef4c7726358aba0bd308afea5f554b8f87aaddecef445fd7"
+        }
+      ],
+      "edit_counts": {
+        "E5-EXECUTOR-LIFETIME": 13,
+        "E5-RUNNER-LIFETIME": 3
+      },
+      "status": "composed_pending_independent_whole_v1_gate",
+      "no_source_or_main_adoption": true
+    },
+    "C8_lifecycle_proposal": {
+      "sha": "a0ffa083ba5363ec3983f36b316caab6d5426e92",
+      "tree": "37579cc5f5b948b78bad6f038cd6cdaae94e3a32",
+      "base": "ef145e26db6463f6c4798c656e01760d5db19bdc",
+      "branch": "feature/bakerounds-20261017-cache-eighth-proposed",
+      "proposal_path": "docs/tasks/vlm/BAKECACHE-1-storage-observation-proposal.md",
+      "proposal_blob": "71b98eb81b0323fc8741fb75308ab476f48baa0f",
+      "proposal_sha256": "a1966edae805a34b30d1debdf4d29d905b96261f3e288010263d338b9d825a53",
+      "edit_count": 14,
+      "status": "proposed_pending_independent_whole_planning_G2",
+      "canonical_plan_source_and_main_unchanged": true
+    },
+    "S_test_review": {
+      "custody": {
+        "sha": "c1e69186ef7764226eb2f3bce1bfe077ca976b42",
+        "tree": "0e502f6949b2b767689aeb5aa655907c6ca511d7",
+        "base": "52e7732877ec803cf231ab262911776657f03b6e",
+        "branch": "feature/bakerounds-20261017-s-test-first-reviewed",
+        "changed_files": [
+          ".task-state/bakeoff-rounds-20261017/reviews/S-EVIDENCE-TEST-GATE.json",
+          ".task-state/bakeoff-rounds-20261017/reviews/S-EVIDENCE-TEST-GATE.md"
+        ]
+      },
+      "review_run_id": 1483,
+      "verdict": "revise",
+      "findings": [
+        "S-TEST-G1-01",
+        "S-TEST-G1-02"
+      ]
+    }
+  },
+  "mcp_decisions": [
+    17827,
+    17828,
+    17829
+  ],
+  "verified_test_id": 4983,
+  "source_or_main_promoted": false,
+  "followup_lanes_launched": false,
+  "stop_scope": "completed monitoring and task integration; stop now after recording continuation",
+  "pending": [
+    "IndependentwholeC8planningG2 with original full distillations beforeadoption/source",
+    "IndependentwholeE-v1testG4 on combinedcandidate",
+    "SecondS-testauthorHIGH for2highoraclefindings",
+    "Actualtargetadmission+qualifiedownedoneQwenprocedure stillneeded; bakeoffnotrun"
+  ],
+  "runner_discrepancy": "U+2192 arrows becameU+001A onlyinfinalfindingtext; committedsummary authoritative, bothrawversions retained",
+  "codemap": {
+    "project": "bakecache-executor-fifth-composed-map",
+    "nodes": 141,
+    "edges": 475
+  },
+  "prior_semantic": "monitor-close-semantic.json"
+}

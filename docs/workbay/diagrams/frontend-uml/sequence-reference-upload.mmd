@@ -1,0 +1,16 @@
+sequenceDiagram
+    %% Rescan cluster from Roster drawer (high sensitivity)
+    participant Admin
+    participant Drawer as ClusterDrawerPanel
+    participant Hooks as useClusterActions.rescanMutation
+    participant WPAPI as WP REST /recognition/analyze
+    participant RecSvc as Recognition Service
+
+    Admin->>Drawer: Click "Rescan with high sensitivity"
+    Drawer->>Hooks: rescanMutation.mutate({cluster, mediaIds})
+    Hooks->>WPAPI: POST /recognition/analyze {media_ids, sensitivity:"high", cluster_id}
+    WPAPI->>RecSvc: /recognition/analyze
+    RecSvc-->>WPAPI: {job_ids:[uuid], status:"queued"}
+    WPAPI-->>Hooks: AnalyzeResponse
+    Hooks-->>Drawer: show statusMessage
+    Hooks->>Hooks: invalidate ['recognition-clusters']

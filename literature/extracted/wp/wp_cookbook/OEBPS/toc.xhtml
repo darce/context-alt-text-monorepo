@@ -1,0 +1,788 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+	<head>
+		<title>WordPress Plugin Development Cookbook</title>
+	</head>
+	<body>
+		<nav id="toc" epub:type="toc">
+		<h2>Contents</h2>
+			<ol>
+				<li><a href="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-1">WordPress Plugin Development Cookbook </a></li>
+				<li><a href="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-2">Third Edition</a></li>
+				<li><a href="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-3">Contributors</a></li>
+				<li><a href="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-4">About the author</a></li>
+				<li><a href="B17639_FM_Final_PG_ePub.xhtml#_idParaDest-5">About the reviewers</a></li>
+				<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-6">Preface</a>
+					<ol>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-7">Who this book is for</a></li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-8">What this book covers</a></li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-9">To get the most out of this book</a></li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-10">Download the example code files</a></li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-11">Download the color images</a></li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-12">Conventions used</a></li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-13">Sections</a>
+							<ol>
+								<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-14">Getting ready</a></li>
+								<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-15">How to do it…</a></li>
+								<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-16">How it works…</a></li>
+								<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-17">There&apos;s more…</a></li>
+								<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-18">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-19">Get in touch</a></li>
+						<li><a href="B17639_Preface_Final_PG_ePub.xhtml#_idParaDest-20">Share Your Thoughts</a></li>
+					</ol>
+				</li>
+				<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-21">Chapter 1: Preparing a Local Development Environment</a>
+					<ol>
+						<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-22">Technical requirements</a></li>
+						<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-23">Installing a local web server on your computer</a>
+							<ol>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-24">How to do it…</a></li>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-25">How it works…</a></li>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-26">There&apos;s more…</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-27">Creating a local version control repository </a>
+							<ol>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-28">How to do it…</a></li>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-29">How it works…</a></li>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-30">There&apos;s more…</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-31">Installing a dedicated code editor/text editor</a>
+							<ol>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-32">Getting ready</a></li>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-33">How to do it…</a></li>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-34">How it works…</a></li>
+								<li><a href="B17639_01_Final_PG_ePub.xhtml#_idParaDest-35">There&apos;s more…</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-36">Chapter 2: Plugin Framework Basics</a>
+					<ol>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-37">Technical requirements  </a></li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-38">Creating a plugin file and header</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-39">Getting ready</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-40">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-41">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-42">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-43">Adding output content to page headers using plugin actions</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-44">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-45">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-46">There&apos;s more...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-47">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-48">Using WordPress path utility functions to load external files and images</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-49">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-50">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-51">There&apos;s more...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-52">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-53">Modifying the site generator meta tag using plugin filters</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-54">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-55">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-56">There&apos;s more...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-57">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-58">Adding text after each item&apos;s content using plugin filters</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-59">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-60">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-61">There&apos;s more...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-62">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-63">Inserting link tracking code in the page body using plugin filters</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-64">Getting ready</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-65">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-66">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-67">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-68">Troubleshooting coding errors and printing variable content</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-69">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-70">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-71">There&apos;s more...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-72">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-73">Creating a new simple shortcode</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-74">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-75">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-76">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-77">Creating a new shortcode with parameters</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-78">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-79">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-80">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-81">Creating a new enclosing shortcode</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-82">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-83">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-84">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-85">Loading a style sheet to format plugin output</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-86">Getting ready</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-87">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-88">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-89">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-90">Writing plugins using object-oriented PHP</a>
+							<ol>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-91">Getting ready</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-92">How to do it...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-93">How it works...</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-94">There&apos;s more…</a></li>
+								<li><a href="B17639_02_Final_PG_ePub.xhtml#_idParaDest-95">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-96">Chapter 3: User Settings and Administration Pages</a>
+					<ol>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-97">Technical requirements</a></li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-98">Creating default user settings on plugin initialization</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-99">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-100">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-101">There&apos;s more...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-102">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-103">Storing user settings using arrays</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-104">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-105">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-106">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-107">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-108">Removing plugin data on deletion</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-109">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-110">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-111">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-112">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-113">Creating an administration page menu item in the settings menu</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-114">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-115">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-116">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-117">There&apos;s more...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-118">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-119">Creating a multi-level administration menu</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-120">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-121">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-122">There&apos;s more…</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-123">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-124">Rendering the admin page contents using HTML</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-125">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-126">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-127">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-128">There&apos;s more...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-129">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-130">Processing and storing plugin configuration data</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-131">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-132">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-133">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-134">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-135">Displaying a confirmation message when options are saved</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-136">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-137">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-138">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-139">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-140">Adding custom help pages</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-141">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-142">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-143">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-144">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-145">Rendering the admin page contents using the Settings API</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-146">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-147">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-148">There&apos;s more...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-149">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-150">Accessing user settings from action and filter hooks</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-151">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-152">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-153">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-154">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-155">Formatting admin pages using meta boxes</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-156">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-157">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-158">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-159">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-160">Splitting admin code from the main plugin file to optimize site performance</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-161">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-162">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-163">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-164">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-165">Storing style sheet data in user settings</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-166">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-167">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-168">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-169">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-170">Managing multiple sets of user settings from a single admin page</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-171">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-172">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-173">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-174">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-175">Creating a network-level plugin with admin pages</a>
+							<ol>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-176">Getting ready</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-177">How to do it...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-178">How it works...</a></li>
+								<li><a href="B17639_03_Final_PG_ePub.xhtml#_idParaDest-179">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-180">Chapter 4: The Power of Custom Post Types</a>
+					<ol>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-181">Technical requirements </a></li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-182">Creating a custom post type</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-183">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-184">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-185">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-186">There&apos;s more...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-187">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-188">Adding a new section to the custom post type editor</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-189">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-190">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-191">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-192">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-193">Displaying single custom post type items using a custom layout</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-194">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-195">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-196">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-197">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-198">Tailoring search output for custom post type items</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-199">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-200">How to do it…</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-201">How it works…</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-202">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-203">Displaying custom post type data in shortcodes</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-204">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-205">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-206">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-207">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-208">Adding custom categories for custom post types</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-209">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-210">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-211">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-212">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-213">Adding custom fields to categories</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-214">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-215">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-216">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-217">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-218">Hiding the category editor from the custom post type editor</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-219">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-220">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-221">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-222">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-223">Displaying additional columns in the custom post list page</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-224">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-225">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-226">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-227">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-228">Adding filters for custom categories to the custom post list page</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-229">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-230">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-231">How it works...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-232">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-233">Adding Quick Edit fields for custom categories</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-234">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-235">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-236">How it works...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-237">Updating the page title to include custom post data using plugin filters</a>
+							<ol>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-238">Getting ready</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-239">How to do it...</a></li>
+								<li><a href="B17639_04_Final_PG_ePub.xhtml#_idParaDest-240">How it works...</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-241">Chapter 5: Customizing Post and Page Editors</a>
+					<ol>
+						<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-242">Technical requirements </a></li>
+						<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-243">Capturing and displaying information using custom meta boxes</a>
+							<ol>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-244">Getting ready</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-245">How to do it...</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-246">How it works...</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-247">There&apos;s more...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-248">Displaying custom post data using filter functions</a>
+							<ol>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-249">Getting ready</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-250">How to do it...</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-251">How it works...</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-252">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-253">Hiding the Custom Fields section in the post editor</a>
+							<ol>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-254">Getting ready</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-255">How to do it...</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-256">How it works...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-257">Extending the post editor to attach custom files with the media uploader</a>
+							<ol>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-258">Getting ready</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-259">How to do it...</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-260">How it works...</a></li>
+								<li><a href="B17639_05_Final_PG_ePub.xhtml#_idParaDest-261">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-262">Chapter 6: Extending the Block Editor</a>
+					<ol>
+						<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-263">Technical requirements </a></li>
+						<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-264">Setting up a block development environment and creating a simple block</a>
+							<ol>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-265">Getting ready</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-266">How to do it...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-267">How it works...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-268">There&apos;s more...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-269">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-270">Creating an editable blockquote block</a>
+							<ol>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-271">Getting ready</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-272">How to do it...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-273">How it works...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-274">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-275">Creating a new WordPress REST endpoint</a>
+							<ol>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-276">Getting ready</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-277">How to do it...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-278">How it works...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-279">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-280">Creating a server-side rendering block that leverages an existing shortcode</a>
+							<ol>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-281">Getting ready</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-282">How to do it...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-283">How it works...</a></li>
+								<li><a href="B17639_06_Final_PG_ePub.xhtml#_idParaDest-284">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-285">Chapter 7: Accepting User Content Submissions</a>
+					<ol>
+						<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-286">Technical requirements </a></li>
+						<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-287">Creating a client-side content submission form</a>
+							<ol>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-288">Getting ready</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-289">How to do it...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-290">How it works...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-291">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-292">Saving user-submitted content in custom post types</a>
+							<ol>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-293">Getting ready</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-294">How to do it...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-295">How it works...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-296">There&apos;s more...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-297">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-298">Sending email notifications upon new submissions</a>
+							<ol>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-299">Getting ready</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-300">How to do it...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-301">How it works...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-302">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-303">Implementing a CAPTCHA on user forms using an online service</a>
+							<ol>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-304">Getting ready</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-305">How to do it...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-306">How it works...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-307">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-308">Using a local library to implement a CAPTCHA on user forms</a>
+							<ol>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-309">Getting ready</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-310">How to do it...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-311">How it works...</a></li>
+								<li><a href="B17639_07_Final_PG_ePub.xhtml#_idParaDest-312">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-313">Chapter 8: Customizing User Data</a>
+					<ol>
+						<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-314">Technical requirements </a></li>
+						<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-315">Adding custom fields to the user editor</a>
+							<ol>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-316">Getting ready</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-317">How to do it...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-318">How it works...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-319">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-320">Processing and storing custom user data</a>
+							<ol>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-321">Getting ready</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-322">How to do it...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-323">How it works...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-324">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-325">Displaying new user data on the user list page</a>
+							<ol>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-326">Getting ready</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-327">How to do it...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-328">How it works...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-329">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-330">Using custom user data in an enclosing shortcode</a>
+							<ol>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-331">Getting ready</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-332">How to do it...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-333">How it works...</a></li>
+								<li><a href="B17639_08_Final_PG_ePub.xhtml#_idParaDest-334">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-335">Chapter 9: Leveraging JavaScript, jQuery, and AJAX Scripts</a>
+					<ol>
+						<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-336">Technical requirements </a></li>
+						<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-337">Safely loading jQuery onto WordPress web pages</a>
+							<ol>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-338">Getting ready</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-339">How to do it...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-340">How it works...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-341">There&apos;s more...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-342">Displaying a pop-up dialog using the built-in ThickBox plugin</a>
+							<ol>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-343">Getting ready</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-344">How to do it...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-345">How it works...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-346">There&apos;s more...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-347">Controlling pop-up dialog display using shortcodes</a>
+							<ol>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-348">Getting ready</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-349">How to do it...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-350">How it works...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-351">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-352">Displaying a calendar day selector using the Datepicker plugin</a>
+							<ol>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-353">Getting ready</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-354">How to do it...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-355">How it works...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-356">Adding tooltips to admin page form fields using the TipTip plugin</a>
+							<ol>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-357">Getting ready</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-358">How to do it...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-359">How it works...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-360">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-361">Using AJAX to dynamically update partial page contents</a>
+							<ol>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-362">Getting ready</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-363">How to do it...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-364">How it works...</a></li>
+								<li><a href="B17639_09_Final_PG_ePub.xhtml#_idParaDest-365">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-366">Chapter 10: Adding New Widgets to the WordPress Library</a>
+					<ol>
+						<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-367">Technical requirements </a></li>
+						<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-368">Creating a new widget in WordPress</a>
+							<ol>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-369">Getting ready</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-370">How to do it...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-371">How it works...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-372">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-373">Displaying widget configuration options</a>
+							<ol>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-374">Getting ready</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-375">How to do it...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-376">How it works...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-377">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-378">Validating widget configuration options</a>
+							<ol>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-379">Getting ready</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-380">How to do it...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-381">How it works...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-382">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-383">Adding a custom dashboard widget</a>
+							<ol>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-384">Getting ready</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-385">How to do it...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-386">How it works...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-387">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-388">Adding a custom widget to the network dashboard</a>
+							<ol>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-389">Getting ready</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-390">How to do it...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-391">How it works...</a></li>
+								<li><a href="B17639_10_Final_PG_ePub.xhtml#_idParaDest-392">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-393">Chapter 11: Fetching, Caching, and Regularly Updating External Site Data</a>
+					<ol>
+						<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-394">Technical requirements </a></li>
+						<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-395">Displaying RSS items from an external feed</a>
+							<ol>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-396">Getting ready</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-397">How to do it…</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-398">How it works...</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-399">There&apos;s more…</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-400">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-401">Optimizing plugin performance by storing external data using transients</a>
+							<ol>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-402">Getting ready</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-403">How to do it...</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-404">How it works...</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-405">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-406">Scheduling plugin data updates using WP-Cron</a>
+							<ol>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-407">Getting ready</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-408">How to do it...</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-409">There&apos;s more…</a></li>
+								<li><a href="B17639_11_Final_PG_ePub.xhtml#_idParaDest-410">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-411">Chapter 12: Enabling Plugin Internationalization</a>
+					<ol>
+						<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-412">Technical requirements </a></li>
+						<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-413">Changing the WordPress site language configuration</a>
+							<ol>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-414">Getting ready</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-415">How to do it...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-416">How it works...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-417">Adapting default user settings for translation</a>
+							<ol>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-418">Getting ready</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-419">How to do it...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-420">How it works...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-421">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-422">Making admin page code ready for translation</a>
+							<ol>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-423">Getting ready</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-424">How to do it...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-425">How it works...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-426">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-427">Modifying shortcode output for translation</a>
+							<ol>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-428">Getting ready</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-429">How to do it...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-430">How it works...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-431">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-432">Translating text strings using Poedit</a>
+							<ol>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-433">Getting ready</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-434">How to do it...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-435">How it works...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-436">There&apos;s more...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-437">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-438">Loading a language file in the plugin initialization</a>
+							<ol>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-439">Getting ready</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-440">How to do it...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-441">How it works...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-442">There&apos;s more...</a></li>
+								<li><a href="B17639_12_Final_PG_ePub.xhtml#_idParaDest-443">See also</a></li>
+							</ol>
+						</li>
+					</ol>
+				</li>
+				<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-444">Chapter 13: Distributing Your Plugin on WordPress.org</a>
+					<ol>
+						<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-445">Technical requirements </a></li>
+						<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-446">Creating a README file for your plugin</a>
+							<ol>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-447">Getting ready</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-448">How to do it...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-449">How it works...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-450">There&apos;s more...</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-451">Applying for your plugin to be hosted on WordPress.org</a>
+							<ol>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-452">How to do it...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-453">How it works...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-454">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-455">Uploading your plugin using Subversion</a>
+							<ol>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-456">Getting ready</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-457">How to do it...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-458">How it works...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-459">There&apos;s more...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-460">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-461">Providing plugin banner and thumbnail images</a>
+							<ol>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-462">Getting ready</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-463">How to do it...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-464">How it works...</a></li>
+								<li><a href="B17639_13_Final_PG_ePub.xhtml#_idParaDest-465">See also</a></li>
+							</ol>
+						</li>
+						<li><a href="B17639_Backmatter_Final_PG_ePub.xhtml#_idParaDest-466">Why subscribe?</a></li>
+					</ol>
+				</li>
+				<li><a href="B17639_Backmatter_Final_PG_ePub.xhtml#_idParaDest-467">Other Books You May Enjoy</a>
+					<ol>
+						<li><a href="B17639_Backmatter_Final_PG_ePub.xhtml#_idParaDest-468">Packt is searching for authors like you</a></li>
+					</ol>
+				</li>
+			</ol>
+		</nav>
+		<nav epub:type="landmarks">
+		<h2>Landmarks</h2>
+			<ol>
+				<li><a epub:type="cover" href="cover.xhtml">Cover</a></li>
+				<li><a epub:type="toc" href="B17639_TOC_Final_PG_ePub.xhtml#_idContainer002">Table of Contents</a></li>
+			</ol>
+		</nav>
+	</body>
+</html>

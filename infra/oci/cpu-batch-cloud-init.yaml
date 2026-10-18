@@ -1,0 +1,242 @@
+#cloud-config
+# ACX dedicated CPU batch box (VLM-6, CPU-first matrix — reachability plan §Requirement update).
+# Target: Ubuntu 22.04 on VM.Standard.E4.Flex (16 OCPU / 64 GB), launched private-only in
+# acx-batch-subnet with NAT egress (Phase 1 step 8 of
+# docs/runbooks/oci-vm-reachability-tailscale-vcn-plan.md).
+#
+# Deliberately generic: no Tailscale, no baked identity, no secrets. The SSH key
+# comes from launch metadata (--ssh-authorized-keys-file); this file only
+# provisions compute. Unlike infra/oci/gpu-cloud-init.yaml (weights baked into a
+# golden image), everything here downloads at first boot via the NAT gateway.
+#
+# Two workloads:
+#   1. Florence on-box cell — /opt/acx-cpu/venv runs
+#      apps/prototype-description-service/scripts/eval_harness/florence_describe.py
+#      (scp the single file + TSV; rsync the corpus to ~ubuntu/corpus, results
+#      from ~ubuntu/results — Phase 1 steps 10-11).
+#   2. Qwen weave-bench CPU cell — llama.cpp llama-server (built at the pinned
+#      release the VLM-2B bench used) serving Qwen3-VL-4B-Instruct Q4_K_M on
+#      127.0.0.1:8080 (acx-cpu-vlm.service).
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - build-essential
+  - cmake
+  - git
+  - curl
+  - ca-certificates
+  - pkg-config
+  - libcurl4-openssl-dev
+  - python3-venv
+  - python3-pip
+
+write_files:
+  - path: /opt/acx-cpu/acx-cpu.env
+    permissions: "0644"
+    content: |
+      # ------------------------------------------------------------------
+      # Qwen3-VL-4B-Instruct GGUF + mmproj (VLM-2B A1 serving notes / HF repo
+      # Qwen/Qwen3-VL-4B-Instruct-GGUF). Filenames and LFS SHA-256 oids verified
+      # against the Hugging Face tree API (2026-08-12): both paths resolve
+      # (HTTP 302) and sha256sum -c fails closed on a wrong-but-200 body.
+      # Workload 2 (llama-server weave-bench cell) is scaffolding for the
+      # PARKED S3–S6 bake-off — not required for the S0–S2 regression gate.
+      # ------------------------------------------------------------------
+      ACX_GGUF_URL=https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf
+      ACX_MMPROJ_URL=https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf
+      # HF LFS content SHA-256 (oid) for each artifact — pin, do not invent.
+      ACX_GGUF_SHA256=66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a
+      ACX_MMPROJ_SHA256=30ba2c7dd3127a4561b6cba9d13d0f711c91bdb38742e2f56d73c8cb596bd06d
+      # llama.cpp pinned to the release the VLM-2B A1 bench ran (serving notes
+      # metadata: "llama.cpp release b9893").
+      ACX_LLAMA_CPP_REF=b9893
+      # The serving notes ran --threads 3 on a 4-core A1 (leave-headroom rule).
+      # Same rule on the E4 16-OCPU box: 12 by default; florence_describe.py and
+      # rsync share the remainder.
+      ACX_VLM_THREADS=12
+      # Loopback per the CPU-first deliverable spec. For the laptop-driven Qwen
+      # cell either tunnel (ssh -L 8080:127.0.0.1:8080 ubuntu@<private-ip>) or —
+      # after the reachability plan's step-7 ":8080" ACL widening — set
+      # ACX_VLM_HOST=0.0.0.0 and restart acx-cpu-vlm.service. Never widen this
+      # before the ACL exists.
+      ACX_VLM_HOST=127.0.0.1
+      ACX_VLM_PORT=8080
+
+  - path: /usr/local/bin/acx-cpu-provision.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # One-shot first-boot provision: Florence venv + llama.cpp build + 4B weights.
+      # All downloads go out the batch subnet's NAT gateway (reachability plan D1).
+      set -euo pipefail
+      source /opt/acx-cpu/acx-cpu.env
+
+      # --- Florence venv (deps mirror apps/prototype-description-service
+      # [project.optional-dependencies].vlm, plus pillow for image IO). Torch is
+      # the CPU wheel: never pull the CUDA-bundled PyPI build on this box.
+      # flash_attn is intentionally ABSENT — florence_describe.py loads with
+      # eager attention (oci-vlm-batch-compute-learnings.md gotcha).
+      python3 -m venv /opt/acx-cpu/venv
+      /opt/acx-cpu/venv/bin/pip install --upgrade pip
+      /opt/acx-cpu/venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2.0"
+      /opt/acx-cpu/venv/bin/pip install \
+        "transformers>=4.44.0,<4.49.0" \
+        "pillow" \
+        "einops>=0.7.0" \
+        "timm>=1.0.0" \
+        "accelerate>=0.33.0"
+
+      # --- llama.cpp llama-server at the pinned bench release.
+      if [[ ! -x /opt/acx-cpu/llama.cpp/build/bin/llama-server ]]; then
+        rm -rf /opt/acx-cpu/llama.cpp
+        git clone --depth 1 --branch "${ACX_LLAMA_CPP_REF}" \
+          https://github.com/ggml-org/llama.cpp /opt/acx-cpu/llama.cpp
+        cmake -S /opt/acx-cpu/llama.cpp -B /opt/acx-cpu/llama.cpp/build -DCMAKE_BUILD_TYPE=Release
+        cmake --build /opt/acx-cpu/llama.cpp/build --target llama-server -j"$(nproc)"
+      fi
+
+      # --- Qwen3-VL-4B Q4_K_M weights + vision mmproj (~4 GB total; -C - resumes
+      # a partial pull on re-run). SHA-256 pins in acx-cpu.env fail closed on a
+      # wrong-but-HTTP-200 body (rg-006: documented boot must not silent-pass).
+      mkdir -p /opt/acx-cpu/models
+      curl -fL --retry 5 --retry-delay 10 -C - \
+        -o /opt/acx-cpu/models/qwen3-vl-4b-instruct-q4.gguf "${ACX_GGUF_URL}"
+      curl -fL --retry 5 --retry-delay 10 -C - \
+        -o /opt/acx-cpu/models/qwen3-vl-4b-instruct-mmproj.gguf "${ACX_MMPROJ_URL}"
+      echo "${ACX_GGUF_SHA256}  /opt/acx-cpu/models/qwen3-vl-4b-instruct-q4.gguf" | sha256sum -c -
+      echo "${ACX_MMPROJ_SHA256}  /opt/acx-cpu/models/qwen3-vl-4b-instruct-mmproj.gguf" | sha256sum -c -
+      # Sentinel for the idle-reaper timer: no poweroff backstop until provision
+      # has succeeded (cmake/curl/pip windows must not look "idle").
+      touch /opt/acx-cpu/.provisioned
+      echo "acx-cpu provision complete"
+
+  - path: /etc/systemd/system/acx-cpu-vlm.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX CPU VLM endpoint (Qwen3-VL-4B-Instruct Q4_K_M, weave-bench CPU cell)
+      After=network-online.target
+      Wants=network-online.target
+      # Fail terminally instead of restart-looping on a billed box when weights
+      # are missing (mirrors gpu-cloud-init.yaml's start-limit rationale).
+      StartLimitIntervalSec=120
+      StartLimitBurst=3
+
+      [Service]
+      Type=exec
+      EnvironmentFile=/opt/acx-cpu/acx-cpu.env
+      ExecStartPre=/usr/bin/test -f /opt/acx-cpu/models/qwen3-vl-4b-instruct-q4.gguf
+      ExecStartPre=/usr/bin/test -f /opt/acx-cpu/models/qwen3-vl-4b-instruct-mmproj.gguf
+      ExecStartPre=/usr/bin/test -x /opt/acx-cpu/llama.cpp/build/bin/llama-server
+      # Serving flags are the MANDATORY live protocol from
+      # docs/tasks/vlm/VLM-2B-a1-serving-notes.md ("full live serving command"):
+      #   llama-server --threads 3 --parallel 1 --ctx-size 8192 --image-max-tokens 1536 \
+      #     -m <model>.gguf --mmproj <mmproj>.gguf --host 127.0.0.1 --port 8099
+      # --image-max-tokens 1536 is REQUIRED: uncapped Qwen3-VL dynamic resolution
+      # blew large golden images past 600 s and aborted the first live run via
+      # bounded-stall. Only host/port (matrix: 127.0.0.1:8080) and the thread
+      # count (leave-headroom rule scaled to the E4, see acx-cpu.env) differ.
+      ExecStart=/opt/acx-cpu/llama.cpp/build/bin/llama-server \
+        --threads ${ACX_VLM_THREADS} --parallel 1 --ctx-size 8192 --image-max-tokens 1536 \
+        -m /opt/acx-cpu/models/qwen3-vl-4b-instruct-q4.gguf \
+        --mmproj /opt/acx-cpu/models/qwen3-vl-4b-instruct-mmproj.gguf \
+        --host ${ACX_VLM_HOST} --port ${ACX_VLM_PORT}
+      Restart=on-failure
+      RestartSec=10
+      TimeoutStartSec=900
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/acx-cpu-idle-reaper.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # BACKSTOP ONLY — never a substitute for terminate discipline (every launch
+      # pairs with a terminate; oci-vlm-batch-compute-learnings.md). The GPU
+      # image's reaper decides on describe-load JSON + OCI STOP (300 s idle, needs
+      # instance OCID + auth); this box is generic/no-credentials, so the backstop
+      # is simpler: sampled every 5 min by acx-cpu-idle-reaper.timer (gated on
+      # /opt/acx-cpu/.provisioned so it cannot fire mid-provision), it powers
+      # off after 6 consecutive idle samples (~30 min) with no matched batch
+      # CPU activity. Activity covers llama-server + python batch PLUS provision
+      # and corpus-transfer processes (cmake/cc1plus/make/curl/rsync/sshd) so a
+      # long build, weight pull, or rsync is not misread as idle. In-OS poweroff
+      # moves the instance to STOPPED (E4.Flex compute billing stops); the
+      # operator still owes the terminate.
+      set -euo pipefail
+      if [[ ! -e /opt/acx-cpu/.provisioned ]]; then
+        logger -t acx-cpu-idle-reaper "skip: provision sentinel missing"
+        exit 0
+      fi
+      STATE_DIR=/run/acx-cpu
+      mkdir -p "${STATE_DIR}"
+      IDLE_LIMIT=6
+      # Minimum new cumulative CPU-seconds across samples to count as active
+      # (30 s over 5 min = 10% of one core; real batch work saturates cores).
+      MIN_DELTA=30
+
+      total=$(ps -eo comm=,cputimes= | awk '$1 ~ /llama-server|python3?|cmake|cc1plus|make|curl|rsync|sshd/ {s+=$2} END {print s+0}')
+      prev=$(cat "${STATE_DIR}/cpu_total" 2>/dev/null || echo 0)
+      idle=$(cat "${STATE_DIR}/idle_count" 2>/dev/null || echo 0)
+      echo "${total}" > "${STATE_DIR}/cpu_total"
+
+      if (( total - prev >= MIN_DELTA )); then
+        echo 0 > "${STATE_DIR}/idle_count"
+        exit 0
+      fi
+      idle=$((idle + 1))
+      echo "${idle}" > "${STATE_DIR}/idle_count"
+      logger -t acx-cpu-idle-reaper "idle sample ${idle}/${IDLE_LIMIT} (cpu delta $((total - prev))s)"
+      if (( idle >= IDLE_LIMIT )); then
+        logger -t acx-cpu-idle-reaper "no batch activity for ${IDLE_LIMIT} samples; powering off"
+        systemctl poweroff
+      fi
+
+  - path: /etc/systemd/system/acx-cpu-idle-reaper.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX CPU batch idle reaper (backstop poweroff, no credentials)
+      # Hard gate: unit is skipped until provision script writes the sentinel
+      # (after venv + llama.cpp build + weight download + sha256 verify).
+      ConditionPathExists=/opt/acx-cpu/.provisioned
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/acx-cpu-idle-reaper.sh
+
+  - path: /etc/systemd/system/acx-cpu-idle-reaper.timer
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Sample ACX CPU batch activity every 5 minutes
+      # Do not arm the reaper until first-boot provision has finished successfully.
+      ConditionPathExists=/opt/acx-cpu/.provisioned
+
+      [Timer]
+      # First sample after boot once the provision sentinel exists; then every 5 min.
+      OnBootSec=15min
+      OnUnitActiveSec=5min
+      Persistent=true
+      Unit=acx-cpu-idle-reaper.service
+
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  # Corpus/results roots match the reachability plan's Phase 1 steps 10-11 rsync
+  # targets (ubuntu@<private-ip>:corpus/ and :results/).
+  - mkdir -p /home/ubuntu/corpus /home/ubuntu/results
+  - chown -R ubuntu:ubuntu /home/ubuntu/corpus /home/ubuntu/results
+  # Provision (venv + llama.cpp build + weights). A failure here exits cloud-init
+  # degraded, which Phase 1 step 9's `cloud-init status --wait` gate surfaces —
+  # triage via /var/log/acx-cpu-provision.log, not the network ladder.
+  - bash /usr/local/bin/acx-cpu-provision.sh >> /var/log/acx-cpu-provision.log 2>&1
+  - chown -R ubuntu:ubuntu /opt/acx-cpu
+  - systemctl daemon-reload
+  - systemctl enable --now acx-cpu-vlm.service
+  - systemctl enable --now acx-cpu-idle-reaper.timer
+  - echo "ACX CPU batch cloud-init bootstrap complete"

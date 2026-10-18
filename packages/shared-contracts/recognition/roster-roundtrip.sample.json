@@ -1,0 +1,40 @@
+{
+    "model": "insightface_w600k",
+    "synced_at": "2024-04-05T16:21:00Z",
+    "entries": [
+        {
+            "id": "remote-1",
+            "label": "Example Person",
+            "type": "person",
+            "updated_at": "2024-04-05T15:45:12Z",
+            "metadata": {
+                "confidence": 0.98,
+                "local_id": 42
+            },
+            "reference_images": [
+                {
+                    "image_id": 123,
+                    "source": "media-library",
+                    "embedding_length": 512
+                }
+            ]
+        },
+        {
+            "id": "remote-archived",
+            "label": "Deprecated Org",
+            "type": "organization",
+            "updated_at": "2024-03-28T09:12:33Z",
+            "archived_at": "2024-04-02T11:00:00Z",
+            "metadata": {
+                "reason": "Merged with Example Person"
+            },
+            "reference_images": []
+        }
+    ],
+    "sync_metrics": {
+        "created": 1,
+        "updated": 0,
+        "deleted": 1,
+        "conflicts": 0
+    }
+}

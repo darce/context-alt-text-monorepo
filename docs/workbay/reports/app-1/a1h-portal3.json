@@ -1,0 +1,33 @@
+{
+  "lane": "a1h-portal3",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py recognition/tests/unit/test_app1_portal_checkout_router.py recognition/tests/unit/test_app1_portal_composition.py recognition/tests/unit/test_app1_single_admission.py recognition/tests/unit/test_app1_usage_composition.py recognition/tests/unit/test_dw2_portalcomp_1.py",
+      "result": "fail",
+      "detail": "Pytest emitted `Timeout (0:04:00)!` in test_enabled_mount_resolves_real_portal_and_billing_composition (recognition/tests/unit/test_app1_app_mount.py:176); later test_first_checkout_persists_before_provider_and_returns_pending also timed out at TestClient.__enter__ (recognition/tests/unit/test_app1_portal_checkout_router.py:327). Interrupted before a final summary (exit 130)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_composition.py::test_create_app_installs_usage_factory_when_portal_flag_off",
+      "result": "pass",
+      "detail": "1 passed in 4.62s; asserts create_app installs UsageAdmissionServiceFactory with RECOGNITION_PORTAL_ENABLED unset."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -vv -o timeout=20 -o timeout_method=signal recognition/tests/unit/test_app1_app_mount.py::test_enabled_mount_resolves_real_portal_and_billing_composition",
+      "result": "fail",
+      "detail": "Failed: Timeout (>20.0s) from pytest-timeout. The request hung in the async app-mount test; teardown logged GET /portal/me 500 after cancellation."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 15853,
+      "finding_id": "W4USAG-ac21ad4e1d22ef24-M-292d3c26be369c4b9ea2dbc5",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "api/main.py:656 - `install_usage_admission_factory(app)` executes before the `RECOGNITION_PORTAL_ENABLED` branch at :657. recognition/tests/unit/test_app1_usage_composition.py:107 - `assert isinstance(app.state.usage_admission_service, UsageAdmissionServiceFactory)` with the portal flag unset at :93.",
+      "guard_test": "recognition/tests/unit/test_app1_usage_composition.py::test_create_app_installs_usage_factory_when_portal_flag_off"
+    }
+  ],
+  "new_findings": [],
+  "summary": "The usage-composition correction holds: admission is installed outside the portal gate and its portal-off regression guard passes. The aggregate lane suite did not complete because app-mount and checkout TestClient tests timed out; no additional code defect was established."
+}

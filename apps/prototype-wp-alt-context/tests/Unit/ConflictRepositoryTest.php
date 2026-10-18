@@ -1,0 +1,213 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Tests\Unit;
+
+use AltContext\Sovereign\Sync\ConflictRepository;
+use AltContext\Tests\TestCase;
+use AltContext\Tests\Support\FindsSqlQueries;
+
+class ConflictRepositoryTest extends TestCase
+{
+	use FindsSqlQueries;
+
+	public function testRecordConflictPersistsOpenConflictRow(): void
+	{
+		global $wpdb;
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_conflict(
+			[
+				'id' => 17,
+				'tenant_id' => 'tenant-test-123',
+				'entity_type' => 'cluster',
+				'entity_key' => 'cluster-7',
+				'expected_base_version' => 21,
+				'local_revision' => 4,
+				'payload' => ['cluster_uuid' => 'cluster-7', 'person_uuid' => null],
+			],
+			[
+				'conflict_code' => 'version_conflict',
+				'backend_version' => 22,
+				'backend_proposed_value' => 'Remote label',
+				'machine_payload' => ['cluster_uuid' => 'cluster-7', 'person_uuid' => 'person-remote'],
+			]
+		);
+
+		$this->assertSame(1, $result);
+
+		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
+		$this->assertStringContainsString("'tenant-test-123'", $insertQuery);
+		$this->assertStringContainsString("'version_conflict'", $insertQuery);
+		$this->assertStringContainsString("'Remote label'", $insertQuery);
+		$this->assertStringContainsString("'open'", $insertQuery);
+	}
+
+	public function testRecordProjectionConflictUsesUpsertSemantics(): void
+	{
+		global $wpdb;
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_projection_conflict(
+			'tenant-projection',
+			'member',
+			'identity-88',
+			'member_cluster_reassignment',
+			54,
+			33,
+			9,
+			['cluster_uuid' => 'cluster-remote', 'proposed_value' => 'Remote cluster'],
+			['cluster_uuid' => 'cluster-local']
+		);
+
+		$this->assertSame(1, $result);
+
+		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
+		$this->assertStringContainsString("'tenant-projection'", $insertQuery);
+		$this->assertStringContainsString("'member_cluster_reassignment'", $insertQuery);
+		$this->assertStringContainsString("'Remote cluster'", $insertQuery);
+		$this->assertStringContainsString('ON DUPLICATE KEY UPDATE', $insertQuery);
+		$this->assertStringContainsString('backend_proposed_value = VALUES(backend_proposed_value)', $insertQuery);
+		$this->assertStringContainsString('machine_payload = VALUES(machine_payload)', $insertQuery);
+		$this->assertStringContainsString('local_payload = VALUES(local_payload)', $insertQuery);
+		$this->assertStringNotContainsString('resolution_status = VALUES(resolution_status)', $insertQuery);
+	}
+
+	public function testRecordProjectionConflictUpdatesExistingOpenConflictAcrossVersions(): void
+	{
+		global $wpdb;
+		$wpdb->mockRow = [
+			'id' => 7,
+			'backend_version' => 54,
+			'resolution_status' => 'open',
+		];
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_projection_conflict(
+			'tenant-projection',
+			'cluster',
+			'cluster-7',
+			'curated_cluster_deleted',
+			55,
+			33,
+			9,
+			['status' => 'missing_from_snapshot'],
+			['label' => 'Curated']
+		);
+
+		$this->assertSame(7, $result);
+
+		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_conflicts SET');
+		$this->assertStringContainsString("backend_version = 55", $updateQuery);
+		$this->assertStringContainsString("WHERE id = 7", $updateQuery);
+	}
+
+	public function testRecordProjectionConflictRejectsMissingRequiredIdentifiers(): void
+	{
+		$repository = new ConflictRepository();
+
+		$result = $repository->record_projection_conflict(
+			'',
+			'member',
+			'identity-88',
+			'member_cluster_reassignment',
+			54,
+			33,
+			9,
+			['cluster_uuid' => 'cluster-remote'],
+			['cluster_uuid' => 'cluster-local']
+		);
+
+		$this->assertFalse($result);
+	}
+
+	public function testRecordBackendRosterRegressionPersistsAggregateConflictRow(): void
+	{
+		global $wpdb;
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_backend_roster_regression(
+			'tenant-storm',
+			41,
+			[
+				'backend_version' => 41,
+				'counts' => ['curated_cluster_deleted' => 2, 'curated_member_deleted' => 1, 'member_cluster_reassignment' => 0],
+				'entities' => [
+					'curated_cluster_deleted' => ['cluster-a', 'cluster-b'],
+					'curated_member_deleted' => ['identity-a'],
+					'member_cluster_reassignment' => [],
+				],
+				'entity_set_truncated' => false,
+			],
+			['curated_clusters' => 4, 'curated_members' => 2]
+		);
+
+		$this->assertSame(1, $result);
+
+		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
+		$this->assertStringContainsString("'backend_roster_regressed'", $insertQuery);
+		$this->assertStringContainsString("'tenant-storm'", $insertQuery);
+		$this->assertStringContainsString('curated_cluster_deleted', $insertQuery);
+	}
+
+	public function testRecordBackendRosterRegressionDeduplicatesOpenAggregateForSameBackendVersion(): void
+	{
+		global $wpdb;
+		$wpdb->mockRow = [
+			'id' => 7,
+			'backend_version' => 41,
+			'resolution_status' => 'open',
+		];
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_backend_roster_regression(
+			'tenant-storm',
+			41,
+			['backend_version' => 41, 'counts' => [], 'entities' => [], 'entity_set_truncated' => false],
+			[]
+		);
+
+		$this->assertSame(7, $result);
+
+		foreach ($wpdb->queries as $query) {
+			$this->assertStringNotContainsString('INSERT INTO', $query, 'an open aggregate for the same backend_version must not be re-recorded');
+			$this->assertStringNotContainsString('UPDATE wp_acx_sync_conflicts', $query);
+		}
+	}
+
+	public function testRecordBackendRosterRegressionRefreshesOpenAggregateForNewerBackendVersion(): void
+	{
+		global $wpdb;
+		$wpdb->mockRow = [
+			'id' => 7,
+			'backend_version' => 41,
+			'resolution_status' => 'open',
+		];
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_backend_roster_regression(
+			'tenant-storm',
+			42,
+			['backend_version' => 42, 'counts' => [], 'entities' => [], 'entity_set_truncated' => false],
+			[]
+		);
+
+		$this->assertSame(7, $result, 'a newer divergent cycle must refresh the open aggregate row, not create a second one');
+
+		foreach ($wpdb->queries as $query) {
+			$this->assertStringNotContainsString('INSERT INTO', $query, 'no second aggregate row while one is open');
+		}
+
+		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_conflicts SET');
+		$this->assertStringContainsString('backend_version = 42', $updateQuery);
+	}
+
+	public function testFindOpenBackendRosterRegressionReturnsNullWithoutOpenAggregate(): void
+	{
+		$repository = new ConflictRepository();
+
+		$this->assertNull($repository->find_open_backend_roster_regression('tenant-storm'));
+	}
+
+}

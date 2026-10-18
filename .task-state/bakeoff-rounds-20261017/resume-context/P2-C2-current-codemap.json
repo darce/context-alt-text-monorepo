@@ -1,0 +1,161 @@
+{
+  "project": "bakecache-p2-c2-v1-baseline-map",
+  "nodes": 338,
+  "edges": 1984,
+  "scope": "Current v1 P/M and current P/C test baseline; P2 and C/E sources absent; exact hashes in test-map-source/P2-C2-current/origin.json",
+  "results": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "name: BatchIntent\nqualified_name: bakecache-p2-c2-v1-baseline-map.owned_protocol.BatchIntent\nlabel: Class\nfile_path: /Users/daniel/Development/context-alt-text-monorepo/.task-state/bakeoff-rounds-20261017/test-map-source/P2-C2-current/owned_protocol.py\nstart_line: 1079\nend_line: 1169\nsource_mode: full\nsource: |\n  class BatchIntent:\n      schema: Literal[\"bakecache-batch-intent/v1\"]\n      contract_version: Literal[\"bakecache-protocol/v1\"]\n      mode: Literal[\"fixture\", \"real\"]\n      batch_id: UUID\n      source_tree: Tree\n      output_root: AbsPath\n      batch_root: AbsPath\n      batch_report_dir: AbsPath\n      batch_report_path: AbsPath\n      planner_inputs: PlannerInputs\n      legs: list[ExecutionIntent]\n      serving_gate_failures: list[ServingGateFailureWire]\n      incumbent_runs: dict[Text, AbsPath]\n      baseline_runs: dict[BaselineLabel, AbsPath]\n      expected_candidates: list[Text]\n      expected_incumbents: list[Text]\n      required_baselines: list[BaselineLabel]\n      bakeoff_gate: bool\n      report_timeout_ns: int\n      max_diagnostic_bytes: int\n  \n      @classmethod\n      def from_json(cls, raw: object) -> Outcome[Self]:\n          result = _decode(raw, cls._parse)\n          if result.ok:\n              try:\n                  encoded = (\n                      raw\n                      if type(raw) is str\n                      else json.dumps(raw, ensure_ascii=False, allow_nan=False, separators=(\",\", \":\"))\n                  )\n                  _require(\n                      len(encoded.encode(\"utf-8\")) <= result.value.max_diagnostic_bytes,\n                      \"batch wire exceeds diagnostic byte admission\",\n                  )\n              except (_InvalidError, ValueError, UnicodeError) as exc:\n                  return _Rejected(False, Failure(FailureCode.CONTRACT_INVALID, str(exc)))\n          return result\n  \n      @classmethod\n      def _parse(cls, raw: object) -> Self:\n          obj = _object(\n              raw,\n              (\n                  \"schema\",\n                  \"contract_version\",\n                  \"mode\",\n                  \"batch_id\",\n                  \"source_tree\",\n                  \"output_root\",\n                  \"batch_root\",\n                  \"batch_report_dir\",\n                  \"batch_report_path\",\n                  \"planner_inputs\",\n                  \"legs\",\n                  \"serving_gate_failures\",\n                  \"incumbent_runs\",\n                  \"baseline_runs\",\n                  \"expected_candidates\",\n                  \"expected_incumbents\",\n                  \"required_baselines\",\n                  \"bakeoff_gate\",\n                  \"report_timeout_ns\",\n                  \"max_diagnostic_bytes\",\n              ),\n          )\n          result = cls(\n              schema=_constant(obj[\"schema\"], \"bakecache-batch-intent/v1\"),\n              contract_version=_constant(obj[\"contract_version\"], \"bakecache-protocol/v1\"),\n              mode=_choice(obj[\"mode\"], (\"fixture\", \"real\")),\n              batch_id=_uuid(obj[\"batch_id\"]),\n              source_tree=_pattern(obj[\"source_tree\"], r\"[0-9a-f]{40}\"),\n              output_root=_path(obj[\"output_root\"]),\n              batch_root=_path(obj[\"batch_root\"]),\n              batch_report_dir=_path(obj[\"batch_report_dir\"]),\n              batch_report_path=_path(obj[\"batch_report_path\"]),\n              planner_inputs=PlannerInputs._parse(obj[\"planner_inputs\"]),\n              legs=_array(obj[\"legs\"], ExecutionIntent._parse, False),\n              serving_gate_failures=_array(obj[\"serving_gate_failures\"], ServingGateFailureWire._parse, False),\n              incumbent_runs=_map(obj[\"incumbent_runs\"], _text),\n              baseline_runs=_map(obj[\"baseline_runs\"], lambda value: _enum(value, BaselineLabel)),\n              expected_candidates=_array(obj[\"expected_candidates\"], _text, False),\n              expected_incumbents=_array(obj[\"expected_incumbents\"], _text, False),\n              required_baselines=_array(obj[\"required_baselines\"], lambda value: _enum(value, BaselineLabel), False),\n              bakeoff_gate=_boolean(obj[\"bakeoff_gate\"]),\n              report_timeout_ns=(lambda value: _integer(value, 1))(obj[\"report_timeout_ns\"]),\n              max_diagnostic_bytes=(lambda value: _integer(value, 1))(obj[\"max_diagnostic_bytes\"]),\n          )\n          _validate_batch(result)\n          return result\ncallers: 0\ncallees: 0\n"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "name: ReservationReceipt\nqualified_name: bakecache-p2-c2-v1-baseline-map.owned_protocol.ReservationReceipt\nlabel: Class\nfile_path: /Users/daniel/Development/context-alt-text-monorepo/.task-state/bakeoff-rounds-20261017/test-map-source/P2-C2-current/owned_protocol.py\nstart_line: 1245\nend_line: 1264\nsource_mode: full\nsource: |\n  class ReservationReceipt:\n      binding: AttemptBinding\n      filesystems: list[ReservedFilesystem]\n      free_samples: list[FreeSample]\n  \n      @classmethod\n      def from_json(cls, raw: object) -> Outcome[Self]:\n          return _decode(raw, cls._parse)\n  \n      @classmethod\n      def _parse(cls, raw: object) -> Self:\n          obj = _object(raw, (\"binding\", \"filesystems\", \"free_samples\"))\n          result = cls(\n              binding=AttemptBinding._parse(obj[\"binding\"]),\n              filesystems=_array(obj[\"filesystems\"], ReservedFilesystem._parse, True),\n              free_samples=_array(obj[\"free_samples\"], FreeSample._parse, True),\n          )\n          _unique([f.device for f in result.filesystems], \"reserved device\")\n          _ordered([f.at_ns for f in result.free_samples], \"free sample timestamps\")\n          return result\ncallers: 0\ncallees: 0\n"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"project\":\"bakecache-p2-c2-v1-baseline-map\",\"total_nodes\":338,\"total_edges\":1984,\"languages\":{\"cols\":[\"language\",\"files\"],\"rows\":[[\"Python\",4]]},\"packages\":{\"cols\":[\"name\",\"nodes\",\"fan_in\",\"fan_out\"],\"rows\":[[\"owned_protocol\",99,0,0],[\"test_eval_harness_owned_cache\",58,0,0],[\"test_eval_harness_owned_protocol\",13,0,0],[\"str\",3,0,0],[\"list\",3,0,0],[\"owned_memory\",3,0,0],[\"dict\",2,0,0],[\"Failure\",2,0,0],[\"EvidenceRef\",2,0,0],[\"DeviceIdentity\",2,0,0],[\"ProcessIdentity\",2,0,0],[\"RootIdentity\",2,0,0],[\"AttemptBinding\",2,0,0],[\"Component\",2,0,0],[\"InventorySpec\",2,0,0]]}}"
+          }
+        ],
+        "structuredContent": {
+          "project": "bakecache-p2-c2-v1-baseline-map",
+          "total_nodes": 338,
+          "total_edges": 1984,
+          "languages": {
+            "cols": [
+              "language",
+              "files"
+            ],
+            "rows": [
+              [
+                "Python",
+                4
+              ]
+            ]
+          },
+          "packages": {
+            "cols": [
+              "name",
+              "nodes",
+              "fan_in",
+              "fan_out"
+            ],
+            "rows": [
+              [
+                "owned_protocol",
+                99,
+                0,
+                0
+              ],
+              [
+                "test_eval_harness_owned_cache",
+                58,
+                0,
+                0
+              ],
+              [
+                "test_eval_harness_owned_protocol",
+                13,
+                0,
+                0
+              ],
+              [
+                "str",
+                3,
+                0,
+                0
+              ],
+              [
+                "list",
+                3,
+                0,
+                0
+              ],
+              [
+                "owned_memory",
+                3,
+                0,
+                0
+              ],
+              [
+                "dict",
+                2,
+                0,
+                0
+              ],
+              [
+                "Failure",
+                2,
+                0,
+                0
+              ],
+              [
+                "EvidenceRef",
+                2,
+                0,
+                0
+              ],
+              [
+                "DeviceIdentity",
+                2,
+                0,
+                0
+              ],
+              [
+                "ProcessIdentity",
+                2,
+                0,
+                0
+              ],
+              [
+                "RootIdentity",
+                2,
+                0,
+                0
+              ],
+              [
+                "AttemptBinding",
+                2,
+                0,
+                0
+              ],
+              [
+                "Component",
+                2,
+                0,
+                0
+              ],
+              [
+                "InventorySpec",
+                2,
+                0,
+                0
+              ]
+            ]
+          }
+        },
+        "isError": false
+      }
+    }
+  ]
+}

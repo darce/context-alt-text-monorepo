@@ -6,7 +6,9 @@
     ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.json",
     ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-SOURCE-G2.md"
   ],
-  "commits": [],
+  "commits": [
+    "a17cc5ddf45e62a0f61179fd29346a70ed0ad4a0"
+  ],
   "findings": [
     {
       "id": "RAW-AUTH-SOURCE-G2-01",

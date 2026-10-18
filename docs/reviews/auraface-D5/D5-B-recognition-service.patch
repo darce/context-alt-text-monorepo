@@ -1,0 +1,11 @@
+diff --git a/scripts/deploy/recognition-service.sh b/scripts/deploy/recognition-service.sh
+index 5b2e00512d4e8130fa492a1c40e54748879583d5..b830a8611ccab7d751deba55c290b6029c7dee2d 100755
+--- a/scripts/deploy/recognition-service.sh
++++ b/scripts/deploy/recognition-service.sh
+@@ -1368,3 +1368,5 @@ def check():
+         if not password or unquote(user,errors="strict") != role: return False
+-        if unquote(url.path,errors="strict") != "/"+database: return False
++        # SQLAlchemy decodes credentials but keeps the database path literal.
++        # Escaped database names select a different store, even if unquote agrees.
++        if url.path != "/"+database: return False
+     return True

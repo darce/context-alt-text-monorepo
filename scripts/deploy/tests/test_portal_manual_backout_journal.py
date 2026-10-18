@@ -52,6 +52,10 @@ def _manual_state(tmp_path: Path, phase: str) -> Path:
     app = backend / "app"
     rollback = app / "rollback"
     rollback.mkdir(parents=True)
+    # Model the reviewed helper packaged by a successful apply. The native
+    # Compose probes replace this unmarked legacy base with the actual base.
+    (app / "shared-edge.sh").write_bytes((REPO_ROOT / "scripts/deploy/lib/shared-edge.sh").read_bytes())
+    deploy_helpers._write_caddy_compose(backend / "docker-compose.caddy.yml")
     (backend / "Caddyfile").write_text("live caddy\n")
     (app / "www").mkdir()
     (app / "www/index.html").write_text("live frontend\n")
@@ -183,20 +187,29 @@ def _recovery_wrapper(
     commands = _recovery_commands()
     assert "env -u FRONTEND_DIST" in commands
     # Model the workstation copies: the VM invocation has no repository checkout.
+    copied_helper = tmp_path / "app-portal-recovery.shared-edge.sh"
     copied_script = tmp_path / "app-portal-recovery.sh"
     copied_snippet = tmp_path / "app-portal-recovery.Caddyfile.app"
     copied_overlay = tmp_path / "app-portal-recovery.overlay.yml"
-    for source, destination in ((SCRIPT, copied_script), (SNIPPET, copied_snippet), (OVERLAY, copied_overlay)):
+    for source, destination in (
+        (SCRIPT, copied_script),
+        (REPO_ROOT / "scripts/deploy/lib/shared-edge.sh", copied_helper),
+        (SNIPPET, copied_snippet),
+        (OVERLAY, copied_overlay),
+    ):
         destination.write_bytes(source.read_bytes())
     replacements = {
         "/opt/acx-backend": str(tmp_path / "opt/acx-backend"),
         "/tmp/app-portal-recovery.sh": str(SCRIPT if checkout else copied_script),
+        "/tmp/app-portal-recovery.shared-edge.sh": str(copied_helper),
         "/tmp/app-portal-recovery.Caddyfile.app": str(copied_snippet),
         "/tmp/app-portal-recovery.overlay.yml": str(copied_overlay),
         "/usr/local/bin/app-portal-health-check": str(tmp_path / "bin/health-check"),
     }
-    for original, replacement in replacements.items():
-        commands = commands.replace(original, replacement)
+    # The script path ending in .sh prefixes .shared-edge.sh. Replace longest
+    # transport paths first so the fourth copied artifact keeps its own binding.
+    for original in sorted(replacements, key=len, reverse=True):
+        commands = commands.replace(original, replacements[original])
     if mutant:
         commands = commands.replace("env -u FRONTEND_DIST", "env")
     wrapper = tmp_path / "documented-recovery.sh"

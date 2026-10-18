@@ -40,7 +40,8 @@ unfenced.
 Required:
 
 - `BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS` (contract default 8s)
-- `POLAR_WEBHOOK_SECRET`, `POLAR_ACCESS_TOKEN`, `POLAR_PRODUCT_IDS`
+> **Billing-provider update (superseded 2026-09-30; clarified 2026-10-17):** Polar is obsolete and will not be provisioned. Billing will use standard Stripe Checkout Sessions on AltContext's own Stripe account plus Stripe Billing (excluding Stripe Managed Payments and any merchant-of-record arrangement), per APP-1 decision (2026-09-22) and APP1RB-1 decision `claude_decision_billing_is_stripe_direct_polar_is_removed_20260930` (2026-09-30). Polar references below are legacy code/history only; do not provision Polar accounts, catalogs, or `POLAR_*` secrets.
+- `POLAR_WEBHOOK_SECRET`, `POLAR_ACCESS_TOKEN`, `POLAR_PRODUCT_IDS` (legacy only)
 - `POLAR_ORGANIZATION_ID`
 - `POLAR_ENVIRONMENT` (`sandbox` or `live`; must match API host)
 

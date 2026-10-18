@@ -1,6 +1,6 @@
 # ADR-014: Payment processor and merchant-of-record selection
 
-- **Status:** Proposed; recommendation updated 2026-09-19, not accepted or implemented.
+- **Status:** Superseded 2026-09-30 by the Stripe-direct decision (APP-1 2026-09-22; APP1RB-1 `claude_decision_billing_is_stripe_direct_polar_is_removed_20260930`); clarified 2026-10-17. Polar is obsolete and will not be provisioned.
 - **Original date:** 2026-07-12.
 - **Decider:** Founder (Daniel).
 - **Context:** INV-NEXTVER-01; current implementation proposal APP-1.
@@ -17,7 +17,7 @@ The July decision also overstated Polar's self-hosting exit, Stripe Managed Paym
 
 ## Recommended decision
 
-**Use Polar Starter as the first and only billing implementation for APP-1. Buy hosted checkout and customer subscription management. Keep a small provider adapter and local entitlement projection.**
+**Superseded: use standard Stripe Checkout Sessions on AltContext's own Stripe account plus Stripe Billing (excluding Stripe Managed Payments and any merchant-of-record arrangement). Keep a small provider adapter and local entitlement projection.** The original Polar recommendation below is retained as history only.
 
 This is a reasoned choice under uncertainty, not a measured assertion of best developer experience. Polar's hosted flow, sandbox and customer-state interface fit one subscription offer and the existing planned lifecycle. There is no demonstrated integration advantage that justifies another mandatory vendor bake-off. Prove this path early; reopen only on concrete failure or meaningful new evidence.
 

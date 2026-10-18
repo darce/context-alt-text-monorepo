@@ -397,7 +397,12 @@ OVERLAY_DEST="${APP_ROOT}/docker-compose.app.yml"
 ROLLBACK_DIR="${APP_ROOT}/rollback"
 ACTIVATION_JOURNAL="${APP_ROOT}/activation.journal"
 DEPLOY_LOCK="${ACTIVATION_JOURNAL}.lock"
-for _reserved_path in "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK" "$OVERLAY_DEST"; do
+SHARED_EDGE_DEST="${APP_ROOT}/shared-edge.sh"
+guard_dest_path SHARED_EDGE_DEST "$SHARED_EDGE_DEST" file
+if paths_overlap "$CADDYFILE" "$SHARED_EDGE_DEST"; then
+  refuse "CADDYFILE collides with installed shared-edge helper"
+fi
+for _reserved_path in "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK" "$OVERLAY_DEST" "$SHARED_EDGE_DEST"; do
   if paths_overlap "$APP_WWW" "$_reserved_path"; then
     refuse "APP_WWW collides with activation paths"
   fi
@@ -421,7 +426,7 @@ guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" path
 # Guards above require absolute paths without dot or symlink components, so
 # these normalized paths identify the actual filesystem destinations.
 for _activation_path in "$STAGING_DIR" "$ROLLBACK_DIR" "$APP_WWW" "${APP_WWW}.prev" \
-  "$CADDYFILE" "$OVERLAY_DEST" "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK"; do
+  "$CADDYFILE" "$OVERLAY_DEST" "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK" "$SHARED_EDGE_DEST"; do
   if paths_overlap "$CADDY_COMPOSE" "$_activation_path"; then
     refuse "CADDY_COMPOSE collides with activation paths"
   fi
@@ -2112,6 +2117,14 @@ if ! reload_caddy; then
 fi
 if ! run_health; then
   activation_fail "health check failed after reload"
+fi
+
+# Keep the reviewed helper available for manual recovery without a VM checkout
+# or the original /tmp transport artifacts. Publish it atomically while the
+# activation journal and shared ownership fence still protect this apply.
+guard_dest_path SHARED_EDGE_DEST "$SHARED_EDGE_DEST" file
+if ! atomic_copy_file "$APP_SHARED_EDGE_LIB" "$SHARED_EDGE_DEST"; then
+  activation_fail "could not package the shared-edge recovery helper"
 fi
 
 clear_activation_journal

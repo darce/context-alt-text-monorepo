@@ -2306,6 +2306,11 @@ def _run_runbook_commands(
     never_ready: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     live_root = tmp_path / "opt" / "acx-backend"
+    # Model the fourth standalone artifact outside the protected live tree;
+    # supplying test inputs must not mutate the state under refusal assertions.
+    packaged_helper = tmp_path / "runbook-shared-edge.sh"
+    if not packaged_helper.exists():
+        packaged_helper.write_bytes((REPO_ROOT / "scripts/deploy/lib/shared-edge.sh").read_bytes())
     bin_dir = tmp_path / "rollback-bin"
     bin_dir.mkdir(exist_ok=True)
     _write_executable(
@@ -2324,7 +2329,13 @@ def _run_runbook_commands(
     commands = commands.replace("/usr/local/bin/app-portal-health-check", str(bin_dir / "health-check"))
     return subprocess.run(
         ["bash", "-c", commands],
-        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "BASH_ENV": "", "LC_ALL": "C"},
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "BASH_ENV": "",
+            "LC_ALL": "C",
+            "APP_SHARED_EDGE_LIB": str(packaged_helper),
+        },
         text=True,
         capture_output=True,
         check=False,
@@ -2380,6 +2391,7 @@ def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snaps
     live_root = tmp_path / "opt" / "acx-backend"
     rollback = live_root / "app" / "rollback"
     rollback.mkdir(parents=True)
+    _write_caddy_compose(live_root / "docker-compose.caddy.yml")
     live_caddy = live_root / "Caddyfile"
     live_caddy.write_text("live caddy\n", encoding="utf-8")
     caddy_inode = live_caddy.stat().st_ino
@@ -2680,6 +2692,9 @@ def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
 ) -> None:
     backend = tmp_path / "opt" / "acx-backend"
     backend.mkdir(parents=True)
+    (backend / "app").mkdir()
+    (backend / "app/docker-compose.app.yml").write_text("services: {}\n")
+    _write_caddy_compose(backend / "docker-compose.caddy.yml")
     (backend / "Caddyfile").write_text("host caddy\n")
     verification = RUNBOOK.read_text(encoding="utf-8").split("If the hashes differ", 1)[1]
     commands = verification.split("```bash\n", 1)[1].split("```", 1)[0]

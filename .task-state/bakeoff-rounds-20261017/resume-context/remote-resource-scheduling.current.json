@@ -1,0 +1,102 @@
+{
+  "at": "2026-10-18T06:49:07.763294+00:00",
+  "objective": {
+    "primary": "Reduce remaining bakeoff landing and execution makespan through its real critical path",
+    "secondary": "Keep ready sibling owners progressing without starvation; preserve running work and reserve headroom",
+    "not_claimed": "Optimal schedule, deterministic exact run times, or width equals capacity"
+  },
+  "method": "Event-driven nonpreemptive resource-constrained critical-path list scheduling with bounded rolling horizon",
+  "research_manifest": ".task-state/bakeoff-rounds-20261017/original-scheduling-corpus-read-manifest.json",
+  "source_anchors": [
+    "Pinedo ch2,5: makespan/precedence/ready jobs; ch14: setups; ch16,18: dynamic arrivals/minimal-change reactive scheduling/slack",
+    "Sinnen ch4,5: max(data-ready time, resource availability); ch7 shared links; ch8 endpoint CPU/transfer work",
+    "Skiena catalog17.9/ch7: critical path lower bound and legal topological order"
+  ],
+  "live_jobs": [
+    {
+      "id": "RAW-R3",
+      "state": "RUNNING_NONPREEMPTIVE",
+      "cpu": 0.5,
+      "memory_bytes": 2147483648,
+      "future_disk_bytes": 1073741824,
+      "nonce": "98456-d83494d1485a427b",
+      "next_real_artifact": "source plus persistent regressions; then independentG3"
+    },
+    {
+      "id": "OWNER-G4",
+      "state": "TERMINAL_PASS_FULL_CUSTODY",
+      "cpu_actor": 0,
+      "memory_actor": 0,
+      "native_head": "53c17674ba8d8265e15fde612eda61763feb0204",
+      "proof": ".task-state/bakeoff-rounds-20261017/OWNER-WHOLE-G4.terminal-cgroup.json"
+    },
+    {
+      "id": "OWNER-PRIVILEGED-QUALIFICATION",
+      "state": "DATA_READY_AFTER_SCOPED_G4_PASS",
+      "cpu": 0.5,
+      "memory_bytes": 2147483648,
+      "future_disk_bytes": 1073741824,
+      "inheritance": "Exact required successor profile, no standing model actor; native execution replaces G4 only at measured admission",
+      "input_document_sha256": "497da91911fe55ffa990e9aee8f2230f41ec71db14960ba1796b1bbb958b3c87",
+      "gates": "actual root staging/ubuntu delegation/privileged shell cancellation; no boot until qualified"
+    },
+    {
+      "id": "CURUX-P0",
+      "state": "READY_UNCLAIMED_OWNER_PROPOSAL",
+      "cpu": 0.5,
+      "memory_bytes": 4294967296,
+      "future_disk_bytes": 1073741824,
+      "scratch_bytes": 536870912,
+      "proposal": "2310119c/024d868f"
+    },
+    {
+      "id": "WB-TRANSPORT",
+      "state": "EXACT_PROFILE_REQUESTED",
+      "cpu": null,
+      "memory_bytes": null,
+      "rule": "No guessed .5CPU budget and no profile shrink to fit"
+    },
+    {
+      "id": "CANVAS",
+      "state": "CURRENT_TERMINAL_COLLECTED_FUTURE_UNRESERVED",
+      "cpu_actor": 0,
+      "future_disk_bytes": 0,
+      "proposal_max_cpu": 0.24,
+      "rule": "Do not turn unclaimed proposal into active claim or discard it from candidate fits"
+    }
+  ],
+  "resources": {
+    "host_cpu": 4,
+    "host_memory_bytes": 25139560448,
+    "gate_cpu": 3.25,
+    "gate_memory_bytes": 17179869184,
+    "aura_runtime_outside_gate": {
+      "cpu": 1.5,
+      "memory_bytes": 4294967296
+    },
+    "reserve": {
+      "cpu": 0.25,
+      "memory_bytes": 2147483648
+    },
+    "setup": "One source/venv setup at a time, returned at actual model boundary rather than verdict",
+    "archive_transfer": "Schedule actual archive-writer/file/network/endpoint CPU contention separately from model execution",
+    "disk": "All owner forward bytes + runtime3GiB + emergency1.4GB; projected ceil<90 and four PG healthy"
+  },
+  "admission_rules": [
+    "Freeze all claimed active phases; no preemption/cancellation/claimed job loan",
+    "Expose a successor only after named producer artifacts and custody are verified; separate data-ready, resource-ready and setup-ready",
+    "At actual terminal/custody return the finished phase CPU/memory and unused disk; successor is a named finite job, never blanket owner rollover",
+    "Recompute all full resource vectors at every release/model-boundary/terminal/custody event, including independent host and parent stocks",
+    "Choose feasible ready critical-path jobs first; among comparable independent jobs use first-ready age/lease risk; no invented all-task acceptance edge",
+    "If higher-priority job cannot fit, evaluate another ready job which fits without delaying a known imminent release; no FIFO head-of-line idle by owner",
+    "Conditional WB return scenario: if Transport original profile is .5CPU, P0 .5CPU + Transport .5CPU may reuse genuine returnedWB1CPU concurrently; verify all memory/disk/CPU/PG/provider/setup facts before claim",
+    "No durations guessed from timeout ceilings: observed warm setup14s, R2author798s, G2gate1036s, G4gate1023s; estimates only, sample small",
+    "Keep .25CPU2GiB emergency/co-tenant headroom; do not shrink source budgets or run jobs at100%physical usage to maximize nominal lane count"
+  ],
+  "applied_changes": [
+    "R3/G4 ran in parallel with separate actual model boundaries and one returned setup",
+    "G4 now terminal/full custody with actual inactive model cgroup and UID0 no matched audit actors; old timed-out aggregate stays unproved as test outcome, not a running claim",
+    "CurrentWorkBay DAG separates actual approval artifact from task-wide unrelated SUBJECT-GATE-03: do not add a false OWNER execution prerequisite merely because MCP pass-write is task-wide fail-closed",
+    "Next action is exact OWNER native qualification, while R3 continues; request precise WB Transport envelope and offer genuine finished-resource handoff to P0, no active Bake cancellation"
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "lane": "cull-svc-scripts-1",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 29,
+  "tests_in_partition": 387,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py::test_no_present_identities_subtraction_in_bench_package",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py:125 - reads production .py files as text and flags only lines containing the literal tokens len(, present_identities, and -; a behavior regression using an alias or helper is invisible to this check",
+      "canon": "TEST-15",
+      "confidence": "medium",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-description-service/scripts/bench/tests/test_dag_score.py::test_fixture_stack_constants_remain_the_declared_pair",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_dag_score.py:317 - compares an imported test-fixture ID with a local literal and never calls production stack-pair validation; changing the production allowlist while leaving fixtures untouched still passes",
+      "canon": "TEST-15",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-description-service/scripts/bench/tests/test_media_pin_public_unicast.py::test_https_get_pinned_connects_to_pinned_ip",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/scripts/bench/tests/test_remote_fetch_bounds.py::test_under_limit_body_preserves_pin_sni_and_host",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_media_pin_public_unicast.py:205 - asserts the pinned TCP destination; apps/prototype-description-service/scripts/bench/tests/test_remote_fetch_bounds.py:358 asserts the same destination in the same seam",
+      "canon": "TEST-11",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_identification.py::test_precision_only_predicate_would_miss_leftover",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_identification.py::test_precision_null_recall_zero_populated_table_is_flagged",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_identification.py:272 - checks source substrings after inspect.getsource instead of executing classification; an always-False classifier retaining the call name passes",
+      "canon": "TEST-15",
+      "confidence": "medium",
+      "cost": "cheap"
+    }
+  ]
+}

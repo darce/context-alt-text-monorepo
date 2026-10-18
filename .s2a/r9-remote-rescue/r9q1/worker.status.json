@@ -1,0 +1,189 @@
+{
+  "attention_required": true,
+  "cycle": 0,
+  "failure_stage": "final_handoff",
+  "handoff_action": "needs_guidance",
+  "lane_id": "vlm6-r9q1",
+  "observability": {
+    "by_phase": {
+      "context_freshness": {
+        "backend": "grok-remote",
+        "context_utilization": {
+          "attribution": {
+            "ctx7_query_count": 0,
+            "used_ace_guidance": false,
+            "used_artifact_context": false,
+            "used_ctx7": false,
+            "used_global_context": false,
+            "used_recent_lane_history": false,
+            "used_semantic_reinjection": false,
+            "used_slice_packet": true
+          },
+          "domain_signal_ratio": 0.7667,
+          "pressure": "normal",
+          "pressure_level": "normal",
+          "prompt_chars": 7002,
+          "prompt_tokens": 1750,
+          "prompt_tokens_approx": 1750,
+          "section_sizes": {
+            "assignment": 0,
+            "context_budget": 525,
+            "dependency_briefs": 5256,
+            "engineering_guidance": 0,
+            "header": 418,
+            "latest_report": 0,
+            "prompt_budget": 307,
+            "relevant_concepts": 55,
+            "reporting_contract": 294,
+            "runtime_guidance": 0
+          },
+          "usage_source": "char_estimate",
+          "utilization_ratio": 0.0137
+        },
+        "cycle": 0,
+        "effective_reasoning_effort": "high",
+        "lane_id": "vlm6-r9q1",
+        "model": "grok-4.5",
+        "phase": "context_freshness",
+        "recorded_at": "2026-08-18T23:56:57.520388+00:00",
+        "requested_reasoning_effort": "high",
+        "response_model": "grok-4.5",
+        "task_ref": "VLM-6",
+        "thread_id": null,
+        "token_usage": null,
+        "token_usage_totals": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "model_context_window": null,
+          "output_tokens": null,
+          "reasoning_output_tokens": null,
+          "total_tokens": null,
+          "usage_source": null
+        },
+        "turn_id": null
+      }
+    },
+    "history": [
+      {
+        "backend": "grok-remote",
+        "context_utilization": {
+          "attribution": {
+            "ctx7_query_count": 0,
+            "used_ace_guidance": false,
+            "used_artifact_context": false,
+            "used_ctx7": false,
+            "used_global_context": false,
+            "used_recent_lane_history": false,
+            "used_semantic_reinjection": false,
+            "used_slice_packet": true
+          },
+          "domain_signal_ratio": 0.7667,
+          "pressure": "normal",
+          "pressure_level": "normal",
+          "prompt_chars": 7002,
+          "prompt_tokens": 1750,
+          "prompt_tokens_approx": 1750,
+          "section_sizes": {
+            "assignment": 0,
+            "context_budget": 525,
+            "dependency_briefs": 5256,
+            "engineering_guidance": 0,
+            "header": 418,
+            "latest_report": 0,
+            "prompt_budget": 307,
+            "relevant_concepts": 55,
+            "reporting_contract": 294,
+            "runtime_guidance": 0
+          },
+          "usage_source": "char_estimate",
+          "utilization_ratio": 0.0137
+        },
+        "cycle": 0,
+        "effective_reasoning_effort": "high",
+        "lane_id": "vlm6-r9q1",
+        "model": "grok-4.5",
+        "phase": "context_freshness",
+        "recorded_at": "2026-08-18T23:56:57.520388+00:00",
+        "requested_reasoning_effort": "high",
+        "response_model": "grok-4.5",
+        "task_ref": "VLM-6",
+        "thread_id": null,
+        "token_usage": null,
+        "token_usage_totals": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "model_context_window": null,
+          "output_tokens": null,
+          "reasoning_output_tokens": null,
+          "total_tokens": null,
+          "usage_source": null
+        },
+        "turn_id": null
+      }
+    ],
+    "latest": {
+      "backend": "grok-remote",
+      "context_utilization": {
+        "attribution": {
+          "ctx7_query_count": 0,
+          "used_ace_guidance": false,
+          "used_artifact_context": false,
+          "used_ctx7": false,
+          "used_global_context": false,
+          "used_recent_lane_history": false,
+          "used_semantic_reinjection": false,
+          "used_slice_packet": true
+        },
+        "domain_signal_ratio": 0.7667,
+        "pressure": "normal",
+        "pressure_level": "normal",
+        "prompt_chars": 7002,
+        "prompt_tokens": 1750,
+        "prompt_tokens_approx": 1750,
+        "section_sizes": {
+          "assignment": 0,
+          "context_budget": 525,
+          "dependency_briefs": 5256,
+          "engineering_guidance": 0,
+          "header": 418,
+          "latest_report": 0,
+          "prompt_budget": 307,
+          "relevant_concepts": 55,
+          "reporting_contract": 294,
+          "runtime_guidance": 0
+        },
+        "usage_source": "char_estimate",
+        "utilization_ratio": 0.0137
+      },
+      "cycle": 0,
+      "effective_reasoning_effort": "high",
+      "lane_id": "vlm6-r9q1",
+      "model": "grok-4.5",
+      "phase": "context_freshness",
+      "recorded_at": "2026-08-18T23:56:57.520388+00:00",
+      "requested_reasoning_effort": "high",
+      "response_model": "grok-4.5",
+      "task_ref": "VLM-6",
+      "thread_id": null,
+      "token_usage": null,
+      "token_usage_totals": {
+        "cached_input_tokens": null,
+        "input_tokens": null,
+        "model_context_window": null,
+        "output_tokens": null,
+        "reasoning_output_tokens": null,
+        "total_tokens": null,
+        "usage_source": null
+      },
+      "turn_id": null
+    }
+  },
+  "pid": 14583,
+  "result_path": "/Users/daniel/Development/context-alt-text-monorepo/.task-state/lane-exec-vlm6-r9q1-bs26znzx.json",
+  "session": "vlm6-review-r9-20260818",
+  "state": "handoff_failed",
+  "summary": "The final worker handoff failed; the saved lane result must be retried without re-running execution.",
+  "task_ref": "VLM-6",
+  "updated_at": "2026-08-18T23:57:02.672632+00:00",
+  "version": 1
+}

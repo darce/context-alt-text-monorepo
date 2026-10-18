@@ -1,0 +1,228 @@
+{
+  "lane": "dfadj-07",
+  "base": "a219271125248d74220f38c40e2879e0d60d85a4",
+  "results": [
+    {
+      "db_id": 16858,
+      "finding_id": "DADJ-6306",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:59 - says the cluster condition appears in 'all five' places, while the same condition is restated in the Files row, verification section, test table, resume rule, and checklist at lines 784, 835, 882, 930, and 1216.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Remove the fixed count or enumerate every repeated cluster-gate statement consistently."
+    },
+    {
+      "db_id": 16860,
+      "finding_id": "DADJ-6310",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:446 - the optimistic mapping rule still conditions centre-in-box fallback on undefined 'size parity'; export_map.py:390 applies the fallback to unmatched GT/prediction pairs without such a condition.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Replace the undefined size-parity trigger with the precise unmatched-pair predicate implemented by the mapper."
+    },
+    {
+      "db_id": 16822,
+      "finding_id": "DADJ-6312",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:691 - the label 'Ground truth & label mapping' links directly to the narrower '#d-media-identity-join' subsection.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Rename the link text to identify the media identity join subsection it opens."
+    },
+    {
+      "db_id": 16823,
+      "finding_id": "DADJ-6313",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:512 - the localization-pin link still points to '#b-constructing-metric-inputs', the current section, and no dedicated localization-pin heading exists.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Give the localization pin its own heading and point its links to that anchor."
+    },
+    {
+      "db_id": 16809,
+      "finding_id": "DADJ-6361",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:45 - the resampling discriminator has six image-level scalars grouped into two occasions; the plan's precision proof at lines 621 and 839 distinguishes occasion from image resampling but has no multi-face fixture to reject face-level resampling.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add a multi-face-per-image fixture where face-level resampling would clear the precision threshold but image-level resampling remains RED."
+    },
+    {
+      "db_id": 16810,
+      "finding_id": "DADJ-6363",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:44 - the current localization fixture has one GT box and one prediction; score.py:77 uses Hungarian assignment, but the declared cases do not distinguish it from descending-IoU greedy matching.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add a multi-box IoU matrix where descending-IoU greedy strands a GT box but Hungarian matching recovers the optimal count."
+    },
+    {
+      "db_id": 16868,
+      "finding_id": "DADJ-6367",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1154 - claims provenance-consumer and per-leg accepted-set red proofs, but the S2 Files table at lines 785-791 does not declare the score/preflight tests for these checks and no listed case asserts accepted-set divergence.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add the provenance-consumer and accepted-set divergence assertions to a declared S2 test row and command, or remove the unsupported red-proof claims."
+    },
+    {
+      "db_id": 16869,
+      "finding_id": "DADJ-6369",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:233 - raises box_convention_unknown on non-exact bbox keys, while the declared test_detection_localization cases cover only matching geometry and do not test malformed keys or missing/non-positive dimensions.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add localization red tests for unexpected prediction bbox keys and missing or non-positive image dimensions."
+    },
+    {
+      "db_id": 16870,
+      "finding_id": "DADJ-6373",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:330 - assign_tier forces optimistic cells to DIRECTIONAL, but the plan's test proof at line 839 and test_precision_precondition.py:533 assert only the native-frame restriction.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add an otherwise eligible optimistic-map cell assertion that fails if it is promoted to CONFIRMATORY."
+    },
+    {
+      "db_id": 16787,
+      "finding_id": "DADJ-6375",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:975 - the claimed complete score-provenance inventory omits floor and population stamps required later at line 1086 and written to accepted_set.json by score_report.py:722.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add floor_config, resolved_floor_count, accepted_set_size, detection_scoring_set_size, and manifest_entry_count to the complete PROV-01 inventory or narrow its completeness claim."
+    },
+    {
+      "db_id": 16788,
+      "finding_id": "DADJ-6379",
+      "task": "DEBTFIX-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:233 - the normative stable-error table omits codes used by current fail-closed paths, including driver.py:377 manifest_sha_mismatch and corpus.py:161 baseline_not_superset, so operators have no table remedy for them.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add stable-code and operator-remedy rows for the reachable manifest-pin and baseline-superset refusals and any other omitted body failure paths."
+    },
+    {
+      "db_id": 16871,
+      "finding_id": "DADJ-6385",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:579 - specifies detection_scoring_set for every detection endpoint including primary; score_report.py:1062 filters the primary's input population by that set, and test_score_head_to_head.py:656 asserts it is empty for a non-exhaustive corpus.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "related": [
+        16872
+      ],
+      "fix_hint": "No change needed; the primary detection endpoint uses the exhaustive detection_scoring_set."
+    },
+    {
+      "db_id": 16872,
+      "finding_id": "DADJ-6386",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:404 - restricts detection rows to detection_scoring_set; score_report.py:1062 builds detection_entries only from that set, and test_score_head_to_head.py:216 verifies box-less accepted media adds no detection FP.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "related": [
+        16871
+      ],
+      "fix_hint": "No change needed; detection rows are built from the exhaustive detection population."
+    },
+    {
+      "db_id": 16833,
+      "finding_id": "DADJ-6393",
+      "task": "DEBTFIX-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:410 - discloses public identity exports as a lower bound on detector output and names the estimate end-to-end embeddable-face precision/recall, not detector-only performance.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No change needed; the report estimand now states the embedding-backed export limitation."
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "task_ref": "LAND-1-continuation",
+  "lanes": {
+    "checker": {"owned_paths": ["scripts/gpu_burst_evidence.py", "scripts/test_gpu_burst_evidence.py"], "state_writes": ["checker_commit", "checker_tests"], "tier": "grok-remote/high"},
+    "exporter": {"owned_paths": ["scripts/deploy/lib/export-gpu-evidence.sh", "scripts/deploy/tests/test_export_gpu_evidence_shell.py", "scripts/deploy/tests/test-export-gpu-evidence.sh"], "state_writes": ["exporter_commit", "exporter_tests"], "tier": "grok-remote/high"},
+    "docs": {"owned_paths": ["docs/runbooks/gpu-evidence-capture.md", "docs/tasks/v0.5.0/lanes/EVID-1-evid-1-fix-exporter-brief.md"], "state_writes": ["docs_commit", "docs_verification"], "tier": "grok-remote/high"},
+    "evid_review": {"state_reads": ["checker_commit", "checker_tests", "exporter_commit", "exporter_tests", "docs_commit", "docs_verification"], "state_writes": ["evid_review_verdict", "evid_reviewed_sha"], "tier": "remote adversarial lenses"},
+    "evid_gate": {"state_reads": ["evid_review_verdict", "evid_reviewed_sha"], "state_writes": ["evid_gate_sha", "evid_close_receipt"]},
+    "evid_intake": {"state_reads": ["evid_gate_sha", "evid_close_receipt"], "state_writes": ["evid_landing_sha"]},
+    "land_review": {"state_writes": ["land_review_verdict", "land_reviewed_sha"], "tier": "one local plus remote adversarial lenses"},
+    "land_gate": {"state_reads": ["land_review_verdict", "land_reviewed_sha"], "state_writes": ["land_gate_sha", "land_close_receipt"]},
+    "land_intake": {"state_reads": ["land_gate_sha", "land_close_receipt"], "state_writes": ["land_landing_sha"]},
+    "row_reconciliation": {"state_reads": ["evid_landing_sha", "land_landing_sha"], "state_writes": ["terminal_lane_receipts", "ownership_snapshot"]},
+    "reap_preview": {"state_reads": ["terminal_lane_receipts", "ownership_snapshot"], "state_writes": ["reap_inventory"]},
+    "deployed_inventory": {"state_writes": ["deployed_sha", "incumbent_model", "ui_route", "gpu_units", "metering_config"]},
+    "deployment_convergence": {"state_reads": ["evid_landing_sha", "deployed_sha", "incumbent_model", "ui_route", "gpu_units", "metering_config"], "state_writes": ["deployment_receipt", "burst_preconditions"]},
+    "live_burst": {"state_reads": ["deployment_receipt", "burst_preconditions"], "state_writes": ["wp_run_receipt", "oci_audit", "instance_history"]},
+    "burst_verdict": {"state_reads": ["wp_run_receipt", "oci_audit", "instance_history", "evid_landing_sha"]}
+  },
+  "depends_on": {
+    "evid_review": ["checker", "exporter", "docs"],
+    "evid_gate": ["evid_review"],
+    "evid_intake": ["evid_gate"],
+    "land_gate": ["land_review"],
+    "land_intake": ["land_gate"],
+    "row_reconciliation": ["evid_intake", "land_intake"],
+    "reap_preview": ["row_reconciliation"],
+    "deployment_convergence": ["deployed_inventory", "evid_intake"],
+    "live_burst": ["deployment_convergence"],
+    "burst_verdict": ["live_burst", "evid_intake"]
+  },
+  "conflict_edges": [["evid_gate", "land_gate"], ["evid_intake", "land_intake"]],
+  "resource_constraints": {
+    "evid_gate|land_gate": "shared remote test-gate clone lock",
+    "evid_intake|land_intake": "root main ref lock with fresh SHA revalidation"
+  }
+}

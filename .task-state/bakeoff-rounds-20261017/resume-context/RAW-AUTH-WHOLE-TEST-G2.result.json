@@ -1,0 +1,95 @@
+{
+  "status": "PASS0",
+  "summary": "Independent whole-test review found zero unresolved material defects across all50 composed cases and all three G1 requests. Current source remains45 public-capability RED/5 controls GREEN; future credential behavior is latent.",
+  "source_sha": "70c341352cd34911a99a07672102ecf25c8c082b",
+  "changed_files": [
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-TEST-G2.json",
+    ".task-state/bakeoff-rounds-20261017/reviews/RAW-AUTH-WHOLE-TEST-G2.md"
+  ],
+  "commits": [
+    "6547078c308823a8aaacd1c1dcd6ab6e05c61f22"
+  ],
+  "findings": [],
+  "tests": [
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/context.py",
+      "exit_code": 0,
+      "summary": "11,642 complete reads/snapshots; 11,464 prior files frozen; eight Canon bodies/four original distillations/three upstream pins verified; actual1GiB/.25CPU cgroup."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/composition.py",
+      "exit_code": 0,
+      "summary": "Independently verified13 source-bound fragments, identical standalone full/core patches, only unchanged function-name anchor overlap, disjoint cores and both map orders exactly matching current blob43058b1b/SHA25608ce4056."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/pytest_run.py whole",
+      "exit_code": 1,
+      "summary": "Normal actual-checkout config/conftests/pytest-timeout:50 cases,45 public missing-capability RED/5 GREEN in25.41s; no setup/teardown failures; eight clients closed."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/pytest_run.py controls",
+      "exit_code": 0,
+      "summary": "Five existing public anonymous/refusal/service controls pass in17.88s; seven clients closed; narrowed normal collection."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/prior-public_and_oracles.py",
+      "exit_code": 0,
+      "summary": "Exact preserved original test oracles reproduce short-read-loop/FileIO false rejections and five payload leak misses;22 observations/14 external HTTP exchanges, matched parents and current public controls."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/prior-metadata_oracle.py",
+      "exit_code": 0,
+      "summary": "Original observers still permit64-byte reads before refusal on foreign-owner/0640 descriptors; matched0400/0600 real-FD parents pass. Meter sensitivity only."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/pytest_run.py observer",
+      "exit_code": 0,
+      "summary": "138 controls pass in12.50s against actual composed observer: standard descriptor paths, valid parents, invalid metadata/order, cap/read-ahead, reopen and closure. No future loader GREEN."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/composed_oracles.py",
+      "exit_code": 0,
+      "summary": "49 owned real-FD reads across seven payloads/seven paths:1470 disclosures rejected,1050 same-byte old-oracle misses,196 redacted parents pass; exact4097/isolated invalidities and eight noncontent branches verified."
+    },
+    {
+      "command": "timeout 60s .venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/public_extra.py",
+      "exit_code": 0,
+      "summary": "Actual current anonymous warmup breaker isolation and five-attempt429 bounds;10 raw requests, three external header encodings, six closed clients. Authenticated Bakeoff behavior remains latent."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/matrix.py",
+      "exit_code": 0,
+      "summary": "All50 cases reviewed; original49 IDs/membership/order retained plus overflow;17 constructor/28 CLI/downstream RED;25 actual import hashes verified."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/canon_graph.py",
+      "exit_code": 0,
+      "summary": "Exact path-specific Canon release hashes and supplied verified semantic/selected reinjection checked; current load-source/clone snippets match supplied graph receipt by AST. No live MCP/ONNX claim."
+    },
+    {
+      "command": ".venv/bin/ruff check --no-cache apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "exit_code": 0,
+      "summary": "Focused read-only Ruff check passes."
+    },
+    {
+      "command": ".venv/bin/ruff format --check --no-cache apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+      "exit_code": 0,
+      "summary": "Focused read-only Ruff format check passes without rewriting."
+    },
+    {
+      "command": ".venv/bin/python -B /tmp/raw-auth-whole-test-g2/scripts/verify.py --committed",
+      "exit_code": 0,
+      "summary": "Strict common schema, committed report equality, exact native input/tree, two-path ownership, unchanged complete inputs/prior audits, collection/imports and closure verified."
+    }
+  ],
+  "limitations": [
+    "Logical input5df99b0596ab91703a86845b95c20992533f810c is absent locally. Honest native source_sha has exact requested tree6696a920f75393727a98211bb9d2df859dec46da; equal trees prove bytes, not ancestry.",
+    "PASS0 is the second whole-test specification gate only. Root owns canonical adoption, independent REMOTE real-public-assertion RED acknowledgment/MCP before separate initial LOW source authorship, whole XHIGH source gate and central disposition. No implementation/runtime/quality/adoption/merge approval or actual effect occurs here.",
+    "Constructor/CLI missing-capability failures are real public RED. Deep file/auth/credentialed-warmup/redaction assertions remain latent. AST-extracted real-FD and external-transport controls qualify meters, never a fabricated future consumer.",
+    "Finite dynamic descriptor coverage includes os.read/readv/pread/preadv and standard FileIO/open/io.open/fdopen/buffered/text/readinto paths. Cached pre-instrumentation aliases, mmap/native extensions and concurrent shared-offset readers are unqualified.",
+    "No live graph/MCP/ONNX retrieval exposed or claimed. Supplied verified gte-base-en-v1.5 retrieval/selected reinjection and graph receipts were checked against exact current source/AST/import hashes; no indexed-branch completeness/freshness assumption.",
+    "Pinned llama.cpp d261223d24e97f2df50220e4a5b7f0adb69bba81 selects upstream Bearer compatibility only; installed identity/real acceptance remain unknown. MockTransport verifies encoding/configured/injected timeout, not physical socket deadlines. Zero-byte images/synthetic keys qualify no GT or quality.",
+    "Private0700 audit/tmp/raw-auth-whole-test-g2 retains full snapshots/scripts/outputs/exits/importhashes/manifests, setup failures and native-environment adaptations. Five prior audit roots remain unchanged; clients/owned FDs close and command children returned through wait. No installs, broad suites, nested agents, source/test repair, credentials, shared service/trust changes, cloud/GPU/model/media/inference, cache deletion or foreign signals.",
+    "Actual cgroup1GiB/CPU25000 per100000 verified. Requested model/XHIGH/STANDARD/1500s is session context, not independently attested metadata. commits names the substantive review commit; a following JSON-only commit records its pointer without self-reference."
+  ]
+}

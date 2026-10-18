@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firbench/face-search-record-v1",
+  "title": "FIRBENCH-1 FaceSearchRecord (one searches.jsonl row), schema_version 1",
+  "description": "One row per (face, leg, arm). Cross-field rules: stage_reached is null only for unavailable_fused; unavailable sets stage_reached to unavailable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "face_id",
+    "image_id",
+    "psu_id",
+    "identity_id",
+    "identity_status",
+    "fold",
+    "fold_role",
+    "cell",
+    "unit_id",
+    "sampling_arm",
+    "inclusion_probability",
+    "cohort",
+    "leg_key",
+    "arm",
+    "arm_availability",
+    "alignment_mode",
+    "stage_reached",
+    "top_k",
+    "gallery_sha256",
+    "timing_receipt_ref"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "face_id": {"type": "string", "minLength": 1},
+    "image_id": {"type": "string", "minLength": 1},
+    "psu_id": {"type": "string", "minLength": 1},
+    "identity_id": {"type": ["string", "null"]},
+    "identity_status": {"enum": ["named", "unknown", "unresolved"]},
+    "fold": {"type": "integer", "minimum": 0},
+    "fold_role": {"enum": ["fit", "test"]},
+    "cell": {
+      "type": "array",
+      "prefixItems": [{"type": "string"}, {"type": "string"}],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "unit_id": {"type": ["string", "null"]},
+    "sampling_arm": {"enum": ["probability", "challenge"]},
+    "inclusion_probability": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1},
+    "cohort": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["sex", "age_band", "origin"],
+      "properties": {
+        "sex": {"type": ["string", "null"]},
+        "age_band": {"type": ["string", "null"]},
+        "origin": {"type": ["string", "null"]}
+      }
+    },
+    "leg_key": {"type": "string", "minLength": 1},
+    "arm": {"enum": ["native", "gt_crop_redetect", "cached_yunet_landmark_replay"]},
+    "arm_availability": {"enum": ["available", "unavailable", "unavailable_fused"]},
+    "alignment_mode": {"enum": ["separable", "fused_internal"]},
+    "stage_reached": {"enum": ["missed", "detected", "unaligned", "embedded", "unavailable", null]},
+    "top_k": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [{"type": "string"}, {"type": "number"}],
+        "items": false,
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "gallery_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "timing_receipt_ref": {"type": ["string", "null"]}
+  },
+  "if": {"properties": {"arm_availability": {"const": "unavailable_fused"}}, "required": ["arm_availability"]},
+  "then": {"properties": {"stage_reached": {"const": null}}},
+  "else": {
+    "if": {"properties": {"arm_availability": {"const": "unavailable"}}, "required": ["arm_availability"]},
+    "then": {"properties": {"stage_reached": {"const": "unavailable"}}, "required": ["stage_reached"]},
+    "else": {"required": ["stage_reached"], "properties": {"stage_reached": {"enum": ["missed", "detected", "unaligned", "embedded"]}}}
+  }
+}

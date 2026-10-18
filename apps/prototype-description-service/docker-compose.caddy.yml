@@ -1,0 +1,59 @@
+# Standalone Caddy reverse proxy for multi-environment routing.
+# Joins all three environment networks and routes subdomains to env-specific API aliases.
+# Start after environment stacks are up (networks must exist).
+#
+# Usage: cd /opt/acx-backend && docker compose -f docker-compose.caddy.yml up -d
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${ACX_CADDY_BIND_ADDRESS:-0.0.0.0}:443:443"
+      - "${ACX_CADDY_BIND_ADDRESS:-0.0.0.0}:80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - acx-prod-net
+      - acx-staging-net
+      - acx-dev-net
+      - acx-dev-fir-net
+      - acx-demo-net
+      - acx-dev-auraface-net
+      - acx-staging-auraface-net
+      - acx-prod-auraface-net
+
+networks:
+  acx-prod-net:
+    external: true
+  acx-staging-net:
+    external: true
+  acx-dev-net:
+    external: true
+  # Fir network MUST stay external (FL30C-GATE-01). docker-compose.env.yml owns
+  # the same name under key `backend` (name: ${ACX_NETWORK_NAME}=acx-dev-fir-net).
+  # A compose-created network here stamps com.docker.compose.network=acx-dev-fir-net
+  # and collides with the fir stack's expected label `backend` — whichever stack
+  # comes up second fails. Deploy path creates the network idempotently before
+  # `docker compose up` so fir-absent demo/dev converges still succeed.
+  acx-dev-fir-net:
+    external: true
+  acx-demo-net:
+    external: true
+  # AuraFace per-target networks (GTMSMOKE-1, edge E). Each is intended to be created
+  # by its acx-<env> stack (proposed configuration, not an observed resource); caddy
+  # only joins them as external and never creates them.
+  # Create-before-up: an external network that is absent makes `docker compose up`
+  # fail for the whole edge, so bring each acx-<env> stack up first.
+  acx-dev-auraface-net:
+    external: true
+  acx-staging-auraface-net:
+    external: true
+  acx-prod-auraface-net:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:

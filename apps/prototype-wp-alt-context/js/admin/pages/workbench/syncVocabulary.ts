@@ -1,0 +1,138 @@
+/**
+ * SYNC_VOCABULARY — canonical user-facing status vocabulary (E21-1).
+ *
+ * Lives in its own leaf module so both `syncPresentation.ts` (view-model) and
+ * `phasePresentation.ts` (phase strategy map) can consume it without a
+ * circular import: `syncPresentation` reads the phase map for
+ * `formatSyncJobPhase`, and the map's entries are built from this vocabulary.
+ * `syncPresentation.ts` re-exports it, so the E21-1 import surface is
+ * unchanged.
+ */
+import { __ } from '@wordpress/i18n';
+
+/**
+ * All user-facing status vocabulary. Plain language only — no topology /
+ * replay / projection / dead-letter jargon.
+ */
+export const SYNC_VOCABULARY = {
+  loading: __('Checking sync…', 'alt-context'),
+  empty: __('No sync recorded yet', 'alt-context'),
+  error: __('Sync status unavailable', 'alt-context'),
+  offlineHeadline: __('Recognition service unreachable — showing your local copy.', 'alt-context'),
+  offlineBadge: __('Offline', 'alt-context'),
+  offlineDetail: __('Showing your local copy; changes will sync when the service returns.', 'alt-context'),
+  offlineBannerTitle: __('Working offline', 'alt-context'),
+  attentionBannerTitle: __('Sync attention needed', 'alt-context'),
+  healthyHeadline: __('Last sync: %s', 'alt-context'),
+  healthyBadge: __('Fresh', 'alt-context'),
+  healthySummary: __('Everything is saved and up to date.', 'alt-context'),
+  reclaimerUnknownHeadline: __('Background cleanup status is unavailable.', 'alt-context'),
+  reclaimerUnknownBadge: __('Status unknown', 'alt-context'),
+  reclaimerUnknownSummary: __('We cannot confirm that background cleanup is running.', 'alt-context'),
+  reclaimerNeverRunHeadline: __('Background cleanup has not run yet.', 'alt-context'),
+  reclaimerNeverRunBadge: __('Needs attention', 'alt-context'),
+  reclaimerNeverRunSummary: __('Background cleanup has not completed yet.', 'alt-context'),
+  reclaimerOverdueHeadline: __('Background cleanup is overdue.', 'alt-context'),
+  reclaimerOverdueBadge: __('Overdue', 'alt-context'),
+  reclaimerOverdueSummary: __('Cleanup is overdue; the next sync will try again.', 'alt-context'),
+  reclaimerBreachHeadline: __('Purge is overdue.', 'alt-context'),
+  reclaimerBreachBadge: __('Overdue', 'alt-context'),
+  reclaimerBreachSummary: __('Purge is overdue and the next sync will attempt recovery.', 'alt-context'),
+  reclaimerBacklogRemaining: __('Cleanup remaining: %d', 'alt-context'),
+  reclaimerBacklogOldestAge: __('Oldest cleanup item age: %d seconds', 'alt-context'),
+  reclaimerBacklogCapReached: __('The cleanup batch limit was reached; more remains.', 'alt-context'),
+  queuedHeadline: __('Your changes are saved here and will sync when the service is available.', 'alt-context'),
+  queuedBadge: __('Waiting to sync', 'alt-context'),
+  queuedSummary: __('Your changes are saved here and will sync when the service is available.', 'alt-context'),
+  staleHeadline: __('Last sync: %s', 'alt-context'),
+  staleBadge: __('Stale', 'alt-context'),
+  staleSummary: __('This view may be out of date — sync now to refresh it.', 'alt-context'),
+  conflictsHeadline: __('Conflict resolution is required before sync can catch up.', 'alt-context'),
+  conflictsBadge: __('Conflicts', 'alt-context'),
+  conflictsSummary: __('Conflict resolution is blocking part of the sync queue.', 'alt-context'),
+  failuresHeadline: __('Some sync operations need attention.', 'alt-context'),
+  failuresBadge: __('Failures', 'alt-context'),
+  failuresSummary: __('Some sync operations failed and need operator attention.', 'alt-context'),
+  resyncRequiredHeadline: __(
+    'Local identity changed — a full re-sync is required before this view is current.',
+    'alt-context',
+  ),
+  resyncRequiredBadge: __('Re-sync required', 'alt-context'),
+  resyncRequiredSummary: __(
+    'Local rows were re-keyed or marked for resync; run a full sync before trusting this view.',
+    'alt-context',
+  ),
+  syncingHeadline: __('Syncing…', 'alt-context'),
+  syncingBadge: __('In Progress', 'alt-context'),
+  scanningHeadline: __('Scanning…', 'alt-context'),
+  clusteringHeadline: __('Clustering…', 'alt-context'),
+  describingHeadline: __('Describing…', 'alt-context'),
+  resultsReadyHeadline: __('Results ready for review.', 'alt-context'),
+  resultsReadyBadge: __('Ready', 'alt-context'),
+  resultsSyncingHeadline: __('Syncing results…', 'alt-context'),
+  resultsAcknowledgingHeadline: __('Confirming results…', 'alt-context'),
+  resultsErrorHeadline: __('Recognition service unreachable — showing your local copy.', 'alt-context'),
+  connectedEmptyHeadline: __('Service connected — no clusters yet', 'alt-context'),
+  syncCompletedHeadline: __('Sync completed: %s', 'alt-context'),
+  syncCompletedBare: __('Sync completed', 'alt-context'),
+  retry: __('Retry', 'alt-context'),
+  retrySync: __('Retry sync', 'alt-context'),
+  syncNow: __('Sync now', 'alt-context'),
+  pendingChanges: __('Pending changes: %d', 'alt-context'),
+  failedOps: __('Failed operations: %d', 'alt-context'),
+  conflictsCount: __('Conflicts: %d', 'alt-context'),
+  lastChangeConfirmed: __('Last change confirmed: %s', 'alt-context'),
+  lastConflict: __('Last conflict: %s', 'alt-context'),
+  lastFailure: __('Last failure: %s', 'alt-context'),
+  pendingWorkSummary: __('%1$d waiting, %2$d synced, %3$d failed, %4$d need review', 'alt-context'),
+  pendingWorkSummaryShort: __('%1$d waiting, %2$d failed, %3$d need review', 'alt-context'),
+  pendingChangesLabel: __('Pending changes', 'alt-context'),
+  failedOpsLabel: __('Failed operations', 'alt-context'),
+  conflictsLabel: __('Conflicts', 'alt-context'),
+  reviewFailedOps: __('Review failed sync operations', 'alt-context'),
+  resolveConflicts: __('Resolve sync conflicts', 'alt-context'),
+  openWorkbenchDetail: __('Inspect sync status, scans, and queued sync work.', 'alt-context'),
+  openFailedOpsDetail: __('Retry or discard failed sync operations.', 'alt-context'),
+  scanComplete: __('Scan complete', 'alt-context'),
+  clusteringComplete: __('Clustering complete', 'alt-context'),
+  clusteringFailed: __('Clustering failed', 'alt-context'),
+  resultsSyncFailed: __('Results sync failed', 'alt-context'),
+  resultsSynced: __('Results synced', 'alt-context'),
+  phaseQueued: __('Queued', 'alt-context'),
+  phaseDetecting: __('Detecting', 'alt-context'),
+  phaseClustering: __('Clustering', 'alt-context'),
+  phaseRetrying: __('Retrying', 'alt-context'),
+  phaseSyncingResults: __('Syncing results', 'alt-context'),
+  phaseFailed: __('Failed', 'alt-context'),
+  phaseComplete: __('Complete', 'alt-context'),
+  describeStarting: __('Starting describe run…', 'alt-context'),
+  describeLost: __('Lost connection to the describe run.', 'alt-context'),
+  describeQueued: __('Queued', 'alt-context'),
+  describeRunning: __('Describing', 'alt-context'),
+  describeCompleted: __('Completed', 'alt-context'),
+  describeCompletedWithErrors: __('Completed with errors', 'alt-context'),
+  describeFailed: __('Failed', 'alt-context'),
+  describeCancelled: __('Cancelled', 'alt-context'),
+  // Person workspace vocabulary covered by this task (E21-9 owns full rewrite).
+  dataVersion: __('Data version: %d', 'alt-context'),
+  matchedFaces: __('%d matched faces', 'alt-context'),
+  reviewQueues: __('Review queues', 'alt-context'),
+  updateStatus: __('Update status: %s', 'alt-context'),
+  lastUpdated: __('Last updated: %s', 'alt-context'),
+  afterNextRefresh: __('after the next refresh', 'alt-context'),
+  // Visible label of the SyncStatusIndicator link to Data Retention — Rule 2
+  // cross-reference, not phase/status text, so the Rule 4 file carve-out does
+  // not exempt these three (BR-33).
+  retentionDispose: __('Data Retention: Dispose after confirm', 'alt-context'),
+  retentionPurge: __('Data Retention: Purge on demand', 'alt-context'),
+  retentionRetain: __('Data Retention: Retain all', 'alt-context'),
+  attentionSummary: __('Sync attention needed.', 'alt-context'),
+  offlineSummary: __('The recognition backend is currently unreachable.', 'alt-context'),
+  // E15-35 Slice 3: aggregate backend-regression signal (degraded mode).
+  backendRegressionWarning: __(
+    'The service roster looks rolled back. Your local curation is preserved — resolve the roster conflict to restore or accept.',
+    'alt-context',
+  ),
+  backendRegressionRestoreLocal: __('Restore local curation', 'alt-context'),
+  backendRegressionAcceptBackend: __('Accept backend version', 'alt-context'),
+} as const;

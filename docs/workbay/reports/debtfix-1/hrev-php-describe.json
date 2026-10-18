@@ -1,0 +1,76 @@
+{
+  "lane": "hrev-php-describe",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "python3 -m pytest scripts/test_check_lane_manifest_overlaps.py -q",
+      "result": "pass",
+      "detail": "26 passed in 4.48s"
+    },
+    {
+      "command": "python3 -m json.tool docs/workbay/reports/debtfix-1/hrev-php-describe.json > /dev/null",
+      "result": "pass",
+      "detail": "JSON report parses successfully"
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16866,
+      "finding_id": "DADJ-2734",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-wp-alt-context/src/api/services/class-describe-media-service.php:998-1003 - the absent option returns `ContextCategoryPolicy::ALL`; :976-981 limits product to `name`; :1075-1117 requires a same-tenant naming flag. The contract at docs/workbay/contracts/image-description-api.md:192-193 says image bytes are always sent. DescribeMediaServiceTest.php:1212-1221 tests category opt-out, :1367-1390 disabled names, and :1165-1209 SKU/price omission, but the default still sends all eligible categories and image data.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php::testContextCategoryPolicySendsOnlyExplicitlyAllowedCategory"
+    },
+    {
+      "db_id": 16865,
+      "finding_id": "DADJ-2730",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php:167-187 - reset returns 400 unless `rest_sanitize_boolean( $confirmation )` is true, before tenant resolution or deletion. SyncStatusControllerTest.php:344-359 proves param-only confirmation is rejected without a transaction or deletes; :312-320 exercises confirmed JSON.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SyncStatusControllerTest.php::testResetMirrorRequiresConfirmationInRequestBody"
+    },
+    {
+      "db_id": 17003,
+      "finding_id": "FXPHPB-0687ea5f45123310-H-2b2eb4f1a8d6f01b277f9053",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/api/recognition/syncApi.ts:135-143 now sends `body: { confirm: true }`. The backend test at SyncStatusControllerTest.php:312-315 manually supplies that body; no test under apps/prototype-wp-alt-context/tests asserts resetMirror's client payload, so reverting the client change would not make this guard fail.",
+      "guard_test": ""
+    },
+    {
+      "db_id": 16867,
+      "finding_id": "DADJ-2732",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/services/class-description-budget-service.php:15,29 sets a finite default of 1000; :64-118 enforces 30 requests per user per 60-second window. SettingsController.php:165-174 applies it to describe, analyze, and bulk-run routes. An explicit negative budget remains an operator-controlled unlimited setting.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testRateLimitsDescribeAnalyzeAndBulkRunRequestsTogether"
+    },
+    {
+      "db_id": 17037,
+      "finding_id": "FXPHPB-coord-M-set-body-stub",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/tests/stubs/wp.php:107-114 implements `set_body`/`get_body`, and :144-152 decodes JSON body params. SyncStatusControllerTest.php:312-315 invokes `set_body('{\"confirm\":true}')` through the fixed stub and :317-320 asserts successful reset.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SyncStatusControllerTest.php::testResetMirrorClearsProjectionTablesInOneTransactionAndEmitsAuditHook"
+    },
+    {
+      "db_id": 17028,
+      "finding_id": "FXCTXP-9340be2f3b5c1728-M-ed75b75be856f854b7861580",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "docs/workbay/contracts/image-description-api.md:157-160 documents the product context as `bounded product name only`. The production payload at class-describe-media-service.php:976-981 contains only `name`, and DescribeMediaServiceTest.php:1207-1209 asserts the name is present while SKU and price are absent.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServiceTest.php::testBuildsBoundedContextPackFromAttachmentParentTermsAndProductNameByDefault"
+    },
+    {
+      "db_id": 17027,
+      "finding_id": "FXCTXP-9340be2f3b5c1728-M-9649fbed6c1bd8082f54b20c",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-settings-controller.php:198 exposes resolved `context_categories`; :410-416 validates and writes the canonical option. SettingsControllerTest.php:2145-2159 proves the production save path persists the selected list, while DescribeMediaServiceTest.php:1212-1221 proves outbound collection honors it.",
+      "guard_test": "apps/prototype-wp-alt-context/tests/Unit/SettingsControllerTest.php::testSaveSettingsWritesCanonicalContextCategorySubset"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Five findings hold and two remain partial: the default context policy still sends all eligible categories and image bytes, and the fixed dashboard confirmation client has no regression test; the lane test passes."
+}

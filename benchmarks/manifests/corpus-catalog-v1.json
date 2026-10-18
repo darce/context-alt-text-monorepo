@@ -1,0 +1,14 @@
+{
+  "corpora": {
+    "corpus646-originals": {
+      "hash_field": "sha256_source",
+      "hash_space": "original",
+      "images_subdir": "originals",
+      "manifest_path": "benchmarks/manifests/corpus-manifest-v3r-20260814.json",
+      "manifest_sha256": "2d9d5ba3e04bcfa7ea29f960b2fdc05431bdae7993bd22042a5369ceee7d9bff",
+      "provenance_file": "provenance.json",
+      "root_relative": "benchmarks/images/corpus646"
+    }
+  },
+  "schema": "benchmark-corpus-catalog/v1"
+}

@@ -1,0 +1,239 @@
+{
+  "lane": "tc-20",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "scripts/deploy/tests/test_recognition_ocir_config.py",
+      "verdict": "REWRITE",
+      "tests_total": 21,
+      "tests_affected": [
+        "test_all_remote_registry_commands_carry_the_deploy_config",
+        "test_rollback_is_captured_before_remote_build_and_used_on_failures"
+      ],
+      "reason": "These two cases read shell source and pin literal helper calls or phase order, so refactors can break them without showing a deployment failure.",
+      "evidence": "scripts/deploy/tests/test_recognition_ocir_config.py:256 - reads SCRIPT and asserts source strings; line 381 slices the same shell source to assert phase order.",
+      "subject": "deploy-scoped OCIR credential propagation and rollback",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-12"
+      ],
+      "replacement": "Exercise the deploy flow with fake OCI, Docker, and SSH commands and assert credential propagation and rollback through observable effects.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_staged_rollback.py",
+      "verdict": "REWRITE",
+      "tests_total": 8,
+      "tests_affected": [],
+      "reason": "The rollback cases call restore_runtime_and_edge directly and assert exact recorded order among internal helper functions.",
+      "evidence": "scripts/deploy/tests/test_staged_rollback.py:27 - _run_rollback writes a driver with internal function recorders and invokes restore_runtime_and_edge directly at line 61.",
+      "subject": "staged deploy rollback safety",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-12",
+        "TEST-16"
+      ],
+      "replacement": "Drive rollback through the deploy-facing command with fake SSH, Docker, and health probes; assert route selection, restart prevention, and receipt behavior.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/deploy/tests/test_sync_demo_preflight.py",
+      "verdict": "REWRITE",
+      "tests_total": 15,
+      "tests_affected": [
+        "test_no_plugin_artifact_skips_first_burst_assertion",
+        "test_bootstrap_required_keys_are_all_declared_in_demo_template",
+        "test_caddy_promote_preserves_the_mounted_inode"
+      ],
+      "reason": "These cases pin emitted shell snippets or parse source shape, which can remain green while remote bootstrap or Caddy behavior is broken.",
+      "evidence": "scripts/deploy/tests/test_sync_demo_preflight.py:242 - asserts generated BOOTSTRAP_RAN shell text; line 357 parses bootstrap source and line 427 inspects the generated Caddy body.",
+      "subject": "sync-demo bootstrap and Caddy promotion behavior",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-16",
+        "TEST-15"
+      ],
+      "replacement": "Execute the generated bootstrap and Caddy update using fake remote tools, then assert missing-key handling, first-burst behavior, inode preservation, and health recovery.",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "scripts/env/tests/test_em2f_gate2_secrets.py",
+      "verdict": "MERGE",
+      "tests_total": 3,
+      "tests_affected": [],
+      "reason": "These wave-named cases exercise live required-host-secret and stale-optional-key behavior and belong with the subject's materializer tests.",
+      "evidence": "scripts/env/tests/test_em2f_gate2_secrets.py:72 - materialize.run is checked for missing-secret status, unchanged files, and optional-key cleanup.",
+      "subject": "required host-secret materialization and optional managed keys",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "scripts/env/tests/test_materialize.py",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_em2f_gate3_adopt.py",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [],
+      "reason": "These wave-named cases verify live adopt convergence and refusal behavior and belong with the subject's materializer tests.",
+      "evidence": "scripts/env/tests/test_em2f_gate3_adopt.py:54 - materialize.run is exercised for both matching and differing backups, with file bytes and mode asserted.",
+      "subject": "env file adoption and backup safety",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "scripts/env/tests/test_materialize.py",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_em2f_gate3_lease_label.py",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [],
+      "reason": "These wave-named cases validate live lease_env label parsing and belong with the subject's manifest-loader tests.",
+      "evidence": "scripts/env/tests/test_em2f_gate3_lease_label.py:24 - an invalid lease_env label must raise ValueError; the valid parsed label is asserted at line 34.",
+      "subject": "manifest lease_env label validation",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "scripts/env/tests/test_manifest_loader.py",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_em2f_host_secret.py",
+      "verdict": "MERGE",
+      "tests_total": 4,
+      "tests_affected": [],
+      "reason": "These wave-named cases cover live manifest, render CLI, and materializer behavior for required host secrets and fit the subject's existing test modules.",
+      "evidence": "scripts/env/tests/test_em2f_host_secret.py:58 - manifest loading rejects host secrets without remote paths; lines 116 and 140 assert check and apply behavior.",
+      "subject": "required host-secret validation, rendering, and materialization",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "scripts/env/tests/test_manifest_loader.py, scripts/env/tests/test_render.py, and scripts/env/tests/test_materialize.py",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_em2f_lease_env.py",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [],
+      "reason": "These wave-named cases verify that materialization refuses lease paths escaping the backup root and belong with the subject's materializer tests.",
+      "evidence": "scripts/env/tests/test_em2f_lease_env.py:69 - apply attempts assert refusal and unchanged marker and env-file bytes for escaping lease paths.",
+      "subject": "materializer lease path containment",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "scripts/env/tests/test_materialize.py",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_em2f_remote_status.py",
+      "verdict": "MERGE",
+      "tests_total": 3,
+      "tests_affected": [],
+      "reason": "These wave-named cases cover live SSH option and stream-failure behavior and belong with the subject's remote materializer tests.",
+      "evidence": "scripts/env/tests/test_em2f_remote_status.py:104 - the cases assert successful bounded SSH arguments, then check producer and SSH failure status at lines 128 and 138.",
+      "subject": "remote materializer SSH bounds and error propagation",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "scripts/env/tests/test_materialize_remote.py",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_harden_loader.py",
+      "verdict": "KEEP",
+      "tests_total": 20,
+      "tests_affected": [],
+      "reason": "The cases assert live manifest validation and acceptance behavior, including the apparent no-assert cases through their shared refusal helper.",
+      "evidence": "scripts/env/tests/test_harden_loader.py:71 - _refused asserts both the manifest path and key in the error, and rejection tests call it starting at line 82.",
+      "subject": "environment manifest validation for names, secrets, targets, and URLs",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-15"
+      ],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_harden_render.py",
+      "verdict": "SPEED",
+      "tests_total": 29,
+      "tests_affected": [
+        "test_harden_make_variables"
+      ],
+      "reason": "The make-variable contract is useful, but its parameterized cases each launch make during commit-stage feedback.",
+      "evidence": "scripts/env/tests/test_harden_render.py:173 - test_harden_make_variables invokes make -n once per parameter row and asserts the expanded command.",
+      "subject": "environment Makefile variable expansion",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Consolidate the make -n parameter rows into one make contract check or move that check to a later pipeline target.",
+      "est_seconds_saved": 1,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_materialize_remote.py",
+      "verdict": "SPEED",
+      "tests_total": 11,
+      "tests_affected": [
+        "test_make_forwards_materialize_mode",
+        "test_make_refuses_unsafe_apply",
+        "test_make_requires_env_and_target"
+      ],
+      "reason": "The make entrypoint behavior is useful, but each parameter row launches make and adds repeated process startup to commit-stage feedback.",
+      "evidence": "scripts/env/tests/test_materialize_remote.py:65 - run selects make for these cases; the three test functions at lines 200, 213, and 222 each call it with parameterized settings.",
+      "subject": "Makefile entrypoint for remote materialization",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24"
+      ],
+      "replacement": "Consolidate the make settings into one make harness invocation or move Makefile entrypoint checks to a later pipeline target; keep direct wrapper checks local.",
+      "est_seconds_saved": 2,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/env/tests/test_vm_manifest.py",
+      "verdict": "KEEP",
+      "tests_total": 17,
+      "tests_affected": [],
+      "reason": "The cases exercise live remote-path, vault/host reference, audience, and derived-secret manifest rules, with refusal checks delegated to an asserting helper.",
+      "evidence": "scripts/env/tests/test_vm_manifest.py:82 - _refused asserts the expected manifest path and key while checking secret redaction; invalid-case tests call it starting at line 146.",
+      "subject": "VM manifest remote paths and vault or host secret rules",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-15"
+      ],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "scripts/test_backend_env_file_refs.py",
+      "verdict": "SPEED",
+      "tests_total": 5,
+      "tests_affected": [
+        "test_no_stale_backend_secrets_env_refs",
+        "test_scan_scope_is_not_vacuous"
+      ],
+      "reason": "The repository guard is valuable, but these two cases enumerate tracked files or recursively walk scan roots during the commit-stage suite.",
+      "evidence": "scripts/test_backend_env_file_refs.py:69 - _git_ls_files shells out to git and the fallback walks each scan root at line 93; both tests run this scanner.",
+      "subject": "stale backend secrets/.env references in repository text",
+      "duplicate_of": "",
+      "canon": [
+        "TEST-24",
+        "TEST-15"
+      ],
+      "replacement": "Keep the pattern unit cases local and move or narrow the full repository scan in a static lint target or later pipeline stage.",
+      "est_seconds_saved": 1,
+      "risk": "low"
+    }
+  ],
+  "fixtures": []
+}

@@ -1,0 +1,81 @@
+# Parameterized compose template for the public WordPress demo stack.
+# The demo directory on the VM holds secrets/.env (chmod 600) with:
+#   COMPOSE_PROJECT_NAME=acx-demo
+#   ACX_DEMO_WPDATA_PATH=/opt/acx-backend/data/demo-wpdata
+#   ACX_DEMO_DBDATA_PATH=/opt/acx-backend/data/demo-dbdata
+#   MARIADB_* / WORDPRESS_DB_* credentials (see infra/oci/demo/.env.example)
+#
+# The acx-demo-net network is external (created by sync-demo.sh) so that
+# `docker compose down` on this stack can never delete the network the edge
+# Caddy declares as a required external join.
+#
+# Secrets are mapped per service — no blanket env_file — so each container
+# only receives the variables it needs (WP admin creds never enter a
+# container; bootstrap-wp.sh passes them as wp-cli arguments).
+#
+# Usage: cd /opt/acx-backend/demo && docker compose -f docker-compose.demo.yml up -d
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    cpus: "0.5"
+    mem_limit: 1g
+    environment:
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+    volumes:
+      - ${ACX_DEMO_DBDATA_PATH}:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - demo
+
+  wordpress:
+    image: wordpress:6.8-php8.3-apache
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    cpus: "1.0"
+    mem_limit: 2g
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_CONFIG_EXTRA: ${WORDPRESS_CONFIG_EXTRA}
+    volumes:
+      - ${ACX_DEMO_WPDATA_PATH}:/var/www/html
+    networks:
+      demo:
+        aliases:
+          - demo-wp
+
+  wpcli:
+    image: wordpress:cli-2.11-php8.3
+    profiles: ["tools"]
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_CONFIG_EXTRA: ${WORDPRESS_CONFIG_EXTRA}
+    user: "33:33"
+    volumes:
+      - ${ACX_DEMO_WPDATA_PATH}:/var/www/html
+    networks:
+      - demo
+
+networks:
+  demo:
+    name: acx-demo-net
+    external: true

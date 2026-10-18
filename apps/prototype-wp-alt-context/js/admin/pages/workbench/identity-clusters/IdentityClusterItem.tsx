@@ -1,0 +1,693 @@
+/**
+ * Single identity cluster item with edit, merge, and action capabilities.
+ */
+
+import React from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { __, sprintf } from '@wordpress/i18n';
+
+import { queryKeys } from '../../../api/queryKeys';
+import type { BoundingBox, MergeClusterResponse } from '../../../api/recognition';
+import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { getClusterMutationErrorMessage } from './clusterMutationUtils';
+import { invalidateSuggestionProjection, type ProjectedSuggestion } from './suggestionProjection';
+import type { ClusterGroup } from './types';
+import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
+import { TWIN_CHIP_ACCEPT_TEMPLATE, TWIN_CHIP_PROMPT_TEMPLATE, TWIN_CHIP_REJECT_LABEL } from './twinChipCopy';
+import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
+import { useClusterEditState } from './useClusterEditState';
+import { useClusterMutations } from './useClusterMutations';
+import { useClusterSuggestions } from './useClusterSuggestions';
+import { ClusterPreview } from './ClusterPreview';
+import { ClusterActions } from './ClusterActions';
+import { ClusterEditForm } from './ClusterEditForm';
+import { MergeUndoBanner } from './MergeUndoBanner';
+import { DebugMetricsPanel } from './DebugMetricsPanel';
+import { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
+import { ClusterConfirmDialog } from './ClusterConfirmDialog';
+import { useClusterConfirmDialog } from './useClusterConfirmDialog';
+import { useClusterSaveHandlers } from './useClusterSaveHandlers';
+import { useClusterSaveStatus } from './useClusterSaveStatus';
+import {
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from '../../../../components/ui/dialog';
+
+const MATCH_DEBOUNCE_MS = 300;
+
+export interface IdentityClusterMergeTwin {
+  suggestionId: string;
+  survivorClusterId: string;
+  survivorLabel: string;
+  survivorMediaUrl?: string | null;
+  survivorBbox?: BoundingBox | null;
+  onAccept: () => void;
+  onReject: () => void;
+  isPending: boolean;
+  disabledReason?: string | null;
+}
+
+interface IdentityClusterItemProps {
+  cluster: ClusterGroup;
+  canLabel?: boolean;
+  canMutate?: boolean;
+  /** Top server-ranked inline suggestion for this cluster's anchor identity. */
+  inlineSuggestionMatch?: ProjectedSuggestion;
+  /** Pending labeled-survivor twin chip (HAI-11 propose, never auto-apply). */
+  mergeTwin?: IdentityClusterMergeTwin;
+}
+
+/**
+ * Renders a single cluster with its thumbnail, label, and actions.
+ *
+ * Handles:
+ * - Display mode (label + action buttons)
+ * - Edit mode (Combobox with suggestions)
+ * - Merge undo banner
+ * - Error display
+ */
+export const IdentityClusterItem = ({
+  cluster,
+  canLabel = true,
+  canMutate = true,
+  inlineSuggestionMatch,
+  mergeTwin,
+}: IdentityClusterItemProps): React.JSX.Element => {
+  // Compute derived values
+  const derivedLabel = React.useMemo(
+    () => formatClusterLabel(cluster.clusterId, cluster.label, cluster.isAutoLabel),
+    [cluster.clusterId, cluster.label, cluster.isAutoLabel],
+  );
+
+  const editableClusterId = React.useMemo(() => getEditableClusterId(cluster), [cluster]);
+
+  const splittableGroups = React.useMemo(() => {
+    const groups = new Map<string, ClusterGroup['members']>();
+    for (const member of cluster.members) {
+      const id = cluster.identityClusterIds?.[member.identity_id] ?? member.cluster_id;
+      if (!id) {
+        continue;
+      }
+      groups.set(id, [...(groups.get(id) ?? []), member]);
+    }
+    return [...groups.entries()].filter(([, members]) => members.length >= 2);
+  }, [cluster]);
+  const [splitGroupId, setSplitGroupId] = React.useState<string | null>(null);
+  const splitMembers = splittableGroups.find(([id]) => id === splitGroupId)?.[1] ?? [];
+
+  // For singletons without a cluster, we still allow naming/merging via identity ID
+  const isSingleton = !editableClusterId && cluster.members.length === 1;
+  const canEdit = canLabel && Boolean(editableClusterId) && !cluster.clusteringPending;
+  const canSearchForMatch = canLabel && isSingleton && !cluster.clusteringPending;
+  // WHY: person-card same-face dedup can leave one member while identityClusterIds still names several identities (INT-03).
+  const recordedIdentityCount = Object.keys(cluster.identityClusterIds ?? {}).length;
+  const canUnlink = canMutate && Math.max(recordedIdentityCount, cluster.members.length) === 1;
+
+  // Show "Processing..." when clustering hasn't run yet, otherwise "Unnamed person"
+  const labelText = cluster.clusteringPending
+    ? __('Processing...', 'alt-context')
+    : (derivedLabel ?? __('Unnamed person', 'alt-context'));
+
+  const representative = cluster.members[0];
+  const anchorIdentityId = representative?.identity_id;
+
+  const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
+  const [isWrongPersonDialogOpen, setIsWrongPersonDialogOpen] = React.useState(false);
+  const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
+  const saveAbortRef = React.useRef<AbortController | null>(null);
+  const matchAbortRef = React.useRef<AbortController | null>(null);
+  // FEBT2-W2-LANE-04: the undo owns its own controller rather than sharing saveAbortRef —
+  // a revert is not a save, and one ref for two lifetimes would let a new save silently
+  // cancel an in-flight undo (DOM-03, lexicons/engineering.md:528).
+  const revertAbortRef = React.useRef<AbortController | null>(null);
+
+  const queryClient = useQueryClient();
+  const { saveStatus, resetSaveStatus, queueSaveStatus, markSaveSuccess } = useClusterSaveStatus();
+  const {
+    confirmDialog,
+    confirmDialogCopy,
+    requestConfirm,
+    handleOpenChange: handleConfirmDialogOpenChange,
+    handleConfirm: handleConfirmAccept,
+    handleCancel: handleConfirmCancel,
+  } = useClusterConfirmDialog();
+
+  // State management
+  const {
+    state: editState,
+    startEditing,
+    cancelEditing,
+    setLabel,
+    setError,
+    onSaveSuccess,
+    onMergeSuccess,
+    onRevertSuccess,
+  } = useClusterEditState({ derivedLabel });
+
+  const handleSaveSuccess = React.useCallback(() => {
+    saveAbortRef.current = null;
+    markSaveSuccess(onSaveSuccess);
+  }, [markSaveSuccess, onSaveSuccess]);
+
+  const handleMergeSuccess = React.useCallback(
+    (result: MergeClusterResponse) => {
+      saveAbortRef.current = null;
+      markSaveSuccess(() => onMergeSuccess(result));
+    },
+    [markSaveSuccess, onMergeSuccess],
+  );
+
+  const handleMutationError = React.useCallback(
+    (message: string) => {
+      saveAbortRef.current = null;
+      setError(message);
+      resetSaveStatus();
+    },
+    [resetSaveStatus, setError],
+  );
+
+  // Suggestions
+  const {
+    options,
+    isLoading: suggestionsLoading,
+    isError: suggestionsError,
+    retry: retrySuggestions,
+    findClusterByLabel,
+    atRestTotal = 0,
+    atRestTruncated = false,
+    isAtRestMode = false,
+  } = useClusterSuggestions({
+    identityId: anchorIdentityId,
+    enabled: editState.isEditing,
+    editableClusterId,
+    labelInput: editState.labelInput,
+  });
+
+  // Mutations
+  const mutations = useClusterMutations({
+    clusterId: editableClusterId,
+    identityCount: cluster.members.length,
+    currentLabel: cluster.label,
+    derivedLabel,
+    onRenameSuccess: handleSaveSuccess,
+    onMergeSuccess: handleMergeSuccess,
+    onRevertSuccess,
+    onError: handleMutationError,
+    onAbort: resetSaveStatus,
+  });
+
+  const bindToRosterEntry = React.useCallback(
+    (rosterEntryId: number, label: string, signal?: AbortSignal) => {
+      if (!editableClusterId) {
+        handleMutationError(__('Cannot bind this person: missing group.', 'alt-context'));
+        return;
+      }
+      // FEBT1-LC-01 / RES-04: the caller's deadline supplies this signal; dropping it would
+      // abandon the caller while the POST kept running server-side.
+      void commitClusterToRosterEntry({ clusterId: editableClusterId, rosterEntryId }, signal)
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+          void invalidateSuggestionProjection(queryClient);
+          handleSaveSuccess();
+        })
+        .catch((error: unknown) => {
+          handleMutationError(getClusterMutationErrorMessage(error, label));
+        });
+    },
+    [editableClusterId, handleMutationError, handleSaveSuccess, queryClient],
+  );
+
+  const { handleCancel, handleConfirmSuggestion, handleSave, handlePersonSelect } = useClusterSaveHandlers({
+    clusterLabel: cluster.label,
+    members: cluster.members,
+    editableClusterId,
+    anchorIdentityId,
+    canEdit,
+    canSearchForMatch,
+    labelInput: editState.labelInput,
+    matchedCluster,
+    options,
+    saveStatus,
+    mutations: {
+      isPending: mutations.isPending,
+      merge: mutations.merge,
+      assignToCluster: mutations.assignToCluster,
+      rename: mutations.rename,
+      createClusterForIdentity: mutations.createClusterForIdentity,
+      bindToRosterEntry,
+    },
+    findClusterByLabel,
+    requestConfirm,
+    cancelEditing,
+    setError,
+    queueSaveStatus,
+    resetSaveStatus,
+    saveAbortRef,
+  });
+
+  /**
+   * FEBT2-W2-LANE-04: `revertMerge` has accepted a signal since FEBT2-W2-R-01, but the undo
+   * button supplied none, so a superseded undo could still commit and its onSuccess still
+   * invalidate caches for an outcome the operator had moved past (RES-10 fencing,
+   * lexicons/engineering.md:121). Each press fences the previous one.
+   *
+   * `lastMerge` is read into a local instead of asserted non-null at the call site: the
+   * banner's render guard is not a type-level guarantee, and a non-null assertion on state
+   * is exactly the internal-invariant-by-`!` this repo forbids (sr-005).
+   */
+  const handleUndoMerge = React.useCallback(() => {
+    const payload = editState.lastMerge;
+    if (!payload) {
+      return;
+    }
+    revertAbortRef.current?.abort();
+    const controller = new AbortController();
+    revertAbortRef.current = controller;
+    mutations.revertMerge(payload, controller.signal);
+  }, [editState.lastMerge, mutations]);
+
+  React.useEffect(() => {
+    return () => {
+      saveAbortRef.current?.abort();
+      matchAbortRef.current?.abort();
+      revertAbortRef.current?.abort();
+    };
+  }, []);
+
+  // Proactive matching while typing
+  React.useEffect(() => {
+    // Bail paths must abort any in-flight lookup so a late response cannot re-arm
+    // matchedCluster after we cleared it (UXP-3-BR-45).
+    const abortInFlightMatch = () => {
+      matchAbortRef.current?.abort();
+      matchAbortRef.current = null;
+    };
+
+    if (!editState.isEditing) {
+      abortInFlightMatch();
+      setMatchedCluster(null);
+      return;
+    }
+
+    const trimmed = editState.labelInput.trim();
+    const currentLabel = cluster.label ?? '';
+    // Exact bail (B6 / UXP-3-BR-39): case-only edits must still run proactive match so
+    // "bob"→"Bob" against a different "Bob" cluster arms the Merge-with preview.
+    if (!trimmed || trimmed === currentLabel) {
+      abortInFlightMatch();
+      setMatchedCluster(null);
+      return;
+    }
+
+    const runMatch = async () => {
+      matchAbortRef.current?.abort();
+      const abortController = new AbortController();
+      matchAbortRef.current = abortController;
+
+      try {
+        const match = await findClusterByLabel(trimmed, abortController.signal);
+        if (!abortController.signal.aborted) {
+          // Mirror save-path BR-40: remote exact-dupe (match.label === currentLabel) renames,
+          // so the preview must not promise Merge/Assign (UXP-3-BR-44).
+          const filtered = filterEditableClusterMatch(match, editableClusterId);
+          setMatchedCluster(filtered?.label === currentLabel ? null : filtered);
+        }
+      } catch {
+        // Ignore
+      }
+    };
+
+    const timer = window.setTimeout(() => void runMatch(), MATCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [editState.isEditing, editState.labelInput, cluster.label, findClusterByLabel, editableClusterId]);
+
+  // Handle "Wrong person" action
+  const handleWrongPerson = () => {
+    if (!canUnlink || !representative?.identity_id) {
+      return;
+    }
+
+    setIsWrongPersonDialogOpen(true);
+  };
+
+  const handleCancelWrongPerson = () => {
+    setIsWrongPersonDialogOpen(false);
+  };
+
+  const handleConfirmWrongPerson = () => {
+    if (representative?.identity_id) {
+      // Send only representative ID per requirements (backend will handle cluster implications).
+      mutations.reassign([representative.identity_id]);
+    }
+
+    setIsWrongPersonDialogOpen(false);
+  };
+
+  const handleSplit = () => {
+    if (!splittableGroups.length) {
+      return;
+    }
+    setSplitGroupId(splittableGroups.length === 1 ? splittableGroups[0][0] : null);
+    setIsAnchorModalOpen(true);
+  };
+
+  const handleAnchorSelect = (identityId: string) => {
+    if (!splitGroupId || !splitMembers.some((member) => member.identity_id === identityId)) {
+      return;
+    }
+    mutations.split(splitGroupId, 2, identityId);
+    setIsAnchorModalOpen(false);
+  };
+
+  const showTwinChip =
+    canMutate &&
+    mergeTwin != null &&
+    cluster.clusterId !== mergeTwin.survivorClusterId &&
+    isMeaningfulMergeLabel(mergeTwin.survivorLabel);
+  const twinPendingTitle = mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
+  const twinPendingDescId = mergeTwin ? `acx-twin-pending-${mergeTwin.suggestionId}` : undefined;
+  // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters
+  // that are not already showing a merge twin (INT-03: one confirm cluster).
+  const showInlinePrompt = Boolean(
+    !showTwinChip && (!cluster.label || cluster.isAutoLabel) && anchorIdentityId && canMutate,
+  );
+
+  const saveLabel = React.useMemo(() => {
+    if (saveStatus === 'queued') {
+      return __('Saving…', 'alt-context');
+    }
+    if (saveStatus === 'saved') {
+      return __('Saved!', 'alt-context');
+    }
+    if (matchedCluster) {
+      return canSearchForMatch
+        ? sprintf(__('Assign to %s', 'alt-context'), matchedCluster.label)
+        : sprintf(__('Merge with %s', 'alt-context'), matchedCluster.label);
+    }
+    return undefined;
+  }, [saveStatus, matchedCluster, canSearchForMatch]);
+
+  return (
+    <div className={`acx-identity-cluster ${editState.isEditing ? 'acx-identity-cluster--editing' : ''}`}>
+      <ClusterPreview
+        representative={representative}
+        representativeFace={representative?.representative_face}
+        memberCount={1}
+      />
+
+      <div className="acx-identity-cluster__info">
+        {!editState.isEditing ? (
+          <>
+            {cluster.clusteringPending ? (
+              <span className="acx-identity-cluster__label acx-identity-cluster__label--processing">{labelText}</span>
+            ) : canEdit || canSearchForMatch ? (
+              <button
+                type="button"
+                className="acx-identity-cluster__label acx-identity-cluster__label--action"
+                onClick={startEditing}
+              >
+                {labelText}
+              </button>
+            ) : (
+              <span className="acx-identity-cluster__label">{labelText}</span>
+            )}
+            {showTwinChip && mergeTwin ? (
+              <div
+                className="acx-identity-clusters__twin-chip"
+                data-testid="acx-identity-clusters__twin-chip"
+                role="group"
+                aria-label={sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}
+                aria-describedby={twinPendingTitle ? twinPendingDescId : undefined}
+              >
+                {twinPendingTitle ? (
+                  <span id={twinPendingDescId} className="screen-reader-text" role="status">
+                    {twinPendingTitle}
+                  </span>
+                ) : null}
+                {mergeTwin.survivorMediaUrl && mergeTwin.survivorBbox ? (
+                  <FaceThumbnail
+                    mediaUrl={mergeTwin.survivorMediaUrl}
+                    bbox={mergeTwin.survivorBbox}
+                    size="sm"
+                    alt={mergeTwin.survivorLabel}
+                    className="acx-identity-clusters__twin-chip-thumb"
+                  />
+                ) : // WHY (HAI-01): mapped merge payload omitted the survivor crop — do not invent one.
+                null}
+                <span className="acx-identity-clusters__twin-chip-icon" aria-hidden="true">
+                  ⇢
+                </span>
+                <span>{sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}</span>
+                <button
+                  type="button"
+                  className="button button-primary button-small"
+                  onClick={mergeTwin.onAccept}
+                  disabled={mergeTwin.isPending}
+                  title={twinPendingTitle}
+                >
+                  {sprintf(TWIN_CHIP_ACCEPT_TEMPLATE, mergeTwin.survivorLabel)}
+                </button>
+                <button
+                  type="button"
+                  className="button button-small"
+                  onClick={mergeTwin.onReject}
+                  disabled={mergeTwin.isPending}
+                  title={twinPendingTitle}
+                >
+                  {TWIN_CHIP_REJECT_LABEL}
+                </button>
+              </div>
+            ) : null}
+            {!cluster.clusteringPending && (
+              <>
+                <ClusterActions
+                  canEdit={canEdit}
+                  canSearchForMatch={canSearchForMatch}
+                  hasLabel={Boolean(cluster.label)}
+                  isAutoLabel={cluster.isAutoLabel}
+                  canSplit={false}
+                  canReject={canUnlink}
+                  isPending={mutations.isPending}
+                  splitDisabled={mutations.splitGate.disabled}
+                  splitTitle={mutations.splitGate.title}
+                  splitAriaDisabled={mutations.splitGate['aria-disabled']}
+                  onEdit={startEditing}
+                  onWrongPerson={handleWrongPerson}
+                  onSplit={handleSplit}
+                />
+                {canMutate && Boolean(cluster.clusterId) && splittableGroups.length > 0 ? (
+                  <details className="acx-identity-cluster__not-same-person" open>
+                    <summary>{__('Not the same person?', 'alt-context')}</summary>
+                    <button
+                      type="button"
+                      className="acx-identity-cluster__action"
+                      onClick={handleSplit}
+                      disabled={mutations.isPending || mutations.splitGate.disabled}
+                      aria-disabled={mutations.splitGate['aria-disabled']}
+                      title={mutations.splitGate.title}
+                    >
+                      {__('Split group', 'alt-context')}
+                    </button>
+                  </details>
+                ) : null}
+              </>
+            )}
+            {/* Show inline "Is this X?" prompt for unlabeled items */}
+            {showInlinePrompt && (
+              <InlineSuggestionPrompt
+                match={inlineSuggestionMatch}
+                onConfirm={(clusterId, label, suggestionId) =>
+                  void handleConfirmSuggestion(
+                    clusterId,
+                    label,
+                    suggestionId,
+                    suggestionId && inlineSuggestionMatch
+                      ? { kind: 'identity', identityId: inlineSuggestionMatch.identityId }
+                      : undefined,
+                  )
+                }
+                onReject={startEditing}
+                isPending={mutations.isPending}
+              />
+            )}
+          </>
+        ) : (
+          <ClusterEditForm
+            labelInput={editState.labelInput}
+            onLabelChange={setLabel}
+            options={options}
+            isLoading={suggestionsLoading}
+            suggestionsError={suggestionsError}
+            onRetrySuggestions={retrySuggestions}
+            isPending={mutations.isPending || saveStatus !== 'idle'}
+            onSave={(labelOverride) => void handleSave(labelOverride)}
+            onPersonSelect={handlePersonSelect}
+            onConfirmSuggestion={(clusterId, label, suggestionId, suggestionProvenance) =>
+              void handleConfirmSuggestion(clusterId, label, suggestionId, suggestionProvenance)
+            }
+            onCancel={handleCancel}
+            onRejectSuggestion={(suggestionId) => mutations.rejectSuggestion(suggestionId)}
+            saveLabel={saveLabel}
+            atRestTotal={atRestTotal}
+            atRestTruncated={atRestTruncated}
+            isAtRestMode={isAtRestMode}
+          />
+        )}
+      </div>
+
+      {editState.lastMerge && (
+        <MergeUndoBanner
+          mergeResult={editState.lastMerge}
+          isReverting={mutations.isReverting}
+          onUndo={handleUndoMerge}
+        />
+      )}
+
+      {editState.error && (
+        <p className="acx-identity-cluster__error" role="alert">
+          {editState.error}
+        </p>
+      )}
+
+      <DebugMetricsPanel metrics={representative?.debug_metrics} />
+
+      <DialogRoot open={isAnchorModalOpen} onOpenChange={setIsAnchorModalOpen}>
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <div className="acx-anchor-modal">
+              <DialogTitle>
+                {derivedLabel
+                  ? __('Choose a face to keep the label', 'alt-context')
+                  : __('Split a face group', 'alt-context')}
+              </DialogTitle>
+              <DialogDescription>
+                {derivedLabel
+                  ? sprintf(
+                      __(
+                        'Choose a face to keep the label “%s”. Other faces in this face group will move to a new face group.',
+                        'alt-context',
+                      ),
+                      derivedLabel,
+                    )
+                  : __(
+                      'The chosen face stays in this face group; other faces move to a new face group.',
+                      'alt-context',
+                    )}
+              </DialogDescription>
+              {splittableGroups.length > 1 && (
+                <fieldset>
+                  <legend>{__('Face group', 'alt-context')}</legend>
+                  {splittableGroups.map(([id, members], index) => {
+                    const preview = members[0];
+                    const representativeFace = members.find(
+                      (member) =>
+                        member.representative_face?.bbox &&
+                        (member.representative_face.media_url || member.representative_face.attachment_url),
+                    )?.representative_face;
+                    const representativeFaceUrl =
+                      representativeFace?.media_url || representativeFace?.attachment_url;
+                    const previewMediaUrl = representativeFaceUrl || preview.media_url || preview.attachment_url;
+                    const previewBbox =
+                      representativeFaceUrl && representativeFace?.bbox ? representativeFace.bbox : preview.bbox;
+                    return (
+                      <label key={id}>
+                        <input
+                          type="radio"
+                          name="split-face-group"
+                          value={id}
+                          checked={splitGroupId === id}
+                          onChange={() => setSplitGroupId(id)}
+                        />
+                        {previewMediaUrl && previewBbox && (
+                          <FaceThumbnail mediaUrl={previewMediaUrl} bbox={previewBbox} size="lg" alt="" />
+                        )}
+                        {sprintf(__('Face group %d · %d faces', 'alt-context'), index + 1, members.length)}
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              )}
+              {!splitGroupId && <p>{__('Choose a face group to pick the face that keeps it', 'alt-context')}</p>}
+              <div className="acx-anchor-modal__grid">
+                {splitMembers.map((member) => {
+                  const label = sprintf(__('Use face from media #%d', 'alt-context'), member.media_id);
+                  return (
+                    <button
+                      key={member.identity_id}
+                      type="button"
+                      className="acx-anchor-modal__option"
+                      aria-label={label}
+                      onClick={() => handleAnchorSelect(member.identity_id)}
+                    >
+                      {member.media_url && member.bbox ? (
+                        <FaceThumbnail
+                          mediaUrl={member.media_url}
+                          bbox={member.bbox}
+                          size="lg"
+                          alt={label}
+                          className="acx-anchor-modal__thumb"
+                        />
+                      ) : (
+                        <span className="acx-anchor-modal__thumb acx-anchor-modal__thumb--placeholder" />
+                      )}
+                      <span className="acx-anchor-modal__meta">
+                        {sprintf(__('Media #%d', 'alt-context'), member.media_id)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" className="button" onClick={() => setIsAnchorModalOpen(false)}>
+                {__('Cancel', 'alt-context')}
+              </button>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
+
+      <DialogRoot
+        open={isWrongPersonDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCancelWrongPerson();
+          }
+        }}
+      >
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <div className="acx-queue-modal">
+              <DialogTitle>{__('Remove this face from the group', 'alt-context')}</DialogTitle>
+              <DialogDescription>{__('Remove this face from the group?', 'alt-context')}</DialogDescription>
+              <div className="acx-queue-modal__actions">
+                <button type="button" className="button" onClick={handleCancelWrongPerson}>
+                  {__('Cancel', 'alt-context')}
+                </button>
+                <button type="button" className="button button-primary" onClick={handleConfirmWrongPerson}>
+                  {__('Remove member', 'alt-context')}
+                </button>
+              </div>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
+
+      <ClusterConfirmDialog
+        dialog={confirmDialog}
+        copy={confirmDialogCopy}
+        onOpenChange={handleConfirmDialogOpenChange}
+        onConfirm={handleConfirmAccept}
+        onCancel={handleConfirmCancel}
+      />
+    </div>
+  );
+};

@@ -1,0 +1,16 @@
+{
+  "lane": "dw3-adj-05",
+  "base": "c003e8de5c76a61e0d38b30aade1c23930178d50",
+  "results": [
+    {
+      "id": "UX0924-05",
+      "verdict": "OPERATOR",
+      "evidence": "apps/prototype-description-service/recognition/application/orchestration/clustering/recovery_merge.py:94-98,277-282 - reserved/unnamed labels have no named-person key, and the conflict clause rejects only when both keys exist and differ; :402-418 ranks destinations by centroid cosine without excluding unnamed-to-named pairs, while :349-397 requires per-member evidence and margin checks. apps/prototype-description-service/recognition/application/settings/clustering.py:355-359,649-669,834-846 - recovery defaults off and policy applicability requires accepted mode/status and matching runtime binding; the provisional policy uses tau_pair 0.55, k=2 and delta 0.05. apps/prototype-description-service/recognition/application/suggestions/merge_suggestions.py:274-277,309-317 - a one-labeled/one-unnamed pair is eligible for suggestions when centroid similarity falls in the configured suggestion band.",
+      "severity": "medium",
+      "remaining_gap": "The guided corpus centroid and member similarities, plus its active recovery enablement and policy binding, are unavailable; code alone cannot establish why these pairs remained separate.",
+      "fix_files": [],
+      "size": "S",
+      "fix_hint": "Run a read-only centroid cosine probe for each guided residual-to-Trudeau and residual-to-Katy Perry pair, then compare member evidence and the active recovery policy before changing thresholds."
+    }
+  ]
+}

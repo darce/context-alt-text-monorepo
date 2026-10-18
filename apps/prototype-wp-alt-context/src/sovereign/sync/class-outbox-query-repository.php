@@ -1,0 +1,532 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Sovereign\Sync;
+
+require_once __DIR__ . '/class-outbox-status.php';
+
+use RuntimeException;
+
+use function current_time;
+use function implode;
+use function is_array;
+use function is_object;
+use function is_string;
+use function json_decode;
+use function max;
+use function method_exists;
+use function trim;
+
+class OutboxQueryRepository {
+	private string $table_name;
+
+	public function __construct( ?string $table_name = null ) {
+		global $wpdb;
+
+		$default_table = 'wp_acx_sync_outbox';
+		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
+			$default_table = $wpdb->prefix . 'acx_sync_outbox';
+		}
+
+		$this->table_name = $table_name ?? $default_table;
+	}
+
+	/**
+	 * @param int[] $outbox_ids
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function find_operations_by_ids( array $outbox_ids, string $tenant_id ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_ids = array_values(
+			array_filter(
+				array_map( 'intval', $outbox_ids ),
+				static fn( int $outbox_id ): bool => $outbox_id > 0
+			)
+		);
+		if (
+			'' === $normalized_tenant_id
+			|| array() === $normalized_ids
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array();
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				$this->operation_select_sql() . '
+				WHERE tenant_id = %s AND id IN (' . implode( ',', array_fill( 0, count( $normalized_ids ), '%d' ) ) . ')',
+				$this->table_name,
+				$normalized_tenant_id,
+				...$normalized_ids
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$operations = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$decoded = $this->decode_operation_payload( $row );
+			$operation_id = (int) ( $decoded['id'] ?? 0 );
+			if ( $operation_id > 0 ) {
+				$operations[ $operation_id ] = $decoded;
+			}
+		}
+
+		return $operations;
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	public function find_operation_by_id( int $outbox_id, string $tenant_id ): ?array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			$outbox_id <= 0
+			|| '' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_row' )
+		) {
+			return null;
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				$this->operation_select_sql() . '
+				WHERE id = %d AND tenant_id = %s
+				LIMIT 1',
+				$this->table_name,
+				$outbox_id,
+				$normalized_tenant_id
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $row ) ) {
+			return null;
+		}
+
+		return $this->decode_operation_payload( $row );
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function find_operations_by_status( string $tenant_id, ?string $status, int $limit, int $offset ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_status = is_string( $status ) ? trim( $status ) : '';
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array();
+		}
+
+		if ( '' === $normalized_status ) {
+			$rows = $wpdb->get_results(
+				$wpdb->prepare(
+					$this->operation_select_sql() . '
+					WHERE tenant_id = %s
+					ORDER BY created_at DESC, id DESC
+					LIMIT %d OFFSET %d',
+					$this->table_name,
+					$normalized_tenant_id,
+					max( 1, $limit ),
+					max( 0, $offset )
+				),
+				ARRAY_A
+			);
+		} else {
+			$rows = $wpdb->get_results(
+				$wpdb->prepare(
+					$this->operation_select_sql() . '
+					WHERE tenant_id = %s AND status = %s
+					ORDER BY created_at DESC, id DESC
+					LIMIT %d OFFSET %d',
+					$this->table_name,
+					$normalized_tenant_id,
+					$normalized_status,
+					max( 1, $limit ),
+					max( 0, $offset )
+				),
+				ARRAY_A
+			);
+		}
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_map( array( $this, 'decode_operation_payload' ), $rows ),
+				'is_array'
+			)
+		);
+	}
+
+	public function count_operations_by_status( string $tenant_id, ?string $status ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_status = is_string( $status ) ? trim( $status ) : '';
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_var' )
+		) {
+			return 0;
+		}
+
+		if ( '' === $normalized_status ) {
+			$value = $wpdb->get_var(
+				$wpdb->prepare(
+					'SELECT COUNT(*) FROM %i WHERE tenant_id = %s',
+					$this->table_name,
+					$normalized_tenant_id
+				)
+			);
+		} else {
+			$value = $wpdb->get_var(
+				$wpdb->prepare(
+					'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND status = %s',
+					$this->table_name,
+					$normalized_tenant_id,
+					$normalized_status
+				)
+			);
+		}
+
+		return max( 0, (int) $value );
+	}
+
+	/**
+	 * Failed row IDs for a tenant, oldest first (E15-35 Slice 2 bulk requeue).
+	 *
+	 * Ordered by id ASC (monotonic insert order) so the caller's paced
+	 * next_attempt_at spread is deterministic and oldest work drains first.
+	 *
+	 * @return int[]
+	 */
+	public function find_failed_operation_ids( string $tenant_id, int $limit ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			'' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array();
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE tenant_id = %s AND status = %s ORDER BY id ASC LIMIT %d',
+				$this->table_name,
+				$normalized_tenant_id,
+				OutboxStatus::FAILED,
+				max( 1, $limit )
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$outbox_ids = array();
+		foreach ( $rows as $row ) {
+			$outbox_id = is_array( $row ) ? (int) ( $row['id'] ?? 0 ) : 0;
+			if ( $outbox_id > 0 ) {
+				$outbox_ids[] = $outbox_id;
+			}
+		}
+
+		return $outbox_ids;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function load_pending_operations( int $batch_size ): array {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		// E15-35 (PR-09): first_failed_at/next_attempt_at are projected because apply_result()
+		// operates only on this row array — the window-age terminal needs the values read out,
+		// not just gated in the WHERE. The gate skips rows whose backoff has not elapsed.
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, tenant_id, operation_type, entity_type, entity_key, idempotency_key, expected_base_version, local_revision, payload, attempts
+				, first_failed_at, next_attempt_at, created_at
+				FROM %i
+				WHERE status = %s AND ( next_attempt_at IS NULL OR next_attempt_at <= %s )
+				ORDER BY created_at ASC, id ASC
+				LIMIT %d',
+				$this->table_name,
+				OutboxStatus::PENDING,
+				current_time( 'mysql' ),
+				max( 1, $batch_size )
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$operations = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$payload = $row['payload'] ?? array();
+			if ( is_string( $payload ) ) {
+				$decoded_payload = json_decode( $payload, true );
+				$payload = is_array( $decoded_payload ) ? $decoded_payload : array();
+			}
+
+			$row['payload'] = is_array( $payload ) ? $payload : array();
+			$operations[] = $row;
+		}
+
+		return $operations;
+	}
+
+	/**
+	 * Atomically claim a single pending operation for this drain.
+	 *
+	 * Transitions pending -> in_flight gated on the current status so a row already
+	 * claimed by a concurrent drain matches 0 rows. Returns the fresh claimed snapshot,
+	 * including its unique ownership token, or false on contention/lost ownership.
+	 *
+	 * @return array<string,mixed>|false
+	 * @throws RuntimeException When claim persistence or the snapshot read fails.
+	 */
+	public function claim_operation( int $outbox_id ): array|false {
+		global $wpdb;
+
+		if ( $outbox_id <= 0 ) {
+			return false;
+		}
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			throw new RuntimeException( 'Outbox claim database adapter is unavailable.' );
+		}
+
+		// Independent of clock resolution, lease length, and wall-clock rollback.
+		$claim_token = bin2hex( random_bytes( 32 ) );
+
+		$updated = $wpdb->update(
+			$this->table_name,
+			array(
+				'status'      => OutboxStatus::IN_FLIGHT,
+				'claimed_at'  => current_time( 'mysql' ),
+				'claim_token' => $claim_token,
+			),
+			array(
+				'id'     => $outbox_id,
+				'status' => OutboxStatus::PENDING,
+			),
+			array( '%s', '%s', '%s' ),
+			array( '%d', '%s' )
+		);
+
+		if ( false === $updated ) {
+			throw new RuntimeException( 'Could not persist outbox claim.' );
+		}
+		if ( 0 === (int) $updated ) {
+			return false;
+		}
+
+		// A pre-claim pending snapshot may predate another completed retry. Read the
+		// accounting/payload belonging to THIS claim; never dispatch an unfenced fallback.
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM %i WHERE id = %d AND status = %s AND claim_token = %s',
+				$this->table_name,
+				$outbox_id,
+				OutboxStatus::IN_FLIGHT,
+				$claim_token
+			),
+			ARRAY_A
+		);
+		if ( ! empty( $wpdb->last_error ) ) {
+			throw new RuntimeException( 'Could not read claimed outbox operation.' );
+		}
+		if ( ! is_array( $row ) || ( $row['claim_token'] ?? null ) !== $claim_token ) {
+			return false;
+		}
+
+		return $this->decode_operation_payload( $row );
+	}
+
+	/**
+	 * Reclaim operations stuck in `in_flight` past the claim lease back to `pending` (CON-3-FU-1).
+	 *
+	 * A drain that dies between {@see self::claim_operation()} (pending -> in_flight) and the
+	 * terminal apply_result write orphans the row: load_pending_operations() and
+	 * has_pending_operations() only see `pending`, so the stuck row is never reprocessed. This
+	 * lease-expiry UPDATE returns such rows to `pending` and clears the claim. A freshly-claimed
+	 * row sits inside the lease window and is left untouched, so a peer drain mid-flight is not
+	 * disturbed.
+	 *
+	 * @throws RuntimeException When reclaim persistence fails.
+	 *
+	 * CON-3-FU-REV-A1: the lease cutoff is computed from current_time('mysql') — the SAME WP
+	 * site clock claim_operation() writes claimed_at with — NOT MySQL NOW(). Comparing a
+	 * WP-local claimed_at against the DB server's NOW() silently breaks the lease whenever the
+	 * site timezone differs from the DB session timezone (ahead -> never reclaims, behind ->
+	 * reclaims rows a peer still holds). Every outbox timestamp uses the WP clock; the lease
+	 * stays on that clock too.
+	 */
+	public function reclaim_stale_in_flight_operations( int $lease_seconds ): int {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$query = $wpdb->prepare(
+			'UPDATE %i SET status = %s, claimed_at = NULL, claim_token = NULL WHERE status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( %s, INTERVAL %d SECOND ) )',
+			$this->table_name,
+			OutboxStatus::PENDING,
+			OutboxStatus::IN_FLIGHT,
+			current_time( 'mysql' ),
+			max( 1, $lease_seconds )
+		);
+		if ( ! is_string( $query ) || '' === $query ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$result = $wpdb->query( $query );
+
+		if ( false === $result ) {
+			throw new RuntimeException( 'Could not reclaim expired outbox claims.' );
+		}
+		return max( 0, (int) $result );
+	}
+
+	/**
+	 * Earliest moment any pending row becomes claimable, on the WP clock (E15-35).
+	 *
+	 * Rows with NULL next_attempt_at are due immediately, so they coalesce to created_at
+	 * (always in the past for an existing row). Returns null when nothing is pending or
+	 * the adapter is unavailable.
+	 */
+	public function earliest_pending_attempt_time(): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$value = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+				$this->table_name,
+				OutboxStatus::PENDING
+			)
+		);
+
+		$normalized = is_string( $value ) ? trim( $value ) : '';
+		return '' !== $normalized ? $normalized : null;
+	}
+
+	/**
+	 * Earliest lease expiry on the same WP clock as claim/reclaim, including NULL legacy claims.
+	 *
+	 * @throws RuntimeException When recovery scheduling cannot read lease expiries.
+	 */
+	public function earliest_in_flight_recovery_time( int $lease_seconds ): ?string {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			throw new RuntimeException( 'Outbox recovery database adapter is unavailable.' );
+		}
+		$query = $wpdb->prepare(
+			'SELECT MIN(CASE WHEN claimed_at IS NULL THEN %s ELSE DATE_ADD(claimed_at, INTERVAL %d SECOND) END) FROM %i WHERE status = %s',
+			current_time( 'mysql' ), max( 1, $lease_seconds ), $this->table_name, OutboxStatus::IN_FLIGHT
+		);
+		if ( ! is_string( $query ) || '' === $query ) {
+			throw new RuntimeException( 'Could not prepare outbox recovery query.' );
+		}
+		$wpdb->last_error = '';
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared above.
+		$value = $wpdb->get_var( $query );
+		if ( '' !== (string) $wpdb->last_error ) {
+			throw new RuntimeException( 'Could not read outbox lease expiries.' );
+		}
+		return is_string( $value ) && '' !== trim( $value ) ? trim( $value ) : null;
+	}
+
+	public function has_pending_operations(): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return false;
+		}
+
+		$value = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
+				$this->table_name,
+				OutboxStatus::PENDING
+			)
+		);
+
+		return (int) $value > 0;
+	}
+
+	/**
+	 * Shared outbox read projection for operator-facing operation records.
+	 *
+	 * The failure clock belongs to the persisted row: an operation that has been retried
+	 * recently can still have an older first failure. Compute its age in SQL so every
+	 * consumer uses the same COALESCE(first_failed_at, last_attempted_at, created_at)
+	 * precedence, while still returning first_failed_at for the API timeline.
+	 */
+	private function operation_select_sql(): string {
+		return 'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, last_error_retryable, payload, created_at, last_attempted_at, first_failed_at, acknowledged_at, '
+			. 'GREATEST(0, TIMESTAMPDIFF(SECOND, COALESCE(first_failed_at, last_attempted_at, created_at), UTC_TIMESTAMP())) AS age_seconds '
+			. 'FROM %i';
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 * @return array<string,mixed>
+	 */
+	private function decode_operation_payload( array $row ): array {
+		$payload = $row['payload'] ?? array();
+		if ( is_string( $payload ) ) {
+			$decoded_payload = json_decode( $payload, true );
+			$row['payload'] = is_array( $decoded_payload ) ? $decoded_payload : array();
+		}
+
+		return $row;
+	}
+}

@@ -1,0 +1,76 @@
+{
+  "lane": "a1h-scene3",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane-root .venv import check: resolved_python -c \"import scene, recognition; print(scene.__file__); print(recognition.__file__)\"",
+      "result": "pass",
+      "detail": "Both packages resolved under this lane worktree: apps/prototype-description-service/scene/__init__.py and apps/prototype-description-service/recognition/__init__.py."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_sweeper.py recognition/tests/unit/test_app1_usage_sweeper_cli.py scene/tests/test_app1_describe_run_key_required.py scene/tests/test_app1_usage_scene_census.py scene/tests/test_describe_async_repository.py scene/tests/test_describe_async_worker.py",
+      "result": "not_run",
+      "detail": "uv failed before pytest: failed to remove the lane environment's alembic executable because the filesystem is read-only (os error 30)."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_usage_sweeper.py recognition/tests/unit/test_app1_usage_sweeper_cli.py scene/tests/test_app1_describe_run_key_required.py scene/tests/test_app1_usage_scene_census.py scene/tests/test_describe_async_repository.py scene/tests/test_describe_async_worker.py",
+      "result": "not_run",
+      "detail": "One progress marker appeared, then the aiosqlite fixture hung. Pytest emitted `Timeout (0:04:00)!`; the stack was waiting at aiosqlite/core.py:59 in _connection_worker_thread and asyncio selectors.py:468. Interrupted the stuck process after capturing the timeout; no suite result was produced."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=60 -o timeout_method=signal scene/tests/test_describe_run_quota.py::test_lost_202_replay_after_last_demo_quota_unit_does_not_429 scene/tests/test_app1_usage_scene_census.py::test_idempotency_key_without_caller_operation_replays_one_reservation recognition/tests/unit/test_app1_operator_usage_census.py::test_gpu_intent_denies_beta_standard_without_markers_before_write recognition/tests/unit/test_app1_operator_usage_census.py::test_clustering_jobs_deny_beta_standard_before_compute_or_job_create recognition/tests/unit/test_app1_operator_usage_census.py::test_recover_orphans_denies_beta_standard_before_recluster recognition/tests/unit/test_app1_operator_usage_census.py::test_cluster_revert_denies_beta_standard_before_mutation",
+      "result": "not_run",
+      "detail": "The focused guard command timed out in the SQLite-backed quota fixture. Pytest emitted `Timeout` with the worker blocked at aiosqlite/core.py:59; remaining selected cases did not produce results."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=60 -o timeout_method=signal recognition/tests/unit/test_app1_operator_usage_census.py::test_gpu_intent_denies_beta_standard_without_markers_before_write recognition/tests/unit/test_app1_operator_usage_census.py::test_clustering_jobs_deny_beta_standard_before_compute_or_job_create recognition/tests/unit/test_app1_operator_usage_census.py::test_recover_orphans_denies_beta_standard_before_recluster recognition/tests/unit/test_app1_operator_usage_census.py::test_cluster_revert_denies_beta_standard_before_mutation",
+      "result": "not_run",
+      "detail": "One selected case completed (one progress marker), then the next stalled until `Timeout`; the AnyIO worker was waiting in queue.get at anyio/_backends/_asyncio.py:1089. The remaining cases did not produce results."
+    },
+    {
+      "command": "pytest recognition/tests/integration/test_app1_usage_recovery_postgres.py recognition/tests/integration/test_app1_usage_worker_postgres.py",
+      "result": "not_run",
+      "detail": "Not attempted because the sandbox lacks the PostgreSQL pg_empty_engine database. Read the tests: recovery covers epoch advance, stale callback rejection, concurrency and fail-closed periods; worker covers reservation binding, replay, settlement and sweeper lifecycle."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16005,
+      "finding_id": "APP1-SCENE-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py:576 - `existing = await repo.get_run_by_idempotency_key(...)`; the route returns that replay before the quota precheck at :582 and admission at :585. apps/prototype-description-service/scene/tests/test_describe_run_quota.py:232 documents `Same-fingerprint retry after the last quota unit must replay, not 429`; assertions verify the same run and no extra charge, while a new key gets 429.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_describe_run_quota.py::test_lost_202_replay_after_last_demo_quota_unit_does_not_429"
+    },
+    {
+      "db_id": 16003,
+      "finding_id": "APP1-SCENE-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py:568 - `operation_id = _usage_operation_id(idempotency_key, caller_operation_id)`; line 576 looks up by idempotency key before admission, and line 589 uses the canonical operation id as reservation key. apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py:533 checks the retry without operation_id returns the same run; line 547 asserts `len(admission.reserves) == 2` for first request, retry, and independent request.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py::test_idempotency_key_without_caller_operation_replays_one_reservation"
+    },
+    {
+      "db_id": 16007,
+      "finding_id": "APP1-OPERATOR-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/gpu.py:168 - `await authorize_operator_control(` runs before `write_gpu_intent`; apps/prototype-description-service/recognition/interface_adapters/http/deps/operator_authorization.py:33 allows only `EntitlementStatus.PAID_ACTIVE`, and :195 fails closed for any status outside that set. The same gate precedes cluster admission (apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py:230), recovery (:365), and revert (apps/prototype-description-service/recognition/interface_adapters/http/routers/cluster_revert.py:71). The tests assert no write, clustering call, recovery call, or revert for a STANDARD beta tenant without beta markers.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_operator_usage_census.py::test_gpu_intent_denies_beta_standard_without_markers_before_write; ::test_clustering_jobs_deny_beta_standard_before_compute_or_job_create; ::test_recover_orphans_denies_beta_standard_before_recluster; ::test_cluster_revert_denies_beta_standard_before_mutation"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py",
+      "line": 428,
+      "title": "Legacy run digests make identical post-upgrade retries conflict",
+      "defect": "Replay compares every nonempty stored request_digest directly with the new usage-v1 fingerprint. Existing runs created by the previous route store the v1 semantic digest from compute_request_digest (media IDs and recognition only), so the digest cannot equal the new fingerprint even when the retry payload is unchanged. No migration or dual-read path rewrites or recognizes those stored values.",
+      "failure_scenario": "A run accepted before rollout under idempotency key K stores its v1 digest. After rollout, the caller retries K with the same media IDs and image bytes after losing the 202; lookup finds the old run, but _replay_or_conflict returns 409 instead of replaying that run.",
+      "fix": "Version persisted run fingerprints and add an explicit compatibility path for legacy v1 digests, or migrate existing runs to a comparable fingerprint before switching the replay comparison. Add a regression test that seeds a run with compute_request_digest v1 and verifies an identical retry returns the stored run.",
+      "test_file": "apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Rechecked: HOLDS=3, PARTIAL=0, NOT_FIXED=0. New findings: high=0, medium=1, low=0. Package imports resolved to this lane; pytest verification is not_run because SQLite/AnyIO workers timed out in the sandbox, and the PostgreSQL integration tests require the unavailable database."
+}

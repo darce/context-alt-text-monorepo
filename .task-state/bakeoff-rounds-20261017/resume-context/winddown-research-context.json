@@ -1,0 +1,105 @@
+{
+  "canon_version": "0.26.2",
+  "verified_canon_files": [
+    {
+      "path": "lexicons/engineering.md",
+      "sha256": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d"
+    },
+    {
+      "path": "lexicons/graph-theory.md",
+      "sha256": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c"
+    },
+    {
+      "path": "PRINCIPLES.md",
+      "sha256": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205"
+    },
+    {
+      "path": "reasoning/feedback-bounded-waiting.md",
+      "sha256": "acf18f3e2ffad3777598e34e0d2b8dd71d678bb432a6e4c05e8db05466b8879a"
+    },
+    {
+      "path": "reasoning/falsification-disconfirmers.md",
+      "sha256": "9e572c986919420c614c6ae26033480a25294874c6bc6b4bb81341d32bba0771"
+    },
+    {
+      "path": "reasoning/evidence-before-commitment.md",
+      "sha256": "e48acbf579002de19890e3af34e170776d59fa93d56347e48042d67652ec57d1"
+    },
+    {
+      "path": "reasoning/measurement-integrity.md",
+      "sha256": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8"
+    },
+    {
+      "path": "reasoning/durable-decision-memory.md",
+      "sha256": "4d3cfde0adbe98e8f4e07c5c6bbff5267c626ec13d0636a31810e433308547fb"
+    }
+  ],
+  "prior_art_semantic_file": "winddown-semantic.json",
+  "semantic_mode": "verified ONNX/handoff.db",
+  "codemap_projects": {
+    "bakecache-memory-fourth-source-current-map": {
+      "nodes": 308,
+      "edges": 1807
+    },
+    "subject-evidence-current-test-source-map": {
+      "nodes": 649,
+      "edges": 2807
+    }
+  },
+  "original_corpus_packet": "/home/gate/bakeoff-rounds-20261017-inputs/lifecycle-original-corpus",
+  "original_corpus_manifest": {
+    "canon_release": "0.26.2",
+    "kind": "original_research_distillations_not_primary_books",
+    "files": [
+      {
+        "name": "modern-software-engineering.md",
+        "source": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/modern-software-engineering.md",
+        "sha256": "f72c96aa473fee608fd444198e51e3123b4be597bb542643e600fe6db407075d",
+        "bytes": 75591
+      },
+      {
+        "name": "continuous-delivery-pipelines-farley.md",
+        "source": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/continuous-delivery-pipelines-farley.md",
+        "sha256": "7c3fa435cb0d876ba1d3667f28a4e2fde399c574abc2a647df9840787ac4a004",
+        "bytes": 59106
+      },
+      {
+        "name": "release-it.md",
+        "source": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/release-it.md",
+        "sha256": "f20f6d03876b68adfb4fcfcb7380223445799825b70adfacedebf7bdd65f8c8a",
+        "bytes": 113185
+      },
+      {
+        "name": "database-internals-petrov.md",
+        "source": "/Users/daniel/Development/heuristics-canon-research/distilled/engineering/database-internals-petrov.md",
+        "sha256": "0f0a9f562f39fff3359d6993b0c2d10c1703eae91dbbb9c32761f6b2074c2d98",
+        "bytes": 65685
+      }
+    ]
+  },
+  "insights": [
+    "Project design proposal, not a prescribed Canon architecture: explicitly partition workload writer proof from original E storage observer/cleanup authority; freeze phase fencing and no pending workload effects, with later independent review. Do not exempt a live I/O actor by prose.",
+    "RES02 Release It!ch5 bounds caller waiting; RES21 Database Internalsch9 timeout establishes suspicion, not worker death or closed descriptors. Preserve unknown typed state/lease/proofs and refuse advancement.",
+    "TEST09/16 Modern Software Engineeringch14: repair the public design/measurement boundary instead of inspecting private labels; TEST25 Continuous Delivery Pipelinesch10 external behavior permits alternate correct implementations.",
+    "TEST15/33: M source escaped defects now have permanent regressions; independent unfixed2RED38GREEN then fixed40GREEN +32publiccontrols/format/lint qualify source only. Canonical integration and finding disposition remain next, no need repeat passed tests without new change.",
+    "Principles2/7/9/11/13/15 navigate falsification, durable handoff, lineage, designed unknown, evidence before commitment and independently owned meter. Cards05/06/08/09/11 provide corresponding verification, not new blanket gates.",
+    "GRPH06 observed shared proof-scope edge means C8 is one connected repair; E5 two file-owned fixes remain parallel. GRPH31 DAG width is not measured simultaneous capacity.",
+    "First Qwen raw generation does not require all candidates, full M/S/P2 completion, description gold or face GT; it still needs actual target/lease/runtime/inventory/physicalreservation/preservation/terminal-proof qualification. No qualified executable owned procedure exists yet.",
+    "Target preflight sandbox no_new_privs owner-read failure is scoped; verify normal installed host owner route before declaring host authorization absent. Existing API operator identity and dedicated benchmark cache issuer are unestablished. Do not mint credentials/fake queue/leases or weaken auth."
+  ],
+  "priorities": {
+    "P0_parallel": [
+      "Monitor C8; apply only granted map, validate resolved worker/proof counterexample and matched controls; independent whole planningG2 with original full distillations before adoption/test/source.",
+      "Normal target owner/admission: bounded read-only installed owner access to durable authority, normal entitled API identity, fresh load/foreign intent/boot-effect/finite lease evidence; then admitted guest measurement/inventory/loader independently. No targetstart until actual prerequisites hold."
+    ],
+    "P1_parallel": [
+      "M whole sourcePASS0 custody1945d17b; selectively integrate exact source3c932a465243e0e59f32062bec6bce86b4491ae7/test7a1e1bca into canonical BAKECACHE with honest ancestry, resolve only verified M findings; source/main gates as required.",
+      "Monitor both E5 maps, validate ownership/pins/commutativity preserving233IDs/legacy83, compose and independent whole v1 E testG4. Any subsequent E semantic author requires new LOUDCanon proposal.",
+      "Monitor S independenttestgate; if defects second authorHIGH, if accepted initial sourceLOW then sourcegateXHIGH. Present structured people incomparablev1, supported absence is narrow, no truth/prompt/digest drift."
+    ],
+    "P2": [
+      "After contract frozen, graph-separate P2/storage/C/E tests and implementations using actual shared API data edges and independent gates; keep matched-source M regression compatibility.",
+      "First raw pinnedQwen only after genuine owned procedure/execution qualification, preserve output/teardown receipts, then raw/fourview/rankers onidenticalcaptions; quality labels/blinded review/face evaluation remain separately qualified."
+    ]
+  }
+}

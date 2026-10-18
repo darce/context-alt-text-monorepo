@@ -1,0 +1,268 @@
+{
+  "source_sha256": "5aad68d0d7b3b3a7b59c27f41dc112a3f04469004928f41ef82fe8d84fc90953",
+  "anchors": [
+    {
+      "id": "E01",
+      "source_id": "S01",
+      "selector": ".acx-guided-entrance__intro",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named, and puts their names in the image description. You choose what gets saved."
+      ],
+      "excerpt": "Follow one photo from start to finish."
+    },
+    {
+      "id": "E02",
+      "source_id": "S01",
+      "selector": ".acx-guided-entrance__status",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Current build This demo uses one saved face-match run. Descriptions can run live on the real GPU."
+      ],
+      "excerpt": "Descriptions can run live on the real GPU."
+    },
+    {
+      "id": "E03",
+      "source_id": "S01",
+      "selector": ".acx-guided-entrance__boundary",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "This is a practice copy. Changes stay in this tab and reset when you reload the page. Live recognition and guest access are still in progress. Read the AltContext case study ."
+      ],
+      "excerpt": "Changes stay in this tab and reset when you reload the page."
+    },
+    {
+      "id": "E04",
+      "source_id": "S01",
+      "selector": ".acx-guided-page__hero",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Saved run How two faces become two names in the description AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Reset practice"
+      ],
+      "excerpt": "You always have the last word."
+    },
+    {
+      "id": "E05",
+      "source_id": "S01",
+      "selector": ".acx-guided-flow ol",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Photo [done] 2 faces found [done] Matched to Justin Trudeau and Katy Perry [done] You confirm each match [now] Names in the description [waiting]"
+      ],
+      "excerpt": "Matched to Justin Trudeau and Katy Perry",
+      "observation": "The match item is data-state=done while both later decision captions are undecided."
+    },
+    {
+      "id": "E06",
+      "source_id": "S01",
+      "selector": ".acx-guided-guide",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Step by step Look at the photo Skip to this step Show steps See the photo and the page it sits on."
+      ],
+      "excerpt": "Show steps",
+      "observation": "The supplied collapsed guide exposes the current label but not an ordinal or the total step count."
+    },
+    {
+      "id": "E07",
+      "source_id": "S01",
+      "selector": ".acx-guided-guide__skip-link",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Skip to this step"
+      ],
+      "excerpt": "Skip to this step",
+      "observation": "href is #guided-section-understand; the supplied application URL uses #/guided-prototype."
+    },
+    {
+      "id": "E08",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__how-it-works",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "AltContext finds every face in the photo. It compares each face to the people you already named. It asks you to confirm each match. Nothing is named without your OK."
+      ],
+      "excerpt": "AltContext finds every face in the photo."
+    },
+    {
+      "id": "E09",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__strength",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "✓ Match strength: strong. This face is close to the 2 saved photos of Justin Trudeau.",
+        "✓ Match strength: strong. This face is close to the 5 saved photos of Katy Perry."
+      ],
+      "excerpt": "Match strength: strong."
+    },
+    {
+      "id": "E10",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__gallery-caption",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "Saved photos of Justin Trudeau: 2 of 2 shown.",
+        "Saved photos of Katy Perry: 3 of 5 shown."
+      ],
+      "excerpt": "Saved photos of Katy Perry: 3 of 5 shown."
+    },
+    {
+      "id": "E11",
+      "source_id": "S01",
+      "selector": "#guided-identity-change-reason",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Changing an answer swaps in a different saved draft. Save or discard your edit first."
+      ],
+      "excerpt": "Save or discard your edit first.",
+      "observation": "Visible message in the snapshot; no Discard control appears in the supplied main element."
+    },
+    {
+      "id": "E12",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__decisions",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Confirm each match Changing an answer swaps in a different saved draft. Save or discard your edit first. Justin Trudeau, face on the left Yes, this is Justin Trudeau Keep this person unnamed Katy Perry, face on the right Yes, this is Katy Perry Keep this person unnamed"
+      ],
+      "excerpt": "Confirm each match",
+      "observation": "Choices are in a separate container after both evidence articles. CSS positions and scrolling behavior are unknown."
+    },
+    {
+      "id": "E13",
+      "source_id": "S01",
+      "selector": ".acx-guided-review__status",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Ready for you to check"
+      ],
+      "excerpt": "Ready for you to check"
+    },
+    {
+      "id": "E14",
+      "source_id": "S01",
+      "selector": "#guided-description-draft",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest."
+      ],
+      "observation": "A label/for association exists. The textarea is enabled in the supplied undecided state."
+    },
+    {
+      "id": "E15",
+      "source_id": "S01",
+      "selector": ".acx-guided-review__actions",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "Save my edit Reject this draft",
+        "Apply to practice copy Undo"
+      ],
+      "excerpt": "Save my edit",
+      "observation": "There are four action-group matches. Save, Reject, Apply and Undo represent different scopes."
+    },
+    {
+      "id": "E16",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-live-additive\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "A live run never changes the draft above, and it never changes what Apply would write."
+      ],
+      "excerpt": "A live run never changes the draft above"
+    },
+    {
+      "id": "E17",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-live-naming\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Names come from your roster on the server, not from this page. You have not confirmed anyone here yet."
+      ],
+      "excerpt": "Names come from your roster on the server, not from this page."
+    },
+    {
+      "id": "E18",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-live-status\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "• Decide each face match first, then you can describe this photo live. That is the lesson's order, not something the run needs."
+      ],
+      "excerpt": "That is the lesson's order, not something the run needs."
+    },
+    {
+      "id": "E19",
+      "source_id": "S01",
+      "selector": "#guided-section-apply",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Apply it yourself The practice copy says Two people at a film festival. . Pressing Apply writes the saved draft to this practice copy only. Apply to practice copy Undo"
+      ],
+      "excerpt": "Pressing Apply writes the saved draft to this practice copy only.",
+      "observation": "Apply is enabled and Undo disabled in this snapshot. No click behavior is observable."
+    },
+    {
+      "id": "E20",
+      "source_id": "S01",
+      "selector": ".acx-guided-history",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "What you did Your decisions Nothing yet. Your next action will show up here."
+      ],
+      "excerpt": "Nothing yet. Your next action will show up here."
+    },
+    {
+      "id": "E21",
+      "source_id": "S01",
+      "selector": ".acx-guided-page__provenance",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "Where this example comes from Example Saved from a real run on 2026-09-06, not a live run Page Tribeca Festival 2026: red carpet photos People on file Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos) Photo credit Colleen Sturtevant, CC BY-SA 4.0, resized Also checked A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing."
+      ],
+      "excerpt": "Also checked",
+      "observation": "A second, unbundled photo is mentioned as a successful recognition result; no evidence link accompanies it."
+    },
+    {
+      "id": "E22",
+      "source_id": "S01",
+      "selector": ".acx-guided-page__media-card img",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        ""
+      ],
+      "observation": "The evidence image alt contains the longer unnamed draft, while a caption calls the shorter string current page alt text. They can be different surfaces; this is not itself an alt mismatch defect."
+    },
+    {
+      "id": "E23",
+      "source_id": "S01",
+      "selector": ".acx-guided-face__crop",
+      "match_count_in_snapshot": 2,
+      "text_matches": [
+        "",
+        ""
+      ],
+      "observation": "Each supplied crop wrapper sets width and height to 64px. No enlargement control is present in the supplied markup."
+    },
+    {
+      "id": "E24",
+      "source_id": "S01",
+      "selector": ".acx-guided-review__context-grid",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        "What the photo shows Two people stand side by side in front of a white wall of Tribeca Festival logos. The man on the left wears a black tuxedo with a white shirt. The woman on the right wears a white draped gown with her dark hair pinned up. Her hand rests on his chest. Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Alt text on the page right now: Two people at a film festival. The page Tribeca Festival 2026: red carpet photos A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026."
+      ],
+      "excerpt": "Alt text on the page right now:",
+      "observation": "Page context and the same unnamed draft are repeated in several locations."
+    },
+    {
+      "id": "E25",
+      "source_id": "S01",
+      "selector": "[data-testid=\"guided-page-feedback\"]",
+      "match_count_in_snapshot": 1,
+      "text_matches": [
+        ""
+      ],
+      "observation": "role=status and aria-live=polite exist; actual update behavior and announcements were not tested."
+    }
+  ]
+}

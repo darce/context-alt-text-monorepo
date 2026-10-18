@@ -1,0 +1,57 @@
+{
+  "lane": "a1h-pscreen2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "\"$resolved_python\" -m pytest scripts/test_check_lane_manifest_overlaps.py -q (resolved lane-root .venv/bin/python)",
+      "result": "pass",
+      "detail": "26 passed in 4.35s."
+    },
+    {
+      "command": "cd apps/app-portal && vitest run src/__tests__/claim-fixwave.test.tsx src/__tests__/claim-journey.test.tsx src/__tests__/keys-journey.test.tsx src/__tests__/keys-ui-fixwave.test.tsx",
+      "result": "not_run",
+      "detail": "The frontend test runner is external to this sandbox; node_modules are unavailable here."
+    },
+    {
+      "command": "cd apps/app-portal && tsc --noEmit",
+      "result": "not_run",
+      "detail": "TypeScript verification is external to this sandbox; node_modules are unavailable here."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16084,
+      "finding_id": "APP1-CLAIMUI-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/screens/ClaimScreen.tsx:42-43,190-192 - the sole token-retention exception is `portal_identity_unavailable`; other failures run `setToken('')`. The fixwave test asserts an empty field and no rendered token after 403, 409, and 422 failures at claim-fixwave.test.tsx:52-70.",
+      "guard_test": "apps/app-portal/src/__tests__/claim-fixwave.test.tsx::clears the raw invitation before $code recovery and requires re-entry"
+    },
+    {
+      "db_id": 16078,
+      "finding_id": "APP1-KEYS-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/screens/KeysScreen.tsx:181-184,268,377 - `actionsLocked = busy || modalOpen`, the underlying tree is `inert` while a dialog is open, and create checks `secretHeldRef`. The test verifies background controls are disabled, a second create/rotate does not run, and the original secret stays visible at keys-ui-fixwave.test.tsx:139-161.",
+      "guard_test": "apps/app-portal/src/__tests__/keys-ui-fixwave.test.tsx::disables background actions, traps focus, and never replaces an uncopied secret"
+    },
+    {
+      "db_id": 16081,
+      "finding_id": "APP1-KEYS-RV04",
+      "was": "fixed",
+      "verdict": "PARTIAL",
+      "evidence": "apps/app-portal/src/screens/KeysScreen.tsx:184,268-269 - `createBlocked && Boolean(primary)` means the 409 latch disables Create only when a usable key is in the currently loaded page. A limit response with no visible primary (for example, the active key is on a later page) leaves Create enabled. Full successful refresh clears the latch at :221-223. The guard test uses a visible usable key and asserts disabled at keys-ui-fixwave.test.tsx:268-291, so it misses that case.",
+      "guard_test": "apps/app-portal/src/__tests__/keys-ui-fixwave.test.tsx::latches Create after tenant key limit and clears it only after a successful refresh"
+    },
+    {
+      "db_id": 16079,
+      "finding_id": "APP1-KEYS-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/app-portal/src/screens/KeysScreen.tsx:124-153,247-264 - Escape and Tab are handled within the dialog, and each revoke-dialog phase focuses `keep-key` when opened. The tests check Tab cycling in preview and Keep-key focus plus Escape focus restoration in the last-usable phase at keys-ui-fixwave.test.tsx:210-225,250-259.",
+      "guard_test": "apps/app-portal/src/__tests__/keys-ui-fixwave.test.tsx::focuses Keep key on preview, traps focus, Escape restores, and Enter does not confirm"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Three corrections hold and APP1-KEYS-RV04 is partial because the create latch depends on a usable key in the currently loaded page; no additional findings were found at the App importer seams."
+}

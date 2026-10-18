@@ -1,0 +1,624 @@
+"""RepresentativeSelector: the representative-selection surface of the clustering writer.
+
+Extracted from ``AssignmentWriter`` (Slice 9 sub-slice 3b) so the admission decision,
+pose-bucket/upgrade logic, and FPS diversity math live in one cohesive object instead
+of being interleaved with persistence orchestration. The class is *not* pure: the
+admission decision issues a representative removal (upgrade path) and the preserve
+query reads representatives, so it legitimately takes a ``ClusterRepository``.
+
+Dependency direction is downward only (``domain.*`` + ``application.settings`` +
+``application.assignment.{decision,quality}`` + ``shared.similarity``); this module
+must never import ``assignment_writer`` so the two form no import cycle.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import cast
+
+import numpy as np
+
+from recognition.application.assignment.decision import AssignmentDecision
+from recognition.application.assignment.quality import (
+    compute_representative_quality,
+    representative_sort_key,
+)
+from recognition.application.settings.clustering import (
+    ENROLLMENT_NOOP_CEILING_OCCLUSION,
+    ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM,
+    ENROLLMENT_NOOP_FLOOR_SHARPNESS,
+    ClusteringSettings,
+    QualitySettings,
+)
+from recognition.domain.identity import MediaIdentity
+from recognition.domain.repositories import ClusterRepository
+from recognition.domain.representative import ClusterRepresentative
+from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
+
+logger = logging.getLogger(__name__)
+
+# Per-source weights for representative scoring multiplier f(·) (EMB-10 / FIR-6 S3b).
+# Declared in code; equal weights until S4 measures rebalance deltas.
+REPRESENTATIVE_MULTIPLIER_WEIGHT_SHARPNESS = 1.0 / 3.0
+REPRESENTATIVE_MULTIPLIER_WEIGHT_EMBEDDING_NORM = 1.0 / 3.0
+REPRESENTATIVE_MULTIPLIER_WEIGHT_OCCLUSION = 1.0 / 3.0
+
+
+@dataclass(frozen=True, slots=True)
+class EnrollmentFloors:
+    """Active enrollment floor/ceiling triple for quality-gated aggregation."""
+
+    floor_sharpness: float = ENROLLMENT_NOOP_FLOOR_SHARPNESS
+    floor_embedding_norm: float = ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM
+    ceiling_occlusion: float = ENROLLMENT_NOOP_CEILING_OCCLUSION
+
+    @property
+    def is_noop(self) -> bool:
+        """True when floors accept everything (dark default until S4)."""
+        return (
+            self.floor_sharpness <= ENROLLMENT_NOOP_FLOOR_SHARPNESS
+            and self.floor_embedding_norm <= ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM
+            and self.ceiling_occlusion >= ENROLLMENT_NOOP_CEILING_OCCLUSION
+        )
+
+
+def enrollment_floors_from_settings(settings: ClusteringSettings | QualitySettings) -> EnrollmentFloors:
+    """Resolve enrollment floors from ClusteringSettings.quality or QualitySettings."""
+    quality = settings.quality if isinstance(settings, ClusteringSettings) else settings
+    return EnrollmentFloors(
+        floor_sharpness=float(quality.factor_floor_sharpness),
+        floor_embedding_norm=float(quality.factor_floor_embedding_norm),
+        ceiling_occlusion=float(quality.factor_ceiling_occlusion),
+    )
+
+
+def passes_enrollment_floors(
+    identity: MediaIdentity,
+    floors: EnrollmentFloors | ClusteringSettings | QualitySettings | None = None,
+) -> bool:
+    """Return True when identity factors clear active enrollment floors (EMB-03).
+
+    ``None`` factors never fail floors (insightface / missing signals). No-op
+    floors accept everything. Active floors reject sharpness/norm below floor
+    or occlusion above ceiling when the corresponding factor is present.
+
+    Shared by ``should_add_representative`` and ``_create_and_add_representative``
+    (same predicate — no intentional path asymmetry on exclusion). Factorless
+    rows remain eligible for admission/create under active floors so insightface
+    and partial-signal observations are not silently dropped; below-floor
+    present factors are excluded from both paths. Distinct from the multiplier,
+    which returns ``f ≡ 1.0`` when any factor is ``None`` rather than treating
+    missing signals as failing floors.
+    """
+    if floors is None:
+        resolved = EnrollmentFloors()
+    elif isinstance(floors, EnrollmentFloors):
+        resolved = floors
+    else:
+        resolved = enrollment_floors_from_settings(floors)
+
+    sharpness = identity.sharpness
+    embedding_norm = identity.embedding_norm
+    occlusion_severity = identity.occlusion_severity
+    if sharpness is not None and sharpness < resolved.floor_sharpness:
+        return False
+    if embedding_norm is not None and embedding_norm < resolved.floor_embedding_norm:
+        return False
+    if occlusion_severity is not None and occlusion_severity > resolved.ceiling_occlusion:
+        return False
+    return True
+
+
+def representative_quality_multiplier(
+    *,
+    sharpness: float | None,
+    embedding_norm: float | None,
+    occlusion_severity: float | None,
+    floors: EnrollmentFloors | ClusteringSettings | QualitySettings | None = None,
+) -> float:
+    """Representative scoring multiplier f(sharpness, embedding_norm, occlusion).
+
+    GR-09 / EMB-10: ``f ≡ 1.0`` when any factor is ``None`` or floors are no-op
+    (bit-identical legacy score under insightface and pre-S4 dark defaults).
+    When floors are active and all factors present, returns a weighted blend in
+    ``[0, 1]`` of soft per-source terms (weights declared above). Soft terms
+    clamp to 0.0, so ``f`` can reach 0.0 when every weighted source bottoms out
+    (e.g. sharpness/norm at 0 and occlusion at the ceiling).
+    """
+    if floors is None:
+        resolved = EnrollmentFloors()
+    elif isinstance(floors, EnrollmentFloors):
+        resolved = floors
+    else:
+        resolved = enrollment_floors_from_settings(floors)
+
+    if sharpness is None or embedding_norm is None or occlusion_severity is None:
+        return 1.0
+    if resolved.is_noop:
+        return 1.0
+
+    # Soft terms in (0, 1]: scale sharpness/norm vs 2× floor so above-floor
+    # observations still differentiate; occlusion maps severity 0→1, ceiling→0.
+    s_ref = max(resolved.floor_sharpness * 2.0, 1e-6)
+    n_ref = max(resolved.floor_embedding_norm * 2.0, 1e-6)
+    s_term = min(1.0, max(0.0, float(sharpness) / s_ref))
+    n_term = min(1.0, max(0.0, float(embedding_norm) / n_ref))
+    if resolved.ceiling_occlusion <= 0.0:
+        o_term = 0.0 if float(occlusion_severity) > 0.0 else 1.0
+    else:
+        o_term = max(0.0, min(1.0, 1.0 - float(occlusion_severity) / resolved.ceiling_occlusion))
+
+    w_s = REPRESENTATIVE_MULTIPLIER_WEIGHT_SHARPNESS
+    w_n = REPRESENTATIVE_MULTIPLIER_WEIGHT_EMBEDDING_NORM
+    w_o = REPRESENTATIVE_MULTIPLIER_WEIGHT_OCCLUSION
+    total_w = w_s + w_n + w_o
+    if total_w <= 0.0:
+        return 1.0
+    return float((w_s * s_term + w_n * n_term + w_o * o_term) / total_w)
+
+
+def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
+    """Normalize a face embedding to unit length.
+
+    Args:
+        embedding: Raw embedding vector (512D or 1024D).
+
+    Returns:
+        Normalized 512D face embedding.
+    """
+    face_vec = extract_face_embedding(embedding)
+    norm = float(np.linalg.norm(face_vec))
+    if norm == 0:
+        return face_vec.astype(np.float32)
+    return face_vec.astype(np.float32) / norm
+
+
+def _quality_settings(
+    settings: ClusteringSettings | QualitySettings | None,
+) -> QualitySettings | None:
+    if isinstance(settings, ClusteringSettings):
+        return settings.quality
+    return settings
+
+
+def representative_quality_components(
+    identity: MediaIdentity,
+    settings: ClusteringSettings | QualitySettings | None = None,
+) -> dict[str, float]:
+    """quality_components JSON for the representative row (svc-rep-recompute)."""
+    return compute_representative_quality(
+        confidence=identity.confidence,
+        bbox_width=identity.bbox_width,
+        bbox_height=identity.bbox_height,
+        sharpness=identity.sharpness,
+        occlusion_severity=identity.occlusion_severity,
+        settings=_quality_settings(settings),
+    ).components()
+
+
+def sort_identities_for_representative(
+    identities: Sequence[MediaIdentity],
+    settings: ClusteringSettings | QualitySettings | None = None,
+) -> list[MediaIdentity]:
+    """Unoccluded-first, then highest C4 composite. Public for assignment_writer."""
+    quality_settings = _quality_settings(settings)
+    return sorted(
+        identities,
+        key=lambda identity: representative_sort_key(
+            confidence=identity.confidence,
+            bbox_width=identity.bbox_width,
+            bbox_height=identity.bbox_height,
+            sharpness=identity.sharpness,
+            occlusion_severity=identity.occlusion_severity,
+            identity_id=identity.id,
+            settings=quality_settings,
+        ),
+    )
+
+
+def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSettings) -> float:
+    """C4 composite written to quality_score (0..1).
+
+    Geometric mean(confidence, bbox term) × (1 − occlusion·k_occ) × sharpness
+    term. Enrollment floors still gate admission separately. The FIR-6
+    multiplier is not mixed in — that would double-count occlusion/sharpness.
+    """
+    return compute_representative_quality(
+        confidence=identity.confidence,
+        bbox_width=identity.bbox_width,
+        bbox_height=identity.bbox_height,
+        sharpness=identity.sharpness,
+        occlusion_severity=identity.occlusion_severity,
+        settings=settings.quality,
+    ).composite
+
+
+def _select_diverse_representatives(
+    identities: list[MediaIdentity],
+    max_reps: int,
+    settings: ClusteringSettings | QualitySettings | None = None,
+) -> list[MediaIdentity]:
+    """Select representatives via Farthest-Point Sampling for diversity.
+
+    This algorithm ensures geometric diversity by selecting representatives
+    that maximize minimum distance from already-chosen representatives,
+    preventing the loss of "bridge" faces that connect different pose angles.
+
+    Args:
+        identities: Pool of candidate identities.
+        max_reps: Maximum number of representatives to select.
+        settings: Optional quality settings for C4 ranking of the FPS seed.
+
+    Returns:
+        Selected representatives in insertion order (first is unoccluded-first
+        then highest composite).
+    """
+    if not identities:
+        return []
+    k = min(max_reps, len(identities))
+
+    ranked = sort_identities_for_representative(identities, settings)
+    selected: list[MediaIdentity] = [ranked[0]]
+    selected_vecs: list[np.ndarray] = [_normalize_embedding(np.asarray(ranked[0].embedding, dtype=np.float32))]
+    remaining = set(range(1, len(ranked)))
+
+    for _ in range(k - 1):
+        if not remaining:
+            break
+        best_idx: int | None = None
+        best_min_dist = -1.0
+        for idx in remaining:
+            vec = _normalize_embedding(np.asarray(ranked[idx].embedding, dtype=np.float32))
+            # Distance = 1 - cosine_similarity (since embeddings are normalized)
+            min_dist = min(float(1 - np.dot(vec, sv)) for sv in selected_vecs)
+            if min_dist > best_min_dist:
+                best_min_dist = min_dist
+                best_idx = idx
+        if best_idx is None:
+            break
+        selected.append(ranked[best_idx])
+        selected_vecs.append(_normalize_embedding(np.asarray(ranked[best_idx].embedding, dtype=np.float32)))
+        remaining.remove(best_idx)
+
+    return selected
+
+
+def _get_pose_bucket(identity: MediaIdentity | ClusterRepresentative, bucket_size: float) -> tuple[int, int] | None:
+    """Get the (pitch, yaw) bucket for an identity or representative."""
+    pitch = identity.pose_pitch
+    yaw = identity.pose_yaw
+    if pitch is None or yaw is None:
+        return None
+    bucket = (int(pitch // bucket_size), int(yaw // bucket_size))
+    identity_ref = getattr(identity, "id", None) or getattr(identity, "identity_id", None)
+    logger.debug(
+        "[pose_bucket] identity=%s pitch=%.2f yaw=%.2f bucket=%s size=%.1f",
+        identity_ref,
+        pitch,
+        yaw,
+        bucket,
+        bucket_size,
+    )
+    return bucket
+
+
+def _is_novel_pose(
+    identity: MediaIdentity,
+    existing_reps: Sequence[ClusterRepresentative],
+    bucket_size: float,
+) -> bool:
+    """Check if identity's pose fall into a bucket not covered by existing reps."""
+    new_bucket = _get_pose_bucket(identity, bucket_size)
+    if not new_bucket:
+        logger.debug(
+            "[pose_bucket] identity=%s has no pose data, cannot determine novelty",
+            identity.id,
+        )
+        return False
+
+    existing_buckets = []
+    for rep in existing_reps:
+        rep_bucket = _get_pose_bucket(rep, bucket_size)
+        if rep_bucket:
+            existing_buckets.append(rep_bucket)
+        if rep_bucket == new_bucket:
+            logger.debug(
+                "[pose_bucket] identity=%s bucket=%s already covered by rep=%s",
+                identity.id,
+                new_bucket,
+                rep.identity_id,
+            )
+            return False  # Covered
+
+    logger.info(
+        "[pose_bucket] NOVEL_POSE identity=%s bucket=%s existing_buckets=%s",
+        identity.id,
+        new_bucket,
+        existing_buckets,
+    )
+    return True
+
+
+def _find_upgradeable_representative(
+    identity: MediaIdentity,
+    existing_reps: Sequence[ClusterRepresentative],
+    bucket_size: float,
+    settings: ClusteringSettings,
+) -> ClusterRepresentative | None:
+    """Find an existing representative in the same pose bucket to replace (upgrade).
+
+    Returns the representative to replace if the new identity is significantly better.
+    """
+    new_bucket = _get_pose_bucket(identity, bucket_size)
+    if not new_bucket:
+        return None
+
+    new_quality = _compute_identity_quality(identity, settings)
+    margin = 0.1
+
+    for rep in existing_reps:
+        rep_bucket = _get_pose_bucket(rep, bucket_size)
+        if rep_bucket == new_bucket:
+            rep_quality = rep.quality_score or 0
+            if new_quality > rep_quality + margin:
+                logger.info(
+                    "[pose_bucket] UPGRADE identity=%s bucket=%s new_quality=%.3f > rep=%s rep_quality=%.3f",
+                    identity.id,
+                    new_bucket,
+                    new_quality,
+                    rep.identity_id,
+                    rep_quality,
+                )
+                return rep
+            else:
+                logger.debug(
+                    "[pose_bucket] identity=%s bucket=%s quality=%.3f not better than rep=%s quality=%.3f",
+                    identity.id,
+                    new_bucket,
+                    new_quality,
+                    rep.identity_id,
+                    rep_quality,
+                )
+
+    return None
+
+
+@dataclass(frozen=True)
+class RepAdmission:
+    """Result of the representative-admission decision.
+
+    Replaces the former ``_last_*`` instance-state side effects of
+    ``should_add_representative`` with an explicit return value. ``was_upgrade`` is
+    True when the decision replaced a lower-quality representative in the same pose
+    bucket (Slice 9 sub-slice 3a-fix restored this signal after a reset bug had pinned
+    it False). ``rep_count`` is the pre-upgrade-removal representative count (what
+    ``persist_assignment`` passes as ``existing_rep_count``).
+    """
+
+    should_add: bool
+    cached_reps: list[ClusterRepresentative]
+    rep_count: int
+    was_upgrade: bool
+    was_novel_pose: bool
+
+
+class RepresentativeSelector:
+    """Own the representative-selection surface for a cluster repository.
+
+    Not pure: ``should_add_representative`` removes an upgraded-out representative and
+    ``select_reps_to_preserve`` reads representatives, so the selector holds the
+    ``ClusterRepository``. Persistence orchestration (creating/persisting reps, emitting
+    events) remains on ``AssignmentWriter``.
+    """
+
+    def __init__(self, settings: ClusteringSettings, cluster_repository: ClusterRepository) -> None:
+        self._settings = settings
+        self._clusters = cluster_repository
+
+    async def should_add_representative(self, decision: AssignmentDecision, batch_mode: bool = False) -> RepAdmission:
+        """Determine if the assigned identity should become a representative.
+
+        Returns a :class:`RepAdmission` whose ``cached_reps`` reflects the current
+        DB state *after* any upgrade removal so the caller can compute the new
+        centroid from cached data without a second DB round-trip (Phase 3
+        duplicate-read elimination). ``rep_count`` is the pre-removal count.
+
+        ``was_upgrade`` is True when an existing lower-quality representative in the
+        same pose bucket was removed to make room for this one (Slice 9 sub-slice
+        3a-fix; the upgrade reason + ``representative_upgraded`` event depend on it).
+        """
+        cluster_id = decision.candidate.cluster_id
+
+        # Fetch all reps once; this is the only get_all_representatives call
+        # for the accepted-assignment path (Phase 3: remove duplicate reads).
+        existing_reps: list[ClusterRepresentative] = list(await self._clusters.get_all_representatives(cluster_id))
+        current_count = len(existing_reps)
+
+        # FIR-6 S3b: quality-gated enrollment — below active floors never enter
+        # representative/centroid updates (dark no-op floors accept everything).
+        identity = decision.candidate.identity
+        floors = enrollment_floors_from_settings(self._settings)
+        if not passes_enrollment_floors(identity, floors):
+            logger.info(
+                "[enrollment_gate] EXCLUDED cluster=%s identity=%s "
+                "sharpness=%s embedding_norm=%s occlusion_severity=%s "
+                "floors=(s>=%.3f,n>=%.3f,o<=%.3f)",
+                cluster_id,
+                identity.id,
+                identity.sharpness,
+                identity.embedding_norm,
+                identity.occlusion_severity,
+                floors.floor_sharpness,
+                floors.floor_embedding_norm,
+                floors.ceiling_occlusion,
+            )
+            return RepAdmission(False, existing_reps, current_count, was_upgrade=False, was_novel_pose=False)
+
+        # Track which rep was removed so cached_reps reflects current DB state.
+        removed_rep_id: str | None = None
+
+        # 1. Check for upgrade opportunity (replace lower quality rep in same pose bucket)
+        upgrade_target = _find_upgradeable_representative(
+            decision.candidate.identity,
+            existing_reps,
+            self._settings.pose_bucket_size,
+            self._settings,
+        )
+        if upgrade_target:
+            # User-selected representatives are protected from automatic upgrades
+            if getattr(upgrade_target, "is_user_selected", False):
+                return RepAdmission(False, existing_reps, current_count, was_upgrade=False, was_novel_pose=False)
+
+            await self._clusters.remove_representative(upgrade_target.id)
+            removed_rep_id = upgrade_target.id
+            logger.info(
+                "[pose_bucket] QUALITY_UPGRADE cluster=%s old_identity=%s new_identity=%s quality_diff=%.3f",
+                cluster_id,
+                upgrade_target.identity_id,
+                decision.candidate.identity.id,
+                _compute_identity_quality(decision.candidate.identity, self._settings)
+                - (upgrade_target.quality_score or 0),
+            )
+
+        # cached_reps = existing_reps minus any rep just removed by the upgrade path.
+        cached_reps = [r for r in existing_reps if r.id != removed_rep_id] if removed_rep_id else existing_reps
+
+        # An upgrade occurred iff we removed a lower-quality rep in the same pose
+        # bucket above. Carrying this through restores the upgrade reason + the
+        # representative_upgraded event that the former unconditional reset
+        # clobbered (Slice 9 sub-slice 3a-fix; behaviour-changing observability fix).
+        was_upgrade = removed_rep_id is not None
+
+        # 2. Check limits with bonus
+        max_base = self._settings.max_representatives_per_cluster
+        max_total = max_base + self._settings.pose_diversity_bonus
+
+        # In batch_mode, we allow adding even if we reached the limit,
+        # provided it's a novel pose or diverse, because they will be provisional.
+        # Actually, the upgrade logic (1) already handles replacing.
+        # For new additions:
+        if not batch_mode and current_count >= max_total:
+            return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
+
+        # 3. If above base limit, only add if novel pose
+        if current_count >= max_base:
+            if _is_novel_pose(decision.candidate.identity, existing_reps, self._settings.pose_bucket_size):
+                return RepAdmission(True, cached_reps, current_count, was_upgrade=was_upgrade, was_novel_pose=True)
+            # If batch_mode, we might still want to add it if it's "better" than nothing?
+            # No, if not novel pose and no upgrade target, it's redundant.
+            return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
+
+        if not existing_reps:
+            return RepAdmission(True, cached_reps, current_count, was_upgrade=was_upgrade, was_novel_pose=False)
+
+        # 4. Standard diversity check (embedding distance)
+        for rep in existing_reps:
+            rep_embedding = cast(np.ndarray, getattr(rep, "embedding", rep))
+            similarity = compute_face_similarity(decision.candidate.identity_vector, rep_embedding)
+            if similarity > self._settings.representative_diversity_threshold:
+                # If we are here, it means we are NOT in the novel pose path (or below max_base).
+                # If below max_base, we enforce diversity.
+                # If above max_base, we already checked novel pose (which implies diversity in pose space).
+                # But novel pose == false -> we fell through.
+                # So if similarity is high, we reject.
+                return RepAdmission(False, cached_reps, current_count, was_upgrade=False, was_novel_pose=False)
+
+        return RepAdmission(True, cached_reps, current_count, was_upgrade=was_upgrade, was_novel_pose=False)
+
+    async def select_reps_to_preserve(
+        self,
+        cluster_id: str,
+    ) -> list[ClusterRepresentative]:
+        """Identify representatives that MUST be preserved during recompute.
+
+        Preserves:
+        1. All user-selected (pinned) representatives.
+        2. The highest-quality representative from each covered pose bucket.
+        """
+        all_reps = await self._clusters.get_all_representatives(cluster_id)
+        if not all_reps:
+            return []
+
+        # 1. Start with all pinned reps
+        pinned = [rep for rep in all_reps if rep.is_user_selected]
+        preserved: dict[str, ClusterRepresentative] = {rep.id: rep for rep in pinned}
+        logger.debug("[select_reps_to_preserve] Found %d pinned reps", len(pinned))
+
+        # 2. Add best-of-bucket for all buckets
+        buckets: dict[tuple[int, int], ClusterRepresentative] = {}
+        for rep in all_reps:
+            bucket = _get_pose_bucket(rep, self._settings.pose_bucket_size)
+            if bucket is None:
+                continue
+
+            if bucket not in buckets or rep.quality_score > buckets[bucket].quality_score:
+                buckets[bucket] = rep
+
+        for rep in buckets.values():
+            if rep.id not in preserved:
+                logger.debug(
+                    "[select_reps_to_preserve] Adding best-of-bucket rep: %s for bucket %s",
+                    rep.identity_id,
+                    _get_pose_bucket(rep, self._settings.pose_bucket_size),
+                )
+                preserved[rep.id] = rep
+            else:
+                logger.debug(
+                    "[select_reps_to_preserve] Best-of-bucket rep %s already preserved (pinned)",
+                    rep.identity_id,
+                )
+
+        return list(preserved.values())
+
+    def select_diverse_representatives_seeded(
+        self,
+        identities: list[MediaIdentity],
+        requested_count: int,
+        seeded_embeddings: list[np.ndarray],
+    ) -> list[MediaIdentity]:
+        """Select diverse representatives using Furthest Point Sampling, seeded with existing reps.
+
+        This ensures newly selected reps are diverse relative to BOTH each other
+        AND the already-preserved representatives.
+        """
+        if not identities or requested_count <= 0:
+            return []
+
+        # Seed the selected set with normalized preserved embeddings
+        selected_vecs = [_normalize_embedding(ev) for ev in seeded_embeddings]
+
+        # We only want to select from identities that aren't already represented by seeds
+        # (though recompute_representatives usually filters these out anyway)
+        selected_identities: list[MediaIdentity] = []
+
+        num_to_pick = min(requested_count, len(identities))
+
+        # Pool of candidates
+        pool = identities
+
+        for _ in range(num_to_pick):
+            best_idx: int | None = None
+            best_min_dist = -1.0
+
+            for idx, candidate in enumerate(pool):
+                cand_vec = _normalize_embedding(candidate.embedding)
+                # Distance to nearest already-selected representative (including seeds)
+                if not selected_vecs:
+                    min_dist = 1.0  # First one if no seeds
+                else:
+                    min_dist = min(float(1 - np.dot(cand_vec, sv)) for sv in selected_vecs)
+
+                if min_dist > best_min_dist:
+                    best_min_dist = min_dist
+                    best_idx = idx
+
+            if best_idx is None:
+                break
+
+            picked = pool.pop(best_idx)
+            selected_identities.append(picked)
+            selected_vecs.append(_normalize_embedding(picked.embedding))
+
+        return selected_identities

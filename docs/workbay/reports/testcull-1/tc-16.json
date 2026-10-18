@@ -1,0 +1,220 @@
+{
+  "lane": "tc-16",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.test.ts",
+      "verdict": "KEEP",
+      "tests_total": 72,
+      "tests_affected": [],
+      "reason": "Keep the independent per-photo draft transitions and outcome state machine because the suite asserts live guided-prototype behavior across edit, preview, apply, undo, and restore.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.test.ts:363 - assertions verify per-photo draft independence through visitor edits, preview, apply, undo, and keep.",
+      "subject": "guidedPrototype/state.ts guided demo state transitions",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/dw2-usebulkdes-1.test.tsx",
+      "verdict": "MERGE",
+      "tests_total": 5,
+      "tests_affected": [
+        "exposes submit unreadable media ids to its caller after a successful partial run",
+        "uses the warmup ETA from the failed describe operation in the idle warming chip",
+        "maps the idle lifecycle reason to safe operator copy",
+        "keeps GPU status out of MediaSelection and preserves unreadable media wiring",
+        "wires unreadable media ids to a recovery notice"
+      ],
+      "reason": "Move these live unreadable-media and GPU-status checks into their subject modules, replacing the final two source-string assertions with rendered MediaSelection behavior.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/dw2-usebulkdes-1.test.tsx:118 - the hook test asserts unreadable IDs are returned to the caller; lines 163 and 171 inspect MediaSelection source text.",
+      "subject": "useBulkDescribe hook, GpuTierStatus, and MediaSelection recovery notice",
+      "duplicate_of": "",
+      "canon": ["TEST-16"],
+      "replacement": "Split the hook cases into apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx and the status cases into apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/GpuTierStatus.test.tsx; cover unreadable-media wiring through a rendered MediaSelection integration test.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx",
+      "verdict": "REWRITE",
+      "tests_total": 36,
+      "tests_affected": [
+        "reserves a tokenized block-size slot for GPU status changes",
+        "keeps the GPU UX-map JSON and rendered contract aligned on visible unknown"
+      ],
+      "reason": "Keep the polling and rendered status coverage, but rewrite these two checks to assert the public rendered/layout contract without matching CSS source or Markdown prose.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx:359 - asserts a class name and matches CSS source; line 366 pins UX-map JSON and Markdown text.",
+      "subject": "useDescribeRunProgress and GpuTierStatus rendered status",
+      "duplicate_of": "",
+      "canon": ["TEST-16"],
+      "replacement": "Assert reserved layout in a browser/rendered contract test and validate UX-map data separately from prose, retaining the direct unknown-state behavior checks.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useGpuStateToasts.test.tsx",
+      "verdict": "KEEP",
+      "tests_total": 15,
+      "tests_affected": [],
+      "reason": "Keep these transition tests because they assert the visible toast and recovery-action behavior for live activity and GPU states.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useGpuStateToasts.test.tsx:185 - assertions check the toast message, action, duration, and destination after a warming-to-ready transition.",
+      "subject": "useGpuStateToasts user-facing transition notifications",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/dw2-rosterpage-1.test.tsx",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "does not open an unrelated default person workspace when the catalogue search is active"
+      ],
+      "reason": "Keep this live RosterPage search behavior and move the wave-named test into the page's canonical suite.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/dw2-rosterpage-1.test.tsx:91 - renders the page with an unrelated active search and asserts no person workspace opens.",
+      "subject": "RosterPage default workspace selection during catalogue search",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/menuHeadingParity.test.ts",
+      "verdict": "REWRITE",
+      "tests_total": 4,
+      "tests_affected": [
+        "each routed page renders an h1 matching its admin menu label",
+        "composed Settings tree has only Settings h1s",
+        "SettingsForm does not wrap RetentionSection",
+        "e2e admin routes omit retired Retention slug"
+      ],
+      "reason": "Retain the live menu-heading and route behavior, but replace source parsing and regex assertions with checks through rendered admin navigation and pages.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/menuHeadingParity.test.ts:75 - reads page source and regex-extracts h1 text; lines 111 and 122 also inspect component and route source.",
+      "subject": "Admin menu labels, routed page headings, Settings composition, and Retention redirect behavior",
+      "duplicate_of": "",
+      "canon": ["TEST-16"],
+      "replacement": "Add an integration test that mounts routed admin pages through their navigation entry and asserts the visible heading and retired-slug redirect through rendered behavior.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/RosterEntriesSection.labels.test.tsx",
+      "verdict": "KEEP",
+      "tests_total": 4,
+      "tests_affected": [],
+      "reason": "Keep the accessible field-label and entry-count checks; the static no-assert signal misses the helper's explicit visibility, id, and for assertions.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/RosterEntriesSection.labels.test.tsx:63 - the shared assertion checks label visibility and matching input id/for attributes.",
+      "subject": "RosterEntriesSection accessible create/edit labels and count heading",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "high"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/dw2-gpuflow1re-1.test.tsx",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "retains the undo token after the banner closes and keeps a recovery action available"
+      ],
+      "reason": "Keep the live persisted-undo recovery regression and move it from the wave file into the established PersonMergeFlow recovery suite.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/dw2-gpuflow1re-1.test.tsx:83 - after banner expiry it checks the recovery button, persisted server token and remaining lifetime, then submits undo with that token.",
+      "subject": "PersonMergeFlow persisted undo-token recovery after banner expiry",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/RosterEntriesSection.personMerge.test.tsx",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/dw2-rosterentr-4.test.tsx",
+      "verdict": "MERGE",
+      "tests_total": 2,
+      "tests_affected": [
+        "keeps dismissal disabled during a retryable undo error and restores it after reconciliation",
+        "keeps dismissal available after a roster check failure"
+      ],
+      "reason": "Move these live retry and reconciliation dismissal regressions into the established PersonMergeFlow recovery suite.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/dw2-rosterentr-4.test.tsx:70 - the first case checks disabled dismissal during retry and restored dismissal after reconciliation; line 89 covers roster-check failure.",
+      "subject": "PersonMergeFlow undo retry and roster reconciliation dismissal",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/RosterEntriesSection.personMerge.test.tsx",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/dw2-mediaaltsu-1.test.tsx",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "keeps the unmark row identity and state coherent if isDecorative flips while busy"
+      ],
+      "reason": "Merge this live pending-toggle accessibility regression into MediaAltSuggest's canonical suite, retaining its pressed-state and description assertions alongside the existing busy-label case.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/dw2-mediaaltsu-1.test.tsx:33 - holds the API mutation pending, flips isDecorative, and verifies the busy control's name, pressed state, title, and description.",
+      "subject": "MediaAltSuggest decorative-toggle accessibility during pending mutation",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/dw2-syncpresen-1.test.ts",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "keeps the base control when a reclaimer breach takes the headline"
+      ],
+      "reason": "Move this live sync-presentation state-matrix case from the wave-named file into the subject's canonical test module.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/dw2-syncpresen-1.test.ts:38 - for four health states it asserts breach status while preserving each base action and badge link.",
+      "subject": "buildSyncPresentation reclaimer-breach overlay and base action",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/syncPresentation.test.ts",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/syncPresentation.test.ts",
+      "verdict": "REWRITE",
+      "tests_total": 24,
+      "tests_affected": [
+        "SyncStatusResponse does not declare a top-level failed string[] (settings graft)",
+        "buildSyncPresentation has no failedFields input or escalation arm",
+        "SyncStatusIndicator does not pass data?.failed into presentation"
+      ],
+      "reason": "Keep the HARM-BR-04 regression guard but replace its three production-source scans with type-contract and public mapper/component behavior checks.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/syncPresentation.test.ts:385 - scans the type source for field declarations; lines 454 and 488 regex-match presentation and indicator source.",
+      "subject": "SyncStatusResponse type, buildSyncPresentation, and SyncStatusIndicator contract",
+      "duplicate_of": "",
+      "canon": ["TEST-16", "TEST-15"],
+      "replacement": "Use a compile-time assertion for the SyncStatusResponse shape and exercise the mapper and rendered SyncStatusIndicator with a payload containing failed[]; retain existing public-seam regression cases.",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/dw2-clusterlab-1.test.tsx",
+      "verdict": "MERGE",
+      "tests_total": 1,
+      "tests_affected": [
+        "does not rename when the duplicate guard lookup times out"
+      ],
+      "reason": "Keep the live timeout safety behavior and move the wave-named hook test into useClusterSaveAction's canonical suite.",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/dw2-clusterlab-1.test.tsx:66 - the test asserts timeout prevents rename and cluster creation while returning the lookup-failure message.",
+      "subject": "useClusterSaveAction duplicate-label guard timeout handling",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/useClusterSaveAction.test.tsx",
+      "est_seconds_saved": 0,
+      "risk": "medium"
+    }
+  ],
+  "fixtures": []
+}

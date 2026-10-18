@@ -1,0 +1,67 @@
+{
+  "lane": "hrev-seed-select",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\" || { echo 'cannot resolve lane root' >&2; exit 1; }; resolved_python=\"$lane_root/.venv/bin/python\"; if [ ! -x \"$resolved_python\" ]; then echo 'lane interpreter unavailable' >&2; exit 1; fi; LC_ALL=C \"$resolved_python\" -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_clustering_seed_rights.py scripts/deploy/tests/test_dw2_clusterverif_1.py scripts/deploy/tests/test_dw2_selectguid_1.py",
+      "result": "pass",
+      "detail": "16 passed in 3.24s."
+    },
+    {
+      "command": "lane_root=\"$(git rev-parse --show-toplevel)\" || { echo 'cannot resolve lane root' >&2; exit 1; }; probe_dir=\"$(mktemp -d)\"; SRC=\"$lane_root/apps/prototype-wp-alt-context/js/admin/assets/guided\" PERSONS=1 PER_PERSON=1 OUT=\"$probe_dir/media\" MANIFEST=\"$probe_dir/manifest.txt\" README=\"$probe_dir/README.md\" RIGHTS=\"$probe_dir/rights.tsv\" bash \"$lane_root/infra/oci/demo/seed/select-clustering-seed.sh\" >/dev/null 2>&1; stat -c '%a %n' \"$probe_dir/rights.tsv\"",
+      "result": "fail",
+      "detail": "Probe exited 0 but generated rights.tsv mode was 600; a shared, readable mode is needed."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16815,
+      "finding_id": "DADJ-10166",
+      "was": "open",
+      "verdict": "NOW_FIXED",
+      "evidence": "infra/oci/demo/seed/select-clustering-seed.sh:112 - each record stores BASIS, SOURCE, and NOTICE; infra/oci/demo/seed/import.sh:212-218 - unrecognised bases are refused before media import.",
+      "guard_test": "scripts/deploy/tests/test_clustering_seed_rights.py::test_readme_note_matches_rights_ledger; scripts/deploy/tests/test_seed_import_rights.py::test_unrecorded_basis_is_named_and_refused_while_other_media_imports"
+    },
+    {
+      "db_id": 17075,
+      "finding_id": "FX3SEE-baac9a71632d4773-M-95385430f7b12a21c9f99297",
+      "was": "open",
+      "verdict": "NOW_FIXED",
+      "evidence": "scripts/deploy/tests/test_dw2_selectguid_1.py:25,40 - the test sends RIGHTS to its tmp path and checks the committed ledger is unchanged; infra/oci/demo/seed/select-guided-seed.sh:153 sets mode 0644.",
+      "guard_test": "scripts/deploy/tests/test_dw2_selectguid_1.py::test_webp_source_keeps_webp_extension_and_manifest_entry"
+    },
+    {
+      "db_id": 17068,
+      "finding_id": "FX3SEE-ec40b15f5f5595d0-M-ed6b88eea82e24b6ec1cde92",
+      "was": "open",
+      "verdict": "NOW_FIXED",
+      "evidence": "infra/oci/demo/seed/select-clustering-seed.sh:48-65 - LICENSE_NOTE overrides are rejected and the note is derived from BASIS, SOURCE, and NOTICE; scripts/deploy/tests/test_clustering_seed_rights.py:137,144-147 checks the generated note and ledger fields.",
+      "guard_test": "scripts/deploy/tests/test_clustering_seed_rights.py::test_readme_note_matches_rights_ledger"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "infra/oci/demo/seed/select-clustering-seed.sh",
+      "line": 121,
+      "title": "Clustering ledger replacement leaves mode 0600",
+      "defect": "The rights temp file is created with mktemp's 0600 mode and moved without a chmod. Unlike the guided selector, this selector leaves its generated ledger unreadable to other Unix users; the committed ledger currently has mode 0644.",
+      "failure_scenario": "A contributor regenerates the ledger in a shared workspace and a deploy/import process runs under another account. import.sh cannot read clustering-rights.tsv and stops during ledger validation before importing media.",
+      "fix": "Set the temporary ledger to mode 0644 before the atomic move, and assert the generated clustering ledger mode in a selector test.",
+      "test_file": "scripts/deploy/tests/test_clustering_seed_rights.py",
+      "urgency": "before_merge"
+    },
+    {
+      "severity": "medium",
+      "file": "infra/oci/demo/seed/select-clustering-seed.sh",
+      "line": 37,
+      "title": "Invalid ADDED values create ledgers the importer rejects",
+      "defect": "ADDED is accepted from the environment and emitted verbatim without date validation; the guided selector has the same gap. The importer requires a real Gregorian YYYY-MM-DD value.",
+      "failure_scenario": "Run either selector with ADDED=2026-02-31. It exits successfully and writes the ledger, but import.sh rejects the invalid date during preflight and imports no media.",
+      "fix": "Validate ADDED as a real Gregorian date in both selectors before changing outputs, and add a regression test that verifies invalid values fail early.",
+      "test_file": "scripts/deploy/tests/test_clustering_seed_rights.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "All three carried findings now have guards, and the lane suite passed (16 tests); review also surfaced two medium selector-to-import defects: clustering ledger permissions and unchecked ADDED dates."
+}

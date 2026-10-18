@@ -1,0 +1,347 @@
+"""Authentication and tenant scope tests (TDD - expected to fail until auth is enforced)."""
+
+from __future__ import annotations
+
+import uuid
+from types import SimpleNamespace
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
+from recognition.config.security import SecuritySettings
+from recognition.interface_adapters.http import deps as dependencies
+from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.deps import auth
+from recognition.tests.api.conftest import FakeSession
+from recognition.tests.fakes import FakeClusterService
+
+
+def _auth_client(fake_cluster_service: FakeClusterService, monkeypatch) -> TestClient:
+    """Build a client with faked dependencies to avoid real DB connections."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+
+    async def _session_dep():
+        yield FakeSession()
+
+    def cluster_builder():
+        async def _build(_tenant_id: str):
+            return fake_cluster_service
+
+        return _build
+
+    app.dependency_overrides[dependencies.get_session] = _session_dep
+    app.dependency_overrides[dependencies.get_optional_session] = _session_dep
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
+    return TestClient(app)
+
+
+def test_missing_authorization_header_returns_401(monkeypatch) -> None:
+    """Requests without Authorization should be rejected."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+
+    response = client.get("/recognition/clusters", headers={"X-Tenant-ID": tenant_id})
+
+    assert response.status_code == 401
+
+
+def test_invalid_bearer_token_returns_403(monkeypatch) -> None:
+    """Malformed or unknown tokens should return 403."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+    headers = {"X-Tenant-ID": tenant_id, "Authorization": "Bearer invalid-token"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 403
+
+
+def test_non_db_api_key_rejected_in_production_mode(monkeypatch) -> None:
+    """DB-backed keys are the sole tenant-key authority (allowlist removed).
+
+    Even when the retired RECOGNITION_ALLOWED_API_KEYS env is set, a key with
+    no api_keys row must be 403 in production-mode runtime (SEC-06, decision #1882).
+    """
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "production")
+    # Former allowlist var — must be ignored after retirement.
+    monkeypatch.setenv("RECOGNITION_ALLOWED_API_KEYS", "former-allowlist-key")
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "Authorization": "Bearer former-allowlist-key",
+    }
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "invalid or missing API key"
+
+
+def test_token_tenant_mismatch_returns_403(monkeypatch) -> None:
+    """Token tenant claim must align with request tenant to protect isolation."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    token_tenant = str(uuid.uuid4())
+    request_tenant = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return token_tenant, "api-key-id", "STANDARD", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    headers = {"X-Tenant-ID": request_tenant, "Authorization": "Bearer good-key"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 403
+
+
+def test_valid_api_key_allows_request(monkeypatch) -> None:
+    """A valid API key should authenticate and pass the request through."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "api-key-id", "STANDARD", False
+
+    # Patch in the auth module where it's actually used
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "Authorization": "Bearer good-key",
+    }
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+
+
+def test_valid_x_api_key_header_allows_request_with_default_settings(monkeypatch) -> None:
+    """WordPress-style X-Api-Key headers should authenticate without an env override."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "api-key-id", "STANDARD", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "X-Api-Key": "good-key",
+    }
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+
+
+def test_valid_x_api_key_header_allows_request_when_configured(monkeypatch) -> None:
+    """Explicit X-Api-Key configuration should accept the raw header value the WP proxy sends."""
+    monkeypatch.setenv("RECOGNITION_API_KEY_HEADER", "X-Api-Key")
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "api-key-id", "STANDARD", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "X-Api-Key": "good-key",
+    }
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+
+
+def test_auth_returns_503_when_optional_session_is_unavailable(monkeypatch) -> None:
+    """Breaker-open/session-unavailable requests must fail before DB key lookup."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+
+    async def _session_dep():
+        yield None
+
+    def cluster_builder():
+        async def _build(_tenant_id: str):
+            return FakeClusterService()
+
+        return _build
+
+    app.dependency_overrides[dependencies.get_optional_session] = _session_dep
+    app.dependency_overrides[dependencies.get_session] = _session_dep
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
+    client = TestClient(app)
+
+    response = client.get(
+        "/recognition/clusters",
+        headers={"Authorization": "Bearer good-key", "X-Tenant-ID": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Database unavailable"
+
+
+class _FakeLookupError(Exception):
+    """Small DB-ish exception carrying SQLSTATE for auth lookup tests."""
+
+    def __init__(self, message: str, *, sqlstate: str | None = None) -> None:
+        super().__init__(message)
+        self.sqlstate = sqlstate
+
+
+def test_classify_auth_lookup_failure_25p02_returns_transaction_aborted() -> None:
+    """Aborted-transaction SQLSTATE should translate to a retryable auth failure."""
+    failure = auth._classify_auth_lookup_failure(_FakeLookupError("aborted transaction", sqlstate="25P02"))
+
+    assert failure.kind == "transaction_aborted"
+    assert failure.sqlstate == "25P02"
+    assert auth._translate_auth_lookup_failure(failure).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_lookup_api_key_is_pure_query_and_uses_nested_transaction() -> None:
+    """Successful auth lookup should not flush telemetry writes on the request session."""
+    session = FakeSession()
+    tenant_id = uuid.uuid4()
+    api_key_id = uuid.uuid4()
+    session.queue_execute_result(
+        scalar_one_or_none=SimpleNamespace(id=api_key_id, tenant_id=tenant_id, rate_limit_tier="STANDARD")
+    )
+
+    result = await auth._lookup_api_key(
+        "good-key",
+        SecuritySettings(auth_enabled=True),
+        session,
+    )
+
+    assert result == (str(tenant_id), str(api_key_id), "STANDARD", False)
+    assert session.begin_nested_calls == 1
+    assert session.nested_rollback_calls == 0
+    assert session.flush_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_lookup_api_key_translates_missing_table_to_500_and_rolls_back_savepoint() -> None:
+    """Permanent auth-store faults should fail fast at the auth boundary."""
+    session = FakeSession()
+    session.queue_execute_exception(_FakeLookupError('relation "api_keys" does not exist', sqlstate="42P01"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth._lookup_api_key(
+            "good-key",
+            SecuritySettings(auth_enabled=True),
+            session,
+        )
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "api key store unavailable"
+    assert session.begin_nested_calls == 1
+    assert session.nested_rollback_calls == 1
+
+
+def test_valid_api_key_enqueues_background_telemetry(monkeypatch) -> None:
+    """Successful API-key auth should record usage through a dedicated session."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+    telemetry_session = FakeSession()
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, str(uuid.uuid4()), "STANDARD", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
+    headers = {"X-Tenant-ID": tenant_id, "Authorization": "Bearer good-key"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+    assert telemetry_session.commit_calls == 1
+    assert telemetry_session.rollback_calls == 0
+    assert telemetry_session.close_calls == 1
+    assert telemetry_session.execute_calls == 1
+
+
+def test_valid_api_key_survives_background_telemetry_failure(monkeypatch) -> None:
+    """Telemetry failures must be logged/rolled back without changing auth success."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+    telemetry_session = FakeSession()
+    telemetry_session.queue_execute_exception(RuntimeError("telemetry failed"))
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, str(uuid.uuid4()), "STANDARD", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
+    headers = {"X-Tenant-ID": tenant_id, "Authorization": "Bearer good-key"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+    assert telemetry_session.commit_calls == 0
+    assert telemetry_session.rollback_calls == 1
+    assert telemetry_session.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_require_auth_direct_call_allows_missing_background_tasks(monkeypatch) -> None:
+    """Direct-call unit tests can pass no BackgroundTasks and still exercise auth."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+    tenant_id = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "api-key-id", "STANDARD", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+
+    result = await auth._require_auth_impl(
+        authorization="Bearer good-key",
+        x_tenant_id=tenant_id,
+        api_key_header_value=None,
+        background_tasks=None,
+        session=FakeSession(),
+    )
+
+    assert result.api_key_id == "api-key-id"
+
+
+def test_tenant_mismatch_does_not_enqueue_background_telemetry(monkeypatch) -> None:
+    """Telemetry should only run for fully authorized requests."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    token_tenant = str(uuid.uuid4())
+    request_tenant = str(uuid.uuid4())
+    telemetry_session = FakeSession()
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return token_tenant, str(uuid.uuid4()), "STANDARD", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
+    headers = {"X-Tenant-ID": request_tenant, "Authorization": "Bearer good-key"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 403
+    assert telemetry_session.execute_calls == 0
+    assert telemetry_session.commit_calls == 0

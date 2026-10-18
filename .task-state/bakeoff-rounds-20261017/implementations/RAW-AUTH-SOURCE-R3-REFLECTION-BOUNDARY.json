@@ -9,7 +9,8 @@
     ".task-state/bakeoff-rounds-20261017/implementations/RAW-AUTH-SOURCE-R3-REFLECTION-BOUNDARY.md"
   ],
   "commits": [
-    "ce5eed59f2c9b54b1e3f89f511b92698dd344ac4"
+    "ce5eed59f2c9b54b1e3f89f511b92698dd344ac4",
+    "3675767d11b42cbf945a001fe85c82d1f88df0ff"
   ],
   "findings": [
     {

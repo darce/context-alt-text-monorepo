@@ -1956,11 +1956,12 @@ def _assert_runbook_recovery_transport(text: str) -> None:
         ["scp", str(source.relative_to(REPO_ROOT)), f"acx-backend:/tmp/{destination}"]
         for source, destination in (
             (SCRIPT, "app-portal-recovery.sh"),
+            (REPO_ROOT / "scripts/deploy/lib/shared-edge.sh", "app-portal-recovery.shared-edge.sh"),
             (SNIPPET, "app-portal-recovery.Caddyfile.app"),
             (OVERLAY, "app-portal-recovery.overlay.yml"),
         )
     ]
-    # Permit only these three complete workstation commands, anywhere in the document.
+    # Permit only these four complete workstation commands, anywhere in the document.
     # The one SSH mention is explanatory prose, never an executable remote shell.
     transport_lines = [line for line in text.splitlines() if re.search(r"\b(?:ssh|scp)\b", line, re.IGNORECASE)]
     prose = "SSH alias is the same existing VM used for deployment; no VM checkout is assumed):"
@@ -1976,6 +1977,7 @@ def _assert_runbook_recovery_transport(text: str) -> None:
         "APP_UPSTREAM": "prod-api:8000",
         "APP_SNIPPET": "/tmp/app-portal-recovery.Caddyfile.app",
         "APP_OVERLAY": "/tmp/app-portal-recovery.overlay.yml",
+        "APP_SHARED_EDGE_LIB": "/tmp/app-portal-recovery.shared-edge.sh",
         "APP_HEALTH_CMD": "/usr/local/bin/app-portal-health-check",
     }
     assert shlex.split(blocks[1].replace("\\\n", "")) == [
@@ -2272,28 +2274,35 @@ def test_runbook_rollback_has_no_unsafe_caddyfile_placeholder() -> None:
     assert "cat rollback > Caddyfile" not in rollback
 
 
-def test_runbook_rollback_documents_guarded_in_place_caddyfile_restore() -> None:
-    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
-    assert all(
-        fragment in rollback
-        for fragment in (
-            "**in place**",
-            "set -euo pipefail",
-            "find /opt/acx-backend/app/rollback -maxdepth 1 -type f",
-            "-name 'Caddyfile.*' -printf '%f\\n'",
-            "sed -n 's/^Caddyfile\\.\\([0-9][0-9]*\\)$/\\1/p'",
-            "| sort -nr | sed -n '1p'",
-            'echo "Selected rollback timestamp: $ts"',
-            'if [ ! -f "$snapshot" ] || [ ! -s "$snapshot" ] || [ -L "$snapshot" ]; then',
-            "refusing restore",
-            'cp -- "$snapshot" /opt/acx-backend/Caddyfile',
-            'www_snapshot="/opt/acx-backend/app/rollback/www.$ts"',
-            'overlay_snapshot="/opt/acx-backend/app/rollback/docker-compose.app.yml.$ts"',
-            "rm -rf -- /opt/acx-backend/app/www",
-            'cp -a -- "$www_snapshot" /opt/acx-backend/app/www',
-            'cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml',
-        )
-    )
+def test_runbook_rollback_restores_selected_state_in_place(tmp_path: Path) -> None:
+    from test_gtmr_portal_backout_admission import _backout, _fixture
+
+    backend, _, record, env = _fixture(tmp_path, marked=True, overlay=True)
+    caddy = backend / "Caddyfile"
+    inode = caddy.stat().st_ino
+    rollback = backend / "app/rollback"
+    snapshots = _rollback_tree_state(rollback)
+    lock = backend / "app/activation.journal.lock"
+    lock_before = _rollback_tree_state(lock)
+    result = _backout(backend, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Selected rollback timestamp: 20" in result.stdout
+    assert caddy.read_bytes() == (rollback / "Caddyfile.20").read_bytes()
+    assert caddy.stat().st_ino == inode
+    assert _tree_files(backend / "app/www") == _tree_files(rollback / "www.20")
+    assert (backend / "app/docker-compose.app.yml").read_bytes() == (
+        rollback / "docker-compose.app.yml.20"
+    ).read_bytes()
+    models = [json.loads(line) for line in record.read_text().splitlines()]
+    assert {item["model"]["name"] for item in models} == {"rollback-project"}
+    assert len({tuple(item["files"]) for item in models}) == 1
+    assert "up" in models[0]["argv"]
+    assert "wget" in models[1]["argv"]
+    assert "reload" in models[2]["argv"]
+    assert len(models) == 3
+    assert _rollback_tree_state(rollback) == snapshots
+    assert _rollback_tree_state(lock) == lock_before
+    assert not (backend / "app/activation.journal").exists()
 
 
 def _run_runbook_commands(
@@ -2304,6 +2313,11 @@ def _run_runbook_commands(
     never_ready: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     live_root = tmp_path / "opt" / "acx-backend"
+    # Model the fourth standalone artifact outside the protected live tree;
+    # supplying test inputs must not mutate the state under refusal assertions.
+    packaged_helper = tmp_path / "runbook-shared-edge.sh"
+    if not packaged_helper.exists():
+        packaged_helper.write_bytes((REPO_ROOT / "scripts/deploy/lib/shared-edge.sh").read_bytes())
     bin_dir = tmp_path / "rollback-bin"
     bin_dir.mkdir(exist_ok=True)
     _write_executable(
@@ -2322,7 +2336,13 @@ def _run_runbook_commands(
     commands = commands.replace("/usr/local/bin/app-portal-health-check", str(bin_dir / "health-check"))
     return subprocess.run(
         ["bash", "-c", commands],
-        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "BASH_ENV": "", "LC_ALL": "C"},
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "BASH_ENV": "",
+            "LC_ALL": "C",
+            "APP_SHARED_EDGE_LIB": str(packaged_helper),
+        },
         text=True,
         capture_output=True,
         check=False,
@@ -2378,6 +2398,7 @@ def test_runbook_rollback_selects_numeric_timestamp_and_refuses_incomplete_snaps
     live_root = tmp_path / "opt" / "acx-backend"
     rollback = live_root / "app" / "rollback"
     rollback.mkdir(parents=True)
+    _write_caddy_compose(live_root / "docker-compose.caddy.yml")
     live_caddy = live_root / "Caddyfile"
     live_caddy.write_text("live caddy\n", encoding="utf-8")
     caddy_inode = live_caddy.stat().st_ino
@@ -2648,11 +2669,33 @@ def test_recovery_refuses_changed_base_compose_without_mutation(tmp_path: Path) 
     assert f"caddy_compose={live.parent / 'docker-compose.caddy.yml'}\n" in journal.read_text()
 
 
-def test_runbook_first_deploy_rollback_uses_base_only_compose() -> None:
-    rollback = RUNBOOK.read_text(encoding="utf-8").split("## Rollback", 1)[1]
-    assert "no prior overlay" in rollback
-    assert "docker compose -f docker-compose.caddy.yml up -d" in rollback
-    assert "docker compose -f docker-compose.caddy.yml exec -T caddy" in rollback
+@pytest.mark.parametrize("marked", [False, True], ids=["legacy", "normalized"])
+def test_runbook_first_deploy_rollback_uses_base_project(tmp_path: Path, marked: bool) -> None:
+    from test_gtmr_portal_backout_admission import _backout, _fixture
+
+    backend, _, record, env = _fixture(tmp_path, marked=marked, overlay=False)
+    caddy = backend / "Caddyfile"
+    inode = caddy.stat().st_ino
+    snapshots = _rollback_tree_state(backend / "app/rollback")
+    result = _backout(backend, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert caddy.read_bytes() == b"caddy 20\n"
+    assert caddy.stat().st_ino == inode
+    assert not (backend / "app/www").exists()
+    assert not (backend / "app/docker-compose.app.yml").exists()
+    models = [json.loads(line) for line in record.read_text().splitlines()]
+    assert {item["model"]["name"] for item in models} == {"acx-backend"}
+    assert all(
+        not any(v["target"] == "/srv/app-portal" for v in item["model"]["services"]["caddy"]["volumes"])
+        for item in models
+    )
+    assert len({tuple(item["files"]) for item in models}) == 1
+    assert "up" in models[0]["argv"]
+    assert "wget" in models[1]["argv"]
+    assert "reload" in models[2]["argv"]
+    assert len(models) == 3
+    assert _rollback_tree_state(backend / "app/rollback") == snapshots
+    assert not (backend / "app/activation.journal").exists()
 
 
 def test_runbook_post_apply_mismatch_recreates_reloads_and_reverifies() -> None:
@@ -2678,6 +2721,9 @@ def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
 ) -> None:
     backend = tmp_path / "opt" / "acx-backend"
     backend.mkdir(parents=True)
+    (backend / "app").mkdir()
+    (backend / "app/docker-compose.app.yml").write_text("services: {}\n")
+    _write_caddy_compose(backend / "docker-compose.caddy.yml")
     (backend / "Caddyfile").write_text("host caddy\n")
     verification = RUNBOOK.read_text(encoding="utf-8").split("If the hashes differ", 1)[1]
     commands = verification.split("```bash\n", 1)[1].split("```", 1)[0]
@@ -2714,17 +2760,7 @@ def test_runbook_fix_forward_waits_for_admin_before_reload_and_verification(
         expected += [
             compose
             + ["exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-            [
-                "docker",
-                "compose",
-                "-f",
-                "docker-compose.caddy.yml",
-                "exec",
-                "-T",
-                "caddy",
-                "sha256sum",
-                "/etc/caddy/Caddyfile",
-            ],
+            compose + ["exec", "-T", "caddy", "sha256sum", "/etc/caddy/Caddyfile"],
             ["health-check"],
         ]
         assert "Caddyfile" in result.stdout, "host hash verification must run after readiness"

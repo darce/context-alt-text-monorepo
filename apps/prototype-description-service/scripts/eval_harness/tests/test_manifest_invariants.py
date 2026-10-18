@@ -14,9 +14,9 @@ import pytest
 
 from scripts.eval_harness.face_metrics import ImageDetection, detection_pr_strict
 from scripts.eval_harness.manifest import (
+    LEGACY_IMPORT_CAPTURE_SESSION_ID,
     AnnotationMode,
     HashVerificationSkippedWarning,
-    LEGACY_IMPORT_CAPTURE_SESSION_ID,
     ManifestError,
     legacy_import_lineage,
     load_legacy_manifest,
@@ -519,9 +519,7 @@ def test_corpus646_retag_loads_as_roster_only() -> None:
 
 
 @pytest.mark.parametrize("source", ["detector", "workbench"])
-def test_historical_face_box_sources_load_but_strict_scoring_rejects_them(
-    tmp_path: Path, source: str
-) -> None:
+def test_historical_face_box_sources_load_but_strict_scoring_rejects_them(tmp_path: Path, source: str) -> None:
     """Legacy region lineage round-trips without qualifying as independent GT."""
     doc = _load_json(PROVENANCED)
     doc["entries"][0]["face_boxes"][0]["source"] = source
@@ -657,9 +655,7 @@ def test_strict_scoring_requires_a_resolved_confirmed_blind_review(tmp_path: Pat
     manifest = load_manifest(str(path), skip_hash_verification=True)
     box = manifest.entries[0].face_boxes[0]
 
-    with pytest.raises(
-        ManifestError, match="confirmed independent blind review"
-    ) as exc_info:
+    with pytest.raises(ManifestError, match="confirmed independent blind review") as exc_info:
         require_confirmed_blind_reviews_for_strict_scoring(manifest.model_dump())
         detection_pr_strict(
             [
@@ -778,3 +774,101 @@ def test_verified_load_does_not_warn(
     monkeypatch.setattr("scripts.eval_harness.manifest._verify_hashes", lambda manifest, images_root: None)
     load_manifest(str(PROVENANCED), images_dir=str(tmp_path))
     assert not any(issubclass(w.category, HashVerificationSkippedWarning) for w in recwarn.list)
+
+
+def test_subject_evidence_never_changes_identity_truth(tmp_path: Path) -> None:
+    """Exercise actual prompt ASTs without importing clients or image libraries."""
+    import ast
+    import hashlib
+    from types import SimpleNamespace
+
+    from scene.tests.test_eval_harness_bakeoff_report import _se_attach
+    from scripts.eval_harness.manifest import GoldenManifest
+
+    original = json.loads(PROVENANCED.read_text())
+    original["entries"][0]["context_pack"] = {"title": "Synthetic editorial title", "caption": "Synthetic caption"}
+    before = GoldenManifest.model_validate(original)
+    amended = _se_attach(original, "known")
+    root = Path(__file__).resolve().parents[1]
+    tree = ast.parse((root / "bakeoff.py").read_text())
+    names = {"_render_context", "_pass1_user_text", "_user_text", "_weave_user_text", "_compress_user_text"}
+    functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
+    assert {node.name for node in functions} == names
+    constants = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id
+            in {"_FACTS_BEGIN", "_FACTS_END", "_CONTEXT_BEGIN", "_CONTEXT_END", "_LONG_BEGIN", "_LONG_END"}
+            for target in node.targets
+        )
+    ]
+    namespace = {"json": json, "Any": object}
+    module = ast.Module(body=constants + functions, type_ignores=[])
+    exec(compile(ast.fix_missing_locations(module), "actual-prompt-nodes", "exec"), namespace)
+    receiver = SimpleNamespace(no_think=True)
+
+    def prompt_texts(manifest: GoldenManifest) -> tuple[str, str]:
+        context = manifest.entries[0].context_pack.model_dump(exclude_none=True)
+        return (
+            namespace["_user_text"](receiver, context),
+            namespace["_weave_user_text"](receiver, "synthetic visual facts", context),
+        )
+
+    baseline_prompts = prompt_texts(before)
+    assert all("Synthetic editorial title" in text for text in baseline_prompts)
+    assert all("subject_evidence" not in text for text in baseline_prompts)
+    assert (
+        namespace["_pass1_user_text"](receiver)
+        == "Return the JSON object of objective visual facts for this image.\n/no_think"
+    )
+    assert namespace["_compress_user_text"](receiver, "synthetic text")
+    for filename in ("cli.py", "bakeoff.py"):
+        caller = ast.parse((root / filename).read_text())
+        describe_context = [
+            keyword.value
+            for node in ast.walk(caller)
+            if isinstance(node, ast.Call)
+            for keyword in node.keywords
+            if keyword.arg == "context_pack"
+            and ast.unparse(keyword.value) == "entry.context_pack.model_dump(exclude_none=True)"
+        ]
+        assert describe_context, filename
+    # Execute the actual digest nodes without importing face_bakeoff's clients.
+    digest_tree = ast.parse((root / "face_bakeoff.py").read_text())
+    digest_functions = [
+        node
+        for node in digest_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in ("_manifest_sha", "_manifest_json_default")
+    ]
+    import datetime
+
+    digest_namespace = {
+        "json": json,
+        "hashlib": hashlib,
+        "datetime": datetime.datetime,
+        "date": datetime.date,
+        "GoldenManifest": GoldenManifest,
+    }
+    exec(compile(ast.Module(body=digest_functions, type_ignores=[]), "actual-digest-nodes", "exec"), digest_namespace)
+    from scripts.eval_harness.build_bakeoff_report import _manifest_sha
+
+    assert digest_namespace["_manifest_sha"](before) == _manifest_sha(before)
+
+    # The unchanged actual nodes run above before the new schema acceptance assertion.
+    after = GoldenManifest.model_validate(amended)
+    left, right = before.model_dump(), after.model_dump()
+    assert right != left
+    for entry in right["entries"]:
+        entry.pop("subject_evidence", None)
+    assert right == left  # Includes every label, note, box, count, context and policy.
+    assert prompt_texts(after) == baseline_prompts
+    assert all("protocol-fixture-authority" not in text for text in prompt_texts(after))
+    assert digest_namespace["_manifest_sha"](after) == _manifest_sha(after)
+    assert _manifest_sha(after) != _manifest_sha(before)
+    legacy = json.loads(json.dumps(amended))
+    legacy["manifest_version"] = 2
+    with pytest.raises(ManifestError):
+        load_legacy_manifest(str(_write(tmp_path, legacy, "frozen-v2.json")))

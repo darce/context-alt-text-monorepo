@@ -54,9 +54,10 @@ import math
 import mimetypes
 import os
 import re
+import stat
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,13 +65,13 @@ from typing import Any
 
 import httpx
 
+from ._pathtext import _printable_message, _printable_path
 from .bench_capture import (
     LoadLoop,
     VramSampler,
     collect_item_latencies,
     summarize_latencies,
 )
-from ._pathtext import _printable_message, _printable_path
 from .cli import (
     DEFAULT_KEEP,
     DEFAULT_STALL_LIMIT,
@@ -83,8 +84,6 @@ from .cli import (
     fetch_run_record,
     prune_out_dir,
 )
-from .face_metrics import named_box_name
-from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .depiction_lexicon import (
     DETAIL_LEVELS,
     KNOWN_FAMILIES,
@@ -93,7 +92,9 @@ from .depiction_lexicon import (
     LexiconError,
     load_depiction_lexicon,
 )
-from .remote_client import RemoteClientError, RemoteSceneClient
+from .face_metrics import named_box_name
+from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
+from .remote_client import CircuitOpenError, RemoteClientError, RemoteSceneClient
 from .report import EVAL_MODES, RosterEpoch
 from .schema import SCHEMA, DocKind
 
@@ -110,6 +111,48 @@ _FACTS_BEGIN = "<<<FACTS>>>"
 _FACTS_END = "<<<END_FACTS>>>"
 _LONG_BEGIN = "<<<DESCRIPTION>>>"
 _LONG_END = "<<<END_DESCRIPTION>>>"
+
+
+def _validate_server_api_key(key: str) -> str:
+    if not isinstance(key, str) or not key or any(not 33 <= ord(char) <= 126 for char in key):
+        raise ValueError("invalid server API credential")
+    return key
+
+
+def _load_server_api_key(path: str) -> str:
+    """Validate the held descriptor before reading any credential bytes."""
+    key: str | None = None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            metadata = os.fstat(fd)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) not in {0o400, 0o600}
+            ):
+                raise ValueError("unsafe credential file")
+            content = b""
+            while len(content) < 4097:
+                chunk = os.read(fd, 4097 - len(content))
+                if not chunk:
+                    break
+                content += chunk
+            if len(content) > 4096:
+                raise ValueError("credential file too large")
+            if content.endswith(b"\n"):
+                content = content[:-1]
+            key = _validate_server_api_key(content.decode("ascii"))
+        finally:
+            os.close(fd)
+    except (OSError, ValueError):
+        pass
+    # Raise outside the handler: neither the path nor rejected bytes belong in
+    # an exception chain (including UnicodeDecodeError.object).
+    if key is None:
+        raise ValueError("invalid server API credential file")
+    return key
+
 
 # --- ALTQ-1 Slice 2: prompt-variant registry ---------------------------------
 # Named system-prompt variants, selected via --prompt-variant and stamped into
@@ -219,6 +262,13 @@ _PASS1_SYSTEM_PROMPT = (
     "speculate about anything that is not visible. Use empty strings or empty "
     "arrays when something does not apply."
 )
+_PASS1_STRUCTURAL_KEYS: dict[str, Any] = {
+    "people": {"position": None, "appearance": None},
+    "setting": None,
+    "action": None,
+    "legible_text": None,
+    "atmosphere": None,
+}
 
 # Weave-pass addendum (appended to the selected variant's system prompt) with
 # the mismatch few-shot from findings §2.4 (ReCap exemplar analog): context
@@ -530,6 +580,7 @@ class BakeoffClient(RemoteSceneClient):
         base_url: str,
         *,
         model_id: str,
+        server_api_key: str | None = None,
         model_version: str | None = None,
         model_revision: str | None = None,
         seed: int | None = None,
@@ -548,6 +599,8 @@ class BakeoffClient(RemoteSceneClient):
         face_fixtures: dict[int, list[dict[str, Any]]] | None = None,
         depiction_lexicon: DepictionLexicon | None = None,
     ) -> None:
+        self._server_api_key = None if server_api_key is None else _validate_server_api_key(server_api_key)
+        self._response_private_values = (self._server_api_key,) if self._server_api_key is not None else ()
         kwargs: dict[str, Any] = {"transport": transport}
         if timeout_s is not None:
             kwargs["timeout_s"] = timeout_s
@@ -606,6 +659,102 @@ class BakeoffClient(RemoteSceneClient):
         self.depiction_lexicon = depiction_lexicon
         self.prompt_sha256 = self._prompt_fingerprint()
 
+    def _request(self, method: str, url: str, **kwargs: Any) -> Any:
+        if self._server_api_key is None:
+            return super()._request(method, url, **kwargs)
+        headers = httpx.Headers(kwargs.pop("headers", None))
+        headers["Authorization"] = f"Bearer {self._server_api_key}"
+        kwargs["headers"] = headers
+        kwargs["follow_redirects"] = False
+        failure: RemoteClientError | None = None
+        try:
+            payload = super()._request(method, url, **kwargs)
+        except RemoteClientError as exc:
+            # Preserve the parent's classification and accounting, but discard
+            # reflected reason phrases, URLs and transport exception chains.
+            message = "circuit open" if isinstance(exc, CircuitOpenError) else "raw request failed"
+            if exc.status_code is not None:
+                message += f" (HTTP {exc.status_code})"
+            failure = type(exc)(message, status_code=exc.status_code)
+        if failure is not None:
+            raise failure
+        return payload
+
+    def _redact_text(self, value: str) -> str:
+        for private in self._response_private_values:
+            for spelling in sorted({private, json.dumps(private)[1:-1], repr(private)[1:-1]}, key=len, reverse=True):
+                value = value.replace(spelling, "[redacted]")
+        return value
+
+    def _redact_response(
+        self, value: Any, *, structural_keys: dict[str, Any] | None = None, structured_text: bool = True
+    ) -> Any:
+        """Scrub generated data through bounded JSON composition, including scalars.
+
+        Only keys at recognized schema paths are structural. Extra keys are
+        generated data; transport labels never enter here. A response exceeding
+        the shared depth/node/text budget is refused before forwarding or storage.
+        """
+        if not self._response_private_values:
+            return value
+        remaining_nodes, remaining_chars = 16384, 1024 * 1024
+
+        def scrub(data: Any, schema: dict[str, Any] | None, structured: bool, depth: int) -> Any:
+            nonlocal remaining_nodes, remaining_chars
+            remaining_nodes -= 1
+            if depth > 64 or remaining_nodes < 0:
+                raise RemoteClientError("raw response privacy budget exceeded")
+            if isinstance(data, str):
+                remaining_chars -= len(data)
+                if remaining_chars < 0:
+                    raise RemoteClientError("raw response privacy budget exceeded")
+                # Decoded scalars and free-form keys are data even when they
+                # spell JSON syntax. Preserve recognized container labels only.
+                if not structured:
+                    data = self._redact_text(data)
+                fenced = _JSON_FENCE_RE.match(data.strip())
+                too_deep = False
+                try:
+                    embedded = json.loads(fenced.group(1) if fenced else data)
+                except ValueError:
+                    embedded = None
+                except RecursionError:
+                    too_deep = True
+                # Raise outside the decoder's handler: its chain is private too.
+                if too_deep:
+                    raise RemoteClientError("raw response privacy budget exceeded")
+                if isinstance(embedded, (dict, list, str)):
+                    redacted = scrub(embedded, schema, not isinstance(embedded, str), depth + 1)
+                    return json.dumps(redacted) if redacted != embedded else data
+                return self._redact_text(data)
+            if isinstance(data, list):
+                return [scrub(item, schema, False, depth + 1) for item in data]
+            if isinstance(data, dict):
+                schema = schema or {}
+                return {
+                    key if key in schema else scrub(key, None, False, depth + 1): scrub(
+                        item, schema.get(key), False, depth + 1
+                    )
+                    for key, item in data.items()
+                }
+            return data
+
+        return scrub(value, structural_keys, structured_text, 0)
+
+    def _parse_response(self, parser: Callable[[Any], Any], value: Any) -> Any:
+        """Keep typed parse failures without exposing response-derived excerpts."""
+        failure: RemoteClientError | None = None
+        try:
+            return parser(value)
+        except RemoteClientError as exc:
+            if self._server_api_key is None:
+                raise
+            # Replacing rendered text cannot cover composed JSON/repr escaping.
+            # Authenticated diagnostics carry classification/status, not payloads.
+            failure = type(exc)("raw response could not be parsed", status_code=exc.status_code)
+        # Discard the original exception chain, which can contain raw excerpts.
+        raise failure
+
     def describe(
         self,
         *,
@@ -631,7 +780,7 @@ class BakeoffClient(RemoteSceneClient):
                 passes=passes,
                 max_tokens=_PASS1_MAX_TOKENS,
             )
-            _parse_pass1_json(facts_raw)  # malformed pass-1 JSON => typed per-item failure
+            self._parse_response(_parse_pass1_json, facts_raw)  # malformed JSON => typed per-item failure
             caption = self._timed_chat(
                 self._weave_messages(facts_raw, context_pack, image_part=image_part),
                 pass_name="ground_weave",
@@ -640,7 +789,7 @@ class BakeoffClient(RemoteSceneClient):
             )
             if PROMPT_VARIANTS[self.prompt_variant].three_surface:
                 # malformed/incomplete three-surface JSON => typed per-item failure
-                surfaces = _parse_three_surface_json(caption)
+                surfaces = self._parse_response(_parse_three_surface_json, caption)
         else:
             caption = self._timed_chat(
                 [
@@ -885,7 +1034,16 @@ class BakeoffClient(RemoteSceneClient):
                 json=request_json,
             )
             usage = _extract_usage(payload)
-            text = _extract_caption(payload)
+            # Interpret envelope labels/discriminators and measured usage before
+            # scrubbing generated text; only text and diagnostics leave this boundary.
+            structural_keys = None
+            if pass_name == "describe_facts":
+                structural_keys = _PASS1_STRUCTURAL_KEYS
+            elif pass_name in {"ground_weave", "weave_bench"} and PROMPT_VARIANTS[self.prompt_variant].three_surface:
+                structural_keys = dict.fromkeys(_THREE_SURFACE_KEYS)
+            text = self._redact_response(
+                self._parse_response(_extract_caption, payload), structural_keys=structural_keys
+            )
         except Exception:
             passes.append(
                 {
@@ -989,9 +1147,7 @@ def _load_weave_bench_source(path: Path) -> tuple[dict[str, Any], str]:
             f"--weave-bench source {_printable_path(path)} is not readable JSON: {_printable_exc(exc)}"
         ) from exc
     if not isinstance(record, dict):
-        raise WeaveBenchRecordError(
-            f"--weave-bench source {_printable_path(path)} must contain a JSON object"
-        )
+        raise WeaveBenchRecordError(f"--weave-bench source {_printable_path(path)} must contain a JSON object")
     kind = record.get("kind")
     if kind is not None and kind != DocKind.RUN_RECORD.value:
         raise WeaveBenchRecordError(
@@ -999,14 +1155,10 @@ def _load_weave_bench_source(path: Path) -> tuple[dict[str, Any], str]:
             "(did you pass a report file?)"
         )
     if not isinstance(record.get("provenance"), dict):
-        raise WeaveBenchRecordError(
-            f"--weave-bench source {_printable_path(path)} has no provenance block"
-        )
+        raise WeaveBenchRecordError(f"--weave-bench source {_printable_path(path)} has no provenance block")
     items = record.get("items")
     if not isinstance(items, list) or not items:
-        raise WeaveBenchRecordError(
-            f"--weave-bench source {_printable_path(path)} carries no items to replay"
-        )
+        raise WeaveBenchRecordError(f"--weave-bench source {_printable_path(path)} carries no items to replay")
     return record, hashlib.sha256(raw_bytes).hexdigest()
 
 
@@ -1014,8 +1166,7 @@ def _weave_bench_facts(item: dict[str, Any]) -> str:
     """Pass-1 facts from a source item's ``describe.passes[0]`` (the ``describe_facts`` pass)."""
     if item.get("error"):
         raise WeaveBenchSourceError(
-            "source item recorded a fetch error, nothing to replay: "
-            f"{_printable_message(str(item['error']))}"
+            f"source item recorded a fetch error, nothing to replay: {_printable_message(str(item['error']))}"
         )
     describe = item.get("describe")
     passes = describe.get("passes") if isinstance(describe, dict) else None
@@ -1117,8 +1268,7 @@ def weave_bench_run_record(
             # No usable media_id => the OUTPUT record would be unscoreable; that is
             # a malformed source (whole-run abort), not a per-item degrade.
             raise WeaveBenchRecordError(
-                "--weave-bench source item without a usable media_id: "
-                f"{_weave_bench_source_item_excerpt(source_item)}"
+                f"--weave-bench source item without a usable media_id: {_weave_bench_source_item_excerpt(source_item)}"
             ) from exc
         raw_path = source_item.get("path")
         if isinstance(raw_path, (str, Path)):
@@ -1313,9 +1463,10 @@ def _timeout_s_of(client: BakeoffClient) -> float | None:
 
 def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
     """Throwaway client with the same endpoint/config; isolated breaker state."""
-    return BakeoffClient(
+    clone = BakeoffClient(
         client.base_url,
         model_id=client.model_id,
+        server_api_key=client._server_api_key,
         model_version=client.model_version,
         no_think=client.no_think,
         timeout_s=_timeout_s_of(client),
@@ -1331,6 +1482,8 @@ def _clone_bakeoff_client(client: BakeoffClient) -> BakeoffClient:
         face_fixtures=client.face_fixtures,
         depiction_lexicon=client.depiction_lexicon,
     )
+    clone._response_private_values = client._response_private_values
+    return clone
 
 
 def _empty_warmup() -> dict[str, Any]:
@@ -1488,10 +1641,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--endpoint", required=True, help="candidate llama.cpp base URL, e.g. http://host:8080")
+    parser.add_argument(
+        "--server-api-key-file", metavar="PATH", help="runner-owned 0400/0600 file containing the raw server Bearer key"
+    )
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--model-version", default=None, help="e.g. GGUF quant tag Q4_K_M")
     parser.add_argument("--model-revision", default=None, help="operator-supplied checkpoint/GGUF revision or digest")
-    parser.add_argument("--seed", type=int, default=None, help="optional fixed completion seed (default: server-selected)")
+    parser.add_argument(
+        "--seed", type=int, default=None, help="optional fixed completion seed (default: server-selected)"
+    )
     parser.add_argument("--no-think", action="store_true", help="append /no_think (reasoning-tuned candidates)")
     parser.add_argument("--manifest", default="scene/tests/seed/bakeoff_golden.json")
     parser.add_argument("--limit", type=_limit_arg, default=None, help="cap images (must be >= 1)")
@@ -1650,6 +1808,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    server_api_key = None
+    if args.server_api_key_file is not None:
+        server_api_key = _load_server_api_key(args.server_api_key_file)
 
     if args.weave_bench is not None and (args.two_pass or args.dual_length):
         sys.exit("--weave-bench replays recorded pass-1 facts through pass-2 only; drop --two-pass/--dual-length")
@@ -1738,6 +1899,7 @@ def main(argv: list[str] | None = None) -> None:
     client = BakeoffClient(
         args.endpoint,
         model_id=args.model_id,
+        server_api_key=server_api_key,
         model_version=args.model_version,
         model_revision=args.model_revision,
         seed=args.seed,
@@ -1755,6 +1917,8 @@ def main(argv: list[str] | None = None) -> None:
         face_fixtures=face_fixtures,
         depiction_lexicon=depiction_lexicon,
     )
+    if args.server_api_key_file is not None:
+        client._response_private_values += (args.server_api_key_file, Path(args.server_api_key_file).name)
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
     out_dir = Path(__file__).parent / "out"
@@ -1839,10 +2003,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         _stamp_stage_costs(exc.partial_record, hourly_rate=args.hourly_rate)
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
-        sys.exit(
-            "BoundedStallError: "
-            f"{_printable_exc(exc)} — partial record saved to {_printable_path(aborted_path)}"
-        )
+        sys.exit(f"BoundedStallError: {_printable_exc(exc)} — partial record saved to {_printable_path(aborted_path)}")
     finally:
         client.close()
         if sampler is not None and gpu_block is None:

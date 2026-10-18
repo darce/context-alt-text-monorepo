@@ -199,7 +199,7 @@ example = "static"
 required = false
 doc = "static supports the single AD-2 endpoint. Set winner on every API/worker before enabling multiple lifecycle candidates; missing, stale or unready winner snapshots then fail closed."
 section = "GPU lifecycle"
-values = { dev = "static", staging = "static", prod = "static" }
+values = { dev = "winner", staging = "winner", prod = "winner" }
 
 [[var]]
 name = "ACX_GPU_ENDPOINT_API_KEY"

@@ -1,0 +1,115 @@
+{
+  "status": "completed",
+  "summary": "DESCBAKE-1 B1 third dispatch (B1-A3): DG2-01 confirmed, extended to the whole same-boundary family, and fixed in the two owned paths. Behavioral RED committed first (f36cc4c): 18 failed, 86 passed, 1 xfailed. Every failure had the predicted stdlib class and message, raised through the real urlopen/OpenerDirector/HTTPSConnection/HTTPResponse stack over an in-memory socket. Minimum GREEN (5a0fa5f): default_fetch maps http.client.HTTPException to the existing unverified/network_error outcome and maps JSON nested past the recursion limit to error/malformed_json. The owner suite then passed: 104 passed, 1 strict xfail. Remote text is never echoed, all 26 typed rows are emitted in both renderers, and HTTPError status distinctions are unchanged. Programming errors still propagate. One reproduced sibling stays OPEN and visible as a strict xfail: a malformed redirect Location IPv6 literal raises a bare ValueError from urllib. Synthetic contract evidence only; no model-quality, winner or promotion claim. An independent merge gate is still required.",
+  "changed_files": [
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py",
+    ".task-state/descbake-1/reports/B1-A3.json"
+  ],
+  "commits": [
+    "f36cc4c25be1de98e21ac5af391a555b2d5b0cd9",
+    "5a0fa5fcdbc4b63008231f31a66de12a28e18b35"
+  ],
+  "tests": [
+    {
+      "phase": "historical",
+      "command": "HISTORICAL, NOT RERUN: first B1 collection RED and A2 RED/GREEN as recorded in B1.json and B1-A2.json",
+      "exit_code": null,
+      "summary": "First B1 RED was a missing-module collection error (exit 2) with zero behavioral tests, so it is not causal evidence. A2 RED was 16 failed/56 passed plus 2 injected-fetch failures; A2 GREEN was 74 passed. The final gate combined 253 passing tests and still missed sibling protocol exceptions. These are retained history, not acceptance evidence here; prior passing tests do not erase DG2-01."
+    },
+    {
+      "phase": "pre-RED probe",
+      "command": "cd apps/prototype-description-service && timeout 120s env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD ../../.venv/bin/python /tmp/descbake-b1-a3-probe/probe.py",
+      "exit_code": 0,
+      "summary": "Frozen source e6f0963e, real urllib stack, in-memory socket, ProxyHandler({}). default_fetch RAISES: BadStatusLine 'not-an-HTTP-status /remote-body-marker'; LineTooLong 'got more than 65536 bytes when reading header line'; bare HTTPException 'got more than 100 headers'; UnknownProtocol 'HTTP/remote-body-marker'; LineTooLong '... reading chunk size'; InvalidURL \"nonnumeric port: 'remote-body-marker'\" (remote 302 Location); RecursionError for a 100000-deep JSON array; ValueError 'Invalid IPv6 URL' (remote 302 Location). Controls RESULT: empty reply (RemoteDisconnected) -> network_error; 404 -> 404; 503 -> 503; valid Unicode -> 200 with payload."
+    },
+    {
+      "phase": "RED",
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a3-red scene/tests/test_eval_harness_bakeoff_intake.py -q --tb=line",
+      "exit_code": 1,
+      "summary": "Before any production edit: 18 failed, 86 passed, 1 xfailed, 3 warnings in 20.11s; no collection error. This matched the prediction recorded before the run, both the count and every message. The 14 in-process main() cases (7 faults x json/markdown, fault on request 12/26) raised exactly the 7 stdlib exceptions listed in the probe. The 4 subprocess CLI cases (bad_status/long_header x json/markdown) failed with 'AssertionError: protocol failure escaped the CLI' (traceback in stderr). Passing controls: 7 real-urllib status distinctions (401/403/404/429/503/418/empty reply), real-urllib valid Unicode, 4 no-swallow guards, the existing 74. The residual redirect-IPv6 ValueError case xfailed. Log at /tmp/descbake-b1-a3-red.log. Tests-only commit f36cc4c."
+    },
+    {
+      "phase": "GREEN",
+      "command": "cd apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../../.venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider --basetemp=/tmp/descbake-b1-a3-green scene/tests/test_eval_harness_bakeoff_intake.py -q --tb=short",
+      "exit_code": 0,
+      "summary": "After the smallest fix (5a0fa5f): 104 passed, 1 xfailed (strict, open residual), 3 known unknown-config warnings (collection_scope_receipt, timeout, timeout_method) in 21.77s. Only the owner module ran, bounded by an outer timeout of 300s; each child subprocess had timeout=60."
+    },
+    {
+      "phase": "lint",
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff check --no-cache apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+      "exit_code": 0,
+      "summary": "All checks passed. Read-only; no --fix."
+    },
+    {
+      "phase": "format-check",
+      "command": "timeout 300s env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m ruff format --no-cache --check apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+      "exit_code": 0,
+      "summary": "2 files already formatted. The same check also passed on the tests-only RED commit. No formatter rewrite was applied."
+    },
+    {
+      "phase": "mutation (TEST-15)",
+      "command": "cd apps/prototype-description-service && timeout 300s env PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python /tmp/descbake-b1-a3-probe/mutate.py \"$PWD\"",
+      "exit_code": 0,
+      "summary": "Driver exited 0, and each child pytest run exited 1, so all 3 mutants were caught. (1) Narrowing back to (OSError, IncompleteRead): 16 failed (12 protocol matrix + 4 CLI). (2) A broad 'except Exception': 5 failed (4 no-swallow guards + strict-xfail XPASS). (3) Dropping RecursionError: 2 failed (deep_json x 2 renderers). Module restored in finally with sha256 verified (de1322aa5ee61d006f10af7f41aeb7402c9126901f88cefb27b99cc5e7781c18); git status clean afterwards."
+    },
+    {
+      "phase": "independent gate reproducer replay",
+      "command": "for t in frozen(git archive 2e74a8b) green(git archive HEAD): cd /tmp/descbake-b1-a3-repro/$t/apps/prototype-description-service && timeout 300s env -u ACX_BAKEOFF_VERIFY_REVISIONS PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONPATH=$PWD .venv/bin/python -m pytest --noconftest -o required_plugins= -p no:cacheprovider /tmp/descbake-b1-a3-repro/test_final_http_boundary.py -q --tb=no -s",
+      "exit_code": 1,
+      "summary": "This entry records two runs. The frozen tree (bakeoff_intake e6f0963e) exited 1: 4 failed in 5.12s, exit 1, traceback, 12/26 fetches, BadStatusLine marker echoed. The green tree (de1322aa) exited 0: 4 passed in 5.27s. The supplied http-boundary-child.py and test_final_http_boundary.py are byte-for-byte as supplied except ROOT, changed to /tmp/descbake-b1-a3-repro because the gate path /tmp/descbake-final-upg4pgvx is absent in this sandbox. Green evidence: exit 0, 26/26 fetches, no traceback, no marker echoed. prior_preserved=false there is correct, because a successful refresh atomically replaces the prior report."
+    },
+    {
+      "phase": "provenance",
+      "command": "cat .workbay-source-provenance; git rev-parse 2e74a8b^{tree}; sha256sum <owned files>",
+      "exit_code": 0,
+      "summary": "source_commit 03c0569685719de0fb4e9f0884ad2af3a05d9e3f, source_tree 0ca4c2277a9f2414be92dba2d91199db7bbe5655 = sandbox base 2e74a8b tree. Pre-edit owned hashes match final-codemap: module e6f0963e..., tests 7644e171.... History-stripped base is not substituted for source identity."
+    }
+  ],
+  "findings": [
+    {
+      "id": "DG2-01",
+      "owner": "B1",
+      "severity": "medium",
+      "status": "confirmed_modified_fixed",
+      "file_path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py",
+      "line": 309,
+      "description": "Original criticism retained verbatim: Recoverable HTTP parser failures still abort the entire public metadata refresh. BadStatusLine and LineTooLong inherit HTTPException, not OSError or IncompleteRead, and escape default_fetch and the CLI. This leaves the DG1-02 per-row error boundary incomplete; a malformed status line can also be echoed verbatim in the traceback. MODIFIED (widened): the escaping set was larger than the two named classes. A bare HTTPException (header-count limit), UnknownProtocol (echoes remote version text), LineTooLong while reading a chunk size, InvalidURL from a remote redirect Location port, and RecursionError from JSON nested deeper than the interpreter limit also aborted the refresh.",
+      "evidence": "Original gate evidence retained: real urllib opener -> HTTPSConnection -> HTTPResponse, in-memory socket, fault on request 12/26; JSON and Markdown CLI each exit 1 with traceback after 12 fetches; BadStatusLine echoes /remote-body-marker; 4 failed in 5.29s. Independently reproduced here on frozen e6f0963e (gate reproducer: 4 failed, 12/26, marker echoed) and by the new owner RED (18 failed with the predicted classes). Original source: bakeoff_intake.py:309 caught only (OSError, http.client.IncompleteRead); :313-314 caught only ValueError around json.loads. Fix: :309-313 catch the documented http.client.HTTPException family with OSError -> FetchResult(error='network_error') -> existing unverified/network_error via audit_one. The exception message is discarded, so no remote status, header or Location text reaches a renderer or stderr. :318-321 catch (ValueError, RecursionError) at json.loads only -> existing error/malformed_json with http_status 200. HTTPError (URLError subclass, caught earlier) keeps 401/403/404/429/5xx/418 distinctions; verified through real urllib. InvalidURL is deliberately inside the family: the probe proved a remote 302 Location reaches it, and loaded rows come from the validated sealed registry and intake. TypeError/AttributeError/KeyError/RuntimeError still propagate (guards; broad-except mutant caught). Tests: test_actual_urllib_protocol_failure_is_one_typed_row_and_refresh_continues (14 cases, all 26 typed records, failed repo identity, 25 unchanged peers, latest/pipeline/license null, no marker, empty stdout/stderr); test_cli_protocol_failure_has_no_traceback_and_does_not_echo_remote_text (4 subprocess cases); test_actual_urllib_keeps_http_status_distinctions (7); test_actual_urllib_valid_unicode_row_is_classified_normally; test_default_fetch_does_not_swallow_programming_errors (4). Canon: CAL-02 https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#cal-02 ; CARD-03 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/designed-unknown.md ; CARD-08 and TEST-06 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/falsification-disconfirmers.md , https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-06 ; TEST-15 via CARD-11 https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/measurement-integrity.md",
+      "fix": "Applied: family-level HTTPException catch plus RecursionError at the JSON boundary. Existing AuditStatus/AuditReason vocabulary and report schema bakeoff-intake-report/v1 are unchanged.",
+      "verdict": "CONFIRMED"
+    },
+    {
+      "id": "DG2-01-R1",
+      "owner": "B1",
+      "severity": "low",
+      "status": "open_reproduced_not_fixed",
+      "file_path": "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py",
+      "line": 298,
+      "description": "Same boundary, different class: a remote 3xx whose Location holds an unbalanced IPv6 literal (e.g. https://[x/...) makes urllib's HTTPRedirectHandler raise a bare ValueError('Invalid IPv6 URL') out of urlopen, which still aborts the 26-row refresh.",
+      "evidence": "Pre-RED probe on frozen source and the committed strict xfail test_malformed_redirect_location_is_an_open_residual (raises=ValueError) both reproduce it; the broad-except mutant turned it XPASS(strict), proving the test is live. Not fixed by design: the only catch that covers it at default_fetch is ValueError around urlopen. That would also swallow local configuration errors such as a malformed proxy environment, and violates the brief's no-broad-catch constraint. Exit with a designed unknown here needs a coordinator decision (CAL-02/CARD-03), not a silent widening.",
+      "fix": "Proposed, not applied: either (a) install an opener whose redirect handler maps a ValueError from Location parsing to an HTTPError/typed row, or (b) accept a ValueError catch scoped to the urlopen call with the local-config tradeoff recorded. Then flip the strict xfail to a normal assertion.",
+      "verdict": "CONFIRMED"
+    },
+    {
+      "id": "B1-A3-HISTORY",
+      "owner": "B1",
+      "severity": "info",
+      "status": "retained",
+      "description": "Prior attempts and criticisms stay visible and unchanged: B1.json (collection-only RED, false no-Unsloth-input claim superseded by DG1-01), B1-A2.json (narrow IncompleteRead fix, 74 PASS) and the final gate's 253 PASS. None is rewritten. DG1-01/02/03/09 protections (docs links, Unicode rejection, atomic write, sealed-path protection, import order) remain and their 74 tests pass unchanged.",
+      "evidence": "Only the new section at the end of the owner test file was added; existing tests are byte-identical in content and pass in RED and GREEN. git diff 2e74a8b..HEAD touches only the two owned source paths (plus this report)."
+    }
+  ],
+  "limitations": [
+    "Ownership: only bakeoff_intake.py, its owner test module and this report changed. B2/B3 work and DG1-04..08 were not re-adjudicated. An independent merge gate is still required; this report is author evidence, not gate acceptance.",
+    "Synthetic contract evidence only: in-memory HTTP wires through the real stdlib parser; no network, live Hugging Face refresh, GPU, private DB, model download, deploy, production routing, subagent or shared-runtime mutation. Lane .venv used read-only with PYTHONDONTWRITEBYTECODE=1; no install.",
+    "Protocol failures report http_status=null even when a status line was parsed before a body-phase failure (e.g. chunk-size LineTooLong). This keeps the existing A2 IncompleteRead convention; recording 200 there is possible but would change existing behavior.",
+    "Open residual DG2-01-R1 (redirect IPv6 ValueError) remains and is visible as a strict xfail; the per-row boundary is therefore not claimed complete for every remote input.",
+    "Not examined: urllib follows redirects to other hosts (HTTPRedirectHandler) and reports the redirected repo's sha as the pinned repo's latest. That is an audit-identity question outside DG2-01, with no change made.",
+    "Only the owner test module ran (--noconftest, plugin autoload disabled, required_plugins cleared). Three known unknown-config warnings are retained. No full suite, sealed-loader suite or B2/B3 suites. An outer timeout of 300s bounded each run.",
+    "Tests use urllib.request._opener (private stdlib global) to keep the real urlopen function in the path with ProxyHandler({}); this relies on CPython 3.12 urlopen internals.",
+    "Canon v0.26.2 rows/cards read from the supplied packet; no URL fetched. Applied TEST-06 (predicted RED messages matched), CARD-08 falsification (sibling hunt and gate reproducer replay), TEST-15 (3 mutants), CAL-02/CARD-03 (typed unknown, not absence). GRPH-31: no parallel fan-out was used.",
+    "Commits carry no author or Co-Authored-By trailers, per the brief's explicit instruction. Git hooks were disabled per commit (core.hooksPath=/dev/null) so no out-of-scope tests ran. The report commit follows RED and GREEN and cannot record its own SHA. .task-state is gitignored, so the report is force-added."
+  ],
+  "source_sha": "03c0569685719de0fb4e9f0884ad2af3a05d9e3f"
+}

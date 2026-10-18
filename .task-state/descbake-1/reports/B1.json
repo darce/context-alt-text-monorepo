@@ -1,0 +1,152 @@
+{
+  "status": "completed",
+  "summary": "B1 additive candidate intake and checkpoint audit CLI implemented on the sandbox base. Offline by default: prints all 16 sealed rows with pinned repo/revision/quant/artifact/tier, plus 10 research-intake rows that are pending_verification and runnable=false. --refresh is the only network path (injected/mocked in tests) and reports latest main sha beside the pinned or observed sha as unchanged/outdated/unverified/error without repinning. Sealed bakeoff_candidates.yaml is unchanged. Scoped tests: RED observed (collection ModuleNotFoundError, exit 2), GREEN 47 passed, 4/4 mutation checks turned tests red. Live Hugging Face refresh was not executed.",
+  "changed_files": [
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_intake.py",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py",
+    "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.json",
+    ".task-state/descbake-1/reports/B1.json"
+  ],
+  "commits": [
+    "fac9a0d",
+    "17497d6"
+  ],
+  "tests": [
+    {
+      "label": "RED (predicted and observed before implementation)",
+      "command": "cd apps/prototype-description-service && .venv/bin/python -m pytest scene/tests/test_eval_harness_bakeoff_intake.py -q -p no:cacheprovider",
+      "exit": 2,
+      "summary": "Collection error: ModuleNotFoundError: No module named 'scripts.eval_harness.bakeoff_intake'; 1 error during collection. Matched prediction."
+    },
+    {
+      "label": "GREEN first run (before fix)",
+      "command": "same as RED",
+      "exit": 1,
+      "summary": "46 passed, 1 failed: markdown table well-formedness; research separator had 12 columns for an 11-column header. Fixed."
+    },
+    {
+      "label": "GREEN final (scoped)",
+      "command": "cd apps/prototype-description-service && .venv/bin/python -m pytest scene/tests/test_eval_harness_bakeoff_intake.py -q -p no:cacheprovider",
+      "exit": 0,
+      "summary": "47 passed in 2.21s."
+    },
+    {
+      "label": "Mutation check (TEST-15), module restored after each and sha verified",
+      "command": "temporary single-line mutants of bakeoff_intake.py, each run against the scoped test file",
+      "exit": 1,
+      "summary": "4/4 mutants caught: unresolved group collapsed to vision (2 failed); research row made generation-eligible (3 failed); --output protection disabled (2 failed); markdown pipe escaping removed (2 failed)."
+    },
+    {
+      "label": "Existing sealed-loader scoped tests (loader and roster unchanged)",
+      "command": "cd apps/prototype-description-service && .venv/bin/python -m pytest scene/tests/test_eval_harness_bakeoff_candidates.py -q -p no:cacheprovider",
+      "exit": 0,
+      "summary": "52 passed, 1 skipped."
+    },
+    {
+      "label": "Lint and formatter on owned Python files",
+      "command": ".venv/bin/ruff check <owned .py files>; .venv/bin/ruff format <owned .py files>",
+      "exit": 0,
+      "summary": "All checks passed; formatter applied to both .py files (no further changes on re-run)."
+    },
+    {
+      "label": "CLI smoke (offline JSON)",
+      "command": "cd apps/prototype-description-service && PYTHONPATH=$PWD .venv/bin/python -m scripts.eval_harness.bakeoff_intake --format json",
+      "exit": 0,
+      "summary": "Parsed as bakeoff-intake-report/v1: sealed=16, research=10, audit=null, no research row runnable."
+    }
+  ],
+  "findings": [
+    {
+      "id": "B1-F1",
+      "severity": "low",
+      "category": "correctness",
+      "file": "apps/prototype-description-service/scripts/eval_harness/bakeoff_intake.py",
+      "summary": "Research markdown table separator had one column too many; caught by the markdown well-formedness test on the first GREEN run.",
+      "status": "fixed before commit"
+    },
+    {
+      "id": "B1-F2",
+      "severity": "info",
+      "category": "source-provenance",
+      "summary": "source_sha 98b228aae5838fdc249918c395fc81c83b6fbe3e is not a commit object in this history-stripped repo. .workbay-source-provenance records source_tree ff2fbeb6b44aa3a4f647ecab8e8b52c6aae051a4, equal to sandbox_base_tree. Local HEAD before work was 19ab23c.",
+      "status": "recorded; source_sha field kept as specified"
+    },
+    {
+      "id": "B1-F3",
+      "severity": "info",
+      "category": "requirement-coverage",
+      "summary": "Linked Unsloth docs were to be included as source links only. The supplied model-research.json contains no Unsloth docs URL, so docs_links is empty and no URL was invented.",
+      "status": "not applicable: no input supplied"
+    },
+    {
+      "id": "B1-F4",
+      "severity": "info",
+      "category": "verification-scope",
+      "summary": "No live --refresh against Hugging Face was run. Refresh is tested with an injected fetch and mocked urlopen only; the research observations come from the supplied model-research.json (fetched 2026-10-17T02:48Z).",
+      "status": "limitation"
+    },
+    {
+      "id": "B1-F5",
+      "severity": "info",
+      "category": "sealed-roster",
+      "summary": "Sealed pins match the supplied audit: 13 unchanged; minicpm-v-45, qwen38-27b, minicpm-v-46 behind latest main. Reported as outdated, not repinned.",
+      "status": "recorded"
+    }
+  ],
+  "limitations": [
+    "Live --refresh was not executed; network use was limited to mocked tests. Latest-sha values in tests are the supplied audit values, not live results.",
+    "Unsloth docs links: none were supplied, so none are included. docs_links is an empty list.",
+    "Research rows are existence and modality observations only (HF metadata and tree listing). They are not serving, quality, or acceptance evidence and stay pending_verification.",
+    "Modality is unresolved for XiaomiMiMo/MiMo-V2.6-Pro-RL and MiMo-V2.6-Flash-RL (text-generation pipeline vs vision-language tags) and for unsloth/DeepSeek-V4-Flash-0731-GGUF (no pipeline tag). They are not forced into a comparison group.",
+    "There is no 'missing' audit status. No evidence source here establishes that a repo is absent. HTTP 404 maps to unverified/http_404; 401, 403, 429, 5xx and timeouts map to unverified with their own reasons.",
+    "--refresh is sequential with a per-request timeout of 10 s and no overall deadline. Worst case for 26 rows is about 260 s.",
+    "Sealed projector and artifact provenance is not re-verified against the HF tree in this lane; only research-row projectors come from tree listings.",
+    "Formatter and lint used the lane venv at .venv (ruff, pytest, pydantic, PyYAML). Nothing was installed and the shared environment was not modified.",
+    "Commit messages carry no AI or Co-Authored trailers, per the task's explicit instruction. That instruction overrides the attribution reminder.",
+    "This report was committed with git add -f because .task-state/ is gitignored. The report commit is a third commit after fac9a0d and 17497d6, and its own SHA is not recorded inside this file.",
+    "Canon citations used at implementation time (v0.26.2 rows supplied): TEST-06 (predicted RED message), TEST-15 (mutation checks), PROV-01 (pinned identity, source URL and fetched UTC retained), CAL-02 (unverified and error are valid results), EMB-01 (comparison groups never mix spaces), EVAL-01 (latest is reported as a delta against a fixed baseline), CARD-26 (base-model licence not inherited by the GGUF repo), and Principles 2, 9, 11, 13, 15, 18."
+  ],
+  "source_sha": "98b228aae5838fdc249918c395fc81c83b6fbe3e",
+  "prior_attempts_preserved": [
+    {
+      "attempt": "embedding similarity is not caption truth or identity",
+      "handling": "No similarity is computed. The EmbeddingGemma row is limited to approved context ranking, consensus, and media search (Oct-7 assessment), not captions or names."
+    },
+    {
+      "attempt": "set equality hides phrase/role swaps",
+      "handling": "Not applicable. The intake compares per-row fields and groups, not name sets."
+    },
+    {
+      "attempt": "case-sensitive name scrubbing lacks token boundaries (8129)",
+      "handling": "Not applicable. No scrubbing added."
+    },
+    {
+      "attempt": "ignore-list wrong-name pairs hide failures (7509)",
+      "handling": "Not applicable. No ignore list added."
+    },
+    {
+      "attempt": "score-time manifestB cannot validate run manifestA (3264)",
+      "handling": "The audit takes no run manifest. It compares a sealed pin or observed sha with latest main only."
+    },
+    {
+      "attempt": "pseudonymisation changes comparability (9998)",
+      "handling": "Not applicable."
+    },
+    {
+      "attempt": "pinned model is not current latest",
+      "handling": "Latest is reported separately. Outdated is informational; nothing is repinned."
+    },
+    {
+      "attempt": "API 4xx/5xx is not missing-repo proof",
+      "handling": "401, 403, 404, 429, 5xx and timeouts are unverified with reasons. There is no 'missing' status."
+    },
+    {
+      "attempt": "sealed registry remains unchanged",
+      "handling": "No write path to the sealed YAML. --output refuses the registry and intake paths. git diff is empty."
+    },
+    {
+      "attempt": "ADR018 frozen anonymous base plus unique face phrase binding",
+      "handling": "Not touched. Out of scope for this lane."
+    }
+  ]
+}

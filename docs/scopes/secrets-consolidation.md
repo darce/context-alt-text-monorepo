@@ -89,7 +89,7 @@ Heuristics: *be a pessimist → smallest shippable cut*; *branch-by-abstraction*
   - Status: APP-1 in progress; router on main behind the flag; no app vhost yet.
 - **Plane B — machine secrets:**
   - Read only through `SecretProvider`; per-env Vault secrets with env-specific names and per-env OCID maps; env files hold config and OCID maps, never prod values.
-  - Rotation = new version + restart; any new provider-read secret (e.g. `POLAR_*`) is mapped before its feature flag turns on (`POLAR_WEBHOOK_SECRET` required before `RECOGNITION_PORTAL_ENABLED`) [CARD-07]; per-env DB passwords [PG-09].
+  - Rotation = new version + restart; any new provider-read secret (for Stripe direct, the future `STRIPE_*` secrets on AltContext's own Stripe account) is mapped before its feature flag turns on [CARD-07]; the legacy `POLAR_*` secrets are obsolete since 2026-09-30 and must not be provisioned; per-env DB passwords [PG-09].
 - **Plane C — operators and agents, verbs not secrets:**
   - Humans and agents act through Tailscale and make targets that run where the secret lives (`admin-oci-mint`, `provision-customer`, deploy targets), so no secret crosses the laptop/VM boundary [SEC-01][SEC-04 least-privilege agency].
   - Agents hold no prod root secrets; API tests use dedicated low-tier, expiring, revocable test-tenant keys; high-impact verbs (prod mint, rotation, Vault writes, DB reset) stay human-gated [SEC-05 human-in-the-loop][SECD-04 dual control].

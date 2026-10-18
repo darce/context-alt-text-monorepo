@@ -2125,9 +2125,9 @@ describe('QCR real React Query credential boundaries', () => {
     mockUseQuery.mockImplementation(real.useQuery as never);
     mockUseMutation.mockImplementation(real.useMutation as never);
     let persisted = initial;
-    vi.mocked(api.fetchSettings).mockImplementation(async () => persisted);
+    vi.mocked(api.fetchSettings).mockImplementation(() => Promise.resolve(persisted));
     vi.mocked(api.testConnection).mockResolvedValue({ outcome: 'network_error' });
-    const requests: Array<{ payload: import('../../api/settingsApi').SaveSettingsPayload } & ReturnType<typeof deferred<import('../../api/settingsApi').SaveSettingsResponse>>> = [];
+    const requests: ({ payload: import('../../api/settingsApi').SaveSettingsPayload } & ReturnType<typeof deferred<import('../../api/settingsApi').SaveSettingsResponse>>)[] = [];
     vi.mocked(api.saveSettings).mockImplementation((payload) => {
       const request = { payload, ...deferred<import('../../api/settingsApi').SaveSettingsResponse>() };
       requests.push(request);
@@ -2140,7 +2140,7 @@ describe('QCR real React Query credential boundaries', () => {
   };
   const type = (element: HTMLElement, value: string) => fireEvent.change(element, { target: { value } });
   const finish = async (request: ReturnType<typeof deferred<import('../../api/settingsApi').SaveSettingsResponse>>, result: import('../../api/settingsApi').SaveSettingsResponse) => {
-    await act(async () => { request.resolve(result); });
+    await act(() => Promise.resolve(request.resolve(result)));
     await flush();
   };
 
@@ -2151,7 +2151,7 @@ describe('QCR real React Query credential boundaries', () => {
     type(key, 'draft-B'); fireEvent.blur(key);
     expect(h.requests).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
-    if (outcome === 'transport') { await act(async () => { h.requests[0].reject(new Error('transport failed')); }); await flush(); }
+    if (outcome === 'transport') { await act(() => Promise.resolve(h.requests[0].reject(new Error('transport failed')))); await flush(); }
     else { await finish(h.requests[0], outcome === 'ok' ? { saved: ['api_key'], result: 'ok' } : { saved: [], failed: ['api_key'], result: 'error' }); }
     expect(key).toHaveValue('draft-B');
     expect(h.requests.map((r) => r.payload)).toEqual([{ api_key: 'draft-A' }, { api_key: 'draft-B' }]);
@@ -2192,7 +2192,7 @@ describe('QCR real React Query credential boundaries', () => {
     await finish(h.requests[0], { saved: ['url'], result: 'ok' });
     if (blur) {
       expect(h.requests[1].payload).toEqual({ url: defaultSettings.url });
-      await act(async () => { h.requests[1].reject(new Error('second write failed')); }); await flush();
+      await act(() => Promise.resolve(h.requests[1].reject(new Error('second write failed')))); await flush();
     }
     expect(url).toHaveValue(defaultSettings.url);
   });
@@ -2294,7 +2294,7 @@ describe('QCR real React Query credential boundaries', () => {
     await finish(h.requests[0], { saved: ['url'], result: 'ok' });
     expect(h.api.testConnection).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
-    await act(async () => { readback.resolve({ ...defaultSettings, url: urlA, effective_target_url: urlA }); }); await flush();
+    await act(() => Promise.resolve(readback.resolve({ ...defaultSettings, url: urlA, effective_target_url: urlA }))); await flush();
     expect(h.api.testConnection).toHaveBeenCalledTimes(1);
   });
   it('QR2 keeps queued full-form fields when later routing commits replace the credentials', async () => {
@@ -2603,8 +2603,8 @@ describe('QCR further cross-save probes', () => {
       fireEvent.blur(screen.getByLabelText('Service API URL'));
       const key = screen.getByLabelText('API Key');
       fireEvent.change(key, { target: { value: 'still-typing' } });
-      vi.mocked(api.saveSettings).mockImplementation(() => new Promise(() => {}));
-      await act(async () => { release({ saved: ['description_budget'], result: 'ok' }); }); await flush();
+      vi.mocked(api.saveSettings).mockImplementation(() => new Promise(() => undefined));
+      await act(() => Promise.resolve(release({ saved: ['description_budget'], result: 'ok' }))); await flush();
       expect(key).toHaveValue('still-typing');
       expect(vi.mocked(api.saveSettings).mock.calls.map(([payload]) => payload)).toEqual([{ description_budget: { max_attempts: 4 } }]);
     } finally { view.unmount(); client.clear(); }

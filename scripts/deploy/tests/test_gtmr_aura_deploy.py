@@ -97,8 +97,18 @@ if [[ -n "${PROBE_STALL:-}" && "$remote" == *"$PROBE_STALL"* ]]; then
   sleep 6
   exit 255
 fi
+relocate_paths() {
+  # Map only absolute remote roots, once. Already relocated scratch paths and
+  # similarly named roots must survive; stdin bytes must not be newline-normalized.
+  python3 -c 'import os,re,sys
+root = os.fsencode(os.environ["PROBE_ROOT"])
+paths = {b"/opt/acx-backend": root + b"/opt/acx-backend",
+         b"/etc/systemd/system": root + b"/etc/systemd/system"}
+pattern = rb"(?<![\w./-])(?:/opt/acx-backend|/etc/systemd/system)(?![\w.-])"
+sys.stdout.buffer.write(re.sub(pattern, lambda m: paths[m[0]], sys.stdin.buffer.read()))'
+}
 if [[ "$remote" == "bash -s" ]]; then
-  body="$(sed -e "s|/opt/acx-backend|${PROBE_ROOT}/opt/acx-backend|g")"
+  body="$(relocate_paths)"
   if [[ -n "${PROBE_STALL:-}" && "$body" == *"$PROBE_STALL"* ]]; then
     # Stall keyed on the shipped operation body; connection and auth already succeeded.
     date +%s.%N >"$PROBE_CONNECTED"
@@ -109,9 +119,8 @@ if [[ "$remote" == "bash -s" ]]; then
   printf '%s\n' "$body" | bash -s
   exit $?
 fi
-remote=${remote//\/opt\/acx-backend/${PROBE_ROOT}\/opt\/acx-backend}
-remote=${remote//\/etc\/systemd\/system/${PROBE_ROOT}\/etc\/systemd\/system}
-sed "s|/etc/systemd/system|${PROBE_ROOT}/etc/systemd/system|g" | bash -c "$remote"
+remote="$(printf '%s' "$remote" | relocate_paths)"
+relocate_paths | bash -c "$remote"
 """,
     "sudo": '#!/bin/sh\n# sudo double: the remote fixture user already owns PROBE_ROOT.\nexec "$@"\n',
     "docker": r"""#!/usr/bin/env bash
@@ -1165,4 +1174,43 @@ def test_unit_install_does_not_continue_after_dotenv_transport_failure(fx):
     )
     assert "REFUSED" in result.stdout, _transcript(fx, result)
     assert not (systemd / "acx-dev-auraface.service").exists(), "dotenv failure reached a unit write"
+    assert fx.seen("mutations") == ""
+
+
+@pytest.mark.parametrize("bounded", [False, True], ids=["bare", "native-timeout"])
+def test_ssh_relocates_stdin_and_argv_once_and_preserves_streams(fx, bounded):
+    paths = [fx.root / "opt/acx-backend/transport.bin", fx.root / "etc/systemd/system/transport.bin"]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    command = "bash -s"
+    if bounded:
+        command = "sudo timeout -k 5 5 bash -s -- /opt/acx-backend/transport.bin /etc/systemd/system/transport.bin"
+    # A real Python program sees both shipped literals and argv, including a
+    # path already relocated by an earlier native call. Fail before any write
+    # if either transport mapping is missing or prefixes that path twice.
+    program = f'''python3 - "$@" <<'PY'
+import sys
+from pathlib import Path
+paths = [Path("/opt/acx-backend/transport.bin"), Path("/etc/systemd/system/transport.bin")]
+assert [str(p) for p in paths] == {list(map(str, paths))!r}
+assert sys.argv[1:] == {list(map(str, paths)) if bounded else []!r}
+assert Path({str(paths[0])!r}) == paths[0]
+assert "/other/opt/acx-backend" == "/other/opt/" + "acx-backend"
+assert "/opt/acx-backend-other" == "/opt/" + "acx-backend-other"
+for path in paths:
+    path.write_bytes(b"transport\\x00payload\\r\\n")
+sys.stdout.write("transport stdout\\n")
+sys.stderr.write("transport stderr\\n")
+sys.exit(37)
+PY
+'''
+    result = subprocess.run(
+        [str(fx.bin / "ssh"), "-l", "deploy-test", "--", "fake-host.invalid", command],
+        input=program, text=True, capture_output=True, env=fx.env(), timeout=10,
+    )
+    assert result.returncode == 37, _transcript(fx, result)
+    assert result.stdout == "transport stdout\n"
+    assert result.stderr == "transport stderr\n"
+    assert fx.seen("ssh") == command + "\n"
+    assert all(path.read_bytes() == b"transport\x00payload\r\n" for path in paths)
     assert fx.seen("mutations") == ""

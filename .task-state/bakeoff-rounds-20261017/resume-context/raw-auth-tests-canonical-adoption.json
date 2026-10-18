@@ -1,0 +1,17 @@
+{
+  "sha": "8d2c24b9178ca74ad4d058539845aa8132cd9ff5",
+  "tree": "fe258b706b88220f4178ad813f6ed103e5ae16f7",
+  "parent": "1024ff2c223770ea94a35de76fd5cc4649a57b0e",
+  "review_parent": "5f9470bd46d76138aaa6e1477d25b79e72494e6a",
+  "task_ref": "BAKERAW-AUTH-1",
+  "branch": "feature/bakeraw-auth-1",
+  "worktree_path": "/Users/daniel/Development/context-alt-text-monorepo-bakeraw-auth-1",
+  "test_path": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+  "test_blob": "43058b1b1f8689a6202f318fe4a5cfd42f434e40",
+  "test_sha256": "08ce40565572cd60219cc1942be4a5fbad03858f05945cd8881cfd5ccb01a66e",
+  "review_run_id": 1509,
+  "scoped_test_result": 5022,
+  "central_verdict": null,
+  "source_unchanged": true,
+  "main_promoted": false
+}

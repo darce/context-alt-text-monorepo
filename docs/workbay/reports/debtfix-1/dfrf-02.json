@@ -1,0 +1,69 @@
+{
+  "lane": "dfrf-02",
+  "base": "ca065abdaa0f0e3fc9e2c4a2106e3c149e211b50",
+  "results": [
+    {
+      "db_id": 16840,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-7-occlusion-adapters-task-plan.md:127,143-146 - the 84/90 synthetic cell remains UNDER-FLOOR/DIRECTIONAL, margins are fixed independently of power, Golden-150 intervals are not population coverage, and the K=3 alpha budget uses an intersection-union gate.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The closing verdict remains supported by the current fail-closed plan; no additional change is indicated."
+    },
+    {
+      "db_id": 16878,
+      "outcome": "REFUTED",
+      "evidence": ".codex/hooks.json:7,14 - checked-in Codex hooks still use relative launcher, wrapper and handler paths; scripts/generate_agent_workflows.py:20,26-54 delegates generation to the hoisted or installed Workbay renderer, so the local helper test does not establish durable rendered output.",
+      "severity": "high",
+      "fix_files": [
+        "scripts/generate_agent_workflows.py",
+        ".codex/hooks.json"
+      ],
+      "test_file": "scripts/test_lint_ratchet.py",
+      "size": "M",
+      "fix_hint": "Apply checkout-root anchoring in the durable workflow-rendering path and regenerate the Codex hook artifact."
+    },
+    {
+      "db_id": 16881,
+      "outcome": "CONFIRMED",
+      "evidence": "scripts/lint_ratchet.py:349-354 - the parser raises when parsed locations do not cover reported diagnostics; scripts/test_lint_ratchet.py:419-435 supplies a newline-path partial inventory and asserts that error.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "scripts/test_lint_ratchet.py",
+      "size": "S",
+      "fix_hint": "The partial-output fail-closed guard and regression fixture cover the reported case; no additional change is indicated."
+    },
+    {
+      "db_id": 16795,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:629-636,1281-1285 - only exhaustive accepted entries enter detection scoring, and refused placeholders skip tier promotion; test_score_head_to_head.py:615-677 asserts null detection metrics and an empty detection_scoring_set for roster_only data.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "fix_hint": "The scorer excludes non-exhaustive data and emits metric-free refusals, so the closing verdict remains supported."
+    },
+    {
+      "db_id": 16817,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/manifest.py:859,1071-1095 - capture_session_id is allowed in box lineage and required for exhaustive manifests; score_report.py:880-901,1252-1263 maps sessions into bootstrap groups; test_precision_precondition.py:432-434,513-529 asserts occasion resampling and partial-occasion handling.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "The schema and end-to-end fixture now support session-level resampling; no further change is indicated."
+    },
+    {
+      "db_id": 16945,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:905-918,1017-1020,1061-1065 - classification uses the verified run-local manifest pin rather than run.json; test_precision_precondition.py:501-531 renames the source metadata, removes run.json, and still verifies the approved corpus is tier-capped.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "Content-pin classification and the metadata-removal regression cover the reported bypass; no additional change is indicated."
+    }
+  ]
+}

@@ -1,0 +1,786 @@
+"""Async bulk describe-run routes."""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from collections.abc import Mapping, Sequence
+from contextlib import suppress
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.datastructures import UploadFile
+
+from db.models import DemoInstance
+from db.tenant_context import require_tenant_record, set_tenant_context
+from recognition.application.services.usage_settlement_service import settle_usage_job
+from recognition.infrastructure.repositories.audit_repository import AuditRepository
+from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
+from recognition.interface_adapters.http.deps.demo_quota import (
+    hash_api_key_for_quota,
+    maybe_consume_demo_quota,
+)
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
+from scene.application.describe_run_repository import DescribeRunRepository
+from scene.application.describe_run_worker import (
+    DescribeItemOutcome,
+    DescribeRunTerminalCode,
+    DescribeRunTerminalReason,
+    FusionNamingInputs,
+    MissingNamingSnapshotError,
+    gpu_run_policy,
+    item_envelope_seconds,
+    publish_demand_snapshot,
+    run_describe_job,
+)
+from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.gpu_state import read_gpu_state
+from scene.application.identity_merge import NamingStatus
+from scene.application.visual_facts_service import VisualFactsService
+from scene.config.settings import DescriptionSettings
+from scene.domain.describe_run import (
+    DescribeRunErrorCode,
+    DescribeUsageRouteMode,
+    InvalidIdempotencyKeyError,
+    RunKind,
+    compute_eta_seconds,
+    compute_request_digest,
+    describe_job_error,
+    normalize_idempotency_key,
+)
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+from scene.interface_adapters.http.deps import get_cpu_description_adapter, get_description_adapter
+from scene.interface_adapters.http.routers.describe import (
+    _bind_run_usage,
+    _DescriptionAuditSink,
+    _DescriptionMetricsSink,
+    _generation_timeout_seconds,
+    _maybe_admit_usage,
+    _optional_operation_id,
+    _parse_recognition_enabled,
+    _run_by_usage_operation,
+    _scene_usage_fingerprint,
+    _usage_operation_id,
+    bound_usage_job_id,
+    worker_session_factory,
+)
+from scene.interface_adapters.http.schemas.responses import (
+    DescribeRunItemResponse,
+    DescribeRunItemsResponse,
+    DescribeRunResponse,
+    DescribeRunTerminal,
+    DescribeRunTiming,
+)
+
+router = APIRouter(tags=["describe-runs"])
+
+logger = logging.getLogger(__name__)
+
+_IMAGE_KEY_PREFIX = "image_"
+# GUIDEDFIX-2 [S05]: the one constraint whose violation means "this key is
+# already reserved". Every other IntegrityError is a real, permanent failure.
+_IDEMPOTENCY_CONSTRAINT = "uq_image_description_runs_idempotency_key"
+_IDEMPOTENCY_SQLITE_COLUMNS = ("image_description_runs.tenant_id", "image_description_runs.idempotency_key")
+
+
+def _is_idempotency_reservation_conflict(exc: IntegrityError) -> bool:
+    """True only when ``exc`` is the idempotency-key unique violation.
+
+    psycopg exposes the constraint name on ``exc.orig.diag``; when the driver
+    does not (or the diagnostic is empty) fall back to SQLSTATE 23505 plus the
+    constraint name in the message. SQLite names no constraints at all — its
+    UNIQUE violations list the columns instead — so match those explicitly
+    rather than treating any SQLite IntegrityError as a collision.
+    """
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    constraint_name = getattr(diag, "constraint_name", None)
+    if constraint_name:
+        return str(constraint_name) == _IDEMPOTENCY_CONSTRAINT
+    message = str(orig) if orig is not None else str(exc)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate is not None:
+        return str(sqlstate) == "23505" and _IDEMPOTENCY_CONSTRAINT in message
+    lowered = message.lower()
+    if "unique constraint failed" in lowered:
+        return all(column in lowered for column in _IDEMPOTENCY_SQLITE_COLUMNS)
+    return _IDEMPOTENCY_CONSTRAINT in message
+
+
+async def _reject_when_demo_quota_is_already_spent(auth, session, *, units: int) -> None:
+    """Cheap read-only 429 for an over-quota demo key, ahead of any insert.
+
+    Mirrors ``consume_demo_quota_units``'s reject shape without consuming: it is
+    an optimisation, not the enforcement point. The atomic guarded UPDATE in
+    ``try_consume_demo_quota`` (called after the reservation lands) remains the
+    only authority on the balance, so a concurrent charge between this read and
+    that update still yields the correct 429 — just later, and after the insert.
+    """
+    if session is None or not getattr(auth, "enabled", False):
+        return
+    token = getattr(auth, "token", None)
+    if not token:
+        return
+    key_hash = hash_api_key_for_quota(token)
+    row = (
+        await session.execute(
+            select(DemoInstance.recognition_quota, DemoInstance.recognition_used, DemoInstance.revoked)
+            .where(DemoInstance.api_key_ref == key_hash)
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        # Not a demo registry key: no metering applies (main-compatible).
+        return
+    quota, used, revoked = int(row[0]), int(row[1]), bool(row[2])
+    remaining = 0 if revoked else max(0, quota - used)
+    if units > remaining:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            {
+                "code": "demo_quota_exceeded",
+                "message": "demo recognition quota exceeded",
+                "quota_remaining": remaining,
+            },
+        )
+
+
+def _observed_run_timing(run) -> DescribeRunTiming | None:
+    """Build timing only from persisted observations; omit when nothing was measured."""
+    if all(
+        getattr(run, name) is None
+        for name in (
+            "queue_ms",
+            "ramp_up_ms",
+            "processing_ms_p50",
+            "processing_ms_max",
+            "startup_ms",
+            "server_elapsed_ms",
+        )
+    ):
+        return None
+    return DescribeRunTiming(
+        queue_ms=run.queue_ms,
+        ramp_up_ms=run.ramp_up_ms,
+        processing_ms_p50=run.processing_ms_p50,
+        processing_ms_max=run.processing_ms_max,
+        startup_ms=run.startup_ms,
+        server_elapsed_ms=run.server_elapsed_ms,
+        items_timed=run.items_timed,
+    )
+
+
+def _describe_run_wire_error(error_message: str | None) -> tuple[DescribeRunTerminal | None, str | None]:
+    """Parse worker JSON on ``run.error_message``; never raise or fabricate."""
+
+    if not error_message:
+        return None, None
+    try:
+        payload = json.loads(error_message)
+    except json.JSONDecodeError:
+        return None, None
+    if not isinstance(payload, Mapping):
+        return None, None
+    terminal = None
+    code_raw = payload.get("code")
+    retryable = payload.get("retryable")
+    if isinstance(code_raw, str) and type(retryable) is bool:
+        try:
+            code = DescribeRunTerminalCode(code_raw)
+        except ValueError:
+            code = None
+        if code is not None:
+            budget = payload.get("startup_budget_seconds")
+            terminal = DescribeRunTerminal(
+                code=code,
+                retryable=retryable,
+                startup_budget_seconds=budget if type(budget) is int else None,
+            )
+    fallback_reason = None
+    reason_raw = payload.get("fallback_reason")
+    if isinstance(reason_raw, str):
+        try:
+            fallback_reason = str(DescribeRunTerminalReason(reason_raw))
+        except ValueError:
+            fallback_reason = None
+    return terminal, fallback_reason
+
+
+def _run_response(run) -> DescribeRunResponse:
+    terminal, fallback_reason = _describe_run_wire_error(getattr(run, "error_message", None))
+    return DescribeRunResponse(
+        tenant_id=str(run.tenant_id),
+        run_id=str(run.id),
+        status=run.status,
+        phase=run.phase,
+        completed=run.completed_items,
+        failed=run.failed_items,
+        skipped=run.skipped_items,
+        total=run.total_items,
+        cancel_requested=run.cancel_requested,
+        eta_seconds=compute_eta_seconds(run),
+        gpu_state=read_gpu_state(),
+        recognition_enabled=bool(run.recognition_enabled),
+        deadline_seconds=run.deadline_seconds,
+        terminal=terminal,
+        fallback_reason=fallback_reason,
+        operation_id=run.operation_id or None,
+        startup_id=run.startup_id,
+        timing=_observed_run_timing(run),
+    )
+
+
+def _run_items_response(run, items) -> DescribeRunItemsResponse:
+    return DescribeRunItemsResponse(
+        tenant_id=str(run.tenant_id),
+        run_id=str(run.id),
+        items=[
+            DescribeRunItemResponse(
+                media_id=item.media_id,
+                status=item.status,
+                alt_text_draft=item.alt_text_draft,
+                caption=item.caption,
+                provenance=item.provenance,
+                error=describe_job_error(item),
+                tier=item.tier,
+                result_generation=item.result_generation,
+                processing_ms=item.processing_ms,
+            )
+            for item in items
+        ],
+    )
+
+
+def _require_tenant_uuid(auth) -> uuid.UUID:
+    """Resolve the tenant claim to a UUID, or 400 (never an unhandled 500). (S3-02)"""
+    claim = (getattr(auth, "tenant_claim", None) or "").strip()
+    if not claim:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "tenant claim required")
+    try:
+        return uuid.UUID(claim)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid tenant claim") from exc
+
+
+async def _prepare_repo(*, session, auth, tenant_id: uuid.UUID) -> DescribeRunRepository:
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if auth_tenant and auth_tenant != str(tenant_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch")
+    if session is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "database session unavailable")
+    await set_tenant_context(session, tenant_id)
+    await require_tenant_record(session, tenant_id)
+    return DescribeRunRepository(session)
+
+
+def _worker_generic_draft(response) -> str:
+    # A cache hit re-realizes names into alt_text_draft; the worker names the
+    # generic draft itself, so hand it the unnamed base or names are applied twice.
+    generic = getattr(response, "generic_draft", None)
+    return generic if generic is not None else response.alt_text_draft
+
+
+def _worker_draft_is_final(response) -> bool:
+    # Older cache rows store only the finished named draft. Re-running preview
+    # appends a second positional sentence, so skip when naming already applied.
+    if getattr(response, "generic_draft", None) is not None:
+        return False
+    provenance = getattr(response, "naming_provenance", None)
+    status = getattr(provenance, "status", None)
+    if status is None and isinstance(provenance, Mapping):
+        status = provenance.get("status")
+    return status == NamingStatus.APPLIED
+
+
+def _build_describe_one(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    recognition_enabled: bool,
+    adapter=None,
+    settings=None,
+):
+    """Real per-item describe adapter: load bytes -> VisualFactsService -> outcome.
+
+    Reuses describe.py's exact adapter/service construction (auth-free here; the
+    submit route already validated the tenant). Opens its own session per call so
+    the cache read/write is independent of the worker's item-tracking session.
+    """
+    adapter = adapter or get_description_adapter()
+    settings = settings or DescriptionSettings()
+    timeout = _generation_timeout_seconds(settings, adapter)
+
+    async def describe_one(
+        media_id: int,
+        image_bytes: bytes | None,
+        content_type: str | None,
+        *,
+        naming_inputs: FusionNamingInputs | None = None,
+    ) -> DescribeItemOutcome:
+        if not image_bytes:
+            raise ValueError(f"no image bytes stored for media_id={media_id}")
+        if naming_inputs is None and recognition_enabled:
+            raise MissingNamingSnapshotError(
+                f"recognition-enabled bulk describe requires preloaded naming_inputs for media_id={media_id}"
+            )
+        async with session_factory() as svc_session:
+            await set_tenant_context(svc_session, tenant_id)
+            confirmed_faces: list = []
+            naming_policy = None
+            if naming_inputs is not None:
+                confirmed_faces, naming_policy = naming_inputs
+                # DATA-19: face elements + naming_policy are the shared snapshot;
+                # copy the list so Stage-2 mutation cannot alias Stage-3's sequence.
+                confirmed_faces = list(confirmed_faces or [])
+            service = VisualFactsService(
+                adapter=adapter,
+                repository=ImageDescriptionRepository(svc_session),
+                audit_sink=_DescriptionAuditSink(AuditRepository(svc_session)),
+                metrics=_DescriptionMetricsSink(),
+                generation_timeout_seconds=timeout,
+            )
+            response = await service.describe(
+                tenant_id=tenant_id,
+                media_id=media_id,
+                image_bytes=image_bytes,
+                # No context to drop: the /describe/run multipart form defines
+                # only tenant_id, media_ids, recognition_enabled and
+                # image_<media_id> -- unlike /describe, which carries an
+                # envelope context/context_pack. Identity context does reach
+                # here, as naming_inputs. Passing None rather than a synthesized
+                # stand-in keeps context_hash the empty-context digest, so a
+                # bulk row can only share a cache row with a genuinely
+                # context-free describe (rg-015: never invent contract
+                # metadata). Add a form field before threading anything here.
+                context=None,
+                confirmed_faces=confirmed_faces,
+                naming_policy=naming_policy,
+            )
+            await svc_session.commit()
+        provenance = {
+            "adapter": str(response.adapter),
+            "model_id": response.model_id,
+            "model_version": response.model_version,
+            "prompt_or_task_version": response.prompt_or_task_version,
+            "image_hash": response.image_hash,
+            "context_hash": response.context_hash,
+            "cached": response.cached,
+            "duration_ms": response.duration_ms,
+        }
+        attempt_ms = getattr(getattr(response, "attempt_timing", None), "processing_ms", None)
+        return DescribeItemOutcome(
+            alt_text_draft=_worker_generic_draft(response),
+            caption=response.visual_facts.caption,
+            provenance=provenance,
+            phrase_boxes=tuple(service.last_phrase_boxes or ()),
+            attachments=tuple(service.last_attachments or ()),
+            tier=response.tier,
+            processing_ms=None if attempt_ms is None else float(attempt_ms),
+            draft_is_final=_worker_draft_is_final(response),
+        )
+
+    return describe_one
+
+
+def _parse_media_ids(raw: object) -> list[int]:
+    if not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'media_ids' (JSON int array) is required"
+        )
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"'media_ids' is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list) or not all(isinstance(m, int) and not isinstance(m, bool) for m in parsed):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "'media_ids' must be a JSON array of integers")
+    if any(m <= 0 for m in parsed):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "media_ids must be positive integers")
+    return parsed
+
+
+def _parse_idempotency_key(raw: object) -> str | None:
+    """Parse an optional retry token; the route checks for a caller operation id if absent."""
+    try:
+        return normalize_idempotency_key(raw)
+    except InvalidIdempotencyKeyError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            {
+                "code": DescribeRunErrorCode.INVALID_IDEMPOTENCY_KEY.value,
+                "message": str(exc),
+                "field": "idempotency_key",
+            },
+        ) from exc
+
+
+def _replay_or_conflict(
+    run,
+    *,
+    fingerprint: str,
+    legacy_fingerprint: str | None = None,
+    legacy_image_bytes: Mapping[int, bytes] | None = None,
+) -> DescribeRunResponse:
+    """Return the reserved run, or 409 when the token names a different payload.
+
+    The replay is deliberately indistinguishable from a first accept (202, same
+    body): a caller must never be able to tell a retry succeeded twice.
+
+    G2 usage identity is byte-sensitive: same operation + same fingerprint
+    replays; a changed fingerprint (including image bytes) is 409.
+    """
+    stored = getattr(run, "request_digest", None)
+    compatible_legacy = False
+    if stored and legacy_fingerprint is not None and legacy_image_bytes is not None:
+        # Legacy digests bound only IDs and recognition; retained bytes keep the
+        # compatibility path from replaying a changed upload.
+        stored_images = {
+            int(item.media_id): bytes(item.image_bytes)
+            for item in (getattr(run, "items", None) or ())
+            if item.image_bytes is not None
+        }
+        compatible_legacy = str(stored) == legacy_fingerprint and stored_images == dict(legacy_image_bytes)
+    if stored and str(stored) != fingerprint and not compatible_legacy:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": DescribeRunErrorCode.IDEMPOTENCY_CONFLICT.value,
+                "message": (
+                    "this 'idempotency_key' is already bound to a describe run submitted with a different payload"
+                ),
+                "field": "idempotency_key",
+                # [S09] Never echo the reserved run's id or media ids.
+            },
+        )
+    return _run_response(run)
+
+
+async def _read_image_parts(
+    form, settings: DescriptionSettings, *, media_ids: Sequence[int]
+) -> Mapping[int, tuple[bytes, str | None]]:
+    """Read + bound each image_<media_id> part, mirroring describe.py's caps.
+
+    Bound reads before materialising bytes so unused or oversized uploads cannot exhaust memory.
+    """
+    images: dict[int, tuple[bytes, str | None]] = {}
+    requested = set(media_ids)
+    total = 0
+    cap = settings.max_description_image_bytes
+    chunk_size = 1024 * 1024
+    for key, value in form.multi_items():
+        if not key.startswith(_IMAGE_KEY_PREFIX):
+            continue
+        suffix = key[len(_IMAGE_KEY_PREFIX) :]
+        try:
+            media_id = int(suffix)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part key '{key}' must be 'image_<media_id>'"
+            ) from exc
+        if media_id not in requested or media_id in images:
+            continue
+        if not isinstance(value, UploadFile):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"form key '{key}' must be a file upload")
+        content_type = value.content_type or ""
+        if content_type not in settings.allowed_description_mime_types:
+            raise HTTPException(
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                f"unsupported image content-type '{content_type}' for part '{key}'",
+            )
+        size_error = f"image part '{key}' exceeds the description size cap ({cap} bytes)"
+        if value.size is not None and value.size > cap:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, size_error)
+        data = bytearray()
+        while chunk := await value.read(chunk_size):
+            data.extend(chunk)
+            total += len(chunk)
+            if len(data) > cap or total > cap * len(requested):
+                raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, size_error)
+        if not data:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"image part '{key}' is empty")
+        images[media_id] = (bytes(data), content_type)
+    return images
+
+
+@router.post("/describe/run", response_model=DescribeRunResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_describe_run(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+    usage_admission_service=Depends(get_usage_admission_service),
+) -> DescribeRunResponse:
+    if session is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "database session unavailable")
+
+    form = await request.form()
+    tenant_raw = form.get("tenant_id")
+    if not isinstance(tenant_raw, str) or not tenant_raw.strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'tenant_id' (uuid) is required")
+    try:
+        tenant_id = uuid.UUID(tenant_raw.strip())
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "'tenant_id' is not a valid uuid") from exc
+
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if auth_tenant and auth_tenant != str(tenant_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
+
+    media_ids = _parse_media_ids(form.get("media_ids"))
+    recognition_enabled = _parse_recognition_enabled(form.get("recognition_enabled"))
+    idempotency_key = _parse_idempotency_key(form.get("idempotency_key"))
+    caller_operation_id = _optional_operation_id(form)
+    if idempotency_key is None and caller_operation_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {
+                "code": DescribeRunErrorCode.IDEMPOTENCY_KEY_REQUIRED.value,
+                "message": "a caller-supplied idempotency_key or operation_id is required",
+                "field": "idempotency_key",
+            },
+        )
+    settings = DescriptionSettings()
+
+    if not media_ids:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "'media_ids' must be non-empty",
+        )
+    images = await _read_image_parts(form, settings, media_ids=media_ids)
+    missing = [m for m in media_ids if m not in images]
+    if missing:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"missing image_<media_id> part(s) for media_ids: {missing}",
+        )
+    # Capture the adapter and its GPU execution policy before persisting the
+    # run. The worker must use this exact pairing even if process configuration
+    # changes before the background task begins.
+    adapter = get_description_adapter()
+    run_gpu_policy = gpu_run_policy(adapter_kind=adapter.kind, settings=settings)
+
+    # Charge unique media ids only (order-preserving dedupe); durable at dispatch.
+    unique_media_ids = list(dict.fromkeys(media_ids))
+    # [S01] ONE number, derived from the value the worker is actually handed
+    # below, so disclosure and enforcement cannot drift on either axis:
+    #   * per item: _generation_timeout_seconds(settings, adapter) is what
+    #     run_describe_job receives; settings.generation_timeout_seconds alone is
+    #     wrong for LOCAL_CPU, which enforces VlmSettings().inference_timeout_seconds.
+    #   * per run: the worker's real per-item bound is item_envelope_seconds()
+    #     (naming budget + describe timeout) and it processes items serially, so
+    #     the run's budget is that envelope times the item count.
+    # Warm-up is deliberately excluded — see the DescribeRunResponse contract.
+    item_timeout_seconds = _generation_timeout_seconds(settings, adapter)
+    run_deadline_seconds = float(item_envelope_seconds(item_timeout_seconds) * len(unique_media_ids))
+    usage_fingerprint = _scene_usage_fingerprint(
+        route_mode=DescribeUsageRouteMode.BULK,
+        media_ids=unique_media_ids,
+        image_bytes_by_media_id={media_id: images[media_id][0] for media_id in unique_media_ids},
+        context=None,
+        recognition_enabled=recognition_enabled,
+        tier=adapter.kind.value,
+    )
+    legacy_fingerprint = compute_request_digest(
+        media_ids=unique_media_ids,
+        recognition_enabled=recognition_enabled,
+    )
+    legacy_image_bytes = {media_id: images[media_id][0] for media_id in unique_media_ids}
+    operation_id = _usage_operation_id(idempotency_key, caller_operation_id)
+    job_id = uuid.uuid4()
+    queue_bytes = sum(len(images[media_id][0]) for media_id in unique_media_ids)
+
+    await set_tenant_context(session, tenant_id)
+    await require_tenant_record(session, tenant_id)
+    repo = DescribeRunRepository(session)
+    if idempotency_key is not None:
+        existing = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
+    else:
+        existing = await _run_by_usage_operation(session, tenant_id=tenant_id, operation_id=operation_id)
+    if existing is not None:
+        return _replay_or_conflict(
+            existing,
+            fingerprint=usage_fingerprint,
+            legacy_fingerprint=legacy_fingerprint,
+            legacy_image_bytes=legacy_image_bytes,
+        )
+    # [S07] Reject an over-quota demo key BEFORE create_run, after proven replay.
+    await _reject_when_demo_quota_is_already_spent(auth, session, units=len(unique_media_ids))
+    await set_tenant_context(session, tenant_id)
+
+    async with _maybe_admit_usage(
+        usage_admission_service,
+        enabled=True,
+        tenant_id=tenant_id,
+        idempotency_key=operation_id,
+        job_id=str(job_id),
+        cost_units=len(unique_media_ids),
+        operation_id=operation_id,
+        request_fingerprint=usage_fingerprint,
+        queue_bytes=queue_bytes,
+    ) as ticket:
+        if idempotency_key is not None:
+            raced = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
+        else:
+            raced = await _run_by_usage_operation(session, tenant_id=tenant_id, operation_id=operation_id)
+        if raced is not None:
+            return _replay_or_conflict(
+                raced,
+                fingerprint=usage_fingerprint,
+                legacy_fingerprint=legacy_fingerprint,
+                legacy_image_bytes=legacy_image_bytes,
+            )
+
+        try:
+            run_id = await repo.create_run(
+                tenant_id=tenant_id,
+                media_ids=media_ids,
+                created_by_user_id=getattr(auth, "user_id", None),
+                images=images,
+                recognition_enabled=recognition_enabled,
+                idempotency_key=idempotency_key,
+                request_digest=usage_fingerprint,
+                deadline_seconds=run_deadline_seconds,
+                run_id=bound_usage_job_id(ticket, job_id),
+                operation_id=operation_id,
+            )
+        except IntegrityError as exc:
+            if idempotency_key is None or not _is_idempotency_reservation_conflict(exc):
+                logger.error(
+                    "describe run insert failed for tenant %s (not an idempotency collision)",
+                    tenant_id,
+                    exc_info=exc,
+                )
+                raise
+            await session.rollback()
+            await set_tenant_context(session, tenant_id)
+            winner = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
+            if winner is None:
+                logger.error(
+                    "describe run reservation uncertain for tenant %s: the idempotency key collided but no "
+                    "live run holds it",
+                    tenant_id,
+                    exc_info=exc,
+                )
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "describe run reservation is uncertain; retry with the same idempotency_key",
+                ) from exc
+            return _replay_or_conflict(
+                winner,
+                fingerprint=usage_fingerprint,
+                legacy_fingerprint=legacy_fingerprint,
+                legacy_image_bytes=legacy_image_bytes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+        await _bind_run_usage(
+            session,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            request_fingerprint=usage_fingerprint,
+        )
+        await maybe_consume_demo_quota(auth, session, units=len(unique_media_ids))
+        await set_tenant_context(session, tenant_id)
+        await session.commit()
+
+        session_factory = worker_session_factory(session)
+        await publish_demand_snapshot(session_factory)
+        cpu_adapter = get_cpu_description_adapter()
+        cpu_describe_one = (
+            None
+            if isinstance(cpu_adapter, UnavailableDescriptionAdapter)
+            else _build_describe_one(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                adapter=cpu_adapter,
+                settings=settings,
+                recognition_enabled=recognition_enabled,
+            )
+        )
+        background_tasks.add_task(
+            run_describe_job,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            session_factory=session_factory,
+            describe_one=_build_describe_one(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                adapter=adapter,
+                settings=settings,
+                recognition_enabled=recognition_enabled,
+            ),
+            timeout_seconds=item_timeout_seconds,
+            gpu_policy=run_gpu_policy,
+            cpu_describe_one=cpu_describe_one,
+        )
+
+        run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:  # pragma: no cover - defensive only
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "describe run was not persisted")
+        return _run_response(run)
+
+
+def _reject_single_run(run) -> None:
+    """Bulk wire surface is disjoint from async single-runs (design (g))."""
+    if run is not None and run.run_kind == RunKind.SINGLE:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+
+
+@router.get("/describe/run/{run_id}", response_model=DescribeRunResponse)
+async def get_describe_run(
+    run_id: uuid.UUID,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+) -> DescribeRunResponse:
+    tenant_id = _require_tenant_uuid(auth)
+    repo = await _prepare_repo(session=session, auth=auth, tenant_id=tenant_id)
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    _reject_single_run(run)
+    return _run_response(run)
+
+
+@router.get("/describe/run/{run_id}/items", response_model=DescribeRunItemsResponse)
+async def list_describe_run_items(
+    run_id: uuid.UUID,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+) -> DescribeRunItemsResponse:
+    """WBUX-4 INT-01a: per-item drafts so a completed run's work product is
+    reachable by the operator (the WP History write-back consumer)."""
+    tenant_id = _require_tenant_uuid(auth)
+    repo = await _prepare_repo(session=session, auth=auth, tenant_id=tenant_id)
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    _reject_single_run(run)
+    items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
+    return _run_items_response(run, items)
+
+
+@router.delete("/describe/run/{run_id}", response_model=DescribeRunResponse)
+async def cancel_describe_run(
+    run_id: uuid.UUID,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+) -> DescribeRunResponse:
+    tenant_id = _require_tenant_uuid(auth)
+    repo = await _prepare_repo(session=session, auth=auth, tenant_id=tenant_id)
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    _reject_single_run(run)
+    if not await repo.request_cancel(tenant_id=tenant_id, run_id=run_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    await session.commit()
+    await settle_usage_job(session, tenant_id=tenant_id, job_id=str(run_id))
+    with suppress(Exception):
+        await session.commit()
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None:  # pragma: no cover - defensive only
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    return _run_response(run)

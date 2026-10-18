@@ -1,0 +1,531 @@
+{
+  "map_ref": "roster-people",
+  "product": "prototype-wp-alt-context",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
+  "goals": [
+    "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
+    "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
+    "Operator manages named people and person workspace without losing roster place",
+    "Name, avatar, and face-group-count buttons open the person workspace; the pencil is the only rename entry point.",
+    "Preview a person merge with survivor, loser, tag union, face-group counts, and conflicts before confirming; keep the success banner reversible with Undo.",
+    "Decompose Roster UI tasks from screens/zones/states/flows (people-first surface; clusters tab retired)"
+  ],
+  "jobs": [
+    {
+      "id": "job-manage-person",
+      "label": "Open person workspace / manage entry"
+    },
+    {
+      "id": "job-cluster-review",
+      "label": "Review face-group deep-link (shim)"
+    },
+    {
+      "id": "job-merge-people",
+      "label": "Preview, confirm, and undo a person merge"
+    }
+  ],
+  "screens": [
+    {
+      "id": "roster-shell",
+      "kind": "screen",
+      "title": "Roster (People)",
+      "purpose": "People-first roster: entries table, Workbench review CTA, person workspace host, face-group drawer shim",
+      "route": "#/roster",
+      "wp_page": "alt-context-roster",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": ["person", "personFilter", "queue", "face", "cluster"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
+      "primary_action_id": "act-add-person",
+      "states": ["default", "loading", "empty", "error", "degraded", "first_time"],
+      "zones": [
+        {
+          "id": "z-entries",
+          "label": "Roster entries table (name, avatar, and face-group-count buttons open person workspace; rename is pencil-only; Merge into... is a row action)",
+          "role": "content",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-review-cta",
+          "label": "Unnamed faces CTA → Workbench review queue",
+          "role": "content",
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-projection-gate",
+          "label": "Projection status gate notices",
+          "role": "status",
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-person-host",
+          "label": "Person workspace host",
+          "role": "other",
+          "states": ["default", "empty"]
+        },
+        {
+          "id": "z-cluster-host",
+          "label": "Face-group drawer host (cluster= shim)",
+          "role": "other",
+          "states": ["default", "empty", "loading", "error"]
+        }
+      ]
+    },
+    {
+      "id": "roster-person-workspace",
+      "kind": "screen",
+      "title": "Person workspace",
+      "purpose": "Deep-linked person panel: faces, media, gated when data status is not current",
+      "route": "#/roster?person=",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": ["person", "queue", "face"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx",
+      "primary_action_id": "act-save-person",
+      "states": ["default", "loading", "empty", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-person-header",
+          "label": "Person header",
+          "role": "content",
+          "states": ["default", "loading"]
+        },
+        {
+          "id": "z-person-identities",
+          "label": "Linked faces",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty", "error", "degraded"]
+        },
+        {
+          "id": "z-person-evidence",
+          "label": "Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty", "error", "degraded"]
+        },
+        {
+          "id": "z-person-actions",
+          "label": "Save / assign / open queue",
+          "role": "form",
+          "states": ["default", "loading", "empty", "error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "roster-cluster-drawer",
+      "kind": "overlay",
+      "title": "Face-group drawer (deep-link shim)",
+      "purpose": "Person-first face-group sample drawer (clusters tab retired; cluster= shim opens drawer)",
+      "route": "#/roster?cluster=",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["cluster"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/ClusterDrawerPanel.tsx",
+      "primary_action_id": "act-assign-cluster",
+      "states": ["default", "loading", "empty", "error"],
+      "zones": [
+        {
+          "id": "z-cluster-samples",
+          "label": "Sample faces",
+          "role": "forced_choice",
+          "evidence_linked": true,
+          "max_candidates": 8,
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-cluster-actions",
+          "label": "Assign / dismiss drawer",
+          "role": "form",
+          "states": ["default", "loading", "empty", "error"]
+        }
+      ]
+    },
+    {
+      "id": "roster-face-lightbox",
+      "kind": "overlay",
+      "title": "Face evidence lightbox",
+      "purpose": "Full-size face/media evidence dialog opened from workspace evidence thumbnails; closes via dialog affordance and resets when the selected person identity changes",
+      "job_entry": false,
+      "deep_link": false,
+      "code_ref": "apps/prototype-wp-alt-context/js/components/ui/FaceLightbox.tsx",
+      "primary_action_id": "act-close-lightbox",
+      "states": ["default", "error"],
+      "zones": [
+        {
+          "id": "z-lightbox-media",
+          "label": "Enlarged evidence media with accessible ordinal name",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "error"]
+        },
+        {
+          "id": "z-lightbox-controls",
+          "label": "Close affordance",
+          "role": "form",
+          "states": ["default", "error"]
+        }
+      ],
+      "route": "#/roster?person= (in-panel dialog; no dedicated route)"
+    },
+    {
+      "id": "exit-workbench",
+      "kind": "exit",
+      "title": "Workbench",
+      "purpose": "Return to media queue / scan after assignment",
+      "route": "#/workbench",
+      "wp_page": "alt-context-workbench",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["tab", "panel", "media"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-wb-entry",
+          "label": "Workbench entry",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "roster-person-merge-dialog",
+      "kind": "overlay",
+      "title": "Merge people dialog",
+      "purpose": "PersonMergeDialog previews the survivor, loser, tag union, face-group counts, and conflicts before the operator confirms a reversible merge.",
+      "route": "#/roster?person=&mergeInto=",
+      "wp_page": "alt-context-roster",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["person", "mergeInto"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx",
+      "primary_action_id": "act-confirm-person-merge",
+      "action_states": ["ready", "preview_ready", "conflict", "committing"],
+      "states": ["default", "loading", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-person-merge-preview",
+          "label": "Merge preview (survivor, loser, tag union, face-group counts, and conflicts)",
+          "role": "forced_choice",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-person-merge-confirm",
+          "label": "Confirm merge only after the preview is current; cancel leaves both people unchanged",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-person-merge-conflicts",
+          "label": "Conflict details (tag or face-group conflict blocks an unreviewed commit)",
+          "role": "status",
+          "states": ["default", "error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "roster-person-merge-success",
+      "kind": "overlay",
+      "title": "Person merge result",
+      "purpose": "Success banner confirms the person merge and offers Undo; the undone state restores the prior survivor, loser, tags, and face-group bindings.",
+      "route": "#/roster?person=&mergeResult=",
+      "wp_page": "alt-context-roster",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": ["person", "mergeResult"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx",
+      "primary_action_id": null,
+      "action_states": ["success", "undoing", "undone", "error"],
+      "states": ["default", "loading", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-person-merge-success-banner",
+          "label": "Success banner (people merged) with Undo",
+          "role": "status",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-person-merge-undo",
+          "label": "Undo merge restores the prior person and face-group bindings",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-person-merge-undone",
+          "label": "Undone state (original people, tags, and face-group counts are visible again)",
+          "role": "content",
+          "states": ["default", "error", "degraded"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "act-add-person",
+      "verb": "Add Person",
+      "target": "roster-shell",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person",
+      "verb": "Open person workspace",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-from-name",
+      "verb": "Open person workspace from name button",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-from-avatar",
+      "verb": "Open person workspace from avatar button",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-from-face-group-count",
+      "verb": "Open person workspace from face-group-count button",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-rename-person-pencil",
+      "verb": "Rename person via pencil",
+      "target": "roster-person-workspace",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-person-merge",
+      "verb": "Merge into...",
+      "target": "roster-person-merge-dialog",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-save-person",
+      "verb": "Save person changes",
+      "target": "roster-person-workspace",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "roster-person-workspace"
+    },
+    {
+      "id": "act-open-cluster",
+      "verb": "Open face-group drawer",
+      "target": "roster-cluster-drawer",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-assign-cluster",
+      "verb": "Assign face group to person",
+      "target": "person",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "roster-cluster-drawer"
+    },
+    {
+      "id": "act-goto-workbench",
+      "verb": "Go to Workbench",
+      "target": "exit-workbench",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-shell"
+    },
+    {
+      "id": "act-open-lightbox",
+      "verb": "Open evidence lightbox",
+      "target": "roster-face-lightbox",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-workspace"
+    },
+    {
+      "id": "act-close-lightbox",
+      "verb": "Close lightbox",
+      "target": "roster-person-workspace",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-face-lightbox"
+    },
+    {
+      "id": "act-preview-person-merge",
+      "verb": "Preview person merge",
+      "target": "roster-person-merge-dialog",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["ready"]
+    },
+    {
+      "id": "act-retry-person-merge-preview",
+      "verb": "Retry merge preview",
+      "target": "roster-person-merge-dialog",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["conflict"]
+    },
+    {
+      "id": "act-confirm-person-merge",
+      "verb": "Confirm person merge",
+      "target": "roster-person-merge-success",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["preview_ready"]
+    },
+    {
+      "id": "act-cancel-person-merge",
+      "verb": "Cancel merge",
+      "target": "roster-shell",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-dialog",
+      "when": ["ready", "preview_ready", "conflict"]
+    },
+    {
+      "id": "act-undo-person-merge",
+      "verb": "Undo merge",
+      "target": "roster-person-merge-success",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-success",
+      "when": ["success"]
+    },
+    {
+      "id": "act-dismiss-person-merge-result",
+      "verb": "Close merge result",
+      "target": "roster-shell",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "roster-person-merge-success",
+      "when": ["success", "undone", "error"]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-cluster-to-person",
+      "job": "job-cluster-review",
+      "label": "Open face-group drawer → assign → person workspace",
+      "steps": [
+        {
+          "screen_id": "roster-shell",
+          "branch_label": "from entries/clusters"
+        },
+        {
+          "screen_id": "roster-cluster-drawer",
+          "branch_label": "cluster= drawer"
+        },
+        {
+          "screen_id": "roster-person-workspace",
+          "branch_label": "assign identity"
+        }
+      ]
+    },
+    {
+      "id": "flow-return-workbench",
+      "job": "job-manage-person",
+      "label": "Roster → Workbench continue scan",
+      "steps": [
+        {
+          "screen_id": "roster-person-workspace",
+          "branch_label": "done assigning"
+        },
+        {
+          "screen_id": "exit-workbench",
+          "branch_label": "continue media queue"
+        }
+      ]
+    },
+    {
+      "id": "flow-person-merge-undo",
+      "job": "job-merge-people",
+      "label": "Roster row → preview person merge → confirm → Undo",
+      "steps": [
+        {
+          "screen_id": "roster-shell",
+          "branch_label": "name, avatar, and face-group-count buttons open workspace; pencil is rename-only; choose Merge into... for a merge"
+        },
+        {
+          "screen_id": "roster-person-merge-dialog",
+          "branch_label": "preview survivor, loser, tag union, face-group counts, and conflicts before commit"
+        },
+        {
+          "screen_id": "roster-person-merge-success",
+          "branch_label": "confirm shows a success banner with Undo"
+        },
+        {
+          "screen_id": "roster-person-merge-success",
+          "branch_label": "Undo restores the prior people, tags, and face-group bindings; show undone state"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)",
+    "Face-group drawer max_candidates=8 — confirm product top-k policy"
+  ],
+  "not_doing": [
+    "Resurrect Clusters tab surface (retired; cluster= drawer only)",
+    "Dashboard map (separate map_ref later)",
+    "Pixel/token design in this map",
+    "REST sequence diagrams"
+  ]
+}

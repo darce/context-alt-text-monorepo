@@ -1,0 +1,1612 @@
+{
+  "map_ref": "fir-bench",
+  "product": "FIRBENCH-1 benchmark tool: static private FIR bench report (S1 to S8) and the occlusion label queue (L1); separate historical comparison explorer (one offline index.html from explore, current v1)",
+  "source_fixture": "docs/tasks/firdv/FIRBENCH-1-fir-benchmark-tool-task-plan.md#screens-ux-map-seeds-values-are-placeholders",
+  "goals": [
+    "Every verdict shows its admissibility, n_eff, MDE and interval. A result that is unratified, inconclusive or unresolvable names no winner.",
+    "An operator can find where faces are lost, from the verdict to the stage, then to the failing faces, without losing sort, filter or position.",
+    "Incompatible runs are refused with a reason before any difference is computed.",
+    "The label queue shows the annotator only what labelling from pixels needs, and no internal item role.",
+    "Explore historical aggregate report files on one offline page without opening private files, querying private tables, or naming a winner. Images scored, faces matched, faces missed and grouped faces keep distinct units.",
+    "Keep the original S1–S8/L1 inventory unchanged. Explorer observations are frozen to supplied source 4e34534e527343ebffc6e165b2891a599734c3a8, renderer SHA-256 a536ea560e2bb063fcaeea6f851a351f2bb0df42799d28543b27cce2802bb210, not moving CURRENT HEAD. Required but unaccepted behavior (UX-RENDER05 caller return, null-status disclosure) is marked pending at this baseline; live finding and acceptance state belongs MCP.",
+    "Show source provenance and unknown compatibility. Equal counts, shared report digests and 18762's representation hashes do not establish equal pixels, independent runs or qualified ground truth. VIZ-23, VIZ-32, GRPH-14; canon v0.26.2."
+  ],
+  "jobs": [
+    {
+      "id": "decide-model-change",
+      "label": "Decide whether a model change is real"
+    },
+    {
+      "id": "find-lost-faces",
+      "label": "Find where faces are lost"
+    },
+    {
+      "id": "compare-two-runs",
+      "label": "Compare two runs"
+    },
+    {
+      "id": "label-occlusion-pixels",
+      "label": "Label occlusion from pixels"
+    },
+    {
+      "id": "explorer-browse-history",
+      "label": "Find historical report files, their digests and recorded coverage"
+    },
+    {
+      "id": "explorer-compare-pipelines",
+      "label": "Read AuraFace, SFace and InsightFace columns side by side, descriptively"
+    },
+    {
+      "id": "explorer-inspect-grouping",
+      "label": "Read recorded grouping values and grouping-method availability"
+    },
+    {
+      "id": "explorer-inspect-coverage",
+      "label": "Read detection and stranger measures with their denominators"
+    },
+    {
+      "id": "explorer-understand-terms",
+      "label": "Look up a term in the in-page glossary and get back to the results"
+    }
+  ],
+  "screens": [
+    {
+      "id": "s1-verdict",
+      "kind": "screen",
+      "title": "S1 Verdict",
+      "purpose": "Answers whether the model change is real at the primary point (FNIR at FPIR 0.01, end to end, misses count). Shows the verdict only with its admissibility, n_eff, MDE and interval. Bench states: unratified and inconclusive are degraded; unresolvable_fpir is degraded and its verdict reason is primary_fpir_unresolvable. None of them names a winner.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-pair-cells",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "verdict-line",
+          "label": "Verdict line: question, paired difference Δ(B−A) or per-leg state with its interval, PSU n_eff and deff. superior ✓ and non-inferior ✓ name a winner only when ratified and sealed. inconclusive ○ (degraded) prints INCONCLUSIVE and the InconclusiveReason value verbatim (primary_fpir_unresolvable, required_guardrail_unscored, margin_unreachable_mde_gt_delta, non_confirmatory_frame or insufficient_independent_psus). unratified ○ (degraded) prints the numbers and 'unratified: no verdict'. unresolvable_fpir ○ (degraded) prints primary_fpir_unresolvable and names no winner. A hypothesis not reached prints 'not evaluated'. Serves VIZ-23, INT-22.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded",
+            "error"
+          ]
+        },
+        {
+          "id": "frame-admissibility",
+          "label": "Admissibility line: frame id and tag (diagnostic, development or confirmatory), frame-inspected flag, n_eff, deff, and MDE per step. Every number carries its frame's tag. Serves VIZ-23.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "leg-range",
+          "label": "FNIR at FPIR 0.01 per leg (SF-128, AF-512, and the IF judge row) as a dot-range with its interval and the frozen τ. Each leg labelled directly, not by legend. Serves VIZ-40, VIZ-23.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "leg-table",
+          "label": "Exact-lookup table: per leg FNIR at FPIR 0.01, FPIR measured with its UCL, frozen τ, and stage counts. Same numbers as the range. Unratified rows show numbers with 'unratified: no verdict' (degraded). Serves VIZ-32.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "guardrails",
+          "label": "Guardrail veto table: false names per 1k mentions, worst pair-cell FNIR floor, worst cohort FPIR, p95 ms per face. Each row shows its rule (≤ sealed, floor or budget) and a mark: ✓ pass, ✗ veto, ○ unscored or unresolvable (cohort n_eff under 3/FPIR). A null or unscored veto is inconclusive with required_guardrail_unscored (degraded). Serves INT-22, VIZ-32.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "report-tabs",
+          "label": "Tabs: Curves, Pair cells, Stages, Failures, Clusters, Compare, Frames and power. Each tab is a keyboard-reachable anchor after a skip link. Switching tabs keeps the run. Serves INT-25.",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s2-curves",
+      "kind": "screen",
+      "title": "S2 Operating curves",
+      "purpose": "FNIR against FPIR on a log scale for each leg, with τ frozen on calibration folds and the test set read once. Bench states: unresolvable_fpir is degraded, for the region below 3/n_eff; unratified is degraded, with numbers only and no winner. Chart treatment follows the actual rendered marks and task: [VIZ-35] Use a range-frame for observed extrema (The Visual Display of Quantitative Information, ch. 6) applies only to a bivariate-pattern scatterplot whose decision-relevant measured extrema are hidden by unneeded round-number frame tails. Trim those tails and label the extrema, retaining required references, scales, units, legibility and marginal views. No blanket mandate or ban covers S1–S8; chart names alone do not decide applicability. FPIR reference lines at 0.001, 0.01 and 0.05 remain.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "curves",
+          "label": "Operating curves per leg on a log FPIR axis, with reference lines at FPIR 0.001, 0.01 and 0.05 and a direct label on each curve. Points below 3/n_eff are shaded (░) and marked ○ unresolvable, and no FNIR claim is drawn inside that region (degraded). A curve with no data reads 'no data' (empty). Serves VIZ-40, VIZ-27.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "tau-readout",
+          "label": "At-τ table: per leg FNIR, FPIR measured with its UCL, false accepts as an integer over non-mated source units, and the gallery identity count. Same numbers as the τ marker on the curve. Serves VIZ-32, INT-22.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "explore-tau",
+          "label": "Explore τ is a mode. A banner reads 'exploring τ: nothing is saved'. Dev frames only; sealed frames are read-only. Leaving the mode restores the frozen τ and its values. Serves INT-23, INT-21.",
+          "role": "form",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s3-pair-cells",
+      "kind": "screen",
+      "title": "S3 Pair cells",
+      "purpose": "Query by enrolled occluder cell, with FNIR at τ per leg and the faces, identities and PSUs in each cell. Bench states: unratified shows the cell numbers with 'unratified: no verdict' (degraded). An empty cell is 'collect', not an error.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-failures",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "cell-grid",
+          "label": "Query by enrolled grid: FNIR at τ per leg (SF-128, AF-512) with n faces, identities and PSUs per cell. Real and synthetic occlusion sit in separate panes. A cell with fewer than 30 independent units reads 'not scored'. An empty cell reads '○ no data → collect'. Serves EVAL-20, VIZ-32.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "cell-handoff",
+          "label": "Cell to failures for that cell and leg. Returning from failures restores this grid with sort, scroll and filter kept. Serves INT-25.",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s4-stages",
+      "kind": "screen",
+      "title": "S4 Stages",
+      "purpose": "Where each GT face ended in the end-to-end ledger, per leg, with the joint gaps against native. Rows are SearchStage values. Bench states: unratified shows the rows and gaps with 'unratified: no verdict' (degraded). The judge row shows no arm deltas.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-lost-faces",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "stage-ledger",
+          "label": "Stage waterfall as a table, in order: GT faces (exhaustive frame only), detected (IoU ≥ 0.50, one-to-one), aligned, top-1 correct identity, accepted at τ with the correct name. The fused leg has no unaligned row. Unavailable arm counts sit in their own arm_availability column, never as a stage. Serves VIZ-32, VIZ-23.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "joint-gaps",
+          "label": "Joint gaps against native with paired PSU intervals for gt_crop_redetect and cached_yunet_landmark_replay, one row each, with the unavailable face count per arm. No shares are apportioned: these are joint intervention gaps, not causal effects. Serves VIZ-23, VIZ-32.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "stage-handoff",
+          "label": "A stage row opens failures filtered to that stage, with the leg fixed. Back returns to this ledger. Serves INT-25.",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s5-failures",
+      "kind": "screen",
+      "title": "S5 Failures",
+      "purpose": "Failures for one query cell and one leg, with the selection pool stated before any face. Stage labels are FaceOutcome and SearchStage values. Bench states: unratified shows counts with 'unratified: no verdict' (degraded). No failure in the cell is empty, not an error.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "pool-accounting",
+          "label": "Selection pool, before any row: reuse the exhaustive frame inventory's overall image count and GT-face count, including existing mated/non-mated face counts and explicit unresolved identities. The source pool is fixed independently of detections; background source units are counted separately, never as GT faces. Show eligible images/faces after the current frame, sampling arm, query/enrolled cell, leg, stage and outcome filters; selected distinct images/faces in the displayed rows; and images actually shown as crops (0 when crops are off). Eligible/selected GT-face counts exclude detector-only rows; report detection counts and represented background-unit counts separately. Display the active filters, sort, offset, limit and omitted counts. Default: all eligible failure rows, no hidden cap, stable pseudonymous image_id then face_id order; any changed sort or limit is disclosed. Missing exhaustive GT reads 'pool not established'; it never implies admissible non-mated N. A selection is never shown without its pool. Serves [VIZ-41] Reveal the image-selection pool (Visual Explanations, ch. 1).",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "outcome-counts",
+          "label": "Outcome counts table: missed, unaligned, wrong_identity, rejected, false_accept. Each count is exact, and a nonzero row is marked ✗. Serves VIZ-32.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "failure-rows",
+          "label": "Failure table, one row per failing face: SearchStage reached, top-1 identity as a pseudonym, its score against τ, and its result on each other leg. Each row explicitly identifies its selected image_id and face_id with stable pseudonymous aliases; background detections identify their pseudonymous background source unit separately. Repeated faces from one image do not inflate the distinct-image count. Sort and filter controls are kept on return from pair cells. Only pseudonyms appear. Selection identities reconcile with pool-accounting. Serves VIZ-32, INT-25 and [VIZ-41] Reveal the image-selection pool (Visual Explanations, ch. 1).",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "private-crop",
+          "label": "Face crop, shown only when the run was written with include_crops. The output stays under benchmarks/private. Without it the zone reads 'crop off' (empty). Each displayed crop carries the same pseudonymous image_id and face_id as its failure row and links back to pool-accounting; shown-image counts count distinct images, with selected face/crop counts separate. Serves VIZ-23 and [VIZ-41] Reveal the image-selection pool (Visual Explanations, ch. 1).",
+          "role": "content",
+          "states": [
+            "default",
+            "empty"
+          ]
+        },
+        {
+          "id": "back-to-origin",
+          "label": "Back to pair cells or to the stage ledger, whichever opened this view. Sort and filter are kept. Serves INT-25.",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s6-compare",
+      "kind": "screen",
+      "title": "S6 Compare",
+      "purpose": "Compares run B with a baseline run A on the same frame. Only compatible runs can be compared. An incompatible pair is refused with its reason and no difference is computed. Bench states: incompatible_runs is error (reason shown, no subtraction, exit to run A). unratified is degraded: numbers for A and B, 'unratified: no verdict', never a ▼ winner.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "select-run-b",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "compat-checks",
+          "label": "Compatibility checks: frame, scorer boundary semantics, OpenCV and ORT versions, leg contracts. Each shows ✓ or ✗ with its reason. A changed leg contract is listed as expected or unexpected. The run B picker offers only runs that pass these checks. incompatible_runs is error: the reason is printed and no metric row shows. Serves INT-22, FORM-11.",
+          "role": "status",
+          "states": [
+            "default",
+            "error"
+          ]
+        },
+        {
+          "id": "metric-delta",
+          "label": "Metric table: A, B and Δ with a paired interval, and a moved mark: ▼ better, ▲ worse, ○ no change or unscored. The worst pair cell appears with its observation-level cells beside it, not only the aggregate. Unratified rows show numbers with 'unratified: no verdict' (degraded). Serves VIZ-32, EXP-31.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "history-spark",
+          "label": "History sparkline of AF FNIR over dated runs, latest value labelled. It states its baseline, units, window and actual dates. Serves VIZ-24.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "tau-spread",
+          "label": "τ spread over the calibration folds and the FNIR range each τ gives, shown beside the single frozen τ the verdict uses. Serves EXP-30.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty"
+          ]
+        },
+        {
+          "id": "refusal-reason",
+          "label": "Refusal reason for incompatible_runs, naming the first failing check. The exit to run A's verdict is the only way out. Serves INT-24.",
+          "role": "status",
+          "states": [
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s7-clusters",
+      "kind": "screen",
+      "title": "S7 Clusters",
+      "purpose": "Clusters for each leg, in that leg's own space only. The projection is a diagnostic and never a metric map. Bench states: projection_unavailable is degraded, and the table alternative stays.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "find-neighbours",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "cluster-metrics",
+          "label": "Per-leg cluster table: pair P/R, B³ P/R, merges, fragments, unknown-absorbed, order stability. Singletons stay unassigned. Retained PCA components are shown with a variance-only spectrum and no loadings. Also show S4 Build 3 chaining_check evidence: N = all eligible held-out named-face pairs independently verified as different identities, with usable vectors in this leg; D = those pairs linked by a cluster path; C = the subset linked through a third distinct verified identity. Label D/N 'known-different path links' and C/N 'chaining_check', each with integer numerator, denominator and rate, plus held-out scope and exclusions. Read S4 clusters.json evidence, never infer identity from co-assignment. N=0 reads 'not evaluated: no eligible held-out different-identity pairs' (empty), missing evidence reads 'not evaluated: chaining evidence unavailable', and malformed evidence is error; none reads zero risk. Select a pair to inspect its path in neighbour-table. Serves VIZ-32 and [GRPH-18] Never trust the transitive closure of a raw similarity threshold (Introduction to Information Retrieval, § 17.2).",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "dendrogram",
+          "label": "Average-linkage cosine dendrogram, cut at the production distance d = 1 − s, labelled with its cut or 'no production cut recorded'. The acceptance τ line is labelled 'acceptance τ (not a cluster cut)' at d = 1 − τ. Direct labels. Serves VIZ-40.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "umap-projection",
+          "label": "UMAP diagnostic projection, captioned 'diagnostic projection · distances not meaningful', with n_neighbors, min_dist and seed beside it. Claims are limited to local contiguity: no gap, density or axis claims. If the projection cannot be drawn, projection_unavailable is degraded and the neighbour table stays. Serves VIZ-18, VIZ-19. Assess any scatterplot rendering against its actual task before applying VIZ-35; diagnostic projection coordinates do not establish original-space measured extrema.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "neighbour-table",
+          "label": "Table alternative: select a face to list its nearest neighbours in the original leg space, with their scores. Distances come from that space, not from the projection. Inspect chaining pair opens a keyboard-reachable disclosure here: pseudonymous endpoint image_id/face_id and independently verified different identity aliases, held-out fold, pair eligibility, and ordered path face/image/identity aliases with each edge score, production s threshold and link rule from S4. Mark the third identity explicitly; direct links are distinguished from third-identity chaining. No real IDs, names or pixels. Closing the disclosure restores the selected pair, leg, sort and position. This evidence remains available when projection_unavailable. Serves VIZ-18, VIZ-32, [INT-25] Map the handoffs (Microinteractions, ch. 6) and [GRPH-18] Never trust the transitive closure of a raw similarity threshold (Introduction to Information Retrieval, § 17.2).",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s8-frames-power",
+      "kind": "screen",
+      "title": "S8 Frames and power",
+      "purpose": "What each frame can claim: units, identities, PSUs, deff, n_eff, admissibility tag and MDE per step. Shows decision-manifest status without a seal value unless the manifest is ratified. Bench states: unratified is degraded and reads 'unratified: no seal shown'.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py",
+      "primary_action_id": "open-verdict",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "frame-table",
+          "label": "Frame table, one row per frame: units, identities, PSUs, deff, n_eff, admissible-as tag (diagnostic, development or confirmatory), MDE per step. deff uses planning ICC 0.10 as delegated project policy, not observed ICC; show sensitivity at 0.05/0.10/0.20. Show the global floor of 50 independent PSUs separately from the pair-cell floor of 30; check the global floor before FPIR intervals. Floors do not establish power, MDE adequacy, resolvability or exhaustive GT. Golden-150 is marked verification-biased. A frame not yet acquired reads 'not acquired' and claims nothing. Serves VIZ-32, VIZ-23.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "manifest-status",
+          "label": "Decision manifest status: ratified and sealed (date, short hash, count of dated disconfirmers), or unratified (degraded, 'unratified: no seal shown'). Delegated project policy is declared before outcomes: k=5 identity/PSU-disjoint rotating folds (seed 2406466110), gallery seed 2468935812, paired cluster percentile bootstrap n_boot=10000 (seed 2429382368), label queue seed 336880394. Policy is not ratification; measured frame/template hashes, actual timestamps, genuine observation references and signatures stay unresolved until supplied. Queue tooling loads delegated gold/repeat shares 0.10/0.10, repeat agreement 0.90, Cohen kappa 0.80, independent-gold accuracy 0.90, support >=20 gold decisions per annotator and >=20 repeats per evaluated field; these remain hidden from L1. These are project QC defaults, not accuracy guarantees; real tier-(a) imports always require a genuine resolvable observation reference, documented applicability to the current measurement context and valid supported QC. No fixture flag bypasses the production gate; controlled generated-fixture helper output is synthetic and ineligible for real analysis. Preserve original answers and failed QC; a corrected version needs its own fresh independently blinded QC run or supported qualified SME resolution under S7, never worker deletion or revised historical QC. Reuse observation after documenting continuing applicability; unrelated version changes alone need no new human observation, while material changes beyond the observed scope or uncertainty block analysis pending a new bounded observation. Semantic created_at follows MCP 16773: seal.sealed_at, else ratification.ratified_at, else explicit ISO8601 literal. Seal and ratification may differ; a supplied explicit literal must match the highest-priority derived instant. Missing/invalid semantic dates or conflicting explicit literals raise FrameContractError. Actual attempt/private unseal-ledger consumed_at stays separate at the non-replayable receipt boundary; no clock fallback or substitution of a seal date. Serves INT-21.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded",
+            "empty",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "l1-label-queue",
+      "kind": "screen",
+      "title": "L1 Occlusion label queue",
+      "purpose": "Single-file HTML that the operator labels from pixels, one face box at a time. Captions, detector boxes and model names are never shown. The annotator sees position and progress only. skipped_nonresponse is the only item state the annotator sees. Other item roles are internal and never rendered on this screen.",
+      "route": "local single-file HTML (private output path)",
+      "code_ref": "benchmarks/tools/fir_occ_label_queue.py",
+      "primary_action_id": "label-occluder",
+      "states": [
+        "default",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "item-image",
+          "label": "Full image with no detector boxes and no caption. Confirmed boxes appear only when the queue entry carries show_confirmed_boxes. The header shows position and progress only. empty: the queue has no items. error: the image fails to embed, and the item stays in the queue. Serves FORM-11.",
+          "role": "queue",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "face-controls",
+          "label": "Per face: a box mark ✓, and an occluder set chosen from m mask, s sunglasses, h hand, o object, x mixed, n none, ? can't tell. Region controls for eyes, nose and mouth cycle through visible, occluded, out-of-frame and uncertain. Only these values can be entered. Every shortcut has a visible labelled button with the same action, reachable by Tab and activated with Enter or Space. Every focusable control shows a visible :focus-visible indicator. Serves FORM-11.",
+          "role": "form",
+          "states": [
+            "default",
+            "error"
+          ]
+        },
+        {
+          "id": "draw-mode",
+          "label": "Add missed face is a mode. a enters it with a visible 'drawing a box' banner. Enter or the visible Commit box button commits the box. Esc or the visible Cancel draw button cancels and restores the unchanged item; the banner disappears on exit. Button and shortcut paths agree. u marks an unknown person as a face attribute, not a second mode; at most one mode is active. Serves INT-23.",
+          "role": "form",
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "next-skip-undo",
+          "label": "Outside draw mode: Enter next, Esc undo, skip recorded as nonresponse. A skipped item shows ○ skipped, the only item state the annotator sees, and stays in the export. The loop ends at the last item or on an explicit export. Progress reads 'done n · skipped m'. No timer advances an item; only Enter, skip or export moves the annotator on. Serves INT-24, PERC-10.",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "export",
+          "label": "Export JSON writes the labelled items to the private output path. Nothing is imported here. A failed export keeps every label, shows the error and offers a retry. Serves INT-25.",
+          "role": "status",
+          "states": [
+            "default",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exit-compare-refused",
+      "kind": "exit",
+      "title": "Back to run A verdict (compare refused)",
+      "purpose": "The only exit from incompatible_runs on S6. Opens run A's S1 verdict, with no comparison shown. Intentional static exit marker, with no independent content or asynchronous work. S6 error/refusal-reason owns the refusal; back-to-run-a hands off to s1-verdict, whose states own the destination. It has no separate loading, empty or error screen. [RLSE-04] Undesigned state is a bug (practice label): screen-state trigger does not apply to this marker.",
+      "route": "report/index.html (static file, no network)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_report.py"
+    },
+    {
+      "id": "explorer-home",
+      "kind": "screen",
+      "title": "Historical results (page top)",
+      "purpose": "Panel alias for #top (main id=top) of the one offline document returned by explore --data EXPORT.json --out REVIEW_DIR, which prints REVIEW_DIR/index.html; the published directory holds only index.html, no data.json sidecar. Separate from S1–S8 and L1. Shows the heading, the source-entry/report-file summary and the Compatibility unknown banner. Not a router view: no #view= field, view enum, SPA, modal or nav bar; every other explorer entry is an in-flow section of this page. degraded: compatibility unknown; partial provenance where exported fields are null, not a blanket pin-absence claim. empty: an export with no reports leaves all three columns 'No result'. error: a refused export or an existing --out makes explore exit 2 with a fixed sanitized message and publish no page. NAV-13, VIZ-23, INT-22; canon v0.26.2.",
+      "route": "REVIEW_DIR/index.html#top (one offline page from explore; panel alias, no router)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_explorer.py",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [
+        "variant-auraface",
+        "variant-sface",
+        "variant-insightface",
+        "focus",
+        "methods",
+        "q"
+      ],
+      "primary_action_id": "explorer-read-results",
+      "states": [
+        "default",
+        "degraded",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "explorer-history",
+          "label": "Summary from the export: 'N source entries name M distinct files, by SHA-256 digest', the pipelines with a file and their file counts, then 'not M independent runs ... nothing on this page names a winner'. Five candidate historical entries give four report SHA-256 values: report variants, not independent runs. No images, face rows, labels or private paths.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "explorer-coverage-status",
+          "label": "Compatibility unknown banner (#compat-head): the files do not record enough to check the same detected population, thresholds, weights, templates or gallery pins, so the columns are separate historical results. With no AuraFace report the page says 'No AuraFace result in the selected set': this export only, not global absence.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded",
+            "empty"
+          ]
+        },
+        {
+          "id": "explorer-entry-nav",
+          "label": "In-flow reading order of one document: #results, #methods-head, What this page does not evaluate (#notes-head), #source-evidence (closed native details), #glossary. Native fragments are navigation; no tabs, router or dialog. The private S1–S8 report is a different command output; no report-pointer opening bridge.",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explorer-runs",
+      "kind": "screen",
+      "title": "Report file per pipeline column",
+      "purpose": "Panel alias for the column-header selects inside #results. Each pipeline with at least one report has a native select labelled 'Report file' (id variant-<pipeline>); its options are that pipeline's report artifact IDs (config.pipelines, sorted) and its default is config.defaults, the first actual per-pipeline report. Query keys variant-auraface, variant-sface and variant-insightface carry artifact IDs, never digests, and are written only when not the default. A pipeline with no report has no select, keeps its visible 'No result' column, cannot be selected into existence, and its key is ignored. There is no clear/empty slot and no Reset selections command: choosing the first artifact ID again restores the default and drops the key. Aliases sharing one file SHA-256 are one report, not extra options. INT-16, INT-21/22.",
+      "route": "REVIEW_DIR/index.html?variant-sface=ARTIFACT_ID#results (column Report file selects; panel alias)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_explorer.py",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "variant-auraface",
+        "variant-sface",
+        "variant-insightface",
+        "focus",
+        "methods",
+        "q"
+      ],
+      "primary_action_id": "explorer-select-variant",
+      "states": [
+        "default",
+        "degraded",
+        "edge_input"
+      ],
+      "zones": [
+        {
+          "id": "explorer-variant-selects",
+          "label": "Candidate historical options, if registered under these IDs: SFace golden150-fir-baseline-20260723 (default), golden150-fir-final-20260723, golden150-fir-v2-20260723; InsightFace golden150-fir-buffalo-20260723 (default and only option). A header with several files notes 'N file(s) for this pipeline'. Changing a select swaps the visible values of that column only.",
+          "role": "form",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-variant-state",
+          "label": "history.replaceState writes nondefault variant-<pipeline> keys, then focus, methods and q, and keeps the native hash. Initial load and reload parse the query; an unknown artifact ID falls back to that column's default; a duplicated key uses the first URLSearchParams.get value; unknown parameters are ignored. The status line counts rows, methods and terms; it does not name the selected report.",
+          "role": "status",
+          "states": [
+            "default",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "explorer-variant-dedup",
+          "label": "Same-digest aliases (golden150-fir-buffalo-baseline-20260723 shares the buffalo SHA-256) appear under Source evidence, not as options. SFace's three different digests carry 'Equal counts do not show that two files used the same images.' Equal counts, shared digests and 18762's representation hashes prove no input or pixel parity.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explorer-pipelines",
+      "kind": "screen",
+      "title": "Results by pipeline",
+      "purpose": "Panel alias for #results. One table in renderer column order AuraFace | SFace | InsightFace with 16 metric rows in three groups (Images and detections 7, Named and stranger faces 3, Grouping 6). Each value is copied from the selected report file; rates show a rounded percentage with their counts. Descriptive only: no winner, delta, ranking, H1/H2 or guardrail evaluation; the in-flow note 'What this page does not evaluate' (#notes-head) links the H1, H2, guardrail and G4 terms. A null wire value is VALUE UNAVAILABLE, SOURCE STATUS NOT EXPORTED; current markup still prints 'not recorded' (product gap, pending). Attributed lineage, not page copy: 18762 is 150 shared entries with 64 same/86 different representation hashes, with no raw-image or decoded-pixel parity claim. VIZ-23/32; canon v0.26.2.",
+      "route": "REVIEW_DIR/index.html#results (Results by pipeline; panel alias)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_explorer.py",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "variant-auraface",
+        "variant-sface",
+        "variant-insightface",
+        "focus",
+        "methods",
+        "q"
+      ],
+      "primary_action_id": "explorer-set-metric-focus",
+      "states": [
+        "default",
+        "degraded",
+        "edge_input"
+      ],
+      "zones": [
+        {
+          "id": "explorer-results-controls",
+          "label": "Control group 'Choose what to show': Metric focus (focus=all|detection|strangers|grouping, default all), Search glossary terms (q, literal, glossary only, default empty), Grouping methods (methods=all|in-tree|other, default all) and Clear search and focus (disabled at defaults; resets focus, methods and q, keeps report choices, then focuses Metric focus). role=status, aria-live=polite: 'Showing X of 16 metric rows, Y of 7 grouping methods, and Z of 44 glossary terms.'",
+          "role": "form",
+          "states": [
+            "default",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "explorer-pipeline-table",
+          "label": "Candidate historical defaults, SFace baseline | InsightFace buffalo, AuraFace 'No result': Images scored 150 of 150 | 150 of 150; Faces matched 189 | 373; Faces missed 186 | 2, each of 375 labelled faces; Extra detections 0 | 2; Detection precision 100.0% (189 ÷ (189 + 0)) | 99.5% (373 ÷ (373 + 2)); Detection recall 50.4% (189 ÷ (189 + 186)) | 99.5% (373 ÷ (373 + 2)). Images scored counts media items, not faces; 375 = tp + fn recorded labelled faces, not exhaustive independent GT. Each row links 'What does this mean?' to #term-<known-id>.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-null-disclosure",
+          "label": "Null cell: the v1 numeric projection omits producer refused/directional/floor/sampling-frame status, so a refused block and an absent block both arrive as null. Honest label: 'value unavailable, source status not exported'; it does not establish not recorded, absent, refusal, zero or an eligible denominator. Current cells and the 'Not recorded' term say the file lacks the value: concrete product gap, disclosure pending in a separate code lane, not shipped. 'No result' means no report for that pipeline.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-comparison-basis",
+          "label": "Caption and 'How to read this': each value comes from one report file listed under Source evidence; a missing value is not zero. Pipelines differ in detector, alignment, embedder, gallery and scorer. Product gap: the renderer's H2 term says 'only after H1 has a recorded result'; the protocol reaches H2 only after H1 PASS/rejection. Pending prospective UX-explorer-copy owner (ASCII section 2), _GLOSSARY h2 tuple only.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explorer-grouping",
+      "kind": "screen",
+      "title": "Grouping methods: availability",
+      "purpose": "Panel alias for #methods-head. Availability table of seven fixed method rows (in-tree: HDBSCAN, average-link HAC cosine, complete-link HAC cosine, constrained HAC; other: Chinese Whispers, DBSCAN, historical d_cut threshold settings). The methods filter (all|in-tree|other) filters these availability rows only and never executes Python, loads embeddings or runs clustering. Recorded grouping values are the Grouping rows in #results (focus=grouping). No winner, score or new quality claim; a later runner needs its own reviewed contract with pinned embeddings, order, preprocessing, metric, library, parameters, seed and independent GT.",
+      "route": "REVIEW_DIR/index.html?methods=in-tree#methods-head (availability rows; panel alias)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_explorer.py",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "variant-auraface",
+        "variant-sface",
+        "variant-insightface",
+        "focus",
+        "methods",
+        "q"
+      ],
+      "primary_action_id": "explorer-filter-methods",
+      "states": [
+        "default",
+        "degraded",
+        "edge_input"
+      ],
+      "zones": [
+        {
+          "id": "explorer-grouping-history",
+          "label": "Grouping rows in #results: Merge rate (false_merge over m_co_clustered pairs), Split rate (false_split over p_same pairs), Cluster purity (definition pending), Grouped faces (clustering.n_faces: the grouping face population, never Images scored), Clusters (n_clusters), Clustering setting d_cut (clustering.parameters.d_cut, cosine distance; 'method not recorded' because the export carries algorithm and metric as null). Attributed historical grouping populations, SFace 100 and InsightFace 166 faces, come from the task, not the supplied safe aggregate; the page shows what the loaded export carries.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-method-inventory",
+          "label": "Columns: Availability in this tree, Settings and distance, Historical numbers ('None attributed'). HDBSCAN is a production adapter recorded as metadata, not run by the firbench path; Chinese Whispers is archived and removed from this tree; DBSCAN is not located in the bounded snapshot, which is not proof it never existed. Availability only, not scores.",
+          "role": "content",
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "explorer-grouping-bridge",
+          "label": "methods=in-tree shows 4 of 7 rows and methods=other 3 of 7; the status line reports 'Y of 7 grouping methods'. An unsupported methods value falls back to all. Clear search and focus resets methods with focus and q; report choices stay.",
+          "role": "status",
+          "states": [
+            "default",
+            "edge_input"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explorer-measures",
+      "kind": "screen",
+      "title": "Detection and stranger measures (metric focus)",
+      "purpose": "Panel alias for #results with Metric focus Images and detections (focus=detection) or Named and stranger faces (focus=strangers); the other row groups are hidden and report choices are untouched. Keeps detection loss, matched strangers and stranger rejection distinct from FNIR, FPIR and G1. Exported but not displayed by the current page: identification headline/full P/R numbers. Not exported: demographic and occlusion categories, producer status, directional/floor flags and sampling frames.",
+      "route": "REVIEW_DIR/index.html?focus=detection#results (or focus=strangers; panel alias)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_explorer.py",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "variant-auraface",
+        "variant-sface",
+        "variant-insightface",
+        "focus",
+        "methods",
+        "q"
+      ],
+      "primary_action_id": "explorer-define-measure",
+      "states": [
+        "default",
+        "degraded",
+        "edge_input"
+      ],
+      "zones": [
+        {
+          "id": "explorer-detection-measures",
+          "label": "focus=detection: Images scored (counts.scored of counts.total), Images that failed, Faces matched (counts.matched_faces; detection.tp in these reports), Faces missed (detection.fn of tp + fn labelled faces), Extra detections (detection.fp), Detection precision tp ÷ (tp + fp), Detection recall tp ÷ (tp + fn). Detection measures, not FNIR or G1.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-stranger-measures",
+          "label": "focus=strangers: Named faces matched (counts.named_matched, 100 and 166 in the safe aggregate), Stranger faces matched (counts.stranger_matched, 89 and 207; matched detections, not rejections or false accepts), Strangers rejected (unknown_rejection correct_rejects of n with rate; n includes strangers the detector missed). Supplied a536ea56 keeps a known correct_rejects count with missing n/rate, with explicit missing-value qualifiers; targeted metrics-r3 receipt exists, independent acceptance pending. Numeric-null cause wording remains pending; no repeated sparse-count implementation is called for. Not an independent non-mated source-unit FPIR denominator; grouping population is read separately from clustering.n_faces.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-measures-unavailable",
+          "label": "A null Strangers rejected or other null cell is value unavailable, source status not exported (current markup: 'not recorded', pending gap). G1 per-cohort FPIR: the export has no cohort populations. Identification P/R: exported, not displayed, never reinterpreted as FPIR.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explorer-provenance",
+      "kind": "screen",
+      "title": "Source evidence and provenance",
+      "purpose": "Panel alias for #source-evidence, a native details disclosure, closed by default, that opens and closes itself without script, dialog or focus trap. Walk: page value, selected artifact ID, file SHA-256, kind and qualification, then source commit and manifest metadata where exported; absent metadata is not recorded for that exported field. No raw private path, report-pointer opening or backend invocation; only comparison-export (data owner) reads the evidence DB. GRPH-14, VIZ-23.",
+      "route": "REVIEW_DIR/index.html#source-evidence (native details; panel alias)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_explorer.py",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "variant-auraface",
+        "variant-sface",
+        "variant-insightface",
+        "focus",
+        "methods",
+        "q"
+      ],
+      "primary_action_id": "explorer-toggle-source-evidence",
+      "states": [
+        "default",
+        "degraded"
+      ],
+      "zones": [
+        {
+          "id": "explorer-source-table",
+          "label": "One row per source entry: Artifact ID, File SHA-256, Kind (report-json), Qualification (unqualified/partial), Source commit, Manifest hash, Manifest hash kind (separate columns). Supplied a536ea56 displays each source's exported pins; null metadata reads not recorded for that entry and field. Five candidate entries map to four SHA-256 values; the two buffalo IDs share one digest (dedup), so they are one report file.",
+          "role": "content",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-source-gaps",
+          "label": "Metadata absence is not recorded for that exported field. Supplied a536ea56 implements per-source pins and _provenance_summary counts conditional on exported fields, including the zero-source case; .task-state/firbench-1/reports/UX-render-metrics-r3-validation.json records targeted green, independent acceptance pending. Fixed commit cells and blanket absence prose belong to historical renderer e51cc87bc368a4fc9dd8ef9d12a778bb224483a61494b3ace12c8a9827fa6d59 observed at author source 6d921bf21dc7d3edc2ed26bf4c76f2499aea0ed3, not this supplied renderer. Example unknown pins are source-specific. A report SHA-256 binds report bytes only, not frame, gallery or pixel equality.",
+          "role": "status",
+          "states": [
+            "default",
+            "degraded"
+          ]
+        },
+        {
+          "id": "explorer-source-keys",
+          "label": "Nested native details 'Source keys for code readers' lists the wire keys behind each row. Copy gap: it names clustering.d_cut where the wire key is clustering.parameters.d_cut; the actual v1 algorithm and metric keys are clustering.algorithm and clustering.metric, both null in export v1. Pending prospective UX-explorer-copy owner (ASCII section 2), this literal list only.",
+          "role": "content",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "explorer-terms",
+      "kind": "screen",
+      "title": "Glossary (in-page section)",
+      "purpose": "Panel alias for #glossary: an in-flow section of 44 term articles (#term-<known-id>, sorted by label), not an overlay or dialog. Term links on rows, the compatibility banner and the not-evaluated note are native fragment links. Search glossary terms (in the #results controls) filters these articles only, by literal case-insensitive substring of label and aliases; q is trimmed; Escape clears a nonempty q and keeps other controls. Current return: each term's 'Back to results' goes to #results; native Back is browser history. UX-RENDER05 (separate code lane) is required but NOT accepted until a normal-VM browser regression and an independent gate pass: before revealing a search-hidden term, retain opener, query, scroll and current controls; explicit Return and native Back restore the temporarily cleared q, invoking control and scroll while keeping report/focus/method selections; later manual choices win over the stale snapshot; direct entry without a caller uses the #results heading. NAV-13, WRIT-71, INT-16/21/22.",
+      "route": "REVIEW_DIR/index.html#glossary (term articles #term-<known-id>; panel alias)",
+      "code_ref": "apps/prototype-description-service/scripts/eval_harness/firbench_explorer.py",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "variant-auraface",
+        "variant-sface",
+        "variant-insightface",
+        "focus",
+        "methods",
+        "q"
+      ],
+      "primary_action_id": "explorer-terms-back",
+      "states": [
+        "default",
+        "empty",
+        "edge_input"
+      ],
+      "zones": [
+        {
+          "id": "explorer-term-search",
+          "label": "Empty q shows all 44 terms; typing filters immediately and updates the status count; q is written to the query by replaceState. Regex or markup characters match literally and the query is echoed only through textContent. No 200-character cap or reset banner is implemented.",
+          "role": "form",
+          "states": [
+            "default",
+            "empty",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "explorer-term-definitions",
+          "label": "Term articles: label, definition, 'Back to results'. Supplied a536ea56 implements a generic AuraFace definition: configured with 512-dimensional embeddings; its column shows a result when the export includes an AuraFace report, otherwise No result. Targeted metrics-r3 receipt exists, independent acceptance pending; no repeated definition implementation is called for. No match: 'No glossary term matches \"<q>\". Use Clear search and focus to show every term.' That button clears q and also resets focus and methods, keeping report choices; Escape in the search box clears q alone.",
+          "role": "content",
+          "states": [
+            "default",
+            "empty"
+          ]
+        },
+        {
+          "id": "explorer-term-return",
+          "label": "Frozen a536ea56 observation: Back to results goes to #results; browser Back follows native fragment history; a hashchange to a search-hidden term clears q without restoring it. UX-RENDER05 caller-aware return acceptance is pending at this baseline. No modal, focus trap, router or caller field.",
+          "role": "nav",
+          "states": [
+            "default",
+            "empty"
+          ]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "open-pair-cells",
+      "verb": "Open pair cells",
+      "target": "s3-pair-cells",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s1-verdict"
+    },
+    {
+      "id": "explore-tau",
+      "verb": "Explore τ (dev frames only)",
+      "target": "s2-curves",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s2-curves"
+    },
+    {
+      "id": "open-failures",
+      "verb": "Open failures for this cell and leg",
+      "target": "s5-failures",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s3-pair-cells"
+    },
+    {
+      "id": "open-lost-faces",
+      "verb": "Open failures for this stage",
+      "target": "s5-failures",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s4-stages"
+    },
+    {
+      "id": "back-to-pair-cells",
+      "verb": "Back to pair cells",
+      "target": "s3-pair-cells",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s5-failures"
+    },
+    {
+      "id": "back-to-stages",
+      "verb": "Back to stage ledger",
+      "target": "s4-stages",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s5-failures"
+    },
+    {
+      "id": "select-run-b",
+      "verb": "Select run B (compatible runs only)",
+      "target": "s6-compare",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s6-compare"
+    },
+    {
+      "id": "back-to-run-a",
+      "verb": "Back to run A verdict",
+      "target": "exit-compare-refused",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s6-compare"
+    },
+    {
+      "id": "find-neighbours",
+      "verb": "Show nearest neighbours",
+      "target": "s7-clusters",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s7-clusters"
+    },
+    {
+      "id": "inspect-chaining-pair",
+      "verb": "Inspect chaining pair and path",
+      "target": "s7-clusters",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s7-clusters"
+    },
+    {
+      "id": "open-verdict",
+      "verb": "Open verdict for this frame",
+      "target": "s1-verdict",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "s8-frames-power"
+    },
+    {
+      "id": "label-occluder",
+      "verb": "Set occluder",
+      "target": "l1-label-queue",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "add-missed-face",
+      "verb": "Add missed face",
+      "target": "l1-label-queue",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "mark-unknown-person",
+      "verb": "Mark unknown person",
+      "target": "l1-label-queue",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "skip-item",
+      "verb": "Skip (recorded as nonresponse)",
+      "target": "l1-label-queue",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "next-item",
+      "verb": "Next (Enter)",
+      "target": "l1-label-queue",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "undo",
+      "verb": "Undo (Esc)",
+      "target": "l1-label-queue",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "export-labels",
+      "verb": "Export JSON",
+      "target": "l1-label-queue",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "l1-label-queue"
+    },
+    {
+      "id": "explorer-read-results",
+      "verb": "Read on: Results by pipeline (in-flow #results)",
+      "target": "explorer-pipelines",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-home"
+    },
+    {
+      "id": "explorer-define-compatibility",
+      "verb": "What does compatibility mean? (#term-compatibility-unknown)",
+      "target": "explorer-terms",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-home"
+    },
+    {
+      "id": "explorer-select-variant",
+      "verb": "Choose Report file in a pipeline column (artifact ID; nondefault kept as variant-<pipeline>)",
+      "target": "explorer-pipelines",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-runs"
+    },
+    {
+      "id": "explorer-set-metric-focus",
+      "verb": "Metric focus: All metrics, Images and detections, Named and stranger faces, Grouping",
+      "target": "explorer-measures",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-pipelines"
+    },
+    {
+      "id": "explorer-define-metric",
+      "verb": "What does this mean? (row link to #term-<known-id>)",
+      "target": "explorer-terms",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-pipelines"
+    },
+    {
+      "id": "explorer-search-terms",
+      "verb": "Search glossary terms (q; filters the glossary only)",
+      "target": "explorer-terms",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-pipelines"
+    },
+    {
+      "id": "explorer-clear-search-focus",
+      "verb": "Clear search and focus (focus, methods, q to defaults; report choices kept)",
+      "target": "explorer-pipelines",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-pipelines"
+    },
+    {
+      "id": "explorer-read-methods",
+      "verb": "Read on: Grouping methods: availability (in-flow #methods-head)",
+      "target": "explorer-grouping",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-pipelines"
+    },
+    {
+      "id": "explorer-define-measure",
+      "verb": "What does this mean? on a detection or stranger row (#term-<known-id>)",
+      "target": "explorer-terms",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-measures"
+    },
+    {
+      "id": "explorer-measures-all",
+      "verb": "Metric focus: All metrics (focus=all)",
+      "target": "explorer-pipelines",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-measures"
+    },
+    {
+      "id": "explorer-filter-methods",
+      "verb": "Grouping methods filter: All methods, Code in this tree, No code here or unknown (control in the #results group)",
+      "target": "explorer-grouping",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-grouping"
+    },
+    {
+      "id": "explorer-grouping-values",
+      "verb": "Metric focus: Grouping (recorded values in #results)",
+      "target": "explorer-pipelines",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-grouping"
+    },
+    {
+      "id": "explorer-read-source-evidence",
+      "verb": "Read on: Source evidence and provenance (in-flow #source-evidence)",
+      "target": "explorer-provenance",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-grouping"
+    },
+    {
+      "id": "explorer-toggle-source-evidence",
+      "verb": "Open or close Source evidence and provenance (native details summary)",
+      "target": "explorer-provenance",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-provenance"
+    },
+    {
+      "id": "explorer-toggle-source-keys",
+      "verb": "Open or close Source keys for code readers (nested native details)",
+      "target": "explorer-provenance",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-provenance"
+    },
+    {
+      "id": "explorer-read-glossary",
+      "verb": "Read on: Glossary (in-flow #glossary)",
+      "target": "explorer-terms",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-provenance"
+    },
+    {
+      "id": "explorer-terms-back",
+      "verb": "Back to results (term link: #results today; caller-aware return pending UX-RENDER05)",
+      "target": "explorer-pipelines",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-terms"
+    },
+    {
+      "id": "explorer-terms-clear-search",
+      "verb": "Clear term search: Escape in the search box (q only) or Clear search and focus, named by the no-match note",
+      "target": "explorer-terms",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "explorer-terms"
+    }
+  ],
+  "flows": [
+    {
+      "id": "verdict-to-failures",
+      "job": "decide-model-change",
+      "label": "verdict → pair cell → failures → back (sort and filter kept, INT-25)",
+      "steps": [
+        {
+          "screen_id": "s1-verdict",
+          "branch_label": "verdict"
+        },
+        {
+          "screen_id": "s3-pair-cells",
+          "branch_label": "pair cell"
+        },
+        {
+          "screen_id": "s5-failures",
+          "branch_label": "failures for cell and leg"
+        },
+        {
+          "screen_id": "s3-pair-cells",
+          "branch_label": "back, sort and filter kept"
+        }
+      ]
+    },
+    {
+      "id": "frame-before-verdict",
+      "job": "decide-model-change",
+      "label": "frame inspected before the verdict; development evidence is not confirmatory",
+      "steps": [
+        {
+          "screen_id": "s8-frames-power",
+          "branch_label": "admissibility and MDE"
+        },
+        {
+          "screen_id": "s1-verdict",
+          "branch_label": "verdict"
+        }
+      ]
+    },
+    {
+      "id": "lost-faces",
+      "job": "find-lost-faces",
+      "label": "verdict → stage ledger → failures at the stage → back to ledger",
+      "steps": [
+        {
+          "screen_id": "s1-verdict",
+          "branch_label": "verdict"
+        },
+        {
+          "screen_id": "s4-stages",
+          "branch_label": "stage ledger"
+        },
+        {
+          "screen_id": "s5-failures",
+          "branch_label": "failures at stage, leg fixed"
+        },
+        {
+          "screen_id": "s4-stages",
+          "branch_label": "back to ledger"
+        }
+      ]
+    },
+    {
+      "id": "compare-compatible",
+      "job": "compare-two-runs",
+      "label": "compatible runs compare to a Δ with its interval",
+      "steps": [
+        {
+          "screen_id": "s6-compare",
+          "branch_label": "select run B from compatible runs"
+        },
+        {
+          "screen_id": "s6-compare",
+          "branch_label": "Δ with paired interval and history"
+        }
+      ]
+    },
+    {
+      "id": "compare-refused-exit",
+      "job": "compare-two-runs",
+      "label": "compare refused → reason → exit (INT-24)",
+      "steps": [
+        {
+          "screen_id": "s6-compare",
+          "branch_label": "select run B"
+        },
+        {
+          "screen_id": "s6-compare",
+          "branch_label": "incompatible_runs: reason, no subtraction"
+        },
+        {
+          "screen_id": "exit-compare-refused",
+          "branch_label": "back to run A verdict"
+        }
+      ]
+    },
+    {
+      "id": "label-add-missed-face",
+      "job": "label-occlusion-pixels",
+      "label": "label → add missed face → next",
+      "steps": [
+        {
+          "screen_id": "l1-label-queue",
+          "branch_label": "item: occluder and regions"
+        },
+        {
+          "screen_id": "l1-label-queue",
+          "branch_label": "draw mode: add missed face"
+        },
+        {
+          "screen_id": "l1-label-queue",
+          "branch_label": "next item (Enter)"
+        }
+      ]
+    },
+    {
+      "id": "label-skip",
+      "job": "label-occlusion-pixels",
+      "label": "skip is recorded as nonresponse, never dropped",
+      "steps": [
+        {
+          "screen_id": "l1-label-queue",
+          "branch_label": "item"
+        },
+        {
+          "screen_id": "l1-label-queue",
+          "branch_label": "skipped (nonresponse)"
+        },
+        {
+          "screen_id": "l1-label-queue",
+          "branch_label": "next item"
+        }
+      ]
+    },
+    {
+      "id": "explorer-history-to-comparison",
+      "job": "explorer-compare-pipelines",
+      "label": "Page top, report files, three descriptive columns, focus, then all metrics again; report choices kept",
+      "steps": [
+        {
+          "screen_id": "explorer-home",
+          "branch_label": "Summary and Compatibility unknown banner"
+        },
+        {
+          "screen_id": "explorer-runs",
+          "branch_label": "Choose Report file per column; a nondefault artifact ID stays in the query"
+        },
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Read AuraFace | SFace | InsightFace; AuraFace No result; no winner"
+        },
+        {
+          "screen_id": "explorer-measures",
+          "branch_label": "Metric focus Images and detections"
+        },
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Clear search and focus: focus, methods and q to defaults; report choices kept"
+        }
+      ]
+    },
+    {
+      "id": "explorer-measure-focus",
+      "job": "explorer-inspect-coverage",
+      "label": "Detection and stranger measures with denominators; null stays value unavailable",
+      "steps": [
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Metric focus Images and detections"
+        },
+        {
+          "screen_id": "explorer-measures",
+          "branch_label": "Faces missed of tp + fn labelled faces; not FNIR"
+        },
+        {
+          "screen_id": "explorer-measures",
+          "branch_label": "Metric focus Named and stranger faces; Strangers rejected n includes missed strangers; not FPIR"
+        },
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Metric focus All metrics"
+        }
+      ]
+    },
+    {
+      "id": "explorer-recorded-grouping",
+      "job": "explorer-inspect-grouping",
+      "label": "Recorded grouping values, then availability-only method rows; nothing executes",
+      "steps": [
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Metric focus Grouping: n_faces, clusters, merge, split, purity, parameters.d_cut"
+        },
+        {
+          "screen_id": "explorer-grouping",
+          "branch_label": "Read on to #methods-head; the methods filter narrows availability rows only"
+        },
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Clear search and focus; report choices kept"
+        }
+      ]
+    },
+    {
+      "id": "explorer-source-path",
+      "job": "explorer-browse-history",
+      "label": "Value, artifact ID, file SHA-256, then recorded metadata; absent metadata stays not recorded",
+      "steps": [
+        {
+          "screen_id": "explorer-home",
+          "branch_label": "Summary names source entries and distinct files"
+        },
+        {
+          "screen_id": "explorer-provenance",
+          "branch_label": "Open native Source evidence details; aliases share one digest"
+        },
+        {
+          "screen_id": "explorer-runs",
+          "branch_label": "Choose the matching artifact ID in its column"
+        }
+      ]
+    },
+    {
+      "id": "explorer-term-search-recovery",
+      "job": "explorer-understand-terms",
+      "label": "Glossary search with no match, then recovery that keeps report choices",
+      "steps": [
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Type in Search glossary terms; glossary filters, metric rows unchanged"
+        },
+        {
+          "screen_id": "explorer-terms",
+          "branch_label": "No match: the note echoes the query as text"
+        },
+        {
+          "screen_id": "explorer-terms",
+          "branch_label": "Escape clears q only, or Clear search and focus also resets focus and methods; report choices kept"
+        }
+      ]
+    },
+    {
+      "id": "explorer-term-roundtrip-results",
+      "job": "explorer-understand-terms",
+      "label": "Row term link and return; caller-aware restore pending UX-RENDER05",
+      "steps": [
+        {
+          "screen_id": "explorer-measures",
+          "branch_label": "What does this mean? on Faces missed, with focus and q set"
+        },
+        {
+          "screen_id": "explorer-terms",
+          "branch_label": "#term-faces-missed; revealing a search-hidden term must retain opener, q, scroll and controls (pending)"
+        },
+        {
+          "screen_id": "explorer-measures",
+          "branch_label": "Back to results or browser Back: today #results with q cleared; required q, link focus and scroll restored, later choices kept (pending)"
+        }
+      ]
+    },
+    {
+      "id": "explorer-term-roundtrip-top",
+      "job": "explorer-understand-terms",
+      "label": "Banner term link and return; caller-aware restore pending UX-RENDER05",
+      "steps": [
+        {
+          "screen_id": "explorer-home",
+          "branch_label": "What does compatibility mean?"
+        },
+        {
+          "screen_id": "explorer-terms",
+          "branch_label": "#term-compatibility-unknown"
+        },
+        {
+          "screen_id": "explorer-home",
+          "branch_label": "Browser Back via native history; explicit Return to the invoking link and scroll pending (today Back to results goes to #results)"
+        }
+      ]
+    },
+    {
+      "id": "explorer-term-direct-entry",
+      "job": "explorer-understand-terms",
+      "label": "Direct entry to a term without a caller",
+      "steps": [
+        {
+          "screen_id": "explorer-terms",
+          "branch_label": "Open index.html?…#term-<known-id>; the query is parsed"
+        },
+        {
+          "screen_id": "explorer-pipelines",
+          "branch_label": "Back to results: #results heading fallback; URL selections and q kept (hidden-term reveal pending UX-RENDER05)"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Coordinator: render and critique the exact map hash in .task-state/firbench-1/reports/UX-map-state-r5-validation.json; local CLI availability and execution are recorded there. exit-compare-refused stays a static exit marker with no added states; the RLSE-04 screen-state trigger does not apply to it.",
+    "Frozen 4e34534e/a536ea56 observation, not live acceptance state: per-source pins/conditional provenance, sparse rejection counts and generic AuraFace definition are implemented with the targeted metrics-r3 receipt; independent acceptance pending. Numeric-null cause disclosure and UX-RENDER05 glossary-state acceptance remain pending. Required H2 term and code-reader clustering.parameters.d_cut copy (P-07) has one owner: prospective UX-explorer-copy under grant resume-f-r5 (SHA-256 4c7ba3c1ef416355b19e5c5893b74ff92af12044e2977fb1ff6bc72951688b73). It owns only the _GLOSSARY h2 tuple and the _render_page 'Source keys for code readers' literal list; its test test_eval_harness_firbench_explorer_copy.py is absent in planning baseline 4747f096 (same renderer a536ea56). It is pending coordinator assignment, with no dispatch, test or result; old-report language owners and the integration owner exclude it. No repeated product work or new tests is requested by this doc correction; live findings/acceptance stay MCP.",
+    "Inherited reference exception UX-PLAN3-03: original L1 code_ref benchmarks/tools/fir_occ_label_queue.py is absent in supplied 4e34534e; the owner addendum identifies the actual source path as apps/prototype-description-service/scripts/eval_harness/fir_occ_label_queue.py. That target is also absent from the local stripped transport tree; it is retained as the addendum reference, not claimed locally resolved. Preserve the original L1 object verbatim under the original-inventory contract; this is an inherited reference note, not a new product bug.",
+    "Ownership/work order follows frozen resume-f-r4 addendum SHA-256 567beeabac5d4128364dd6f5d68198aedb9c39bea590f26641b0ff25560b0fb5 and unchanged state contract 0af216de, supplemented without broadening by the resume-f-r5 explorer-copy grant. Exact symbol/test grants are in ASCII section 2. From this common contract, plan correction, map/ASCII correction and disjoint code scopes proceed in parallel; document alignment is not a code prerequisite. presentation-result -> null-copy is a real shared-branch/data edge; caller-state is independent. Explorer-copy is independently dispatchable alongside plan/map, caller-state and input-boundary lanes; sharing firbench_explorer.py alone creates no serial edge. Coordinator alone composes exact disjoint hunks and verifies outside-grant AST/source; unresolved merges go remote. Final plan/map conformance and composed producer/CLI/browser gates are joins; descriptive explorer has no H2/GT/new-MC dependency. Scientific/private/main-merge holds remain.",
+    "Commands and owners: the data owner runs comparison-export --evidence-db PATH --artifact-id ID (repeatable) --out EXPORT.json; the renderer owner runs explore --data EXPORT.json --out REVIEW_DIR, which prints REVIEW_DIR/index.html. Both refuse with exit 2 and fixed text. The six original commands and the evidence fast path are unchanged.",
+    "Export v1 is exactly schema, schema_version, sources, dedup and reports; an unsupported source schema or kind refuses the whole export; there is no unsupported[] inventory or status field. Carrying producer status or sampling frame needs a separately reviewed wire, not an invented input version.",
+    "Active deployment policy values are unknown when missing; code defaults, archived settings and fixture rules are not active policy. Frozen failedv6 0.063/0.5565 is preserved. Canon v0.26.2 application is recorded in benchmarks/reports/firbench-1-comparison-ascii.md."
+  ],
+  "not_doing": [
+    "A winner shown while a decision is unratified, inconclusive or unresolvable",
+    "Confirmatory-frame acquisition, or any confirmatory-claim UI",
+    "Label import from any screen; import stays a CLI step",
+    "Real names, real pixels or private file contents in the map or its render",
+    "A tenth screen; the nine seeds are the whole inventory",
+    "Hand-written Markdown; the rendered .md comes from the canvas CLI",
+    "Scope of the two preceding original entries: 'a tenth screen' and 'the nine seeds' bound the private S1–S8/L1 report. The seven explorer entries are panel aliases into one separately authorized offline explorer page, not added report screens. benchmarks/reports/firbench-1-comparison-ascii.md is a hand-written planning companion, not this map's rendered .md.",
+    "In the explorer: no #view= router, view enum, SPA, modal, dialog or focus trap; no scope, status, sort or pipeline facet; no clear/empty report slot or Reset selections command; no term deep-link query field; no localStorage or network.",
+    "No data.json sidecar, report-pointer opening, backend invocation or Python grouping from the offline page; no new inference, winner, qualified GT, H2/MC acceptance, source registry or private DB expansion.",
+    "Production or test edits in this planning lane; protocol, seed or bar changes; environment installs; push, merge or deploy."
+  ],
+  "schema_version": 1
+}

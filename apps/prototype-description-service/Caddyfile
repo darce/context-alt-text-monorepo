@@ -1,0 +1,118 @@
+# Caddy reverse proxy for multi-environment deployment.
+# Each subdomain routes to the env-specific API alias on its Docker network.
+# Caddy auto-provisions Let's Encrypt TLS for all three subdomains.
+
+api.altcontext.com {
+	# /admin is tailnet-only (E15-31): deny it on the public vhost so the
+	# operator surface is reachable only over the tailnet path. 404 (not 403)
+	# avoids confirming the surface exists. The admin token still gates it.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy prod-api:8000
+}
+
+staging.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy staging-api:8000
+}
+
+dev.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy dev-api:8000
+}
+
+fir.dev.api.altcontext.com {
+	# Defense in depth: /admin is prod-operator-only; deny it here too.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy dev-fir-api:8000
+}
+
+# 129-213-40-111.sslip.io is the VM-native interim host (E15-29): it resolves to
+# the VM IP with no external DNS, so Caddy ALPN-issues a real cert for it today.
+# demo.altcontext.com stays listed so it auto-serves once the operator adds the
+# A-record — no Caddy edit needed at cutover. WordPress' canonical WP_HOME/
+# WP_SITEURL points at the interim until then (set in demo secrets/.env).
+demo.altcontext.com, 129-213-40-111.sslip.io {
+	# Demo root is the walkthrough itself: a visitor who reaches the demo
+	# host already wants the product, so skip the intermediate homepage.
+	# Scoped to the bare root of the public hostname, GET/HEAD, empty query
+	# string, so /wp-admin/, /wp-login.php, /wp-json/, assets and WordPress
+	# query-based routes are untouched. `path /` is an exact match in Caddy,
+	# not a prefix. 302 while the site structure is still settling.
+	@demo_root {
+		host demo.altcontext.com
+		method GET HEAD
+		path /
+		expression {query} == ""
+	}
+	redir @demo_root /guide/ 302
+
+	@xmlrpc path /xmlrpc.php
+	respond @xmlrpc "Forbidden" 403
+
+	# No rate_limit directive here: stock caddy:2-alpine does not bundle the
+	# third-party caddy-ratelimit module, and an unrecognized directive fails
+	# `caddy validate` for every vhost. Login rate-limiting requires a custom
+	# xcaddy build — deferred (E15-28 hardening note).
+
+	reverse_proxy demo-wp:80
+}
+
+# dl.darce.xyz is the portfolio's download rail, not an altcontext surface: it
+# shares this proxy because the proxy is here, but the NAME belongs to the
+# domain the portfolio itself lives on, so parking or selling altcontext.com
+# never breaks a published download link.
+#
+# 302, not 301: a permanent redirect is cached by browsers effectively forever,
+# which would forfeit the only thing this vhost buys — the ability to move the
+# bytes (GitHub Releases today, object storage or anything else tomorrow) by
+# editing one line here instead of editing every page that ever linked it.
+#
+# The target is the `latest` release PAGE, deliberately not a versioned asset
+# path: GitHub resolves `latest` itself, so cutting a new release needs no edit
+# to this file, and the reader lands beside the SHA256SUMS file the download
+# instructions tell them to check.
+dl.darce.xyz {
+	redir https://github.com/darce/visual-search-workbench/releases/latest 302
+}
+
+# AuraFace edge (GTMSMOKE-1, edge E): exactly one single-host vhost per frozen
+# target. Each routes '/' only to its own environment's stable API alias on port
+# 8000. The cutover alias is never routed here. Each block has one reverse_proxy
+# and no handle, route, or error branch, so an unreachable alias fails closed
+# rather than answering from another environment.
+auraface.dev.altcontext.com {
+	# Defense in depth: public /admin is denied before the proxy. 404 (not 403)
+	# avoids confirming the surface exists.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy dev-auraface-api:8000
+}
+
+auraface.staging.api.altcontext.com {
+	# Defense in depth: public /admin is denied before the proxy. 404 (not 403)
+	# avoids confirming the surface exists.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy staging-auraface-api:8000
+}
+
+auraface.api.altcontext.com {
+	# Defense in depth: public /admin is denied before the proxy. 404 (not 403)
+	# avoids confirming the surface exists.
+	@admin path /admin /admin/*
+	respond @admin 404
+
+	reverse_proxy prod-auraface-api:8000
+}

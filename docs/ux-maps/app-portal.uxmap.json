@@ -1,0 +1,1147 @@
+{
+  "map_ref": "app-portal",
+  "product": "AltContext customer account portal (APP-1) — standalone React/Vite SPA at apps/app-portal",
+  "source_fixture": "apps/app-portal",
+  "goals": [
+    "OBSERVED-UI account chrome: visible sign-in, sign-up, signed-in user chrome, and sign-out. @clerk/react SignIn/SignUp own the credential forms; this app does not invent a password field (NAV-08, NAV-12, CARD-06).",
+    "Disabled/unavailable configuration is a designed screen, not a blank shell: missing VITE_CLERK_PUBLISHABLE_KEY, portal flag off, or Clerk session load failure each have copy and no primary auth action (RLSE-04, CARD-03, FORM-09).",
+    "No fake tenant claims: Clerk user id/email is identity only. Tenant UUID, admission, and API keys remain existing backend authority. Never render Clerk OrganizationSwitcher or a guessed tenant name (DOM-03, CARD-12, HAI-05).",
+    "Never put CLERK_SECRET_KEY in the browser. Publishable key only. Wrap Clerk behind the SPA auth chrome so the rest of the product can swap identity later (REF-15, CARD-16).",
+    "Logout is a first-class exit back to signed-out chrome. Signed-in-but-not-admitted is a distinct error, not a tenant dashboard (NAV-07, CARD-15).",
+    "B0 browser-fix invariants are frozen before B1: account state is keyed by Clerk session/user, private account reads are no-store and bounded with token refresh, signed-in backend outage keeps UserButton and Sign out, a 200 /portal/me payload without a valid tenant_id is invalid data rather than an unlinked tenant, and unadmitted access is backend 403 (RLSE-04, NAV-11, HAI-01).",
+    "B1 planned journeys remain in this map: verified-identity invitation claim, tenant API-key lifecycle and one-time secret handling, honest usage, WordPress Test Connection guidance, and billing checkout/manage recovery. These are offline planning contracts, not live provider evidence."
+  ],
+  "jobs": [
+    {
+      "id": "authenticate-session",
+      "label": "Sign in or sign up with Clerk and return to the account origin"
+    },
+    {
+      "id": "manage-session",
+      "label": "See the signed-in Clerk user and sign out"
+    },
+    {
+      "id": "recover-unavailable",
+      "label": "Understand when the portal cannot run and what to do next"
+    },
+    {
+      "id": "claim-tenant-access",
+      "label": "Redeem one verified invitation into the backend-owned tenant binding"
+    },
+    {
+      "id": "manage-api-keys",
+      "label": "Create, list, rotate, revoke, and safely copy tenant API credentials"
+    },
+    {
+      "id": "read-usage",
+      "label": "Read bounded usage and entitlement evidence without invented counts"
+    },
+    {
+      "id": "manage-billing",
+      "label": "Start or recover hosted billing without granting access from a redirect"
+    }
+  ],
+  "screens": [
+    {
+      "id": "portal-signed-out",
+      "kind": "screen",
+      "title": "Account › Signed out",
+      "purpose": "OBSERVED-UI job entry. Clerk session loaded and signed-out. Two plain-language doors (NAV-08): Sign in (primary) and Create account. No tenant name, no key list, no billing. first_time is first visit with no in-tab Clerk session residue. loading is ClerkProvider still resolving; open-sign-in and open-sign-up stay disabled until the provider is ready. In default and first_time, both doors are enabled. Serves authenticate-session.",
+      "route": "/",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "open-sign-in",
+      "states": ["default", "loading", "first_time"],
+      "zones": [
+        {
+          "id": "z-signed-out-brand",
+          "label": "OBSERVED-UI AltContext account heading and one-sentence purpose. Does not name a tenant.",
+          "role": "content",
+          "states": ["default", "first_time"]
+        },
+        {
+          "id": "z-signed-out-auth",
+          "label": "OBSERVED-UI signed-out chrome: Sign in (primary) and Create account. Both doors are enabled in default and first_time after Clerk is ready, and disabled while the provider is loading. Implement with @clerk/react SignInButton / SignUpButton or equivalent signed-out rendering. No custom password form.",
+          "role": "nav",
+          "states": ["default", "loading", "first_time"]
+        },
+        {
+          "id": "z-signed-out-status",
+          "label": "OBSERVED-UI polite status: loading session; ready to sign in. Icon plus token color, not color alone.",
+          "role": "status",
+          "states": ["default", "loading", "first_time"]
+        }
+      ]
+    },
+    {
+      "id": "clerk-sign-in",
+      "kind": "overlay",
+      "title": "Account › Sign in",
+      "purpose": "OBSERVED-UI account sign-in surface opened from signed-out chrome. Prefer @clerk/react <SignIn /> on /sign-in or SignInButton hosted Account Portal. Credential fields, MFA, and recovery are Clerk-owned. Escape returns to portal-signed-out (NAV-07). error is provider failure, not a tenant error. Serves authenticate-session.",
+      "route": "/sign-in",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["redirect_url"],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "submit-sign-in",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-sign-in-clerk",
+          "label": "OBSERVED-UI secure account sign-in surface. App chrome may frame it; app does not collect passwords.",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-sign-in-escape",
+          "label": "OBSERVED-UI Back to account / no active session. Link to Create account. Does not claim a tenant.",
+          "role": "nav",
+          "states": ["default", "error"]
+        }
+      ]
+    },
+    {
+      "id": "clerk-sign-up",
+      "kind": "overlay",
+      "title": "Account › Create account",
+      "purpose": "OBSERVED-UI account setup surface. @clerk/react <SignUp /> on /sign-up or SignUpButton hosted Account Portal. Creating a Clerk user is not tenant admission and must not say an AltContext workspace is ready (DOM-03). Serves authenticate-session.",
+      "route": "/sign-up",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["redirect_url"],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "submit-sign-up",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-sign-up-clerk",
+          "label": "OBSERVED-UI secure account setup surface. Account setup remains separate from backend access admission.",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-sign-up-escape",
+          "label": "OBSERVED-UI Back to account. Link to Sign in.",
+          "role": "nav",
+          "states": ["default", "error"]
+        }
+      ]
+    },
+    {
+      "id": "portal-account",
+      "kind": "screen",
+      "title": "Account › Signed in",
+      "purpose": "OBSERVED-UI signed-in chrome after Clerk session exists. UserButton shows the signed-in person and Sign out is visible. open-user-menu is available in signed-in default/loading chrome; sign-out remains the session exit. Tenant/key/billing regions stay withheld until backend /portal/me supplies a valid tenant binding; a 200 payload without a valid tenant_id is invalid backend data, not an unlinked tenant label. Never invent a tenant from Clerk org or email local-part (DOM-03, CARD-12). loading is the Clerk plus backend identity check. error is backend 401 session verification failure with retry. Backend 403 not_admitted routes to portal-not-admitted; backend outage routes to portal-backend-outage while preserving UserButton and Sign out (RLSE-04, NAV-11, HAI-01). Serves manage-session.",
+      "route": "/",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "open-user-menu",
+      "states": ["default", "loading", "empty", "error"],
+      "zones": [
+        {
+          "id": "z-account-user",
+          "label": "OBSERVED-UI signed-in chrome: @clerk/react UserButton (profile) and visible Sign out. Show when signed-in. open-user-menu is available while identity is loading, ready, or 401 retry; no OrganizationSwitcher.",
+          "role": "nav",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-account-identity",
+          "label": "OBSERVED-UI identity strip: signed-in person presentation name/email from useUser. Tenant UUID only if backend returned a valid UUID. A 200 response missing or invalid tenant_id is an invalid account binding; do not call it 'not linked' or fill it from email/org.",
+          "role": "content",
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-account-status",
+          "label": "OBSERVED-UI plus B0-fix contract: session ready; checking account; invalid /portal/me binding (200 without valid tenant_id); session could not be verified (401) with retry. Private reads use no-store and bounded token refresh. Icon plus token color.",
+          "role": "status",
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty", "error"]
+        }
+      ]
+    },
+    {
+      "id": "portal-unavailable",
+      "kind": "screen",
+      "title": "Account › Unavailable",
+      "purpose": "OBSERVED-UI designed unavailable. Missing or empty publishable key, or server portal flag off, is not a crash blank (RLSE-04). Sign in / Sign up / User / Sign out are absent or disabled (FORM-09). Copy distinguishes configuration missing (error) from portal closed (degraded). No Clerk widget. Serves recover-unavailable.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": null,
+      "states": ["error", "degraded"],
+      "zones": [
+        {
+          "id": "z-unavailable-status",
+          "label": "OBSERVED-UI substitute status. error: This account page is not configured. degraded: Account access is turned off. Contact support. No Sign in control.",
+          "role": "status",
+          "states": ["error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "portal-not-admitted",
+      "kind": "screen",
+      "title": "Account › Not admitted",
+      "purpose": "OBSERVED-UI signed-in Clerk user whose backend identity link is missing, unverified, or ineligible. UserButton and Sign out remain so the person can leave (NAV-07). Do not show keys, tenant UUID, or an invented workspace. error is generic account-not-ready (backend 403). degraded is explicit email verification. Backend reason codes stay non-enumerating. Serves recover-unavailable.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "sign-out",
+      "states": ["error", "degraded"],
+      "zones": [
+        {
+          "id": "z-not-admitted-status",
+          "label": "OBSERVED-UI: Account access is not ready yet (error) or verify your email (degraded). Sign out stays available. No tenant or key claims.",
+          "role": "status",
+          "states": ["error", "degraded"]
+        },
+        {
+          "id": "z-not-admitted-user",
+          "label": "OBSERVED-UI UserButton + Sign out still visible so the session can be ended.",
+          "role": "nav",
+          "states": ["error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "portal-clerk-outage",
+      "kind": "screen",
+      "title": "Account › Sign-in unavailable",
+      "purpose": "OBSERVED-UI provider/session endpoint failure after a publishable key exists. Bounded wait then this error (INT-08, RES-13). Retry reloads the SPA. Do not fall back to a homemade login. Existing WordPress API keys are not this screen's concern and must not be described as broken here. Serves recover-unavailable.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "retry-clerk",
+      "states": ["error", "degraded"],
+      "zones": [
+        {
+          "id": "z-outage-status",
+          "label": "OBSERVED-UI: Sign-in is temporarily unavailable. Try again. Icon plus token color. No tenant claims.",
+          "role": "status",
+          "states": ["error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "portal-backend-outage",
+      "kind": "screen",
+      "title": "Account › Backend unavailable",
+      "purpose": "PLANNED-UI B0 browser-fix state for a signed-in person whose bounded /portal/me request returns 503 or times out. Keep the signed-in UserButton and Sign out reachable; retry only the account read. Do not manufacture a tenant, key, usage, or billing state (RLSE-04, NAV-11, HAI-01). Serves recover-unavailable.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx:187-209 and apps/app-portal/src/screens/OutageScreen.tsx (B0-fix contract)",
+      "primary_action_id": "retry-account",
+      "states": ["error", "degraded"],
+      "zones": [
+        {
+          "id": "z-backend-outage-status",
+          "label": "PLANNED-UI: Account access is temporarily unavailable. Try again. Do not expose 503 detail text or claim that keys/usage are lost.",
+          "role": "status",
+          "states": ["error", "degraded"]
+        },
+        {
+          "id": "z-backend-outage-user",
+          "label": "PLANNED-UI B0-fix: UserButton and Sign out remain visible while retrying the backend identity read; session exit is independent of the outage.",
+          "role": "nav",
+          "states": ["error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "portal-claim",
+      "kind": "screen",
+      "title": "Onboarding › Claim invitation",
+      "purpose": "PLANNED-UI verified-identity claim. A signed-in Clerk person with a verified, non-empty email may enter one invitation_token to POST /portal/onboarding/claim before a tenant exists. The final single-use mutation stays behind a preview/confirmation; the browser never selects tenant_id, stores the raw token, or calls Polar. First success is 201 with replayed false; the same bound identity may receive 200 replayed true. Backend keeps unknown, expired, or email-mismatched invitations non-enumerating as 403 not_admitted. Serves claim-tenant-access (DOM-03, HAI-01).",
+      "route": "/claim",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:709-765; planned apps/app-portal/src/features/claim/ClaimScreen.tsx",
+      "primary_action_id": "submit-claim",
+      "states": ["default", "loading", "empty", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-claim-identity",
+          "label": "PLANNED-UI: show verified Clerk identity context only. Missing/unverified email is backend 403 email_unverified; no tenant selector and no account claim from email local-part.",
+          "role": "content",
+          "states": ["default", "loading", "degraded"]
+        },
+        {
+          "id": "z-claim-token",
+          "label": "PLANNED-UI form: invitation_token is entered or pasted into memory for one request only. Never place it in a URL, localStorage, sessionStorage, logs, analytics, or copied status text. Show a readable preview/confirmation before the single-use mutation; loading disables submit and preserves focus.",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-claim-status",
+          "label": "PLANNED-UI exact backend vocabulary: 201/200 success with replayed; 401 invalid_portal_authorization; 403 email_unverified, not_admitted, tenant_header_forbidden, csrf_origin_denied; 409 invitation_consumed or identity_already_bound; 422 invalid_claim_request; 503 portal_identity_unavailable. UI gives recovery without revealing which invitation check failed.",
+          "role": "status",
+          "states": ["empty", "error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "portal-keys",
+      "kind": "screen",
+      "title": "Developer access › API keys",
+      "purpose": "PLANNED-UI tenant-bound API-key lifecycle. GET /portal/keys returns bounded metadata including revoked history, never hashes or raw secrets. Create and rotate return a raw_key only on the first successful non-replayed response; list, GET, and replay responses never reveal it. Revoke is immediate and requires a destructive confirmation when it is the last usable key. Serves manage-api-keys (NAV-11, HAI-01, RLSE-04).",
+      "route": "/keys",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:110-181, 881-1006; planned apps/app-portal/src/features/keys/KeysScreen.tsx",
+      "primary_action_id": "create-key",
+      "states": ["default", "loading", "empty", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-keys-list",
+          "label": "PLANNED-UI list: id, created_at, expires_at, revoked_at, rate_limit_tier, lifetime_seconds, and tenant_id metadata only. Cursor paging is bounded (default 25, max 100); expired and revoked rows are visibly different from usable rows.",
+          "role": "content",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-keys-actions",
+          "label": "PLANNED-UI actions: Create when no usable key exists; Rotate only the current primary usable key; Revoke from a confirmation dialog. Create/rotate use an Idempotency-Key and retry by replay, not by minting a second secret.",
+          "role": "nav",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-keys-warning",
+          "label": "PLANNED-UI last-key warning: a 409 detail.code last_usable_key_confirmation_required names confirmation_field confirm_last_usable. Show the consequence before Revoke; do not silently send emergency=true.",
+          "role": "status",
+          "states": ["default", "error", "degraded"]
+        },
+        {
+          "id": "z-keys-wordpress",
+          "label": "PLANNED-UI guidance link: after a secret is copied, explain that WordPress Test Connection is a separate plugin evidence step. No current portal.py route is claimed for that test, and the raw secret is not sent back to this portal.",
+          "role": "content",
+          "states": ["default", "empty"]
+        }
+      ]
+    },
+    {
+      "id": "portal-key-secret",
+      "kind": "overlay",
+      "title": "Developer access › One-time API secret",
+      "purpose": "PLANNED-UI one-time secret dialog after create or rotate. raw_key is available only in the non-replayed issue response; a replay has raw_key null. Copy and close are explicit. Closing clears the in-memory secret and returns focus to the initiating Create or Rotate control. Copy failure is recoverable without a second API request (CARD-15, RLSE-04).",
+      "route": "/keys/secret",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:124-129, 579-585; planned apps/app-portal/src/components/OneTimeSecretDialog.tsx",
+      "primary_action_id": "copy-one-time-secret",
+      "states": ["default", "loading", "empty", "error"],
+      "zones": [
+        {
+          "id": "z-secret-value",
+          "label": "PLANNED-UI secret value: render only from the current response in memory; no URL, storage, analytics, log, or later fetch. Never show a replayed response as if it contained a new secret.",
+          "role": "content",
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-secret-controls",
+          "label": "PLANNED-UI primary Copy secret and secondary Close. On copy success show copied status; on clipboard error keep the dialog open with a retry/copy instruction. Close clears the value and restores focus to the source row action.",
+          "role": "nav",
+          "states": ["default", "error", "empty"]
+        }
+      ]
+    },
+    {
+      "id": "portal-wordpress-guidance",
+      "kind": "overlay",
+      "title": "Developer access › WordPress Test Connection",
+      "purpose": "PLANNED-UI handoff guidance, not a claimed API. Explain that the copied API secret is pasted into the WordPress plugin's configured API-key field, then the plugin's Test Connection control provides the WordPress-side result. The portal does not receive the secret back. Exact live menu labels, plugin version behavior, and error copy require later WordPress evidence.",
+      "route": "/keys/wordpress",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "Plan 0002 B acceptance; no matching current plugin Test Connection source anchor found in the targeted checkout",
+      "primary_action_id": "return-to-keys",
+      "states": ["default", "error", "degraded"],
+      "zones": [
+        {
+          "id": "z-wordpress-steps",
+          "label": "PLANNED-UI: 1) copy the secret once, 2) paste it into the WordPress plugin, 3) run Test Connection there, 4) return here to rotate or revoke if needed. Do not paste the secret into chat, screenshots, URLs, or support tickets.",
+          "role": "content",
+          "states": ["default", "degraded"]
+        },
+        {
+          "id": "z-wordpress-recovery",
+          "label": "PLANNED-UI recovery: if WordPress reports an auth, expiry, or connectivity failure, return to the key row and inspect metadata or rotate; do not assume a billing or Clerk outage. Live WordPress proof is later evidence.",
+          "role": "status",
+          "states": ["default", "error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "portal-usage",
+      "kind": "screen",
+      "title": "Account › Usage",
+      "purpose": "PLANNED-UI honest usage read. GET /portal/usage is tenant-bound and returns nullable used/reserved/remaining/allowance, required period bounds, optional as_of/status, and data_source. The browser displays backend remaining; it never computes entitlement or converts missing evidence into zero. Distinguish authoritative, pending/unknown, expired, cap reached, past_due grace, and 503 outage. Serves read-usage (HAI-01, RLSE-04).",
+      "route": "/usage",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:183-208, 1059-1123; planned apps/app-portal/src/features/usage/UsageScreen.tsx",
+      "primary_action_id": "retry-usage",
+      "states": ["default", "loading", "empty", "error", "degraded", "offline"],
+      "zones": [
+        {
+          "id": "z-usage-summary",
+          "label": "PLANNED-UI summary: show used, reserved, remaining, allowance only when each field is present; show period_start/period_end and as_of when present. data_source is evidence context, not a price or entitlement guess.",
+          "role": "content",
+          "states": ["default", "loading", "empty", "degraded"]
+        },
+        {
+          "id": "z-usage-state",
+          "label": "PLANNED-UI state copy: unknown when counts are null; pending when data_source is pending; expired when status=expired; cap reached only when backend remaining=0; past_due retains only backend-authorized grace; outage on 503 with Try again. Never client-compute remaining.",
+          "role": "status",
+          "states": ["empty", "error", "degraded", "offline"]
+        }
+      ]
+    },
+    {
+      "id": "portal-billing",
+      "kind": "screen",
+      "title": "Account › Billing",
+      "purpose": "PLANNED-UI billing entry. Checkout and manage are tenant-bound POST routes requiring Origin and server-selected relative return paths. Continue to checkout creates or replays a hosted checkout attempt and opens provider navigation; it does not charge by itself, so the action is reversible until authoritative billing state changes. payments_enabled defaults false, so disabled is an honest first state. The UI may submit only a configured public plan_code; there is no current catalog route for prices or product IDs, so it must not fabricate price, currency, or plan entitlements. Serves manage-billing (NAV-11, HAI-01).",
+      "route": "/billing",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py:210-243, 796-878; planned apps/app-portal/src/features/billing/BillingScreen.tsx",
+      "primary_action_id": "start-checkout",
+      "states": ["default", "loading", "empty", "error", "degraded", "offline"],
+      "zones": [
+        {
+          "id": "z-billing-catalog",
+          "label": "PLANNED-UI catalog boundary: render only a coordinator-provided configured public plan_code when one exists. No ad-hoc price, product ID, currency, or client entitlement calculation. If the catalog is empty or payments are disabled, show that honestly.",
+          "role": "content",
+          "states": ["default", "empty", "degraded"]
+        },
+        {
+          "id": "z-billing-checkout",
+          "label": "PLANNED-UI checkout: POST /portal/billing/checkout with Origin, Authorization, Idempotency-Key, plan_code, and optional relative return_path. 200 may be pending/provider_requested/succeeded; checkout_url null on succeeded replay. This creates or replays hosted navigation and does not charge by itself; the external redirect is never proof of paid access.",
+          "role": "form",
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
+          "id": "z-billing-manage",
+          "label": "PLANNED-UI manage: POST /portal/billing/manage opens the hosted customer portal only when a mapping exists. 409 billing_customer_missing is a recoverable setup state; 503 billing_portal_unavailable gets retry. Manage cannot change tenant or grant entitlement.",
+          "role": "nav",
+          "states": ["default", "error", "degraded"]
+        },
+        {
+          "id": "z-billing-errors",
+          "label": "PLANNED-UI exact codes: payments_disabled, csrf_origin_denied, unknown_plan_code, invalid_return_path, invalid_idempotency_key, idempotency_key_reuse, checkout_ambiguous, already_subscribed, checkout_unavailable, billing_customer_missing, billing_portal_unavailable. Preserve attempt_id and Retry-After when provided.",
+          "role": "status",
+          "states": ["error", "degraded", "offline"]
+        }
+      ]
+    },
+    {
+      "id": "portal-billing-return",
+      "kind": "screen",
+      "title": "Account › Billing return",
+      "purpose": "PLANNED-UI return landing for /billing/return and /billing/cancel. A provider redirect can show pending, canceled, expired, or recovery copy, but never grants paid access. Paid state is shown only after an authoritative billing projection/usage read reports it. Preserve focus on the billing status panel when returning from an external tab or hosted portal (RLSE-04, NAV-11).",
+      "route": "/billing/return",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "docs/specs/app-portal-account-billing-spec.md:204-220, 276-297; planned apps/app-portal/src/features/billing/BillingReturnScreen.tsx",
+      "primary_action_id": "return-to-billing",
+      "states": ["default", "loading", "empty", "error", "degraded", "offline"],
+      "zones": [
+        {
+          "id": "z-billing-return-status",
+          "label": "PLANNED-UI: status panel announces pending reconciliation until backend evidence changes; success URL is not a paid grant. checkout_ambiguous keeps the same attempt_id and tells the user not to create another checkout.",
+          "role": "status",
+          "states": ["loading", "empty", "error", "degraded", "offline"]
+        },
+        {
+          "id": "z-billing-return-nav",
+          "label": "PLANNED-UI primary Return to billing restores focus to the checkout/manage region. Cancel or expired attempts may start a new purchase only with a new durable attempt and idempotency key; no automatic duplicate redirect.",
+          "role": "nav",
+          "states": ["default", "error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "logout-complete",
+      "kind": "exit",
+      "title": "Sign out",
+      "purpose": "OBSERVED-UI session signOut then return to portal-signed-out. Clears account/tenant data immediately. loading is in-flight signOut. error is provider signOut failure with Try again (same sign-out action). default is session ended. Does not revoke tenant API keys (backend authority) (RLSE-04, CARD-15). Serves manage-session.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "sign-out",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-logout-consequence",
+          "label": "OBSERVED-UI: Session ended. Browser returns to signed-out chrome. Existing API keys are unchanged.",
+          "role": "status",
+          "states": ["default"]
+        },
+        {
+          "id": "z-logout-progress",
+          "label": "OBSERVED-UI: Signing out. Tenant/account fetch data already cleared. No key-revoke copy.",
+          "role": "status",
+          "states": ["loading"]
+        },
+        {
+          "id": "z-logout-retry",
+          "label": "OBSERVED-UI: Sign out failed. Account data stays cleared. Try again retries sign-out (NAV-07, RLSE-04).",
+          "role": "nav",
+          "states": ["error"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "open-sign-in",
+      "verb": "Sign in",
+      "target": "/sign-in or Clerk SignInButton",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-signed-out"
+    },
+    {
+      "id": "open-sign-up",
+      "verb": "Create account",
+      "target": "/sign-up or Clerk SignUpButton",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-signed-out"
+    },
+    {
+      "id": "submit-sign-in",
+      "verb": "Continue sign in",
+      "target": "Clerk SignIn widget",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "clerk-sign-in"
+    },
+    {
+      "id": "submit-sign-up",
+      "verb": "Create account",
+      "target": "Clerk SignUp widget",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "clerk-sign-up"
+    },
+    {
+      "id": "open-user-menu",
+      "verb": "Open account menu",
+      "target": "@clerk/react UserButton",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-account"
+    },
+    {
+      "id": "sign-out",
+      "verb": "Sign out",
+      "target": "Clerk signOut / SignOutButton",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-account"
+    },
+    {
+      "id": "retry-clerk",
+      "verb": "Try again",
+      "target": "reload SPA / remount ClerkProvider",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-clerk-outage"
+    },
+    {
+      "id": "retry-account",
+      "verb": "Try again",
+      "target": "bounded GET /portal/me retry",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-backend-outage"
+    },
+    {
+      "id": "open-claim",
+      "verb": "Claim invitation",
+      "target": "/claim",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-not-admitted"
+    },
+    {
+      "id": "submit-claim",
+      "verb": "Confirm claim access",
+      "target": "preview/confirmation then POST /portal/onboarding/claim",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": true,
+      "preview_required": true,
+      "screen_id": "portal-claim"
+    },
+    {
+      "id": "retry-claim",
+      "verb": "Try claim again",
+      "target": "same claim form with new bounded request",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-claim"
+    },
+    {
+      "id": "open-keys",
+      "verb": "Open API keys",
+      "target": "/keys",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-account"
+    },
+    {
+      "id": "create-key",
+      "verb": "Create API key",
+      "target": "POST /portal/keys",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-keys"
+    },
+    {
+      "id": "rotate-key",
+      "verb": "Rotate key",
+      "target": "POST /portal/keys/{api_key_id}/rotate",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "portal-keys"
+    },
+    {
+      "id": "revoke-key",
+      "verb": "Revoke key",
+      "target": "open revoke preview before POST /portal/keys/{api_key_id}/revoke",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "portal-keys"
+    },
+    {
+      "id": "confirm-revoke-key",
+      "verb": "Confirm revoke (destructive)",
+      "target": "confirmation_field confirm_last_usable when last usable key warning appears",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": true,
+      "preview_required": true,
+      "screen_id": "portal-keys"
+    },
+    {
+      "id": "cancel-revoke-key",
+      "verb": "Keep key",
+      "target": "close revoke confirmation and return focus to key row",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-keys"
+    },
+    {
+      "id": "copy-one-time-secret",
+      "verb": "Copy secret",
+      "target": "current in-memory raw_key only",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-key-secret"
+    },
+    {
+      "id": "close-one-time-secret",
+      "verb": "Close secret",
+      "target": "clear secret and return focus to initiating key action",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-key-secret"
+    },
+    {
+      "id": "open-wordpress-guidance",
+      "verb": "WordPress Test Connection guidance",
+      "target": "/keys/wordpress guidance overlay",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-keys"
+    },
+    {
+      "id": "return-to-keys",
+      "verb": "Back to API keys",
+      "target": "/keys with focus on key list",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-wordpress-guidance"
+    },
+    {
+      "id": "open-usage",
+      "verb": "Open usage",
+      "target": "/usage",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-account"
+    },
+    {
+      "id": "retry-usage",
+      "verb": "Try again",
+      "target": "GET /portal/usage retry",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-usage"
+    },
+    {
+      "id": "open-billing",
+      "verb": "Open billing",
+      "target": "/billing",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-account"
+    },
+    {
+      "id": "start-checkout",
+      "verb": "Open hosted checkout",
+      "target": "POST /portal/billing/checkout then server-provided checkout_url",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "portal-billing"
+    },
+    {
+      "id": "retry-checkout",
+      "verb": "Retry checkout recovery",
+      "target": "replay same durable attempt or wait for checkout_ambiguous reconciliation",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "portal-billing"
+    },
+    {
+      "id": "open-manage-billing",
+      "verb": "Manage billing",
+      "target": "POST /portal/billing/manage then hosted customer portal",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-billing"
+    },
+    {
+      "id": "retry-billing",
+      "verb": "Try billing again",
+      "target": "bounded billing request retry with same focus target",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-billing"
+    },
+    {
+      "id": "return-to-billing",
+      "verb": "Return to billing",
+      "target": "/billing with focus on billing status panel",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-billing-return"
+    }
+  ],
+  "flows": [
+    {
+      "id": "proposed-sign-in-happy",
+      "job": "authenticate-session",
+      "label": "OBSERVED-UI: signed-out chrome → account sign-in → signed-in account chrome",
+      "steps": [
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Clerk loaded, signed-out; Sign in enabled"
+        },
+        {
+          "screen_id": "clerk-sign-in",
+          "branch_label": "Account sign-in completes"
+        },
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Show signed-in chrome: account menu + Sign out; tenant strip empty until backend says otherwise"
+        }
+      ]
+    },
+    {
+      "id": "proposed-sign-up-happy",
+      "job": "authenticate-session",
+      "label": "OBSERVED-UI: Create account → account setup → signed-in chrome without tenant claim",
+      "steps": [
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Create account secondary CTA"
+        },
+        {
+          "screen_id": "clerk-sign-up",
+          "branch_label": "Account created; copy does not say workspace is ready"
+        },
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Signed-in; identity strip empty or waiting if backend has no link"
+        }
+      ]
+    },
+    {
+      "id": "proposed-sign-out",
+      "job": "manage-session",
+      "label": "OBSERVED-UI: account menu/Sign out → logout loading (data cleared) → session ended → signed-out chrome. Sign in doors restore only after sign-out succeeds (RLSE-04, CARD-15).",
+      "steps": [
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Sign out visible in signed-in chrome"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "loading: account/tenant fetch data already cleared; API keys unchanged"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "default: session ended"
+        },
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Sign in / Create account restored only after sign-out succeeds"
+        }
+      ]
+    },
+    {
+      "id": "observed-sign-out-retry",
+      "job": "manage-session",
+      "label": "OBSERVED-UI RLSE-04: Sign out failure keeps account data cleared; Try again retries the same sign-out; Sign in doors are not restored until success",
+      "steps": [
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Sign out visible in signed-in chrome"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "loading: tenant/account fetch data already cleared"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "error: Sign out failed; Try again retries sign-out; Sign in doors stay hidden"
+        },
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Sign in / Create account restored only after sign-out succeeds"
+        }
+      ]
+    },
+    {
+      "id": "proposed-missing-config",
+      "job": "recover-unavailable",
+      "label": "OBSERVED-UI: missing publishable key → unavailable error, controls disabled",
+      "steps": [
+        {
+          "screen_id": "portal-unavailable",
+          "branch_label": "No ClerkProvider; Sign in disabled/absent; configuration copy"
+        }
+      ]
+    },
+    {
+      "id": "proposed-portal-disabled",
+      "job": "recover-unavailable",
+      "label": "OBSERVED-UI: portal flag off → unavailable degraded, no auth CTAs",
+      "steps": [
+        {
+          "screen_id": "portal-unavailable",
+          "branch_label": "Account access turned off; not a sign-in outage"
+        }
+      ]
+    },
+    {
+      "id": "proposed-clerk-outage",
+      "job": "recover-unavailable",
+      "label": "OBSERVED-UI: publishable key present but sign-in session fails → retry",
+      "steps": [
+        {
+          "screen_id": "portal-clerk-outage",
+          "branch_label": "Bounded wait then Try again; no homemade login"
+        }
+      ]
+    },
+    {
+      "id": "proposed-not-admitted",
+      "job": "recover-unavailable",
+      "label": "OBSERVED-UI: sign-in session ok, backend not admitted → sign out still works",
+      "steps": [
+        {
+          "screen_id": "portal-account",
+          "branch_label": "identity_loading against backend /portal/me"
+        },
+        {
+          "screen_id": "portal-not-admitted",
+          "branch_label": "Generic account-not-ready; UserButton + Sign out remain; no tenant/key UI"
+        }
+      ]
+    },
+    {
+      "id": "planned-backend-outage-retry",
+      "job": "recover-unavailable",
+      "label": "PLANNED-UI B0-fix: signed-in /portal/me outage keeps UserButton + Sign out; bounded retry changes only the account read",
+      "steps": [
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Signed-in session; private account read is loading"
+        },
+        {
+          "screen_id": "portal-backend-outage",
+          "branch_label": "503/timeout: outage copy; UserButton and Sign out remain; no tenant substitution"
+        },
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Try again returns to loading then valid tenant or explicit invalid/403 state"
+        }
+      ]
+    },
+    {
+      "id": "planned-claim",
+      "job": "claim-tenant-access",
+      "label": "PLANNED-UI: signed-in verified identity → one invitation token claim → tenant-bound account or non-enumerating recovery",
+      "steps": [
+        {
+          "screen_id": "portal-not-admitted",
+          "branch_label": "No tenant-bound principal; Claim invitation is a secondary door beside Sign out"
+        },
+        {
+          "screen_id": "portal-claim",
+          "branch_label": "Verified identity; token held in memory; preview then secondary/destructive confirmation before single-use mutation"
+        },
+        {
+          "screen_id": "portal-claim",
+          "branch_label": "loading: disable submit, preserve focus, bounded POST with Origin and no tenant selector"
+        },
+        {
+          "screen_id": "portal-account",
+          "branch_label": "201 replayed=false or 200 replayed=true: backend tenant UUID may now be read; no Polar call"
+        },
+        {
+          "screen_id": "portal-claim",
+          "branch_label": "403 not_admitted/email_unverified, 409 invitation_consumed/identity_already_bound, 422 invalid_claim_request, or 503 portal_identity_unavailable: recovery without token enumeration"
+        }
+      ]
+    },
+    {
+      "id": "planned-key-issue-secret",
+      "job": "manage-api-keys",
+      "label": "PLANNED-UI: key metadata list → create/rotate idempotent issue → one-time secret → copy/close focus return",
+      "steps": [
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "loading list, then empty create affordance or metadata-only usable key row"
+        },
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "Create API key or Rotate key sends Idempotency-Key and disables duplicate submit"
+        },
+        {
+          "screen_id": "portal-key-secret",
+          "branch_label": "non-replayed response has raw_key: show once; replayed response raw_key=null: show recovery, never refetch a secret"
+        },
+        {
+          "screen_id": "portal-key-secret",
+          "branch_label": "Copy success or clipboard error; Close clears memory and returns focus to initiating action"
+        },
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "Metadata refresh shows expires_at/revoked_at; raw secret is absent"
+        }
+      ]
+    },
+    {
+      "id": "planned-key-revoke-confirmation",
+      "job": "manage-api-keys",
+      "label": "PLANNED-UI destructive revoke: row action → explicit warning/confirmation → immediate revoke or safe cancel",
+      "steps": [
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "Revoke is secondary and never fires on row selection"
+        },
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "Last usable key warning from 409 last_usable_key_confirmation_required; focus starts on Cancel, consequence is readable"
+        },
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "Confirm sends confirm_last_usable only after user confirmation; success marks revoked and returns focus to row"
+        },
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "404/409/503 error keeps row context and offers retry/list refresh; no raw secret or tenant switch"
+        }
+      ]
+    },
+    {
+      "id": "planned-wordpress-test-connection-guidance",
+      "job": "manage-api-keys",
+      "label": "PLANNED-UI: one-time secret → WordPress Test Connection guidance → return to key list without sending secret back",
+      "steps": [
+        {
+          "screen_id": "portal-key-secret",
+          "branch_label": "Secret copied or copy instruction remains visible"
+        },
+        {
+          "screen_id": "portal-wordpress-guidance",
+          "branch_label": "Paste into the WordPress plugin, run its Test Connection control, and keep the secret out of URLs/support channels"
+        },
+        {
+          "screen_id": "portal-keys",
+          "branch_label": "Return to keys; inspect metadata, rotate, or revoke based on later WordPress evidence"
+        }
+      ]
+    },
+    {
+      "id": "planned-usage-honest-states",
+      "job": "read-usage",
+      "label": "PLANNED-UI: bounded usage read → authoritative, unknown/pending, expired/cap, or outage state without client entitlement math",
+      "steps": [
+        {
+          "screen_id": "portal-usage",
+          "branch_label": "loading: GET /portal/usage; no stale numbers presented as current"
+        },
+        {
+          "screen_id": "portal-usage",
+          "branch_label": "default: backend fields and data_source are displayed as returned"
+        },
+        {
+          "screen_id": "portal-usage",
+          "branch_label": "empty/degraded: nullable counts or status=expired/past_due/cap are explained; no fabricated remaining"
+        },
+        {
+          "screen_id": "portal-usage",
+          "branch_label": "error/offline: 503 or transport failure; Try again preserves focus and does not change entitlement"
+        }
+      ]
+    },
+    {
+      "id": "planned-checkout-no-redirect-grant",
+      "job": "manage-billing",
+      "label": "PLANNED-UI critical billing path: configured plan_code → durable checkout attempt → provider return → pending/recovery until authoritative billing state",
+      "steps": [
+        {
+          "screen_id": "portal-billing",
+          "branch_label": "No catalog/disabled: payments_disabled or absent configured public plan_code; no price guess and no checkout call"
+        },
+        {
+          "screen_id": "portal-billing",
+          "branch_label": "Open hosted checkout: Origin + Bearer + 64–128 character Idempotency-Key; POST creates/replays an attempt and returns attempt_id/status/checkout_url without charging"
+        },
+        {
+          "screen_id": "portal-billing-return",
+          "branch_label": "External return/cancel: focus status panel; redirect alone never changes paid access"
+        },
+        {
+          "screen_id": "portal-billing-return",
+          "branch_label": "pending/provider_requested or checkout_ambiguous: keep same attempt_id; do not create a duplicate"
+        },
+        {
+          "screen_id": "portal-billing",
+          "branch_label": "Authoritative usage/entitlement read later reports status; expired/canceled attempt needs a new attempt/key"
+        }
+      ]
+    },
+    {
+      "id": "planned-billing-manage-recovery",
+      "job": "manage-billing",
+      "label": "PLANNED-UI: billing manage session opens only for mapped customer and recovers missing mapping/provider outage without changing tenant",
+      "steps": [
+        {
+          "screen_id": "portal-billing",
+          "branch_label": "Manage billing submits server-selected relative return path with Origin"
+        },
+        {
+          "screen_id": "portal-billing-return",
+          "branch_label": "Hosted portal return restores focus to billing status"
+        },
+        {
+          "screen_id": "portal-billing",
+          "branch_label": "409 billing_customer_missing or 503 billing_portal_unavailable: explain and retry; no entitlement grant"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Resolved for this slice: routed @clerk/react <SignIn /> and <SignUp /> on /sign-in and /sign-up with app chrome doors. Hosted Account Portal buttons are not used.",
+    "Resolved for this slice: missing VITE_CLERK_PUBLISHABLE_KEY is client-detectable; VITE_PORTAL_ENABLED is the public build-time flag; Clerk outage is a bounded wait then retry. Never CLERK_SECRET_KEY.",
+    "B1 claim boundary: the invitation token is entered only on the dedicated claim screen after verified identity; it is hashed and consumed by the backend transaction, not treated as a Clerk credential or tenant selector.",
+    "B1 catalog boundary: no GET plan-catalog route is present in current portal.py. UI may use only an explicitly configured public plan_code; price, currency, product id, and entitlement remain server/provider authority.",
+    "B1 WordPress boundary: targeted current plugin source did not provide a Test Connection UI/API anchor. Guidance is mapped, but exact live labels and success/error evidence remain later acceptance."
+  ],
+  "not_doing": [
+    "Do not scaffold Clerk over the monorepo root or the WordPress plugin. SPA lives only in apps/app-portal.",
+    "Do not use Next.js Clerk APIs (@clerk/nextjs, auth(), clerkMiddleware). Package is @clerk/react.",
+    "Do not use legacy @clerk/clerk-react.",
+    "Do not put CLERK_SECRET_KEY, webhook secrets, or login material in the SPA, commits, or this map.",
+    "Do not render OrganizationSwitcher, fake tenant names, or treat Clerk email as tenant UUID (DOM-03).",
+    "Do not put API-key hashes or raw secrets in the browser outside the one-time in-memory issue dialog; list/read responses are metadata only and revoke remains a destructive backend mutation.",
+    "Do not compute entitlement, remaining usage, plan price, or paid state in the client. Display nullable usage and authoritative status/data_source from backend responses.",
+    "Do not grant paid access from a billing redirect, invent a catalog item, or retry an ambiguous checkout as a new attempt.",
+    "Do not claim WordPress Test Connection, production Clerk, Polar sandbox, or provider webhook evidence from offline doubles.",
+    "Do not claim live Clerk, Polar, or Caddy CSP policy from this offline SPA slice.",
+    "Do not replace local API-key recognition when sign-in is down; this SPA failure is portal-only (CARD-16, REF-15).",
+    "Do not run CLI init, accountless setup, login, provisioning, or credential-file access for this offline slice. Use manual @clerk/react integration with offline mocks; do not hardcode a rescued app ID as proof of the production application.",
+    "Do not add a second uxmap file: B1 extends app-portal.uxmap.json and preserves every existing B0 id."
+  ]
+}

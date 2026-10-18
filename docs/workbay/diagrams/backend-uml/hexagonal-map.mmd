@@ -1,0 +1,54 @@
+flowchart TB
+    %% Hexagonal (Ports & Adapters) map for prototype-description-service
+
+    subgraph Repo["apps/prototype-description-service/"]
+        direction TB
+
+        Api["api/\nFastAPI entry + logging"]
+        Db["db/\nmodels + migrations"]
+        Shared["shared/\nhealth, ids, utilities"]
+        Data["data/"]
+        Scripts["scripts/"]
+        Logs["logs/"]
+
+        subgraph Recognition["recognition/ (bounded context)"]
+            direction TB
+            InterfaceR["Interface Adapters\nrecognition/interface_adapters/http/"]
+            ApplicationR["Application\nrecognition/application/"]
+            DomainR["Domain\nrecognition/domain/"]
+            InfraR["Infrastructure\nrecognition/infrastructure/"]
+            WorkerR["Worker\nrecognition/worker/"]
+        end
+
+        subgraph Roster["roster/ (bounded context)"]
+            direction TB
+            InterfaceRo["Interface Adapters\nroster/interface_adapters/http/"]
+            ApplicationRo["Application\nroster/application/"]
+        end
+
+        subgraph Scene["scene/ (bounded context)"]
+            direction TB
+            InterfaceS["Interface Adapters\nscene/interface_adapters/http/"]
+            ApplicationS["Application\nscene/application/"]
+        end
+    end
+
+    Api --> InterfaceR
+    Api --> InterfaceRo
+    Api --> InterfaceS
+
+    InterfaceR --> ApplicationR --> DomainR
+    ApplicationR --> InfraR --> Db
+    WorkerR --> InfraR
+
+    InterfaceRo --> ApplicationRo
+    InterfaceS --> ApplicationS
+
+    Shared -.-> InterfaceR
+    Shared -.-> ApplicationR
+    Shared -.-> InterfaceRo
+    Shared -.-> InterfaceS
+
+    Data -.-> ApplicationR
+    Scripts -.-> Api
+    Logs -.-> Api

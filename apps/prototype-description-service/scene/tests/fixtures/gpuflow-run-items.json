@@ -1,0 +1,67 @@
+{
+  "run": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "run_id": "00000000-0000-0000-0000-000000000002",
+    "status": "completed_with_errors",
+    "phase": "complete",
+    "completed": 1,
+    "failed": 1,
+    "skipped": 1,
+    "total": 3,
+    "cancel_requested": false,
+    "eta_seconds": null,
+    "gpu_state": "ready",
+    "recognition_enabled": true,
+    "deadline_seconds": 90.0,
+    "operation_id": "run-operation-opaque",
+    "startup_id": null,
+    "timing": {
+      "queue_ms": 10,
+      "ramp_up_ms": 0,
+      "processing_ms_p50": 12.5,
+      "processing_ms_max": 30,
+      "startup_ms": null,
+      "server_elapsed_ms": 40,
+      "items_timed": 2
+    }
+  },
+  "items": {
+    "tenant_id": "00000000-0000-0000-0000-000000000001",
+    "run_id": "00000000-0000-0000-0000-000000000002",
+    "items": [
+      {
+        "media_id": 70,
+        "status": "completed",
+        "alt_text_draft": "A dog resting on green grass",
+        "caption": "a dog on grass",
+        "provenance": {"adapter": "gpu"},
+        "error": null,
+        "tier": "final_gpu",
+        "result_generation": 1,
+        "processing_ms": 12.5
+      },
+      {
+        "media_id": 71,
+        "status": "failed",
+        "alt_text_draft": null,
+        "caption": null,
+        "provenance": null,
+        "error": "adapter boom",
+        "tier": null,
+        "result_generation": 0,
+        "processing_ms": 30
+      },
+      {
+        "media_id": 72,
+        "status": "skipped",
+        "alt_text_draft": null,
+        "caption": null,
+        "provenance": null,
+        "error": null,
+        "tier": null,
+        "result_generation": 0,
+        "processing_ms": null
+      }
+    ]
+  }
+}

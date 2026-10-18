@@ -1,0 +1,41 @@
+%%{init: {"theme": "base", "sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    autonumber
+    
+    participant Job as ClusterService
+    participant Logger as ClusteringLogger
+    participant Run as RecognitionRunContext
+    participant Obs as ObservabilityRepository
+    participant Viz as ClusterVisualizer
+    participant DB as PostgreSQL
+    
+    Note over Job,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Job,DB: Mini-map: ClusterService.cluster_unclustered_identities -> ClusteringLogger -> ObservabilityRepository, Code: recognition/application/orchestration/clustering/orchestrator.py | recognition/observability/logging.py | recognition/observability/persistence.py
+    
+    %% Job Start
+    Job->>Run: create_recognition_run()
+    Job->>Logger: bind_run_context(run)
+    Job->>Logger: log_batch_start(identity_count, algorithm)
+    
+    rect rgb(40, 80, 40)
+        Note over Job,Logger: Evaluation Phase - Log Decisions
+        loop For each candidate
+            Job->>Logger: log_decision(identity_id, cluster_id, decision, similarity, reason)
+            Logger->>Run: add_event("assignment_decision", payload)
+            opt observability repo wired
+                Logger->>Obs: add_decision(decision)
+                Obs->>DB: INSERT assignment_decisions
+            end
+        end
+    end
+    
+    rect rgb(80, 40, 80)
+        Note over Job,Viz: Completion Phase - Report + Chart
+        Job->>Job: Build BatchJobReport
+        Job->>Logger: log_batch_complete(report)
+        opt observability repo wired
+            Logger->>Obs: save_batch_report(report)
+            Obs->>DB: INSERT clustering_job_reports
+        end
+        Job->>Viz: generate_batch_report_chart(report, algorithm)
+    end

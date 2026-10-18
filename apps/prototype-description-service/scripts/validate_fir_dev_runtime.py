@@ -1,0 +1,1145 @@
+"""Validate an already-redacted FIR development-runtime snapshot.
+
+The validator is deliberately offline and stdlib-only.  It consumes the
+observations collected by the runtime, applies the supplied freshness and
+isolation policies, and returns a machine-readable readiness result with one
+of the stable ``ready``, ``incomplete``, or ``invalid`` statuses.
+
+The checks have a fixed precedence.  Structural validation runs before the
+contract rungs, followed by secret-shape and model-id parsing, freshness,
+tenant isolation, runtime contract, database dimensions, model assets,
+provenance, and persisted-store evidence.  A report is built before refusal
+and replaces secret-shaped strings; the tenant ID is represented by a coarse
+SHA-256 token while model IDs remain visible for diagnostics.  Keep this
+order stable:
+``schema -> secret shape -> model-id parse -> freshness -> tenant ->
+forbidden resources -> auth -> adapter -> image -> dimension -> model
+contract -> database dimension -> weight hashes -> provenance -> database
+identity -> vector inventory -> store state``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import logging
+import math
+import re
+import sys
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
+
+ROLE_NAMES = ("api", "worker", "fix-blob-ownership")
+ROLE_FIELDS = (
+    "effective_profile",
+    "embedding_dimension",
+    "model_id",
+    "preprocessing_id",
+    "image_digest",
+    "loaded_weight_hashes",
+    "auth_enabled",
+    "source_git_sha",
+)
+STORAGE_FIELDS = ("volume_ids", "network_ids", "compose_project", "blob_namespace")
+DATABASE_BASE_FIELDS = (
+    "identity",
+    "server_version",
+    "extension_versions",
+    "vector_column_inventory",
+)
+DATABASE_EVIDENCE_FIELDS = ("store_state", "embedding_provenance")
+
+EXPECTED_VECTOR_COLUMNS = frozenset(
+    {
+        "public.media_identities.embedding",
+        "public.identity_cluster_representatives.embedding",
+        "public.mv_identity_cluster_centroids.centroid",
+    }
+)
+_VECTOR_SAMPLE_NAMES = ("representative_vector", "centroid")
+
+EXPECTED_CONTRACTS: dict[str, dict[str, Any]] = {
+    "baseline128": {
+        "effective_profile": "face_pipeline",
+        "embedding_dimension": 128,
+        "model_name_prefix": "opencv-sface+",
+        "model_suffix": ("128d", "l2", "cosine"),
+        "preprocessing_id": "sface-5pt-112",
+        # Source of truth: provenance.py MODEL_MANIFEST yunet / sface sha256.
+        "asset_hashes": {
+            "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+            "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+        },
+    },
+    "candidate512": {
+        "effective_profile": "auraface",
+        "embedding_dimension": 512,
+        # Canonical production identity: EmbeddingModelManifest.model_id prepends the framework
+        # ("insightface-" + "auraface+<space>"), so the emitted prefix is insightface-auraface+.
+        "model_name_prefix": "insightface-auraface+",
+        "model_suffix": ("512d", "l2", "cosine"),
+        "preprocessing_id": "arcface-112",
+        # Source of truth: provenance.py MODEL_MANIFEST yunet / auraface sha256.
+        "asset_hashes": {
+            "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+            "auraface": "sha256:a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60",
+        },
+    },
+}
+
+EXPECTED_MODEL_CONTRACT: dict[str, Any] = {
+    key: EXPECTED_CONTRACTS["baseline128"][key]
+    for key in (
+        "effective_profile",
+        "embedding_dimension",
+        "model_name_prefix",
+        "model_suffix",
+        "preprocessing_id",
+    )
+}
+EXPECTED_MODEL_ASSET_HASHES = EXPECTED_CONTRACTS["baseline128"]["asset_hashes"]
+
+_SNAPSHOT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "captured_at",
+        "tenant_id",
+        "observations",
+        "database",
+        "storage",
+        "description_adapter",
+    }
+)
+_ROLE_WRAPPER_KEYS = frozenset({"value", "provenance"})
+_INVENTORY_WRAPPER_KEYS = frozenset({"value", "provenance", "discovery_complete"})
+_SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_UNRESOLVED_MODEL_MARKERS = ("${", "PENDING_OPERATOR_FETCH")
+
+# These are the accepted observation methods from the snapshot contract.  The
+# database paths remain here for documentation, but are intentionally excluded
+# from the general provenance rung below and checked by their own rungs.
+OBSERVATION_METHODS: dict[str, frozenset[str]] = {
+    "observations[*].effective_profile": frozenset({"runtime_probe"}),
+    "observations[*].embedding_dimension": frozenset({"runtime_probe"}),
+    "observations[*].model_id": frozenset({"runtime_probe"}),
+    "observations[*].preprocessing_id": frozenset({"runtime_probe"}),
+    "observations[*].image_digest": frozenset({"runtime_resolved_digest"}),
+    "observations[*].loaded_weight_hashes": frozenset({"runtime_loaded_artifact"}),
+    "observations[*].auth_enabled": frozenset({"runtime_auth_probe"}),
+    "observations[*].source_git_sha": frozenset({"binary_identity"}),
+    "database.identity": frozenset({"database_catalog"}),
+    "database.server_version": frozenset({"database_catalog"}),
+    "database.extension_versions": frozenset({"database_catalog"}),
+    "database.vector_column_inventory": frozenset({"database_catalog"}),
+    "database.store_state": frozenset({"database_catalog"}),
+    "database.embedding_provenance": frozenset({"database_catalog"}),
+    "storage.volume_ids": frozenset({"storage_inspection"}),
+    "storage.network_ids": frozenset({"storage_inspection"}),
+    "storage.compose_project": frozenset({"storage_inspection"}),
+    "storage.blob_namespace": frozenset({"storage_inspection"}),
+    "description_adapter.model_id": frozenset({"description_probe"}),
+    "description_adapter.model_revision": frozenset({"description_probe"}),
+    "description_adapter.serving_profile": frozenset({"description_probe"}),
+    "description_adapter.is_stub": frozenset({"description_probe"}),
+    "captured_at": frozenset({"collector_clock"}),
+    "tenant_id": frozenset({"request_context"}),
+}
+
+_SECRET_MARKER = re.compile(r"REPLACE_ME[_A-Z0-9]*")
+_CREDENTIAL_KEY_PATTERN = (
+    r"(?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key|"
+    r"auth[-_]?token|client[-_]?secret|pgpassword|bearer[-_]?token|dsn)"
+)
+_CREDENTIAL_KEY = re.compile(r"^" + _CREDENTIAL_KEY_PATTERN + r"$", re.IGNORECASE)
+_CREDENTIAL_KEY_VALUE = re.compile(
+    r"""(?:^|[\s?&;,{"'])['"]?"""
+    + _CREDENTIAL_KEY_PATTERN
+    + r"""['"]?\s*(?:=|:)\s*(?P<value>"[^"]*"|'[^']*'|(?!(?:[A-Za-z_][A-Za-z0-9_-]*)\s*(?:=|:))[^\s,;&}]+)""",
+    re.IGNORECASE,
+)
+_BEARER_TOKEN_PREFIX = re.compile(
+    r"^\s*(?:authorization\s*:\s*)?(?:bearer|basic|token)\s+\S",
+    re.IGNORECASE,
+)
+_MAX_CLOCK_SKEW = timedelta(seconds=60)
+# Keep this below ``timedelta.max.total_seconds()``: converting that rounded
+# float back to a timedelta overflows to 1,000,000,000 days.  The integer
+# whole-second ceiling is the largest value this validator can safely pass to
+# ``timedelta(seconds=...)``.
+_MAX_TIMEDELTA_SECONDS = timedelta.max.days * 24 * 60 * 60 + timedelta.max.seconds
+_ISOLATION_RESOURCE_CATEGORIES = frozenset(
+    {
+        "volumes",
+        "networks",
+        "compose_projects",
+        "database_names",
+        "database_roles",
+        "blob_namespaces",
+    }
+)
+
+_INCOMPLETE_REASON_CODES = frozenset(
+    {
+        "missing_loaded_weight_hashes",
+        "observation_provenance_declared",
+        "database_identity_version_unobserved",
+        "vector_inventory_incomplete",
+        "incomplete_loaded_weight_hashes",
+        "vector_inventory_discovery_incomplete",
+        "vector_column_coverage_incomplete",
+        "vector_column_identity_invalid",
+        "fir_store_state_unobserved",
+        "embedding_provenance_unobserved",
+    }
+)
+
+
+def _coarse_space_token(value: str) -> str:
+    # WHY: keep the canonical first-eight SHA-256 redaction from health.py:383
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+
+
+def _uri_has_password(value: str) -> bool:
+    """Return whether a URI string has non-empty userinfo or query credentials."""
+
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError:
+        return False
+    if parsed.query and _keyword_value_has_credential(parsed.query):
+        return True
+    if not parsed.scheme or not parsed.netloc or "@" not in parsed.netloc:
+        return False
+    userinfo = parsed.netloc.rsplit("@", 1)[0]
+    if ":" not in userinfo:
+        return False
+    return bool(userinfo.rsplit(":", 1)[1])
+
+
+def _credential_value_is_nonempty(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip().strip("\"'").strip())
+    if isinstance(value, Mapping):
+        if "value" in value:
+            return _credential_value_is_nonempty(value["value"])
+        return bool(value)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_credential_value_is_nonempty(item) for item in value)
+    return value is not None and bool(value)
+
+
+def _keyword_value_has_credential(value: str) -> bool:
+    return any(_credential_value_is_nonempty(match.group("value")) for match in _CREDENTIAL_KEY_VALUE.finditer(value))
+
+
+def _is_secret_shaped_string(value: str) -> bool:
+    return (
+        bool(_SECRET_MARKER.search(value))
+        or _uri_has_password(value)
+        or _keyword_value_has_credential(value)
+        or bool(_BEARER_TOKEN_PREFIX.search(value))
+    )
+
+
+def _contains_secret_shaped(value: Any) -> bool:
+    """Inspect input values for credential-bearing shapes before any validation rung."""
+
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if isinstance(key, str) and _CREDENTIAL_KEY.fullmatch(key.strip()) and _credential_value_is_nonempty(item):
+                return True
+            if _contains_secret_shaped(key) or _contains_secret_shaped(item):
+                return True
+        return False
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_contains_secret_shaped(item) for item in value)
+    return isinstance(value, str) and _is_secret_shaped_string(value)
+
+
+def _redact_credential_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _redact_credential_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_redact_credential_value(item) for item in value]
+    return "[redacted-secret]"
+
+
+def _redact_value(value: Any) -> Any:
+    """Copy JSON-like values while removing secret-shaped strings."""
+
+    if isinstance(value, Mapping):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            redacted_key = "[redacted-key]" if isinstance(key, str) and _is_secret_shaped_string(key) else key
+            if isinstance(key, str) and _CREDENTIAL_KEY.fullmatch(key.strip()) and _credential_value_is_nonempty(item):
+                redacted[redacted_key] = _redact_credential_value(item)
+            else:
+                redacted[redacted_key] = _redact_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, str) and _is_secret_shaped_string(value):
+        return "[redacted-secret]"
+    return value
+
+
+def _redacted_field(field: Any, raw_value: Any) -> dict[str, Any]:
+    result = _redact_value(field)
+    if not isinstance(result, dict):
+        result = {}
+    result["value"] = _coarse_space_token(str(raw_value))
+    return result
+
+
+def _build_report(
+    snapshot: Any,
+    freshness_policy: Any,
+    isolation_policy: Any,
+    now: Any,
+) -> dict[str, Any]:
+    """Build the report before any validation rung can refuse the input."""
+
+    report = {
+        "snapshot": _redact_value(snapshot),
+        "freshness_policy": _redact_value(freshness_policy),
+        "isolation_policy": _redact_value(isolation_policy),
+        "now": _redact_value(now.isoformat() if isinstance(now, datetime) else now),
+    }
+    redacted_isolation_policy = report["isolation_policy"]
+    if isinstance(redacted_isolation_policy, dict) and isinstance(isolation_policy, Mapping):
+        required_tenant_id = isolation_policy.get("required_tenant_id")
+        redacted_isolation_policy["required_tenant_id"] = _coarse_space_token(str(required_tenant_id))
+
+    redacted_snapshot = report["snapshot"]
+    if not isinstance(redacted_snapshot, dict):
+        return report
+
+    if not isinstance(snapshot, Mapping):
+        return report
+
+    tenant_field = snapshot.get("tenant_id")
+    if isinstance(tenant_field, Mapping) and "value" in tenant_field:
+        redacted_snapshot["tenant_id"] = _redacted_field(tenant_field, tenant_field["value"])
+    else:
+        redacted_snapshot["tenant_id"] = _coarse_space_token(str(tenant_field))
+
+    return report
+
+
+def _outcome(
+    reason_code: str,
+    report: Mapping[str, Any],
+    *,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    if reason_code == "ready":
+        status, exit_code = "ready", 0
+        reason = "ready: snapshot satisfies the FIR development-runtime contract"
+    elif reason_code in _INCOMPLETE_REASON_CODES:
+        status, exit_code = "incomplete", 1
+        reason = f"{reason_code}: required runtime evidence is incomplete"
+    else:
+        status, exit_code = "invalid", 2
+        reason = f"{reason_code}: snapshot violates the FIR development-runtime contract"
+    if detail:
+        reason = f"{reason}: {detail}"
+    return {
+        "status": status,
+        "exit_code": exit_code,
+        "reason_code": reason_code,
+        "reason": reason,
+        "report": report,
+    }
+
+
+def _policy_input_error_detail(freshness_policy: Any, isolation_policy: Any) -> str:
+    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(freshness_policy.get("max_age_seconds")):
+        return "freshness_policy.max_age_seconds is invalid"
+    if (
+        not isinstance(isolation_policy, Mapping)
+        or not isinstance(isolation_policy.get("required_tenant_id"), str)
+        or not isolation_policy["required_tenant_id"].strip()
+    ):
+        return "isolation_policy.required_tenant_id is invalid"
+    return "policy input is invalid"
+
+
+def _roles(snapshot: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    observations = snapshot.get("observations")
+    if not isinstance(observations, list):
+        raise TypeError("snapshot observations must be a list")
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for record in observations:
+        if not isinstance(record, Mapping) or not isinstance(record.get("role"), str):
+            raise TypeError("snapshot role observation must be a mapping with a string role")
+        role = record["role"]
+        if role in by_name:
+            raise ValueError(f"duplicate role observation: {role}")
+        by_name[role] = record
+    if set(by_name) != set(ROLE_NAMES):
+        raise ValueError("snapshot role observations do not match the required role set")
+    return tuple(by_name[name] for name in ROLE_NAMES)
+
+
+def _is_identity_only_repair(record: Any) -> bool:
+    return (
+        isinstance(record, Mapping)
+        and record.get("role") == "fix-blob-ownership"
+        and set(record) == {"role", "image_digest", "source_git_sha"}
+    )
+
+
+def _runtime_roles(snapshot: Mapping[str, Any], aura_acceptance: bool = False) -> tuple[Mapping[str, Any], ...]:
+    roles = _roles(snapshot)
+    return tuple(record for record in roles if not _is_identity_only_repair(record)) if aura_acceptance else roles
+
+
+def _field(record: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
+    value = record[field_name]
+    if not isinstance(value, Mapping):
+        raise TypeError(f"observation field {field_name!r} is not a mapping wrapper")
+    return value
+
+
+def _model_id_is_parseable(value: Any) -> bool:
+    return _parse_model_id(value) is not None
+
+
+def _parse_model_id(value: Any) -> tuple[str, tuple[str, str, str]] | None:
+    if not isinstance(value, str):
+        return None
+    pieces = value.rsplit("@", 1)
+    if len(pieces) != 2 or not pieces[0]:
+        return None
+    suffix_parts = pieces[1].split("/")
+    if len(suffix_parts) != 3 or not all(suffix_parts):
+        return None
+    return pieces[0], (suffix_parts[0], suffix_parts[1], suffix_parts[2])
+
+
+def _flatten_policy_values(value: Any) -> Iterable[Any]:
+    if isinstance(value, Mapping):
+        for item in value.values():
+            yield from _flatten_policy_values(item)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            yield from _flatten_policy_values(item)
+    else:
+        yield value
+
+
+def _observed_resource_values(snapshot: Mapping[str, Any]) -> Iterable[tuple[str, Any]]:
+    storage = snapshot["storage"]
+    storage_categories = {
+        "volume_ids": "volumes",
+        "network_ids": "networks",
+        "compose_project": "compose_projects",
+        "blob_namespace": "blob_namespaces",
+    }
+    for field_name in STORAGE_FIELDS:
+        value = storage[field_name].get("value")
+        category = storage_categories[field_name]
+        if isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                yield category, item
+        else:
+            yield category, value
+    identity = snapshot["database"]["identity"]
+    identity_categories = {
+        "database_name": "database_names",
+        "role": "database_roles",
+    }
+    for field_name, category in identity_categories.items():
+        value = identity[field_name].get("value")
+        if isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                yield category, item
+        else:
+            yield category, value
+
+
+def _resource_is_forbidden(
+    value: Any,
+    forbidden_values: Iterable[Any],
+    *,
+    compose_project: Any = None,
+    forbidden_projects: Iterable[Any] = (),
+    allow_compose_prefix: bool = True,
+) -> bool:
+    """Match normalized IDs, including policy-owned Compose prefixes when enabled."""
+
+    normalized_compose_project = compose_project.strip().casefold() if isinstance(compose_project, str) else None
+    normalized_forbidden_projects = tuple(
+        project.strip().casefold() for project in forbidden_projects if isinstance(project, str) and project.strip()
+    )
+
+    for forbidden in forbidden_values:
+        if isinstance(value, str) and isinstance(forbidden, str):
+            normalized_value = value.strip().casefold()
+            normalized_forbidden = forbidden.strip().casefold()
+            if normalized_value == normalized_forbidden:
+                return True
+            if allow_compose_prefix and normalized_forbidden:
+                for forbidden_project in normalized_forbidden_projects:
+                    if forbidden_project == normalized_compose_project:
+                        continue
+                    if normalized_value == f"{forbidden_project}_{normalized_forbidden}":
+                        return True
+        elif value == forbidden:
+            return True
+    return False
+
+
+def _non_database_provenance_is_declared(snapshot: Mapping[str, Any], roles: tuple[Mapping[str, Any], ...]) -> bool:
+    for record in roles:
+        for field_name in ROLE_FIELDS:
+            if field_name not in record:
+                continue  # The schema admits only explicit Aura identity-only repair records here.
+            path = f"observations[*].{field_name}"
+            if _field(record, field_name).get("provenance") not in OBSERVATION_METHODS[path]:
+                return True
+
+    for field_name in ("captured_at", "tenant_id"):
+        if snapshot[field_name].get("provenance") not in OBSERVATION_METHODS[field_name]:
+            return True
+
+    for field_name in STORAGE_FIELDS:
+        path = f"storage.{field_name}"
+        if snapshot["storage"][field_name].get("provenance") not in OBSERVATION_METHODS[path]:
+            return True
+
+    for field_name in ("model_id", "model_revision", "serving_profile", "is_stub"):
+        path = f"description_adapter.{field_name}"
+        if snapshot["description_adapter"][field_name].get("provenance") not in OBSERVATION_METHODS[path]:
+            return True
+    return False
+
+
+def _database_identity_or_version_is_unobserved(snapshot: Mapping[str, Any]) -> bool:
+    identity = snapshot["database"]["identity"]
+    for field_name in ("database_name", "role"):
+        if identity[field_name].get("provenance") != "database_catalog":
+            return True
+    for field_name in ("server_version", "extension_versions"):
+        if snapshot["database"][field_name].get("provenance") != "database_catalog":
+            return True
+    return False
+
+
+def _is_wrapper(value: Any, expected_keys: frozenset[str] = _ROLE_WRAPPER_KEYS) -> bool:
+    return isinstance(value, Mapping) and set(value) == expected_keys
+
+
+def _is_missing_evidence_wrapper(
+    value: Any, allow_missing: bool, expected_keys: frozenset[str] = _ROLE_WRAPPER_KEYS,
+) -> bool:
+    return (
+        allow_missing and isinstance(value, Mapping)
+        and set(value) <= expected_keys and not _ROLE_WRAPPER_KEYS.issubset(value)
+    )
+
+
+def _is_positive_number(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return 0 < value <= _MAX_TIMEDELTA_SECONDS and math.isfinite(float(value))
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+def _is_nonempty_identity(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(isinstance(item, str) and bool(item.strip()) for item in value)
+    return False
+
+
+def _validate_isolation_policy_shape(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return "malformed_isolation_policy"
+    for category in _ISOLATION_RESOURCE_CATEGORIES:
+        category_values = value.get(category)
+        if not isinstance(category_values, (list, tuple)) or not category_values:
+            return "malformed_isolation_policy"
+    return None
+
+
+def _validate_required_identity_values(snapshot: Mapping[str, Any]) -> str | None:
+    database = snapshot["database"]
+    identity = database["identity"]
+    if any(not _is_nonempty_identity(identity[field_name].get("value")) for field_name in ("database_name", "role")):
+        return "database_identity_version_unobserved"
+    if not _is_nonempty_identity(database["server_version"]["value"]):
+        return "database_identity_version_unobserved"
+
+    extension_versions = database["extension_versions"]["value"]
+    if (
+        not isinstance(extension_versions, Mapping)
+        or not extension_versions
+        or any(not _is_nonempty_identity(value) for value in extension_versions.values())
+    ):
+        return "database_identity_version_unobserved"
+
+    storage = snapshot["storage"]
+    if any(not _is_nonempty_identity(storage[field_name].get("value")) for field_name in STORAGE_FIELDS):
+        return "observation_provenance_declared"
+
+    roles = _roles(snapshot)
+    if any(not _is_nonempty_identity(_field(record, "source_git_sha")["value"]) for record in roles):
+        return "observation_provenance_declared"
+    return None
+
+
+def _validate_schema(
+    snapshot: Any,
+    *,
+    freshness_policy: Any,
+    isolation_policy: Any,
+    now: Any,
+    aura_acceptance: bool = False,
+    allow_missing_store_evidence: bool = False,
+) -> str | None:
+    """Validate the JSON boundary before any contract rung reads a field."""
+
+    if not isinstance(snapshot, Mapping):
+        return "snapshot_schema_invalid"
+
+    schema_version = snapshot.get("schema_version")
+    if schema_version is None or isinstance(schema_version, bool) or not isinstance(schema_version, int):
+        return "snapshot_schema_invalid"
+    if schema_version != 1:
+        return "unsupported_schema_version"
+    if set(snapshot) != _SNAPSHOT_FIELDS:
+        return "snapshot_schema_invalid"
+
+    observations = snapshot.get("observations")
+    if not isinstance(observations, list) or len(observations) != len(ROLE_NAMES):
+        return "snapshot_schema_invalid"
+    observed_roles: list[str] = []
+    expected_role_keys = {"role", *ROLE_FIELDS}
+    for record in observations:
+        if not isinstance(record, Mapping):
+            return "snapshot_schema_invalid"
+        role = record.get("role")
+        if not isinstance(role, str) or role not in ROLE_NAMES:
+            return "unknown_role_observation"
+        if role in observed_roles:
+            return "duplicate_role_observation"
+        observed_roles.append(role)
+        identity_only = aura_acceptance and _is_identity_only_repair(record)
+        if not identity_only and set(record) != expected_role_keys:
+            return "snapshot_schema_invalid"
+        fields = ("image_digest", "source_git_sha") if identity_only else ROLE_FIELDS
+        if any(not _is_wrapper(record[field_name]) for field_name in fields):
+            return "malformed_observation_wrapper"
+    if set(observed_roles) != set(ROLE_NAMES):
+        return "unknown_role_observation"
+
+    for field_name in ("captured_at", "tenant_id"):
+        if not _is_wrapper(snapshot.get(field_name)):
+            return "malformed_observation_wrapper"
+
+    database = snapshot.get("database")
+    if not isinstance(database, Mapping):
+        return "snapshot_schema_invalid"
+    database_keys = set(database)
+    allowed_database_keys = set(DATABASE_BASE_FIELDS) | set(DATABASE_EVIDENCE_FIELDS)
+    if not set(DATABASE_BASE_FIELDS).issubset(database_keys) or not database_keys <= allowed_database_keys:
+        return "snapshot_schema_invalid"
+    identity = database.get("identity")
+    if not isinstance(identity, Mapping) or set(identity) != {"database_name", "role"}:
+        return "snapshot_schema_invalid"
+    if any(not (_is_wrapper(identity[field_name]) or _is_missing_evidence_wrapper(
+        identity[field_name], allow_missing_store_evidence
+    )) for field_name in ("database_name", "role")):
+        return "malformed_observation_wrapper"
+    if any("value" in identity[field_name] and not isinstance(identity[field_name]["value"], str)
+           for field_name in ("database_name", "role")):
+        return "malformed_observation_wrapper"
+    for field_name in ("server_version", "extension_versions"):
+        if not _is_wrapper(database.get(field_name)):
+            return "malformed_observation_wrapper"
+    inventory = database.get("vector_column_inventory")
+    if not (_is_wrapper(inventory) or _is_wrapper(inventory, _INVENTORY_WRAPPER_KEYS)
+            or _is_missing_evidence_wrapper(inventory, allow_missing_store_evidence, _INVENTORY_WRAPPER_KEYS)):
+        return "malformed_observation_wrapper"
+    for field_name in DATABASE_EVIDENCE_FIELDS:
+        if field_name in database and not _is_wrapper(database[field_name]):
+            if not _is_missing_evidence_wrapper(database[field_name], allow_missing_store_evidence):
+                return "malformed_observation_wrapper"
+
+    storage = snapshot.get("storage")
+    if not isinstance(storage, Mapping) or set(storage) != set(STORAGE_FIELDS):
+        return "snapshot_schema_invalid"
+    if any(not (_is_wrapper(storage[field_name]) or _is_missing_evidence_wrapper(
+        storage[field_name], allow_missing_store_evidence
+    )) for field_name in STORAGE_FIELDS):
+        return "malformed_observation_wrapper"
+
+    description_adapter = snapshot.get("description_adapter")
+    description_fields = ("model_id", "model_revision", "serving_profile", "is_stub")
+    if not isinstance(description_adapter, Mapping) or set(description_adapter) != set(description_fields):
+        return "snapshot_schema_invalid"
+    if any(not _is_wrapper(description_adapter[field_name]) for field_name in description_fields):
+        return "malformed_observation_wrapper"
+
+    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(freshness_policy.get("max_age_seconds")):
+        return "malformed_policy_input"
+    if (
+        not isinstance(isolation_policy, Mapping)
+        or not isinstance(isolation_policy.get("required_tenant_id"), str)
+        or not isolation_policy["required_tenant_id"].strip()
+    ):
+        return "malformed_policy_input"
+    isolation_reason = _validate_isolation_policy_shape(isolation_policy.get("forbidden_resource_ids"))
+    if isolation_reason is not None:
+        return isolation_reason
+
+    try:
+        _parse_timestamp(snapshot["captured_at"]["value"])
+        _parse_timestamp(now)
+    except (TypeError, ValueError, OverflowError):
+        return "malformed_timestamp"
+    return None
+
+
+def _validate_secret_and_model_ids(snapshot: Mapping[str, Any], aura_acceptance: bool = False) -> str | None:
+    if _contains_secret_shaped(snapshot):
+        return "secret_shaped_input"
+    roles = _runtime_roles(snapshot, aura_acceptance)
+    if any(not _model_id_is_parseable(_field(record, "model_id")["value"]) for record in roles):
+        return "unparseable_model_id"
+    return None
+
+
+def _validate_freshness_and_isolation(
+    snapshot: Mapping[str, Any],
+    *,
+    freshness_policy: Mapping[str, Any],
+    isolation_policy: Mapping[str, Any],
+    now: Any,
+) -> str | None:
+    try:
+        captured_at = _parse_timestamp(snapshot["captured_at"]["value"])
+        current_time = _parse_timestamp(now)
+    except (TypeError, ValueError, OverflowError):
+        return "malformed_timestamp"
+    try:
+        max_age = timedelta(seconds=freshness_policy["max_age_seconds"])
+    except (TypeError, ValueError, OverflowError):
+        return "malformed_policy_input"
+    age = current_time - captured_at
+    if age < -_MAX_CLOCK_SKEW:
+        return "future_snapshot"
+    if age > max_age:
+        return "stale_snapshot"
+    if snapshot["tenant_id"]["value"] != isolation_policy["required_tenant_id"]:
+        return "shared_default_tenant"
+    # Policy contract: string IDs are compared after strip/casefold normalization. Collectors may emit
+    # Compose-managed resources as ``<project>_<declared-name>``; only prefixes owned by a forbidden
+    # Compose project are eligible for the expanded comparison. The observed project prevents its own
+    # prefix from being interpreted as a foreign policy resource.
+    forbidden_resources = isolation_policy["forbidden_resource_ids"]
+    compose_project = snapshot["storage"]["compose_project"].get("value")
+    forbidden_projects = tuple(_flatten_policy_values(forbidden_resources["compose_projects"]))
+    for category, value in _observed_resource_values(snapshot):
+        forbidden_values = tuple(_flatten_policy_values(forbidden_resources[category]))
+        if _resource_is_forbidden(
+            value,
+            forbidden_values,
+            compose_project=compose_project,
+            forbidden_projects=forbidden_projects,
+            allow_compose_prefix=category in {"volumes", "networks", "blob_namespaces"},
+        ):
+            return "forbidden_resource_id"
+    return None
+
+
+def _selected_contract(contract: str) -> Mapping[str, Any]:
+    try:
+        return EXPECTED_CONTRACTS[contract]
+    except KeyError as exc:
+        raise ValueError(f"unknown expected contract: {contract}") from exc
+
+
+def _model_id_has_unresolved_space_marker(value: str, *, expected_prefix: str) -> bool:
+    if any(marker in value for marker in _UNRESOLVED_MODEL_MARKERS):
+        return True
+    parsed = _parse_model_id(value)
+    return parsed is not None and parsed[0] == expected_prefix
+
+
+def _validate_runtime_contract(snapshot: Mapping[str, Any], contract: str = "baseline128", aura_acceptance: bool = False) -> str | None:
+    expected = _selected_contract(contract)
+    roles = _runtime_roles(snapshot, aura_acceptance)
+
+    if any(_field(record, "auth_enabled")["value"] is not True for record in roles):
+        return "auth_disabled"
+
+    description_adapter = snapshot["description_adapter"]
+    if description_adapter["is_stub"]["value"] is not False:
+        return "description_adapter_stub_or_seeded"
+    for field_name in ("model_id", "model_revision", "serving_profile"):
+        value = description_adapter[field_name]["value"]
+        if not isinstance(value, str) or not value.strip():
+            return "description_adapter_unverified_model"
+    if description_adapter["serving_profile"]["value"] != "remote_self_hosted":
+        return "description_adapter_unverified_model"
+
+    image_digests = [_field(record, "image_digest")["value"] for record in _roles(snapshot)]
+    if any(value != image_digests[0] for value in image_digests[1:]):
+        return "role_image_digest_mismatch"
+    if any(not isinstance(value, str) or _SHA256_DIGEST.fullmatch(value) is None for value in image_digests):
+        return "unpinned_image_digest"
+
+    dimensions = [_field(record, "embedding_dimension")["value"] for record in roles]
+    if any(value != dimensions[0] for value in dimensions[1:]):
+        return "role_embedding_dimension_mismatch"
+    agreed_dimension = dimensions[0]
+
+    expected_profile = expected["effective_profile"]
+    if any(_field(record, "effective_profile")["value"] != expected_profile for record in roles):
+        return "unexpected_face_pipeline_profile"
+
+    model_ids = [_field(record, "model_id")["value"] for record in roles]
+    preprocessing_ids = [_field(record, "preprocessing_id")["value"] for record in roles]
+    expected_prefix = expected["model_name_prefix"]
+    if any(_model_id_has_unresolved_space_marker(value, expected_prefix=expected_prefix) for value in model_ids):
+        return "unresolved_model_space_marker"
+    if any(value != model_ids[0] for value in model_ids[1:]) or any(
+        value != preprocessing_ids[0] for value in preprocessing_ids[1:]
+    ):
+        return "model_contract_mismatch"
+
+    if agreed_dimension != expected["embedding_dimension"]:
+        return "model_space_contract_mismatch"
+
+    expected_suffix = expected["model_suffix"]
+    for model_id in model_ids:
+        parsed = _parse_model_id(model_id)
+        if parsed is None:
+            return "unparseable_model_id"
+        name, suffix = parsed
+        if not name.startswith(expected_prefix) or suffix != expected_suffix:
+            return "model_space_contract_mismatch"
+    if preprocessing_ids[0] != expected["preprocessing_id"]:
+        return "model_space_contract_mismatch"
+    return None
+
+
+def _validate_database_inventory(snapshot: Mapping[str, Any], aura_acceptance: bool = False) -> str | None:
+    roles = _runtime_roles(snapshot, aura_acceptance)
+    dimensions = [_field(record, "embedding_dimension")["value"] for record in roles]
+    agreed_dimension = dimensions[0]
+    inventory = snapshot["database"]["vector_column_inventory"].get("value")
+    if isinstance(inventory, (list, tuple)):
+        for item in inventory:
+            if not isinstance(item, Mapping):
+                continue
+            dimension = item.get("dimension")
+            if isinstance(dimension, int) and not isinstance(dimension, bool) and dimension != agreed_dimension:
+                return "database_dimension_mismatch"
+    return None
+
+
+def _validate_model_assets(snapshot: Mapping[str, Any], contract: str = "baseline128", aura_acceptance: bool = False) -> str | None:
+    expected_hashes = _selected_contract(contract)["asset_hashes"]
+    roles = _runtime_roles(snapshot, aura_acceptance)
+    hash_values = [_field(record, "loaded_weight_hashes")["value"] for record in roles]
+    if aura_acceptance:
+        # Compare every present digest before selecting a missing-observation reason.
+        present = [value for value in hash_values if isinstance(value, Mapping)]
+        for value in present:
+            if any(not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None
+                   for digest in value.values()):
+                return "malformed_loaded_weight_hash"
+        for name in expected_hashes:
+            digests = {value[name] for value in present if name in value}
+            if len(digests) > 1:
+                return "role_loaded_weight_hash_mismatch"
+        if any(value[name] != digest for value in present
+               for name, digest in expected_hashes.items() if name in value):
+            return "model_asset_hash_unexpected"
+    if any(isinstance(value, Mapping) and not value for value in hash_values):
+        return "missing_loaded_weight_hashes"
+    for value in hash_values:
+        if not isinstance(value, Mapping) or set(value) != set(expected_hashes):
+            return "incomplete_loaded_weight_hashes"
+        if any(not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None for digest in value.values()):
+            return "malformed_loaded_weight_hash"
+    first_mapping = hash_values[0]
+    if any(value != first_mapping for value in hash_values[1:]):
+        return "role_loaded_weight_hash_mismatch"
+    if first_mapping != expected_hashes:
+        return "model_asset_hash_unexpected"
+    return None
+
+
+def _vector_inventory_is_incomplete(snapshot: Mapping[str, Any]) -> str | None:
+    inventory_field = snapshot["database"]["vector_column_inventory"]
+    if inventory_field.get("provenance") != "database_catalog":
+        return "vector_inventory_incomplete"
+    inventory = inventory_field.get("value")
+    if not isinstance(inventory, (list, tuple)):
+        return "vector_inventory_incomplete"
+    for item in inventory:
+        if not isinstance(item, Mapping):
+            return "vector_inventory_incomplete"
+        if item.get("provenance") != "database_catalog" or item.get("dimension") is None:
+            return "vector_inventory_incomplete"
+
+    if inventory_field.get("discovery_complete") is not True:
+        return "vector_inventory_discovery_incomplete"
+
+    identities: set[str] = set()
+    for item in inventory:
+        schema = item.get("schema")
+        table = item.get("table")
+        column = item.get("column")
+        dimension = item.get("dimension")
+        if (
+            not isinstance(schema, str)
+            or not schema.strip()
+            or not isinstance(table, str)
+            or not table.strip()
+            or not isinstance(column, str)
+            or not column.strip()
+            or not isinstance(dimension, int)
+            or isinstance(dimension, bool)
+        ):
+            return "vector_column_identity_invalid"
+        identities.add(f"{schema}.{table}.{column}")
+    if not EXPECTED_VECTOR_COLUMNS.issubset(identities):
+        return "vector_column_coverage_incomplete"
+    return None
+
+
+def _validate_provenance(snapshot: Mapping[str, Any]) -> str | None:
+    roles = _roles(snapshot)
+    if _non_database_provenance_is_declared(snapshot, roles):
+        return "observation_provenance_declared"
+    identity_reason = _validate_required_identity_values(snapshot)
+    if identity_reason is not None:
+        return identity_reason
+    if _database_identity_or_version_is_unobserved(snapshot):
+        return "database_identity_version_unobserved"
+    return _vector_inventory_is_incomplete(snapshot)
+
+
+def _is_finite_vector(value: Any, expected_dimension: int) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != expected_dimension:
+        return False
+    for component in value:
+        if not isinstance(component, (int, float)) or isinstance(component, bool):
+            return False
+        try:
+            if not math.isfinite(float(component)):
+                return False
+        except (OverflowError, TypeError, ValueError):
+            return False
+    return True
+
+
+def _vector_payload_is_populated(value: Any) -> bool:
+    """Return whether a store summary carries a non-empty vector payload."""
+
+    return value is not None and (not isinstance(value, (list, tuple)) or bool(value))
+
+
+def _validate_store_state(snapshot: Mapping[str, Any], contract: str = "baseline128") -> str | None:
+    database = snapshot["database"]
+    store_state = database.get("store_state")
+    if not isinstance(store_state, Mapping) or store_state.get("provenance") != "database_catalog":
+        return "fir_store_state_unobserved"
+    state = store_state.get("value")
+    if state not in {"empty", "enrolled"}:
+        return "fir_store_state_unobserved"
+
+    embedding_provenance = database.get("embedding_provenance")
+    if (
+        not isinstance(embedding_provenance, Mapping)
+        or embedding_provenance.get("provenance") != "database_catalog"
+        or not isinstance(embedding_provenance.get("value"), Mapping)
+    ):
+        return "embedding_provenance_unobserved"
+    summary = embedding_provenance["value"]
+    required_summary_fields = {"row_counts", "model_id", "preprocessing_id"}
+    if not required_summary_fields.issubset(summary):
+        return "embedding_provenance_unobserved"
+
+    inventory = database["vector_column_inventory"].get("value")
+    if not isinstance(inventory, (list, tuple)):
+        return "embedding_provenance_unobserved"
+    inventory_identities = {
+        f"{item['schema']}.{item['table']}.{item['column']}"
+        for item in inventory
+        if isinstance(item, Mapping)
+        and isinstance(item.get("schema"), str)
+        and isinstance(item.get("table"), str)
+        and isinstance(item.get("column"), str)
+    }
+    row_counts = summary["row_counts"]
+    if not isinstance(row_counts, Mapping) or set(row_counts) != inventory_identities:
+        return "embedding_provenance_unobserved"
+    if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in row_counts.values()):
+        return "embedding_provenance_unobserved"
+
+    if state == "empty":
+        if any(count != 0 for count in row_counts.values()):
+            return "fir_store_state_unobserved"
+        if any(
+            sample_name in summary and _vector_payload_is_populated(summary[sample_name])
+            for sample_name in _VECTOR_SAMPLE_NAMES
+        ):
+            return "empty_store_vector_payload"
+        return None
+
+    if not any(count > 0 for count in row_counts.values()):
+        return "fir_store_state_unobserved"
+
+    roles = _roles(snapshot)
+    runtime_model_id = _field(roles[0], "model_id")["value"]
+    runtime_preprocessing_id = _field(roles[0], "preprocessing_id")["value"]
+    if summary["model_id"] != runtime_model_id or summary["preprocessing_id"] != runtime_preprocessing_id:
+        return "persisted_model_stamp_mismatch"
+
+    expected_dimension = _selected_contract(contract)["embedding_dimension"]
+    for sample_name in _VECTOR_SAMPLE_NAMES:
+        if sample_name not in summary:
+            return "embedding_provenance_unobserved"
+        if not _is_finite_vector(summary[sample_name], expected_dimension):
+            return "non_finite_persisted_vector"
+    return None
+
+
+def _parse_timestamp(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    else:
+        raise TypeError("timestamp must be an ISO-8601 string or datetime")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+    return parsed
+
+
+def validate_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    freshness_policy: Mapping[str, Any],
+    isolation_policy: Mapping[str, Any],
+    now: Any,
+    contract: str = "baseline128",
+    aura_acceptance: bool = False,
+) -> Mapping[str, Any]:
+    """Validate a snapshot and return status, reason, and a redacted report."""
+
+    if aura_acceptance and contract != "candidate512":
+        raise ValueError("Aura acceptance requires candidate512")
+    report = _build_report(snapshot, freshness_policy, isolation_policy, now)
+
+    reason = _validate_schema(
+        snapshot,
+        freshness_policy=freshness_policy,
+        isolation_policy=isolation_policy,
+        now=now,
+        aura_acceptance=aura_acceptance,
+        allow_missing_store_evidence=aura_acceptance,
+    )
+    if reason is not None:
+        detail = (
+            _policy_input_error_detail(freshness_policy, isolation_policy)
+            if reason == "malformed_policy_input"
+            else None
+        )
+        return _outcome(reason, report, detail=detail)
+
+    ordered_checks = (
+        lambda: _validate_secret_and_model_ids(snapshot, aura_acceptance),
+        lambda: _validate_freshness_and_isolation(
+            snapshot,
+            freshness_policy=freshness_policy,
+            isolation_policy=isolation_policy,
+            now=now,
+        ),
+        lambda: _validate_runtime_contract(snapshot, contract, aura_acceptance),
+        lambda: _validate_database_inventory(snapshot, aura_acceptance),
+        lambda: _validate_model_assets(snapshot, contract, aura_acceptance),
+        lambda: _validate_provenance(snapshot),
+        lambda: _validate_store_state(snapshot, contract),
+    )
+    incomplete_reason = None
+    for check in ordered_checks:
+        reason = check()
+        if reason is not None:
+            if aura_acceptance and reason in _INCOMPLETE_REASON_CODES:
+                incomplete_reason = incomplete_reason or reason
+                continue
+            return _outcome(reason, report)
+    return _outcome(incomplete_reason or "ready", report)
+
+
+def _load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _error_outcome(reason_code: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "invalid",
+        "exit_code": 2,
+        "reason_code": reason_code,
+        "reason": f"{reason_code}: {reason}",
+        "report": {},
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--snapshot", type=Path, required=True)
+    parser.add_argument("--freshness-policy", type=Path, required=True)
+    parser.add_argument("--isolation-policy", type=Path, required=True)
+    parser.add_argument("--now", required=True)
+    parser.add_argument(
+        "--expected-contract",
+        choices=tuple(EXPECTED_CONTRACTS),
+        default="baseline128",
+        help="Operator-selected model contract. Never inferred from the snapshot profile.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        snapshot = _load_json(args.snapshot)
+        freshness_policy = _load_json(args.freshness_policy)
+        isolation_policy = _load_json(args.isolation_policy)
+        result = validate_snapshot(
+            snapshot,
+            freshness_policy=freshness_policy,
+            isolation_policy=isolation_policy,
+            now=args.now,
+            contract=args.expected_contract,
+        )
+    except (json.JSONDecodeError, OSError):
+        result = _error_outcome("snapshot_unreadable", "unable to read or parse JSON input")
+    except Exception:
+        logger.exception("validator failed unexpectedly")
+        result = _error_outcome("validator_internal_error", "validator failed unexpectedly")
+    print(json.dumps(result, sort_keys=True))
+    print(result["reason"], file=sys.stderr)
+    return int(result["exit_code"])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

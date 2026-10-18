@@ -1,0 +1,40 @@
+---
+title: Prototype Description Service Context
+---
+flowchart LR
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
+    subgraph client["HTTP Clients"]
+        http_client["ENTRY: HTTP client(s)"]
+        sse_client["ENTRY: SSE subscribers"]
+    end
+
+    subgraph service["Recognition Service"]
+        recognition_api["ENTRY: FastAPI /recognition/*\nAnalyze, clusters, suggestions,\nmedia, diagnostics, events, health"]
+        sse_clusters["ENTRY: SSE /recognition/clusters/events"]
+        sse_jobs["ENTRY: SSE /recognition/jobs/{id}/stream"]
+        scan_worker["Scan worker process\nclaims scan + clustering/curation/split jobs"]
+    end
+
+    subgraph data_plane["Data & Models"]
+        postgres["PostgreSQL + pgvector\nRLS per tenant (app.current_tenant)"]
+        model_weights["InsightFace model cache"]
+        thumbnails["Thumbnail storage\nmounted static path"]
+    end
+
+    http_client --> recognition_api
+    sse_client --> sse_clusters
+    sse_client --> sse_jobs
+
+    recognition_api -->|enqueue scan jobs + query data| postgres
+    scan_worker -->|claim items + persist identities| postgres
+    scan_worker --> model_weights
+    scan_worker --> thumbnails
+    thumbnails --> http_client
+
+    ApiCode["Code anchors:\nrecognition/interface_adapters/http/routers/*\nrecognition/worker/scan_worker.py"]
+    recognition_api -.-> ApiCode

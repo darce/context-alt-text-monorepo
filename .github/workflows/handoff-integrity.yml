@@ -1,0 +1,47 @@
+name: Handoff Integrity
+
+on:
+  pull_request:
+    paths:
+      - "docs/workbay/BOOTSTRAP.md"
+      - "docs/workbay/instructions.md"
+      - "docs/workbay/rules/development-workflow.md"
+      - "Makefile"
+      - ".github/workflows/handoff-integrity.yml"
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - "docs/workbay/BOOTSTRAP.md"
+      - "docs/workbay/instructions.md"
+      - "docs/workbay/rules/development-workflow.md"
+      - "Makefile"
+
+jobs:
+  handoff-integrity:
+    name: Validate MCP Handoff Integrity
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install mcp-workbay-handoff
+        run: pip install "mcp-workbay-handoff==0.2.0"
+
+      - name: Install mcp-workbay-orchestrator
+        run: pip install "mcp-workbay-orchestrator==0.2.0"
+
+      - name: Run handoff integrity guard
+        run: python -m workbay_orchestrator_mcp.orchestration.handoff_integrity_guard

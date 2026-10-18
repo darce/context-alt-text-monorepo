@@ -1,0 +1,89 @@
+{
+  "lane": "drfu-12",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 5242,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/scopes/commercial-face-identity-replacement.md:54,71 - below-floor slices are directional and excluded from the gate; gating relies on separately powered synthetic pairs and the headline.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The existing slice-floor policy closes this finding; no fix is indicated."
+    },
+    {
+      "db_id": 5244,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/report.py:4689-4694,4712-4719 - fewer than 90 eligible real pairs is under_floor, and synthetic occlusion is directional unless real evidence is observed.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The current real-evidence demotion closes this finding; no fix is indicated."
+    },
+    {
+      "db_id": 6261,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:614-618 - any accepted id without an identity row is counted as zero detections; export_leg persists only the batched identity payload, with no per-requested-id query outcome (export_map.py:47-70).",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/export_map.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "M",
+      "fix_hint": "Persist an explicit query result for each requested media id and test successful empty results separately from unqueried ids."
+    },
+    {
+      "db_id": 6264,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:14-27 - identical legs assert zero half-width while the discordant paired fixture asserts the RED half-width exceeds 0.05.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "The discriminating RED fixture closes this finding; no fix is indicated."
+    },
+    {
+      "db_id": 6265,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:598-608 specifies H0, a two-sided bootstrap p-value, alpha 0.05, the secondary family, Holm step-down, and empty-family behavior; test_precision_precondition.py:77-90 exercises the adjustment.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "The normative Holm contract and adjustment test close this finding; no fix is indicated."
+    },
+    {
+      "db_id": 6359,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:114-124 keeps detection rows identical across frames and asserts that e2e identification has more FNs than native; this closes the same canonical red-proof ambiguity as db 6253.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py",
+      "size": "S",
+      "fix_hint": "The explicit dual-frame assertion closes this duplicate finding; no fix is indicated."
+    },
+    {
+      "db_id": 10004,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_anchor_check.py:86-98 asserts all three verifiers ran, the injected token appeared, and the process failed; lines 173-178 exercise each failure token.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_anchor_check.py",
+      "size": "S",
+      "fix_hint": "The verifier-call and failure-token assertions close this finding; no fix is indicated."
+    },
+    {
+      "db_id": 10005,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/cli.py:366-371 refuses manifest-drift comparability and persists a non-comparable verdict; docs/tasks/vlm/bakeoff-results/SUPERSEDED.md:3-5,17 marks the frozen 39-image caption report as not comparable to the current split.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "The drift refusal and superseded-report status close this finding; no fix is indicated."
+    }
+  ]
+}

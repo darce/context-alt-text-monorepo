@@ -1,0 +1,99 @@
+{
+  "lane": "tc-10",
+  "base": "e56ab004eb3080fd1dac7c602d78835e11fac792",
+  "files": [
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_describe_baseline_pin_provenance.py",
+      "verdict": "KEEP",
+      "tests_total": 43,
+      "tests_affected": [],
+      "reason": "These tests exercise live provenance contracts, including rejecting fabricated or unresolvable SHAs and preventing production call sites from opting out.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_describe_baseline_pin_provenance.py:426 - CLI rejects fabricated live SHAs; :467 - scans eval_harness producers for verify_git opt-outs.",
+      "subject": "Pinned/live provenance and commit SHA validation",
+      "duplicate_of": "",
+      "canon": ["TEST-15"],
+      "replacement": "",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_dw2_experiment_1.py",
+      "verdict": "MERGE",
+      "tests_total": 4,
+      "tests_affected": [
+        "test_validator_rejects_corpus_sha_that_disagrees_with_stack_pair_pin",
+        "test_builder_rejects_aborted_flag_that_disagrees_with_run_record",
+        "test_builder_rejects_non_boolean_aborted_flag",
+        "test_validator_rejects_status_that_disagrees_with_run_record"
+      ],
+      "reason": "The four live manifest regression cases belong with the existing canonical experiment-manifest tests instead of in a wave-named module.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_dw2_experiment_1.py:46 - rejects a mismatched corpus pin; apps/prototype-description-service/scene/tests/test_eval_harness_experiment_manifest.py:13 - canonical module imports and tests the same production module.",
+      "subject": "Experiment manifest builder and validator invariants",
+      "duplicate_of": "",
+      "canon": [],
+      "replacement": "Move these four cases into apps/prototype-description-service/scene/tests/test_eval_harness_experiment_manifest.py as focused invalid corpus-pin and aborted/status consistency cases, then remove the wave-named module.",
+      "est_seconds_saved": 0,
+      "risk": "low"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_determinism_anchor.py",
+      "verdict": "SPEED",
+      "tests_total": 21,
+      "tests_affected": [
+        "test_corrupt_expect_report_makes_determinism_gate_red",
+        "test_expect_report_matches_committed_freeze_green",
+        "test_corrupt_run_record_alt_text_makes_determinism_gate_red"
+      ],
+      "reason": "These mutation and green-path checks protect the live determinism gate but invoke its cross-process scorer; the observed slowest test is 3.7 seconds.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_determinism_anchor.py:366 - corrupted-report case calls _check_score_determinism_cross_process; :411 - green path does likewise.",
+      "subject": "Caption score determinism gate and committed anchor",
+      "duplicate_of": "",
+      "canon": ["TEST-24", "TEST-15"],
+      "replacement": "Keep direct scorer/oracle assertions in commit-stage checks; run these cross-process gate cases in post-commit CI, or share each identical child payload once per run.",
+      "est_seconds_saved": 3.7,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_eval_harness_face_determinism_anchor.py",
+      "verdict": "SPEED",
+      "tests_total": 25,
+      "tests_affected": [
+        "test_corrupt_face_expect_report_makes_determinism_gate_red",
+        "test_corrupt_face_run_record_embedding_makes_determinism_gate_red",
+        "test_f7_clustering_corruption_goes_red",
+        "test_f7_detection_fp_corruption_goes_red",
+        "test_corrupt_face_run_record_without_expect_report_passes_silently",
+        "test_face_expect_report_matches_committed_freeze_green",
+        "test_cli_score_face_expect_report_end_to_end_green",
+        "test_f7_01_mismatch_artifact_never_dirties_bakeoff_results"
+      ],
+      "reason": "These checks protect the face determinism gate but run cross-process scoring or the end-to-end CLI; the observed slowest test is 3.4 seconds.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_face_determinism_anchor.py:860 - corrupted-report case calls _check_face_determinism_cross_process; :1261 - end-to-end CLI green path runs the full determinism gate.",
+      "subject": "Face score determinism gate, corruption handling, and committed anchor",
+      "duplicate_of": "",
+      "canon": ["TEST-24", "TEST-15"],
+      "replacement": "Keep direct scorer/oracle assertions in commit-stage checks; run cross-process corruption and full CLI determinism cases in post-commit CI, reusing the module-scoped identical-payload cache.",
+      "est_seconds_saved": 3.4,
+      "risk": "medium"
+    },
+    {
+      "path": "apps/prototype-description-service/scene/tests/test_vlm_promote_atomicity.py",
+      "verdict": "SPEED",
+      "tests_total": 42,
+      "tests_affected": [
+        "test_vlm6_r2_b02_concurrent_promotes_consistent",
+        "test_vlm6_r2_b02_lock_absence_goes_red",
+        "test_vlm6_r2_b02_scavenge_does_not_reclaim_under_live_lock"
+      ],
+      "reason": "Keep the locking regressions but move the 50-worker filesystem stress check later and replace fixed waits in the live-lock check; this file's slowest observed test is 9.9 seconds.",
+      "evidence": "apps/prototype-description-service/scene/tests/test_vlm_promote_atomicity.py:700 - launches 50 concurrent atomic_promote workers; :835 and :844 - the live-lock test sleeps 0.2 and 0.5 seconds.",
+      "subject": "Crash-safe atomic promotion, namespace locks, and stage scavenging",
+      "duplicate_of": "",
+      "canon": ["TEST-24", "TEST-08", "CON-17"],
+      "replacement": "Keep a small deterministic contention check in the commit stage; move the 50-worker stress case to post-commit CI and use events or a fake clock instead of the 0.2/0.5 second sleeps.",
+      "est_seconds_saved": 9.9,
+      "risk": "medium"
+    }
+  ],
+  "fixtures": []
+}

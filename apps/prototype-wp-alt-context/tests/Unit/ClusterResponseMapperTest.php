@@ -1,0 +1,1592 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Tests\Unit;
+
+use AltContext\Sovereign\Mappers\ClusterResponseMapper;
+use AltContext\Tests\TestCase;
+
+/**
+ * @covers \AltContext\Sovereign\Mappers\ClusterResponseMapper
+ */
+class ClusterResponseMapperTest extends TestCase
+{
+    private ClusterResponseMapper $mapper;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->mapper = new ClusterResponseMapper();
+    }
+
+    public function testMapTopUnlabeledClustersPreservesPinnedRepresentatives(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][99] = 'http://example.test/media/99.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 99,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                    'is_pinned' => 1,
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $this->assertTrue($payload[0]['representatives'][0]['is_pinned']);
+    }
+
+    public function testMapClusterListUsesMemberRowsForSamples(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertSame('cluster-1', $payload[0]['id']);
+        $this->assertSame('Alice', $payload[0]['label']);
+        $this->assertSame('identity-1', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['thumb_url']);
+    }
+
+    public function testMapClusterListPreservesSnapshotExportFields(): void
+    {
+        $quality_components = [
+            'confidence' => 0.91,
+            'bbox_area' => 0.12,
+            'sharpness' => 0.77,
+            'occlusion_severity' => null,
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-export',
+                    'representative_quality' => '0.82',
+                    'quality_components' => json_encode($quality_components),
+                    'representative_media_id' => '501',
+                    'undoable_merge_receipt_id' => 'b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44',
+                ],
+            ],
+            []
+        );
+
+        $this->assertSame(0.82, $payload[0]['representative_quality']);
+        $this->assertSame($quality_components, $payload[0]['quality_components']);
+        $this->assertSame(501, $payload[0]['representative_media_id']);
+        $this->assertSame('b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44', $payload[0]['undoable_merge_receipt_id']);
+    }
+
+    public function testMapClusterListUsesObservedEmptyMemberCountOnCounterMismatch(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-count',
+                    'identity_count' => 1,
+                ],
+            ],
+            ['cluster-stale-count' => []],
+            4
+        );
+
+        $this->assertSame(0, $payload[0]['identity_count']);
+        $this->assertStringContainsString('cluster-stale-count', \implode("\n", $GLOBALS['__ac_error_log']));
+        $this->assertStringContainsString('projected=1 observed=0', \implode("\n", $GLOBALS['__ac_error_log']));
+    }
+
+    /**
+     * Production repository shape: clusters with zero members have no key in the
+     * members map (sparse). With members fetched (preview limit provided), that
+     * absence must mean observed 0 — not "not loaded".
+     */
+    public function testMapClusterListTreatsSparseMissingKeyAsEmptyWhenMembersFetched(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        // Real list_for_cluster_uuids output: only clusters with rows appear.
+        $sparse_members = [
+            'cluster-with-members' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                ],
+            ],
+            // 'cluster-stale-empty' intentionally absent — zero member rows.
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-with-members',
+                    'identity_count' => 1,
+                ],
+                [
+                    'cluster_uuid' => 'cluster-stale-empty',
+                    'identity_count' => 1,
+                ],
+            ],
+            $sparse_members,
+            4
+        );
+
+        $this->assertSame(1, $payload[0]['identity_count']);
+        $this->assertSame(0, $payload[1]['identity_count']);
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-stale-empty', $log);
+        $this->assertStringContainsString('projected=1 observed=0', $log);
+    }
+
+    /**
+     * Mapper-level densify for top-unlabeled: a sparse members map (cluster UUID
+     * with no key) plus a non-null preview_limit must treat observed zero as
+     * authoritative over a stale projected identity_count. Does not go through
+     * ClusterFacade so facade densify cannot mask a missing preview_limit.
+     */
+    public function testMapTopUnlabeledClustersTreatsSparseMissingKeyAsEmptyWhenPreviewLimitSet(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        // Sparse map: cluster-stale-empty has no key at all (not even []).
+        $sparse_members = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-empty',
+                    'label' => '',
+                    'identity_count' => 7,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            $sparse_members,
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(0, $payload, 'memberless top-unlabeled rows must be dropped when members were loaded');
+        $this->assertContains('cluster-stale-empty', $this->mapper->requested_repair_cluster_ids());
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-stale-empty', $log);
+        $this->assertStringContainsString('projected=7 observed=0', $log);
+    }
+
+    public function testMapTopUnlabeledDropsZeroObservedMembersWhenMembersLoaded(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-empty',
+                    'label' => '',
+                    'identity_count' => 7,
+                    'is_user_confirmed' => 0,
+                ],
+                [
+                    'cluster_uuid' => 'cluster-kept',
+                    'label' => '',
+                    'identity_count' => 2,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-empty' => [],
+                'cluster-kept' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(1, $payload);
+        $this->assertSame('cluster-kept', $payload[0]['id']);
+        $this->assertSame(2, $payload[0]['identity_count']);
+        $this->assertNotEmpty($payload[0]['representatives']);
+        $this->assertContains('cluster-empty', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    public function testMapClusterListKeepsProjectedCountWhenMembersNotFetched(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-projected-only',
+                    'identity_count' => 7,
+                ],
+            ],
+            []
+        );
+
+        $this->assertSame(7, $payload[0]['identity_count']);
+        $this->assertSame([], $GLOBALS['__ac_error_log']);
+    }
+
+    public function testMapClusterListDoesNotLogExpectedPreviewTruncation(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $members = [
+            'cluster-truncated' => [
+                ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-truncated',
+                    'identity_count' => 9,
+                ],
+            ],
+            $members,
+            4
+        );
+
+        $this->assertSame(9, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['sample_identities']);
+        $this->assertSame([], $GLOBALS['__ac_error_log']);
+        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
+    }
+
+    public function testMapClusterListReturnsObservedCountAndLogsWhenObservedBelowPreviewLimit(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $members = [
+            'cluster-shortfall' => [
+                ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-shortfall',
+                    'identity_count' => 9,
+                ],
+            ],
+            $members,
+            4
+        );
+
+        $this->assertSame(2, $payload[0]['identity_count']);
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-shortfall', $log);
+        $this->assertStringContainsString('projected=9 observed=2', $log);
+    }
+
+    /**
+     * R1-02: upward drift is also SoR. projected=2, observed=4, not a cap-hit
+     * truncation (projected is not greater than observed) → identity_count 4.
+     */
+    public function testMapClusterListReturnsObservedCountWhenObservedExceedsProjected(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $members = [
+            'cluster-upward' => [
+                ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-upward',
+                    'identity_count' => 2,
+                ],
+            ],
+            $members,
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertGreaterThanOrEqual(
+            count($payload[0]['sample_identities']),
+            $payload[0]['identity_count']
+        );
+        $this->assertSame(4, count($payload[0]['member_ids']));
+        $this->assertContains('cluster-upward', $this->mapper->requested_repair_cluster_ids());
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('projected=2 observed=4', $log);
+    }
+
+    /**
+     * R1-02: top-unlabeled must reconcile observed > projected the same way.
+     */
+    public function testMapTopUnlabeledReturnsObservedCountWhenObservedExceedsProjected(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-upward-top',
+                    'label' => '',
+                    'identity_count' => 2,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-upward-top' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertGreaterThanOrEqual(
+            count($payload[0]['representatives']),
+            $payload[0]['identity_count'],
+            'identity_count must be >= count(representatives)'
+        );
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-upward-top', $this->mapper->requested_repair_cluster_ids());
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('projected=2 observed=4', $log);
+    }
+
+    /**
+     * B5 / REF-09: projected 3, observed 2, preview cap 4 is a non-truncated
+     * shortfall — identity_count must be the honest observed 2 (TEST-15: returning
+     * the stale projected 3 makes this assertion red).
+     */
+    public function testMapTopUnlabeledReturnsObservedCountOnNonTruncatedShortfall(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-drift-3-2',
+                    'label' => '',
+                    'identity_count' => 3,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-drift-3-2' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(2, $payload[0]['identity_count']);
+        $this->assertCount(2, $payload[0]['representatives']);
+        $this->assertContains(
+            'cluster-drift-3-2',
+            $this->mapper->requested_repair_cluster_ids(),
+            'non-truncated shortfall must request targeted projection repair'
+        );
+        $log = \implode("\n", $GLOBALS['__ac_error_log']);
+        $this->assertStringContainsString('cluster-drift-3-2', $log);
+        $this->assertStringContainsString('projected=3 observed=2', $log);
+    }
+
+    /**
+     * R1-12: observed > cap is truncation. Fetch probe returns cap+1.
+     */
+    public function testMapTopUnlabeledKeepsProjectedCountWhenPreviewIsTruncated(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-truncated-9-5',
+                    'label' => '',
+                    'identity_count' => 9,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-truncated-9-5' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(9, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertSame([], $this->mapper->requested_repair_cluster_ids());
+        $this->assertSame([], $GLOBALS['__ac_error_log']);
+    }
+
+    /**
+     * R6-01: projected=7, cap=4, cap+1 fetch returns 5 rows. This is a
+     * healthy oversized cluster — observed is a capped page, not a stale
+     * projection. Must keep identity_count 7 and must not request repair.
+     */
+    public function testMapTopUnlabeledHealthyOversizedTruncationDoesNotRequestRepair(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-healthy-7',
+                    'label' => '',
+                    'identity_count' => 7,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-healthy-7' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(7, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertSame(
+            [],
+            $this->mapper->requested_repair_cluster_ids(),
+            'healthy oversized cluster must not schedule truncation repair'
+        );
+    }
+
+    /**
+     * R6-01: projected=3, cap=4, fetch returns 5 rows. Projection is
+     * stale-low during truncation — repair must be requested.
+     */
+    public function testMapTopUnlabeledStaleLowTruncationRequestsRepair(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-low-3',
+                    'label' => '',
+                    'identity_count' => 3,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-low-3' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-stale-low-3', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    /**
+     * R1-12: observed == cap after a cap+1 fetch is exact, not truncation.
+     */
+    public function testMapTopUnlabeledTreatsObservedEqualToCapAsExactCount(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-exact-4',
+                    'label' => '',
+                    'identity_count' => 9,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-exact-4' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-exact-4', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    /**
+     * R2-07: observed==cap+1 with stale-low projected must not publish
+     * observed 5 as an exact count. Republish the projected column and request repair.
+     */
+    public function testMapTopUnlabeledDoesNotPublishTruncatedObservedAsExactWhenProjectedIsStaleLow(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-trunc',
+                    'label' => '',
+                    'identity_count' => 4,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-trunc' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertCount(4, $payload[0]['representatives']);
+        $this->assertContains('cluster-stale-trunc', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    /**
+     * R2-07 residual: truncated stale-low projected (1 or 0) must not go
+     * below representatives.length. Mutant: return $projected_count.
+     */
+    public function testMapTopUnlabeledTruncatedCountNeverBelowPreviewLength(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-one',
+                    'label' => '',
+                    'identity_count' => 1,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-one' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(1, $payload);
+        $this->assertGreaterThanOrEqual(count($payload[0]['representatives']), $payload[0]['identity_count']);
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertContains('cluster-stale-one', $this->mapper->requested_repair_cluster_ids());
+
+        $zero = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-stale-zero',
+                    'label' => '',
+                    'identity_count' => 0,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-stale-zero' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                    ['identity_uuid' => 'id-5', 'attachment_id' => 5],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertGreaterThanOrEqual(count($zero[0]['representatives']), $zero[0]['identity_count']);
+        $this->assertSame(4, $zero[0]['identity_count']);
+        $this->assertContains('cluster-stale-zero', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    /**
+     * R2-08: SQL excludes <2 members; mapper must drop a 1-member non-truncated row.
+     */
+    public function testMapTopUnlabeledDropsSingleObservedMemberWhenNotCapTruncated(): void
+    {
+        $payload = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-singleton',
+                    'label' => '',
+                    'identity_count' => 1,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [
+                'cluster-singleton' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                ],
+            ],
+            'tenant-1',
+            4
+        );
+
+        $this->assertCount(0, $payload);
+        $this->assertSame(1, $this->mapper->dropped_cluster_count());
+    }
+
+    /**
+     * R1-13: non-positive preview_limit is not a truncation cap (null-default
+     * and 0 both publish observed).
+     */
+    public function testMapClusterListNonPositivePreviewLimitIsNotTruncation(): void
+    {
+        $GLOBALS['__ac_error_log'] = [];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-zero-cap',
+                    'identity_count' => 9,
+                ],
+            ],
+            [
+                'cluster-zero-cap' => [
+                    ['identity_uuid' => 'id-1', 'attachment_id' => 1],
+                    ['identity_uuid' => 'id-2', 'attachment_id' => 2],
+                    ['identity_uuid' => 'id-3', 'attachment_id' => 3],
+                    ['identity_uuid' => 'id-4', 'attachment_id' => 4],
+                ],
+            ],
+            0
+        );
+
+        $this->assertSame(4, $payload[0]['identity_count']);
+        $this->assertContains('cluster-zero-cap', $this->mapper->requested_repair_cluster_ids());
+    }
+
+    public function testMapClusterListIncludesPinnedRepresentativeState(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                    'is_pinned' => 1,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertTrue($payload[0]['representative_identity']['is_pinned']);
+    }
+
+    public function testMapClusterListFallsBackToClusterPinnedRepresentativeState(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+                'representative_id' => 'identity-1',
+                'is_pinned' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertTrue($payload[0]['representative_identity']['is_pinned']);
+    }
+
+    public function testMapTopUnlabeledClustersIncludesRepresentatives(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][99] = 'http://example.test/media/99.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 99,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $this->assertSame('cluster-top', $payload[0]['id']);
+        $this->assertFalse($payload[0]['is_labeled']);
+        $this->assertSame('http://example.test/media/99.jpg', $payload[0]['representatives'][0]['thumb_url']);
+        $this->assertFalse($payload[0]['representatives'][0]['is_pinned']);
+    }
+
+    public function testMapTopUnlabeledClustersRewritesBlobThumbPathWhenAttachmentUrlMissing(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 6731,
+                    'thumb_path' => 'file:///private/tmp/acx-recognition-blobs/tenant-x/job-y/6731.bin',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $parts = \parse_url($payload[0]['representatives'][0]['thumb_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-y/6731', $parts['path']);
+    }
+
+    public function testMapTopUnlabeledClustersPrefersFaceThumbPathOverAttachmentUrl(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][6731] = 'http://example.test/uploads/6731.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 6731,
+                    'thumb_path' => '/recognition/face-thumbs/job-y/6731?x=1&y=2&width=30&height=40',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":30,"height":40}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $parts = \parse_url($payload[0]['representatives'][0]['thumb_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-y/6731', $parts['path']);
+        $this->assertStringNotContainsString('/uploads/6731.jpg', $payload[0]['representatives'][0]['thumb_url']);
+        $this->assertSame('http://example.test/uploads/6731.jpg', $payload[0]['representatives'][0]['attachment_url']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 30,
+                'height' => 40,
+            ),
+            $payload[0]['representatives'][0]['bbox']
+        );
+    }
+
+    public function testMapClusterListEmitsAttachmentUrlAndBboxBesideFaceThumb(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'thumb_path' => '/recognition/face-thumbs/job-1/12?x=1&y=2&width=3&height=4',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $parts = \parse_url($payload[0]['sample_identities'][0]['thumb_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/face-thumbs/job-1/12', $parts['path']);
+        $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['attachment_url']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 3,
+                'height' => 4,
+            ),
+            $payload[0]['sample_identities'][0]['bbox']
+        );
+    }
+
+    public function testMapTopUnlabeledClustersEmitsNullAttachmentUrlWhenUnknown(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 1,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 99,
+                    'thumb_path' => '/recognition/face-thumbs/job-y/99?x=1&y=2&width=30&height=40',
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $this->assertNull($payload[0]['representatives'][0]['attachment_url']);
+        $this->assertNull($payload[0]['representatives'][0]['bbox']);
+    }
+
+    public function testMapTopUnlabeledClustersFallsBackToClusterRepresentativeMetadata(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+                'representative_id' => 'identity-99',
+                'is_pinned' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 99,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-100',
+                    'attachment_id' => 100,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $this->assertTrue($payload[0]['representatives'][0]['is_pinned']);
+    }
+
+    public function testMapTopUnlabeledClustersReadsSuggestedLabelFromRow(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-inferred',
+                'label' => '',
+                'identity_count' => 5,
+                'is_user_confirmed' => 0,
+                'suggested_label' => 'Alice',
+                'suggested_label_source' => 'similar_cluster',
+                'suggested_label_confidence' => '0.92',
+                'suggested_target_cluster_id' => 'cluster-target',
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, [], 'tenant-1');
+
+        $this->assertSame('Alice', $payload[0]['suggested_label']);
+        $this->assertSame('similar_cluster', $payload[0]['suggested_label_source']);
+        $this->assertEqualsWithDelta(0.92, $payload[0]['suggested_label_confidence'], 0.001);
+        $this->assertSame('cluster-target', $payload[0]['suggested_target_cluster_id']);
+    }
+
+    public function testMapTopUnlabeledClustersReturnsNullWhenSuggestedLabelAbsent(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-nosugg',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, [], 'tenant-1');
+
+        $this->assertNull($payload[0]['suggested_label']);
+        $this->assertNull($payload[0]['suggested_label_source']);
+        $this->assertNull($payload[0]['suggested_label_confidence']);
+        $this->assertNull($payload[0]['suggested_target_cluster_id']);
+    }
+
+    public function testMapTopUnlabeledClustersTreatsSyntheticClusterLabelsAsAutoLabels(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-auto',
+                'label' => 'cluster-12345678',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, [], 'tenant-1');
+
+        $this->assertNull($payload[0]['label']);
+        $this->assertFalse($payload[0]['is_labeled']);
+        $this->assertTrue($payload[0]['is_auto_label']);
+        $this->assertFalse($payload[0]['user_confirmed']);
+    }
+
+    public function testMapClusterListTreatsSyntheticClusterLabelsAsAutoLabels(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-list-auto',
+                'label' => 'cluster-12345678',
+                'identity_count' => 3,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, []);
+
+        $this->assertNull($payload[0]['label']);
+        $this->assertTrue($payload[0]['is_auto_label']);
+    }
+
+    public function testMapClusterListPassesThroughPersonUuidFromPersonsJoin(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-bound',
+                'label' => 'Alice',
+                'identity_count' => 2,
+                'person_uuid' => '11111111-1111-1111-1111-111111111111',
+            ],
+            [
+                'cluster_uuid' => 'cluster-unresolved',
+                'label' => '',
+                'identity_count' => 3,
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, []);
+
+        $this->assertSame('11111111-1111-1111-1111-111111111111', $payload[0]['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $payload[1]);
+        $this->assertNull($payload[1]['person_uuid']);
+    }
+
+    public function testMapClusterListDoesNotInventTopologyFields(): void
+    {
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-plain',
+                    'label' => 'Bob',
+                    'identity_count' => 2,
+                    'person_uuid' => '22222222-2222-2222-2222-222222222222',
+                    'merged_into_cluster_id' => 'should-not-pass',
+                    'superseded_by' => 'should-not-pass',
+                    'status' => 'merged',
+                ],
+            ],
+            []
+        );
+
+        $this->assertSame('22222222-2222-2222-2222-222222222222', $payload[0]['person_uuid']);
+        $this->assertArrayNotHasKey('merged_into_cluster_id', $payload[0]);
+        $this->assertArrayNotHasKey('superseded_by', $payload[0]);
+        $this->assertArrayNotHasKey('status', $payload[0]);
+    }
+
+    public function testMapClusterDetailPassesThroughPersonUuid(): void
+    {
+        $payload = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-detail',
+                'label' => 'Dana',
+                'identity_count' => 4,
+                'person_uuid' => '33333333-3333-3333-3333-333333333333',
+            ],
+            []
+        );
+
+        $this->assertSame('33333333-3333-3333-3333-333333333333', $payload['person_uuid']);
+    }
+
+    public function testMapClusterListNormalizesEmptyAndWhitespacePersonUuidToNull(): void
+    {
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-empty',
+                    'label' => 'Empty',
+                    'identity_count' => 2,
+                    'person_uuid' => '',
+                ],
+                [
+                    'cluster_uuid' => 'cluster-whitespace',
+                    'label' => 'Whitespace',
+                    'identity_count' => 2,
+                    'person_uuid' => '   ',
+                ],
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('person_uuid', $payload[0]);
+        $this->assertNull($payload[0]['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $payload[1]);
+        $this->assertNull($payload[1]['person_uuid']);
+    }
+
+    public function testMapClusterDetailNormalizesEmptyAndWhitespacePersonUuidToNull(): void
+    {
+        $empty = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-empty-detail',
+                'label' => 'Empty',
+                'identity_count' => 2,
+                'person_uuid' => '',
+            ],
+            []
+        );
+        $whitespace = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-whitespace-detail',
+                'label' => 'Whitespace',
+                'identity_count' => 2,
+                'person_uuid' => " \t ",
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('person_uuid', $empty);
+        $this->assertNull($empty['person_uuid']);
+        $this->assertArrayHasKey('person_uuid', $whitespace);
+        $this->assertNull($whitespace['person_uuid']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenBboxJsonIsNotValidJson(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'bbox_json' => 'not-json',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-1', $payload[0]['sample_identities'][0]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenPixelsOmitAnEdge(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 2,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-omit-height',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-omit-y',
+                    'attachment_id' => 13,
+                    'bbox_json' => '{"pixels":{"x":1,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-omit-height', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][1]);
+        $this->assertNull($payload[0]['sample_identities'][1]['bbox']);
+        $this->assertSame('identity-omit-y', $payload[0]['sample_identities'][1]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenPixelsIsNotAnObject(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 2,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-scalar-pixels',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":5}',
+                ],
+                [
+                    'identity_uuid' => 'identity-list-pixels',
+                    'attachment_id' => 13,
+                    'bbox_json' => '{"pixels":[1,2,3,4]}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-scalar-pixels', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][1]);
+        $this->assertNull($payload[0]['sample_identities'][1]['bbox']);
+        $this->assertSame('identity-list-pixels', $payload[0]['sample_identities'][1]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenEdgeIsNonNumeric(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-non-numeric-width',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":"abc","height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-non-numeric-width', $payload[0]['sample_identities'][0]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenExtentsAreNegative(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 2,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-negative-width',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":-40,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-negative-height',
+                    'attachment_id' => 13,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":-40}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-negative-width', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][1]);
+        $this->assertNull($payload[0]['sample_identities'][1]['bbox']);
+        $this->assertSame('identity-negative-height', $payload[0]['sample_identities'][1]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsNullBboxWhenWidthIsZero(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-zero-width',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":0,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertArrayHasKey('bbox', $payload[0]['sample_identities'][0]);
+        $this->assertNull($payload[0]['sample_identities'][0]['bbox']);
+        $this->assertSame('identity-zero-width', $payload[0]['sample_identities'][0]['identity_id']);
+    }
+
+    public function testMapClusterListEmitsIntegerBboxWhenPixelsAreNumericAndPositive(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-happy-bbox',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":10,"y":20,"width":30,"height":40}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertSame('identity-happy-bbox', $payload[0]['sample_identities'][0]['identity_id']);
+        $this->assertSame(
+            array(
+                'x' => 10,
+                'y' => 20,
+                'width' => 30,
+                'height' => 40,
+            ),
+            $payload[0]['sample_identities'][0]['bbox']
+        );
+    }
+
+    public function testMapClusterDetailEmitsBboxOnHappyPathAndNullWhenAbsent(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
+        $GLOBALS['__ac_attachment_urls'][13] = 'http://example.test/media/13.jpg';
+
+        $payload = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-detail-bbox',
+                'label' => 'Dana',
+                'identity_count' => 2,
+            ],
+            [
+                [
+                    'identity_uuid' => 'identity-with-bbox',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+                [
+                    'identity_uuid' => 'identity-without-bbox',
+                    'attachment_id' => 13,
+                ],
+            ]
+        );
+
+        $this->assertSame('cluster-detail-bbox', $payload['id']);
+        $this->assertSame('Dana', $payload['label']);
+        $this->assertSame('identity-with-bbox', $payload['sample_identities'][0]['identity_id']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 3,
+                'height' => 4,
+            ),
+            $payload['sample_identities'][0]['bbox']
+        );
+        $this->assertSame('identity-without-bbox', $payload['sample_identities'][1]['identity_id']);
+        $this->assertArrayHasKey('bbox', $payload['sample_identities'][1]);
+        $this->assertNull($payload['sample_identities'][1]['bbox']);
+        $this->assertSame(
+            array(
+                'x' => 1,
+                'y' => 2,
+                'width' => 3,
+                'height' => 4,
+            ),
+            $payload['representative_identity']['bbox']
+        );
+    }
+
+    /**
+     * M2: REST-facing cluster list + top-unlabeled must carry the three-valued
+     * label_state string. Dropping the key from either emitted array fails this.
+     */
+    public function testMapClusterListAndTopUnlabeledEmitLabelState(): void
+    {
+        $list = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-bound',
+                    'label' => 'Ada Lovelace',
+                    'label_state' => 'person',
+                    'person_uuid' => '11111111-1111-1111-1111-111111111111',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('label_state', $list[0]);
+        $this->assertSame('person', $list[0]['label_state']);
+
+        $detail = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-detail',
+                'label' => 'Dana',
+                'label_state' => 'person',
+                'identity_count' => 1,
+            ],
+            []
+        );
+        $this->assertArrayHasKey('label_state', $detail);
+        $this->assertSame('person', $detail['label_state']);
+
+        $top = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-top',
+                    'label' => '',
+                    'identity_count' => 2,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [],
+            'tenant-1'
+        );
+
+        $this->assertArrayHasKey('label_state', $top[0]);
+        $this->assertSame('unlabeled', $top[0]['label_state']);
+    }
+
+    public function testMapClusterListPrefersSqlLabelStateAndFallsBackWhenColumnMissing(): void
+    {
+        $fromSql = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-sql-person',
+                    'label' => 'Tory Guzman',
+                    'label_state' => 'person',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('person', $fromSql[0]['label_state']);
+
+        $unbound = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-unbound',
+                    'label' => 'Tory Guzman',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('unbound', $unbound[0]['label_state']);
+
+        $boundViaUuid = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-uuid-person',
+                    'label' => 'Ada Lovelace',
+                    'person_uuid' => '11111111-1111-1111-1111-111111111111',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('person', $boundViaUuid[0]['label_state']);
+
+        $reserved = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-reserved',
+                    'label' => 'cluster-12345678',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('unlabeled', $reserved[0]['label_state']);
+        $this->assertTrue($reserved[0]['is_auto_label']);
+    }
+
+    public function testEnsureEmittedLabelStateBackfillsUnlabeledWhenOmitted(): void
+    {
+        $ensured = $this->mapper->ensure_emitted_label_state([
+            'id' => 'cluster-proxy',
+            'label' => null,
+            'identity_count' => 2,
+        ]);
+
+        $this->assertSame('unlabeled', $ensured['label_state']);
+    }
+}

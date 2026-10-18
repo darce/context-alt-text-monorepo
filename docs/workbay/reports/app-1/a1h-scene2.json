@@ -1,0 +1,48 @@
+{
+  "lane": "a1h-scene2",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_app1_usage_composition.py scene/tests/test_app1_describe_run_key_required.py scene/tests/test_app1_gate3_describe_operation_id.py scene/tests/test_app1_usage_scene_census.py scene/tests/test_context_pack.py",
+      "result": "not_run",
+      "detail": "uv stopped before pytest: failed to remove the lane environment's alembic executable with `Read-only file system (os error 30)`; retried with --no-sync per lane guidance."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_operator_usage_census.py recognition/tests/unit/test_app1_usage_composition.py scene/tests/test_app1_describe_run_key_required.py scene/tests/test_app1_gate3_describe_operation_id.py scene/tests/test_app1_usage_scene_census.py scene/tests/test_context_pack.py",
+      "result": "not_run",
+      "detail": "The first --no-sync retry emitted 11 progress dots and stalled without terminal status; it was interrupted. The second emitted 11 dots, then reported `Timeout (0:04:00)!` with the async test event loop waiting in `selectors.py:468 in select` and an anyio worker waiting in `queue.py:171 in get`; it hit this timeout twice and was interrupted without a final pytest summary. The lane harness identifies this async SQLite fixture timeout as a sandbox limit."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16004,
+      "finding_id": "APP1-SCENE-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:402-407 - `if service is None` raises 503 with `detail={\"error\": \"usage_admission_unavailable\"}`; apps/prototype-description-service/recognition/tests/unit/test_app1_usage_composition.py:129-131 asserts 503 and zero adapter calls.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_composition.py::test_metered_scene_ingress_is_503_when_factory_missing"
+    },
+    {
+      "db_id": 16002,
+      "finding_id": "APP1-SCENE-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:1561-1564 - successful adapter consumption calls `await _settle_usage_ticket(usage_admission_service, ticket, commit=True)`; apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py:362 asserts the committed job id matches the multipart reservation.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py::test_three_compute_posts_reserve_before_dispatch"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py",
+      "line": 1487,
+      "title": "Missing admission can strand accepted GPU demand",
+      "defect": "The multipart route runs `await _accept_operation(...)` before `async with _maybe_admit_usage(...)` (describe.py:1476-1487). For GPU requests, repository line 113 creates `state=State.ACTIVE`, then the missing-service check raises 503 before the route's cleanup handlers are entered; repository line 186 renews `lease.expires_at` on same-key retries. Repeated failing retries can therefore keep consuming GPU demand capacity without dispatching compute.",
+      "failure_scenario": "A GPU multipart request has a database session but no usage-admission service: `_accept_operation` commits its ACTIVE demand lease, then admission returns 503. Retrying with the same operation_id renews the lease on each attempt and can exclude real GPU work from active-demand capacity.",
+      "fix": "Validate the metered admission service before accepting the operation, or terminalize the accepted GPU operation whenever admission setup fails. Add a database-backed regression asserting the lease is not ACTIVE after a missing-service 503 and remains released after a same-key retry.",
+      "test_file": "apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "Both listed scene corrections are present with guard assertions, and one medium GPU demand-lease leak remains when admission is absent; lane verification hit the sandbox async SQLite timeout before producing a final summary."
+}

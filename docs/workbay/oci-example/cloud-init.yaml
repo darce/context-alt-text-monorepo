@@ -1,0 +1,83 @@
+#cloud-config
+# ACX OCI bootstrap pattern (Ubuntu 24.04 ARM)
+# Installs Docker + Docker Compose, fail2ban, and creates an app service scaffold.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - unattended-upgrades
+  - fail2ban
+
+write_files:
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        },
+        "storage-driver": "overlay2"
+      }
+
+  - path: /etc/systemd/system/acx-backend.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX Backend (Docker Compose)
+      Requires=docker.service
+      After=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/acx-backend
+      ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up -d --remove-orphans
+      ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
+      TimeoutStartSec=600
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/logrotate.d/acx-backend
+    permissions: "0644"
+    content: |
+      /opt/acx-backend/logs/*.log {
+        daily
+        rotate 7
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 0640 ubuntu ubuntu
+      }
+
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - apt-get install -y docker-compose-plugin
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+  - systemctl restart docker
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+  - mkdir -p /opt/acx-backend/secrets
+  - mkdir -p /opt/acx-backend/logs
+  - mkdir -p /opt/acx-backend/data/models
+  - mkdir -p /opt/acx-backend/data/pgdata
+  - chown -R ubuntu:ubuntu /opt/acx-backend
+  - chmod 750 /opt/acx-backend/secrets
+  - systemctl daemon-reload
+  - systemctl enable acx-backend.service
+  - echo "ACX cloud-init bootstrap complete"
+
+# Optional Free Tier-only keepalive pattern:
+#   - create /usr/local/bin/acx-keepalive.sh
+#   - schedule with cron every 6h
+# Keep this disabled by default on PAYG deployments.

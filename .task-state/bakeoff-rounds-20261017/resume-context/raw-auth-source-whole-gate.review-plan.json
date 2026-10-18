@@ -1,0 +1,33 @@
+{
+  "created_at": 1792290776.454916,
+  "lane": "RAW-AUTH-WHOLE-SOURCE-G1",
+  "trigger": "Verified terminal RAW-AUTH-INITIAL-SOURCE sourcecommit + normal scoped validation; stage exact owned delta first",
+  "backend": "codex-remote",
+  "model": "gpt-6.1-sol",
+  "effort": "xhigh",
+  "speed": "standard",
+  "timeout_seconds": 1500,
+  "source_readonly": "apps/prototype-description-service/scripts/eval_harness/bakeoff.py",
+  "tests_readonly": "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_raw_auth.py",
+  "gate_scope": [
+    "Review whole new optional RAW constructor/auth-file/transport/warmup/error boundary, no source/test repair in review lane",
+    "Independently reproduce approved50 normal serviceconfig/bothconftests/requiredplugins; scrutinize coherent positive-negative controls, no expected-token masked by unrelatedfailure",
+    "HeldFD validation before ANYcontentread, nofollow+nonblocking+regularrunnerUID0400/0600,4096/read4097overflow, sameFD/no reopen, exactASCII/optionaloneLF, all resourceclose paths",
+    "Per-requestrawBearer only; inheritedrequest_kwargs route owns retry429/timeout/three-strike accounting; no redirected secret forwarding or globalclient auth change",
+    "No key/privatepath output/config/provenance/str/repr/chains, including reflected success/error responses; preserve typed errors/retry classification",
+    "Warmup propagatesauth andisolatescounter/breaker; preexistingseed/revision/weavecloneomissions remainoutofscope",
+    "Adjacentlegacy scope only with namedactual source/testproducer; no broad suite / livecloud/model/secret access",
+    "Sourceandtests hashes/actual imported producer/real externalMockTransport; no futureclient substitutes/source-string oracle/private-layout acceptance",
+    "PASS only0 unresolvedmaterialsource defects; consequent defects coherentpubliccounterexample+matchedvalidparent/frozenrequirement/exactpathline/minimalfix",
+    "Second actualsource authorafterG1defects routesSolHIGHstandard with allfirst-source+G1 paths; third+ROOTLOUDcanonproposal beforeoddOpusXHIGH/evenSolXHIGH (allSolwhileClaude exhausted)"
+  ],
+  "context_mandatory": [
+    "Author fullresult/patch/before-after50 outputs and finalJSON equalscommittedreport",
+    "Current canonical8d2c24b9/main1024ff hashes/newsource stage and honestnative provenance tree mapping",
+    "All prior rawtest low/G1/twoHIGHmaps/G2, approved50/redACK5024, QWENroute investigation",
+    "Fresh semanticneighbors+ONNXreinjection/null-degrade receipt, current graph+actual source/AST, canon0.26.2 fired rows/cards/principles+fulloriginaldistillations",
+    "Existing client/request/reporting transport reuse from raw-auth-source-navigation/measurement-reporting-reuse-navigation; no duplicate producers"
+  ],
+  "after_pass": "Recordactualwholegate; adopt exact approvedsource/report blobs on canonical BAKERAW with realauthor+review ancestry; feature-cwd review-ready/enforced close-check verdict BEFORE main merge; taskfinish; retain test-only gate/source-gate distinction",
+  "current_state": "Prepared plan only; no worker launched and no source approval claimed"
+}

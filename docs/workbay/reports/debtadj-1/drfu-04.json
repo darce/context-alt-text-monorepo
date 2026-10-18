@@ -1,0 +1,86 @@
+{
+  "lane": "drfu-04",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 6240,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/corpus.py:113-142 - exhaustiveness is opt-in, defaults false, and raises only when explicitly required; driver.py:182-187 and score_report.py:458-464 use the default. The default-load test marks a mismatched entry non-exhaustive at tests/test_manifest_version_seam.py:51-60.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_manifest_version_seam.py",
+      "size": "S",
+      "fix_hint": "No fix remains; the loader separates the ordinary run path from explicit detection-exhaustiveness checks."
+    },
+    {
+      "db_id": 6248,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:247-252 - each of the six cited body codes has a stable-table row with its trigger and operator remedy.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix remains; all six identifiers are listed in the normative error-code table."
+    },
+    {
+      "db_id": 6249,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:637-647 - resolves the fractional floor using len(manifest.entries); :905 compares accepted_set_size with that resolved count. tests/test_attrition_floor.py:20-24 checks 0.90 of 150 resolves to 135; the normative policy states N=manifest size at plan:1068.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "No fix remains; the manifest denominator makes the accepted-size comparison detect attrition."
+    },
+    {
+      "db_id": 6250,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:386-406 - run performs the superset assertion before stamping run.json true; score_report.py:412-421 reads that run stamp and :1204 writes it into score provenance. The plan says this field is score-side and never in preflight.json at :960.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "No fix remains; run-level evidence flows into score provenance without claiming preflight performed the assertion."
+    },
+    {
+      "db_id": 6251,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:759 and :858 - the corpus.py ItemOutcomeStore surface explicitly decodes and records image_width/image_height at ingest; driver.py:247-248 carries both dimensions into items.jsonl records.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix remains; the producer and per-item output keys are in the change inventory and ingest path."
+    },
+    {
+      "db_id": 6263,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:637-647 - as in canonical db 6249, resolves a fractional floor from manifest count; :905 downgrades when accepted_set_size falls below it.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "No fix remains; this duplicate is closed by the canonical manifest-denominator fix."
+    },
+    {
+      "db_id": 6286,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:637-647 - as in canonical db 6249, resolves a fractional floor from manifest count; :905 downgrades when accepted_set_size falls below it.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "No fix remains; this duplicate is closed by the canonical manifest-denominator fix."
+    },
+    {
+      "db_id": 6298,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1216 scopes the no-subtraction invariant to scripts/bench and :335 records eval_harness/report.py as read-not-edited; score_report.py:129-133 derives stranger faces from face_boxes, while the legacy calculation remains in eval_harness/report.py:2260-2267.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix remains; the assertion is explicitly scoped to the bench package and documents the retained harness calculation."
+    }
+  ]
+}

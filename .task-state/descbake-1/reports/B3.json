@@ -1,0 +1,129 @@
+{
+  "task": "DESCBAKE-1",
+  "lane": "B3",
+  "status": "completed",
+  "summary": "Added an additive, offline name/phrase-binding evaluator (scripts.eval_harness.name_binding_eval, name_binding_eval/v1 input, name_binding_eval_report/v1 output) for the IDWEAVE L13 wrong-binding ledger, with a synthetic plumbing example and 37 scoped tests. RED was observed and predicted before implementation (collection ModuleNotFoundError). GREEN: 37 passed; ruff format and ruff check clean on owned files. The evaluator consumes precomputed proposals only: no model, network, or similarity library is imported, and no production path, golden, threshold, or sealed registry was changed. The fixture is synthetic plumbing; no empirical winner is declared and no accuracy claim is made.",
+  "changed_files": [
+    "apps/prototype-description-service/scene/tests/test_name_binding_eval.py",
+    "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+    "apps/prototype-description-service/scripts/eval_harness/name_binding_example.json",
+    ".task-state/descbake-1/reports/B3.json"
+  ],
+  "commits": [
+    "f6af6fd338b476a6e8566c08067ce256b3ba8cfe",
+    "eb23e52509c11e7f93502adab08249af922dc524",
+    "457fc9bd45844c7d571f497b710aa2b4f17e96d5"
+  ],
+  "commit_note": "RED = f6af6fd (tests only, observed failing); GREEN = eb23e52 (module and example); 457fc9b = docstring citation correction, no behaviour change. This report is committed as the final commit on the branch; it cannot list its own SHA.",
+  "tests": [
+    {
+      "phase": "RED",
+      "command": "cd apps/prototype-description-service && PYTHONPATH=$PWD ../../.venv/bin/python3 -m pytest scene/tests/test_name_binding_eval.py -q -p no:cacheprovider",
+      "state": "test file only (commit f6af6fd)",
+      "exit_code": 2,
+      "summary": "Collection ERROR: 'ModuleNotFoundError: No module named scripts.eval_harness.name_binding_eval'; 1 error during collection; 0 tests run. The message was predicted before the run (TEST-06) and matched exactly."
+    },
+    {
+      "phase": "GREEN",
+      "command": "cd apps/prototype-description-service && PYTHONPATH=$PWD ../../.venv/bin/python3 -m pytest scene/tests/test_name_binding_eval.py -q -p no:cacheprovider",
+      "state": "module and example added (commit eb23e52), first run",
+      "exit_code": 0,
+      "summary": "37 passed in 0.86s"
+    },
+    {
+      "phase": "GREEN",
+      "command": "cd apps/prototype-description-service && PYTHONPATH=$PWD ../../.venv/bin/python3 -m pytest scene/tests/test_name_binding_eval.py -q -p no:cacheprovider",
+      "state": "final tree (commit 457fc9b)",
+      "exit_code": 0,
+      "summary": "37 passed in 0.59s"
+    },
+    {
+      "phase": "format",
+      "command": "cd apps/prototype-description-service && PYTHONPATH=$PWD ../../.venv/bin/python3 -m ruff format --check scripts/eval_harness/name_binding_eval.py scene/tests/test_name_binding_eval.py",
+      "state": "final tree",
+      "exit_code": 0,
+      "summary": "2 files already formatted. One earlier ruff format run reformatted the module before commit eb23e52; the test file was already formatted."
+    },
+    {
+      "phase": "lint",
+      "command": "cd apps/prototype-description-service && PYTHONPATH=$PWD ../../.venv/bin/python3 -m ruff check scripts/eval_harness/name_binding_eval.py scene/tests/test_name_binding_eval.py",
+      "state": "final tree",
+      "exit_code": 0,
+      "summary": "All checks passed!"
+    },
+    {
+      "phase": "cli-smoke",
+      "command": "cd apps/prototype-description-service && PYTHONPATH=$PWD ../../.venv/bin/python3 -m scripts.eval_harness.name_binding_eval scripts/eval_harness/name_binding_example.json --output /tmp/descbake-1-b3/example-report.json",
+      "state": "final tree",
+      "exit_code": 0,
+      "summary": "Report schema name_binding_eval_report/v1; frozen_image_count 3; gold_binding_count 4; ranking null. arm-deterministic-cpu: correct 3, missing_record 1, coverage 2/3. arm-model-rewrite-challenger: wrong_person 3 (2 misattributed role-swap bindings), abstained 1, prohibited_name_additions 1, all_abstain_images 1, required_identity_omissions 1."
+    }
+  ],
+  "findings": [
+    {
+      "id": "B3-F1",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+      "summary": "ADR-018 section 13 requires the wrong-binding ledger to be zero on fixtures. This report has no single gate total. A name on a stranger or unnamed person is counted as unbound_phrase_bindings, prohibited additions are counted separately, and gold wrong_person outcomes overlap both.",
+      "status": "open",
+      "follow_up": "Decide the zero-gate definition and its de-duplication rule before any gate consumes this report. Do not sum the categories naively."
+    },
+    {
+      "id": "B3-F2",
+      "severity": "medium",
+      "file": "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+      "summary": "ADR-018 section 13 says gold associations are required for every fixture. The task brief asked for validation of empty gold, so the evaluator accepts an image with zero gold bindings and returns null rates with unbound counts. The two requirements conflict.",
+      "status": "open",
+      "follow_up": "Decide whether a fixture with zero gold bindings is refused or allowed as a diagnostic-only state."
+    },
+    {
+      "id": "B3-F3",
+      "severity": "low",
+      "file": "apps/prototype-description-service/scripts/eval_harness/name_binding_eval.py",
+      "summary": "ADR-018 section 13 lists a no-naming baseline and a presence-appendix baseline. The evaluator does not generate baselines. A fixture must declare an all-abstain arm to act as the no-naming reference.",
+      "status": "open",
+      "follow_up": "Add baseline arms to the fixture contract if a comparison is required."
+    },
+    {
+      "id": "B3-F4",
+      "severity": "info",
+      "file": ".task-state/descbake-1/reports/B3.json",
+      "summary": "Source snapshot correction. The pinned source_commit 98b228aae5838fdc249918c395fc81c83b6fbe3e does not resolve in this history-stripped clone. The sandbox base bfe4c84227de0bcd6bb7441e29cb0bc45cca479a has tree ff2fbeb6b44aa3a4f647ecab8e8b52c6aae051a4, which matches the provenance file's source_tree and sandbox_base_tree. source_sha is recorded as bfe4c84.",
+      "status": "recorded"
+    }
+  ],
+  "limitations": [
+    "Synthetic plumbing fixture only. No empirical winner is declared (ranking is null), and no accuracy, face-identification, or caption-quality claim is made.",
+    "Only the scoped tests were run. The full suite was not run, per the brief. mypy was not run.",
+    "No network, GPU, deploy, OCI provisioning, or subagent was used. Canon rules were taken from the supplied canon-context v0.26.2 rows only; heuristics-canon was not fetched.",
+    "Python ran from the repo .venv (a sandbox lane symlink) read-only. Nothing was installed and no shared runtime was modified.",
+    "Classification is per gold binding. A prediction on a phrase with no gold binding is reported as unbound_phrase_bindings and is not in the gold partition. A role swap is visible as wrong_person with misattributed_to_phrase set.",
+    "Partial coverage is reported explicitly. Rates keep the frozen gold denominator, so a missing record lowers recall rather than being excluded. Rates are null when no image was scored.",
+    "The schema has no numeric fields, so the non-finite-value check is not applicable. Any future numeric field must add that validation.",
+    "input_sha256 is the digest of the raw input bytes. Reproducibility depends on the fixture bytes being unchanged.",
+    "The report commit is the last commit on the branch and cannot list its own SHA. .task-state/ is gitignored, so the report was force-added; 8 .task-state files are already tracked.",
+    "The codemap and semantic-context attachments referenced /Users/daniel paths outside this sandbox and were not used. model-research.json is unrelated to this evaluator and was not used."
+  ],
+  "source_sha": "bfe4c84227de0bcd6bb7441e29cb0bc45cca479a",
+  "canon_rules_cited": [
+    {"id": "TEST-06", "use": "Predicted the exact first failure message before the RED run; the prediction matched."},
+    {"id": "CAL-02", "use": "A missing arm-image record is a distinct explicit outcome, not abstention and not success; abstention is a valid, separately counted result."},
+    {"id": "PROV-01", "use": "The report carries input SHA-256 and the source anonymous-base digest with generation and reweave IDs; a prediction with a mismatched digest is refused."},
+    {"id": "GRPH-14", "use": "Lineage: every per-image ledger row points at its frozen image, phrase, and gold person IDs."},
+    {"id": "EVAL-04", "use": "Per-arm aggregates and a per-image ledger for every arm; no single pooled score."},
+    {"id": "CARD-11", "use": "Measurement integrity: denominators come from the frozen fixture, not from what an arm predicted (also Principle 15)."},
+    {"id": "Principle 11", "use": "Unknown is a designed state: missing_record and empty-gold rates are null rather than zero."},
+    {"id": "Principle 18", "use": "The machine-consumed contract is schema-versioned, extra keys are forbidden, and invalid input is refused fail-closed (exit 1, no output written)."}
+  ],
+  "prior_attempted_paths": [
+    {"path": "embedding similarity as caption truth or identity", "handling": "Not used. No embedding, difflib, or rapidfuzz import. Exact ID equality only. Test: test_module_imports_no_network_model_client_or_similarity_library."},
+    {"path": "set equality hides phrase or role swaps", "handling": "Each gold binding gets its own outcome. Test: test_role_swapped_names_are_wrong_person_and_not_hidden_by_set_equality."},
+    {"path": "case-sensitive name scrubbing without token boundaries (8129)", "handling": "No text scrubbing. IDs are matched exactly, and an uppercase phrase ID is refused as unknown. Test: test_unknown_or_inconsistent_references_are_refused."},
+    {"path": "ignore-list of wrong-name pairs hides failures (7509)", "handling": "No ignore list. Every wrong binding appears in gold_outcomes and in the per-image ledger."},
+    {"path": "score-time manifest B cannot validate run manifest A (3264)", "handling": "A prediction carrying a different anonymous-base digest is refused, not re-derived. Test: test_source_digest_mismatch_is_refused_not_rederived_at_score_time."},
+    {"path": "pseudonymisation changes comparability (9998)", "handling": "No pseudonymisation or renaming. IDs are used exactly as supplied. Design-only; no test."},
+    {"path": "pinned model is not current latest; API 4xx/5xx is not missing-repo proof; sealed registry must stay unchanged", "handling": "No model call and no network. bakeoff_candidates.yaml and golden fixtures were not touched."},
+    {"path": "Oct 7 EmbeddingGemma assessment used for names", "handling": "Not used. That assessment does not cover names or captions."},
+    {"path": "ADR-018 production architecture change", "handling": "None. The evaluator is benchmark plumbing; the deterministic CPU rewrite over the anonymous base plus phrase boxes is unchanged."}
+  ]
+}

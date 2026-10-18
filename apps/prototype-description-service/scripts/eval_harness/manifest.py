@@ -1,0 +1,2252 @@
+"""Golden-manifest schema + fail-fast loader (rg-008).
+
+The manifest (`scene/tests/seed/golden.json`) is the single source of truth for
+the eval corpus: per-image relative path, content sha256, stable synthetic
+``media_id`` (the analyze contract keys uploads as ``image_<media_id>`` parts
+and identity reads group by ``media_id``), ground-truth ``face_count`` (see
+contract below), present-identity labels, context-pack fixture,
+Must-Right/Easy-Wrong rubric entries, policy flags, ``annotation_mode``, and
+per-box ``LabelLineage``.
+
+Image bytes are NOT vendored in git; ``images_dir`` (usually ``$GOLDEN_IMAGES_DIR``)
+points at the rsync-bootstrapped local copy and is verified hash-by-hash.
+
+Every field is strictly typed under ``extra='forbid'`` and validated at load
+time: ``policy.recognition_enabled`` is required (a typo can no longer silently
+enable recognition), ``annotation_mode`` is required, every box carries
+``LabelLineage``, the coverage invariant compares independently recorded
+``face_count`` against ``len(face_boxes)``, paths and media_ids must be unique,
+the corpus may not be empty, and the manifest version must be one this loader
+understands (rg-008 fail-fast).
+
+``face_count`` contract
+-----------------------
+``face_count`` is the number of **human faces visible in the frame**, including
+non-roster strangers, background faces, and faces too small or occluded to
+identify. It is **not** "faces the detector found" and **not** "roster members
+present".
+
+The operator records ``face_count`` as a **separate count-first step before any
+box is drawn**. It is **never** derived from ``len(face_boxes)`` — a derived
+count makes the coverage invariant unfalsifiable (GF-11). The invariant then
+compares two independently produced numbers:
+
+- ``exhaustive``: ``len(face_boxes) == face_count``
+- ``roster_only``: ``len(face_boxes) <= face_count``
+- both modes: ``face_count >= len(present_identities)`` — an identity
+  claim that exceeds the independently recorded face count is unbacked
+  and cannot be scored as identification ground truth
+
+Declared limitation (GF-12): equality proves internal consistency only (the
+operator's count matches the operator's own boxes). Exhaustiveness *in the
+world* is Slice 3's independent exhaustiveness audit [AUDIT-04], never this
+invariant.
+
+``load_manifest`` is the v3 gate loader. Frozen v2 artifacts (golden150-draft,
+Slice 5 bias-audit arms, Slice 3 audit-queue draw) go through
+``load_legacy_manifest`` only — never a ``cli.py`` gate command.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import unicodedata
+import warnings
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from pathlib import Path, PureWindowsPath
+from typing import Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
+
+from ._pathtext import _printable_message, _printable_path
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_ADJUDICATION_RECORD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_HUMAN_ADJUDICATION_SOURCE_RE = re.compile(r"^human_adjudicated:([A-Za-z0-9][A-Za-z0-9._-]{0,127})$")
+
+
+def _validate_relative_image_path(value: str) -> str:
+    """Require a manifest image path to be relative and traversal-free.
+
+    The manifest is portable across POSIX and Windows workers, so both path
+    syntaxes are checked. Symlink containment is checked at resolution time,
+    when the corpus root is available.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("image path must be a non-empty relative path")
+    if "\x00" in value:
+        raise ValueError("image path must not contain NUL")
+    posix = Path(value)
+    windows = PureWindowsPath(value)
+    # ``PureWindowsPath.is_absolute()`` is false for a rooted path such as
+    # ``\\outside.jpg`` (it has no drive), even though joining it to a Windows
+    # corpus root discards the root's directory. Treat every Windows root or
+    # drive spelling as an absolute escape, including drive-relative ``C:foo``.
+    if posix.is_absolute() or windows.is_absolute() or windows.drive or windows.root:
+        raise ValueError("image path must be relative to the corpus root")
+    if any(part == ".." for part in (*posix.parts, *windows.parts)):
+        raise ValueError("image path must be relative and must not contain parent traversal")
+    if posix == Path(".") or windows == PureWindowsPath("."):
+        raise ValueError("image path must name a relative file below the corpus root")
+    return value
+
+
+def _printable_validation_value(value: object, *, depth: int = 0) -> str:
+    """Render Pydantic error values without ``repr``-flattening surrogates.
+
+    Pydantic's default ``ValidationError.__str__`` uses ``repr(input_value)``.
+    A JSON ``\\udce9`` therefore becomes literal backslash text in an operator
+    message, which is ambiguous and violates the path-text wire contract. Keep
+    the shape of common containers while sending every string leaf through the
+    message encoder.
+    """
+    if depth > 5:
+        return "<nested value>"
+    if isinstance(value, str):
+        return str(_printable_message(value))
+    if isinstance(value, bytes):
+        return str(_printable_message(value.decode("utf-8", errors="backslashreplace")))
+    if isinstance(value, Mapping):
+        items = ", ".join(
+            f"{_printable_validation_value(key, depth=depth + 1)}: {_printable_validation_value(item, depth=depth + 1)}"
+            for key, item in value.items()
+        )
+        return "{" + items + "}"
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return "[" + ", ".join(_printable_validation_value(item, depth=depth + 1) for item in value) + "]"
+    try:
+        rendered = str(value)
+    except Exception:
+        rendered = f"<{type(value).__name__}>"
+    return str(_printable_message(rendered))
+
+
+def _format_validation_error(error: ValidationError) -> str:
+    """Return a strict-UTF-8, deterministic summary of validation failures."""
+    details: list[str] = []
+    for item in error.errors(include_url=False):
+        location = ".".join(_printable_validation_value(part) for part in item.get("loc", ())) or "<document>"
+        message = _printable_validation_value(item.get("msg", "validation error"))
+        suffix: list[str] = []
+        if "input" in item:
+            suffix.append(f"input={_printable_validation_value(item['input'])}")
+        if "ctx" in item and item["ctx"]:
+            suffix.append(f"context={_printable_validation_value(item['ctx'])}")
+        details.append(f"{location}: {message}" + (f" ({'; '.join(suffix)})" if suffix else ""))
+    return "; ".join(details) or "validation error"
+
+
+SUPPORTED_MANIFEST_VERSION = 3
+LEGACY_MANIFEST_VERSION = 2
+
+# Documented defaults for v2→v3 box migration (rg-015). Applied only by the
+# Slice 2 retag/migration of pre-v3 boxes; the loader never invents these.
+LEGACY_IMPORT_LABELER_ID = "legacy-import"
+LEGACY_IMPORT_BATCH_ID = "fir-11-slice-2-v3-migration"
+LEGACY_IMPORT_LABELED_AT = "1970-01-01T00:00:00Z"  # unknown; epoch sentinel
+LEGACY_IMPORT_TOOL_VERSION = "legacy-import"
+# Fail-closed: assume proposals were visible unless the record says otherwise.
+LEGACY_IMPORT_SAW_MACHINE_PROPOSALS = True
+# Unknown occasion — pre-v3 boxes have no recoverable capture session.
+# This token means "there is no occasion key". It must not satisfy the
+# exhaustive capture-session gate (S2R6-01); roster_only may still carry it.
+LEGACY_IMPORT_CAPTURE_SESSION_ID = "legacy-import-unknown-session"
+
+# Recorded decision (S2R4-20): persisted annotation_mode is document-level.
+# S2R3-10 closed by extra=forbid + a comment left the mixed-stamp lattice
+# unreachable from any on-disk file and unrecorded outside those remarks.
+# The loader now refuses a per-entry stamp under this named invariant.
+ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT = "annotation_mode_is_document_level"
+
+# Stratification / metric-backing fields inventoried for MEAS-09 / EVAL-04.
+# A metric whose backing field is 0/N corpus-wide must refuse certification
+# rather than return a vacuous single-bucket pass (VLM6-R2-03).
+STRATIFICATION_INVENTORY_FIELDS: tuple[str, ...] = (
+    "difficulty",
+    "domain",
+    "tags",
+    "reference_facts",
+    "spatial_facts",
+    "face_boxes",
+    "provenance",
+    "must_right",
+    "easy_wrong",
+    "demographic_cohort",
+)
+
+# Honest coverage gaps on the shipped golden-37 corpus: fields that cannot be
+# populated without viewing image bytes or operator-authored geometry. Each
+# value names the owner and the concrete next action (OBS-04). Do not invent
+# ground truth to silence these gaps (VLM6-R2-03).
+SHIPPED_CORPUS_COVERAGE_GAPS: dict[str, str] = {
+    "reference_facts": (
+        "owner=VLM-6-operator; action=author polarity-tagged reference_facts per image "
+        "after a visual pass — cannot be derived from filename/face_count alone"
+    ),
+    "spatial_facts": (
+        "owner=VLM-6-operator; action=author spatial relations from curated boxes — "
+        "no box geometry is vendored for the full corpus"
+    ),
+    "face_boxes": (
+        "owner=FIR-1/VLM-6-operator; action=author FaceBox x/y/w/h per face — "
+        "phrase_boxes.json has centers only for 6 scenes and is not a substitute"
+    ),
+    "demographic_cohort": (
+        "owner=FIR-5; action=label roster_cohorts / demographic_cohort after "
+        "operator cohort definitions land — no labelled source exists yet"
+    ),
+}
+
+
+# --- Golden-100 stratification vocabulary (VLM-6 S1) -------------------------
+# Centralized enums (sr-007) so difficulty/domain/fact-kind/relation are never
+# scattered magic strings. All Golden-100 additions are ADDITIVE and optional —
+# the legacy golden-38 entries omit them and still validate under extra='forbid'.
+
+
+class Difficulty(StrEnum):
+    """Coarse per-image difficulty tier used for stratified reporting."""
+
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class Domain(StrEnum):
+    """Stratum an image belongs to. Every stratum gets >=5 images (plan S1)."""
+
+    PEOPLE = "people"
+    FACES = "faces"
+    CROWDS = "crowds"
+    OCCLUSION = "occlusion"
+    MIRRORS = "mirrors"
+    ANIMALS = "animals"
+    ART = "art"
+    ABSTRACT = "abstract"
+    BLACK_AND_WHITE = "black_and_white"
+    DENSE_SCENE = "dense_scene"
+    TEXT_IN_IMAGE = "text_in_image"
+    CHARTS = "charts"
+    PRODUCTS = "products"
+    LOW_LIGHT = "low_light"
+
+
+class FactKind(StrEnum):
+    """What a reference fact asserts, so the hallucination scorer can bucket."""
+
+    OBJECT = "object"
+    ATTRIBUTE = "attribute"
+    COUNT = "count"
+    RELATION = "relation"
+    SCENE = "scene"
+    TEXT = "text"
+
+
+class FactPolarity(StrEnum):
+    """Whether a reference fact is TRUE of the image or a fabrication trap.
+
+    ``true`` facts are the ground truth a faithful caption may state (coverage);
+    ``false`` facts are things that are NOT true of the image — a caption that
+    asserts one has fabricated (the hallucination signal). Deterministic scoring
+    matches ``phrases`` with word-boundary anchoring (see caption_metrics).
+    """
+
+    TRUE = "true"
+    FALSE = "false"
+
+
+class SpatialRelation(StrEnum):
+    """Relative placement relations derived from curated face/object boxes."""
+
+    LEFT_OF = "left_of"
+    RIGHT_OF = "right_of"
+    BETWEEN = "between"
+    ABOVE = "above"
+    BELOW = "below"
+    FOREGROUND = "foreground"
+    BACKGROUND = "background"
+
+
+class LicenseTag(StrEnum):
+    """Provenance license classes accepted into the corpus (PII/license screen)."""
+
+    CC0 = "cc0"
+    PUBLIC_DOMAIN = "public_domain"
+    MOCK_ENTITY = "mock_entity"  # consented/synthetic roster material
+    CONSENTED = "consented"  # operator's own / explicitly consented
+    FIXTURE = "fixture"  # pre-existing vendored fixture pool
+    # Recorded on three corpus646 unlabeled slugs (no attestable subject).
+    # Not a new status invented here — the value is already in the file.
+    # Fail-closed for publishability (not CC0 / public_domain).
+    UNASSIGNED = "unassigned"
+
+
+class ProvenanceSource(StrEnum):
+    """Canonical corpus-source vocabulary (sr-007). One definition shared by the
+    manifest, the strata shortlister, and the identity bridge so a source label can
+    never mean three different things across modules (the celeb->stranger identity
+    loss that a scattered string set caused).
+
+    CELEB/WIKIMEDIA/OPENVERSE are public-eligible; LOCALWP/OPERATOR are PRIVATE
+    (real personal photos, never published — see ``Provenance.is_publishable`` and
+    ``PRIVATE_SOURCES``); FIXTURE is vendored test material.
+    """
+
+    CELEB = "celeb"
+    WIKIMEDIA = "wikimedia"
+    OPENVERSE = "openverse"
+    LOCALWP = "localwp"
+    OPERATOR = "operator"
+    FIXTURE = "fixture"
+
+
+class SliceTag(StrEnum):
+    """Image-slice strata for face bake-off rollups (FIR-5).
+
+    Seven values only — the SC3 slice list. ``unknown`` is structural via
+    face_boxes name=None; ``demographic`` is a person cohort (roster_cohorts /
+    demographic_cohort), not an image tag (rg-009).
+    """
+
+    MASKED = "masked"
+    SUNGLASSES = "sunglasses"
+    OCCLUSION_OTHER = "occlusion_other"
+    PROFILE = "profile"
+    LOW_RES = "low_res"
+    BLUR = "blur"
+    SIMILAR_PEOPLE = "similar_people"
+
+
+class AnnotationMode(StrEnum):
+    """Manifest-level declaration of what the boxes cover.
+
+    ``exhaustive``: every human face in the frame is boxed (named or null).
+    ``roster_only``: only roster members are boxed. Detection scoring is
+    structurally barred against ``roster_only`` — unlabeled non-roster faces
+    would be scored as false positives.
+    """
+
+    EXHAUSTIVE = "exhaustive"
+    ROSTER_ONLY = "roster_only"
+
+
+class ScoreInvariant(StrEnum):
+    """Canonical names for score-time refusals. Import this; do not re-spell."""
+
+    DETECTION_REQUIRES_ANNOTATION_MODE = "detection_requires_annotation_mode"
+    DETECTION_REFUSES_ROSTER_ONLY = "detection_refuses_roster_only"
+    DETECTION_UNRECOGNISED_ANNOTATION_MODE = "detection_unrecognised_annotation_mode"
+    DETECTION_REFUSES_EMPTY_ENTRIES = "detection_refuses_empty_entries"
+    DETECTION_REFUSES_MIXED_ANNOTATION_MODE = "detection_refuses_mixed_annotation_mode"
+    IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS = "identification_refuses_unboxed_identity_claims"
+    DETECTION_REFUSES_UNCOVERED_FACE_COUNT = "detection_refuses_uncovered_face_count"
+    DETECTION_REFUSES_EMPTY_OBSERVATIONS = "detection_refuses_empty_observations"
+    IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS = "identification_refuses_empty_observations"
+    DETECTION_REQUIRES_LOCALIZATION = "detection_requires_localization"
+    DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT = "detection_requires_localization_frame_agreement"
+    DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD = "detection_requires_ratified_iou_threshold"
+    DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE = "detection_requires_human_adjudicated_gt_lineage"
+    DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE = "detection_requires_independent_gt_source"
+
+
+# Published markdown explanation per fired invariant (S2R5-04). A refusal
+# reason that names a condition that did not fire is worse than no reason.
+REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
+    ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE: (
+        "detection P/R is not computed without a resolved annotation_mode; omission is not exhaustive"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY: (
+        "detection P/R is not computed unless annotation_mode is exhaustive"
+    ),
+    ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE: (
+        "detection P/R is not computed from an unrecognised annotation_mode token"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_EMPTY_ENTRIES: (
+        "detection P/R is not computed from zero score entries; an empty entry list cannot witness a detection contract"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_MIXED_ANNOTATION_MODE: (
+        "detection P/R is not computed from mixed annotation_mode stamps; "
+        "the scorer will not guess which detection contract applies"
+    ),
+    ScoreInvariant.IDENTIFICATION_REFUSES_UNBOXED_IDENTITY_CLAIMS: (
+        "identification P/R is not computed from identity claims that carry no per-face box lineage"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_UNCOVERED_FACE_COUNT: (
+        "detection P/R is not computed from an exhaustive stamp whose boxes do not cover face_count"
+    ),
+    ScoreInvariant.DETECTION_REFUSES_EMPTY_OBSERVATIONS: (
+        "detection P/R is not computed from zero scored observations"
+    ),
+    ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS: (
+        "identification P/R is not computed from zero scored observations"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION: (
+        "detection P/R is not computed from rows without usable localization geometry"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT: (
+        "detection P/R is not computed from detector boxes measured in a frame that "
+        "differs from the declared image size"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD: (
+        "detection P/R is not computed from an absent or unratified IoU threshold"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE: (
+        "detection P/R is not computed from ground-truth boxes without human-adjudicated lineage"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_INDEPENDENT_GT_SOURCE: (
+        "detection P/R is not computed from ground-truth boxes with missing, unrecognised, "
+        "or Buffalo-derived region provenance"
+    ),
+}
+if frozenset(REFUSAL_EXPLANATIONS) != frozenset(ScoreInvariant):
+    raise RuntimeError(
+        "REFUSAL_EXPLANATIONS keys drifted from ScoreInvariant: "
+        f"table={sorted(member.value for member in REFUSAL_EXPLANATIONS)} "
+        f"enum={sorted(member.value for member in ScoreInvariant)}"
+    )
+
+
+def refusal_explanation(invariant: object) -> str:
+    """Return the published sentence for the invariant that actually fired.
+
+    Unknown tokens raise. Never substitute a neighbouring metric's reason.
+    """
+    if isinstance(invariant, ScoreInvariant):
+        member = invariant
+    else:
+        try:
+            member = ScoreInvariant(invariant)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            raise ManifestError(f"no refusal explanation for invariant {invariant!r}") from None
+    text = REFUSAL_EXPLANATIONS.get(member)
+    if text is None:
+        raise ManifestError(f"no refusal explanation for invariant {member!r}")
+    return text
+
+
+def parse_annotation_mode(value: object) -> AnnotationMode | None:
+    """Return the enum member, or None when the value is omitted.
+
+    Empty / whitespace-only strings are omitted. Unknown tokens (including
+    wrong case) raise ManifestError with invariant
+    ``detection_unrecognised_annotation_mode``. Never invents exhaustive.
+    """
+    if value is None:
+        return None
+    if isinstance(value, AnnotationMode):
+        return value
+    if isinstance(value, str):
+        token = value.strip()
+        if not token:
+            return None
+        try:
+            return AnnotationMode(token)
+        except ValueError:
+            raise ManifestError(
+                f"unrecognised annotation_mode {value!r}; "
+                f"expected one of {[member.value for member in AnnotationMode]}",
+                invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
+            ) from None
+    raise ManifestError(
+        f"unrecognised annotation_mode {value!r}; expected one of {[member.value for member in AnnotationMode]}",
+        invariant=ScoreInvariant.DETECTION_UNRECOGNISED_ANNOTATION_MODE,
+    )
+
+
+class LabelSource(StrEnum):
+    """How the label was produced (GF-13). ``saw_machine_proposals`` is a flag,
+    not a source — a blind pass and a re-pass that both saw proposals are
+    still distinct sources.
+    """
+
+    OPERATOR_BLIND = "operator_blind"
+    OPERATOR_REPASS = "operator_repass"
+    ARBITRATION = "arbitration"
+    GOLD_REFERENCE = "gold_reference"
+    LEGACY_IMPORT = "legacy_import"
+
+
+class FaceBoxSource(StrEnum):
+    """Supported sources for independently checked ground-truth regions."""
+
+    IPTC = "iptc"
+    MWG = "mwg"
+    OPERATOR = "operator"  # Human-drawn regions are independent of detector proposals.
+
+
+class HistoricalFaceBoxSource(StrEnum):
+    """Recorded legacy region sources that are not independent ground truth."""
+
+    DETECTOR = "detector"
+    WORKBENCH = "workbench"
+
+
+class LabelDecision(StrEnum):
+    """What the labeler decided about the face. ``inconclusive`` is a decision,
+    not a confidence — the face is present but identity cannot be determined.
+    """
+
+    NAMED = "named"
+    STRANGER = "stranger"
+    INCONCLUSIVE = "inconclusive"
+
+
+class LabelConfidence(StrEnum):
+    """Graded confidence (GF-13). Distinct from ``LabelDecision``."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class HumanAdjudicationRecord(BaseModel):
+    """Pinned corpus-curation evidence for one independently reviewed box.
+
+    Record IDs are resolved against ``GoldenManifest.adjudication_records``;
+    the review must be a confirmed, blind human pass by someone other than the
+    original box labeler. A free-form source string or an ID-shaped token alone
+    is not adjudication evidence.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str = Field(pattern=_ADJUDICATION_RECORD_ID_RE.pattern)
+    media_id: int = Field(ge=1)
+    box_index: int = Field(ge=0)
+    reviewer_id: str = Field(min_length=1)
+    reviewer_kind: Literal["human"]
+    review_method: Literal["independent_blind_review"]
+    decision: Literal["confirmed"]
+    reviewed_at: datetime
+
+    @field_validator("reviewed_at")
+    @classmethod
+    def _review_time_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("reviewed_at must include a timezone")
+        return value
+
+
+# Private roots are LOCAL-ONLY: a personal photo is never publishable regardless of
+# license or an explicit flag (fail-closed on the "never publish uploads" invariant).
+PRIVATE_SOURCES: frozenset[ProvenanceSource] = frozenset({ProvenanceSource.LOCALWP, ProvenanceSource.OPERATOR})
+
+
+class ManifestError(Exception):
+    """Structural, hash, or label problem in the golden manifest. Fail fast.
+
+    Coverage / mode / lineage failures carry a named ``invariant``, the
+    ``entry_index``, and the ``entry_path`` so callers get an error taxonomy
+    rather than a boolean (GF-21).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        invariant: str | None = None,
+        entry_index: int | None = None,
+        entry_path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.invariant = invariant
+        self.entry_index = entry_index
+        self.entry_path = entry_path
+
+
+class RubricEmptyWarning(UserWarning):
+    """The corpus defines no Must-Right/Easy-Wrong rubric entries (gate vacuous)."""
+
+
+class HashVerificationSkippedWarning(UserWarning):
+    """``load_manifest`` skipped image sha256 verification (metadata-only load)."""
+
+
+@dataclass(frozen=True)
+class FieldPopulation:
+    """Per-field population count for a loaded corpus (VLM6-R2-03 inventory)."""
+
+    field: str
+    populated: int
+    total: int
+
+    @property
+    def empty(self) -> int:
+        return self.total - self.populated
+
+    @property
+    def is_vacuous(self) -> bool:
+        """True when zero entries populate the field (metric would be single-bucket)."""
+        return self.total > 0 and self.populated == 0
+
+
+class ContextPack(BaseModel):
+    """WP context echoed to the describe route (title/caption/description).
+
+    ``extra='allow'`` — WP context is intentionally extensible — but the known
+    fields are type-checked so a mistyped title/caption fails fast.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    title: str | None = None
+    caption: str | None = None
+    description: str | None = None
+
+
+class EntryPolicy(BaseModel):
+    """Per-image recognition policy.
+
+    ``recognition_enabled`` is REQUIRED so a missing or mistyped key fails at
+    load time instead of silently defaulting to recognition-enabled (rg-008).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    recognition_enabled: bool
+
+
+class ExpectedAttachment(BaseModel):
+    """Ground-truth attachment altitude for a supplied ContextPack fact (E20-FUSION).
+
+    Mirrors Stage-2 ``Attachment`` decision fields so mis-attachment scoring
+    compares runner provenance against real producer shapes (not invented enums).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_source: str
+    fact_label: str
+    decision: str  # object | caption | dropped
+    altitude: str  # object | caption | none
+    visible: bool = False
+    review_reason: str | None = None
+    fact_id: str | None = None
+
+
+class ConfirmationSource(StrEnum):
+    """Who confirmed a reference fact (sr-007). ``operator`` is human gold;
+    ``agent`` is a machine draft that is not yet a human label.
+    """
+
+    OPERATOR = "operator"
+    AGENT = "agent"
+
+
+class AdjudicationRule(StrEnum):
+    """Written disagreement rules (MLDATA-03). Closed set; free text is not a rule.
+
+    Named in the DESCQUAL-2 scope as the code half of BR-25. Doc lane should
+    cite these tokens, not unconstrained prose.
+    """
+
+    DISAGREEMENT_ESCALATE_TO_SME = "disagreement-escalate-to-sme"
+    MAJORITY_VOTE = "majority-vote"
+    UNANIMOUS = "unanimous"
+
+
+# Allowlist, not complement-of-AGENT: any future ConfirmationSource member must
+# be named here to become human gold. Complement-of-AGENT would silently promote
+# a new non-human member (MLDATA-04).
+HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset({ConfirmationSource.OPERATOR})
+
+
+class PreAdjudicationLabel(BaseModel):
+    """A pre-adjudication annotator label (MLDATA-03).
+
+    When two annotators disagree and an SME adjudicates, both original labels
+    survive here. The adjudicated value lives on the parent ``ReferenceFact``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotator_id: str
+    polarity: FactPolarity
+    text: str
+    noted_at: str
+
+
+class ReferenceFact(BaseModel):
+    """A ground-truth fact about an image (VLM-6 S1).
+
+    ``polarity=true`` facts are things a faithful caption may state; ``false``
+    facts are fabrication traps (untrue of the image). ``phrases`` are the
+    deterministic word-boundary match variants the hallucination scorer checks.
+    ``confirmed_by`` records whether an operator or the agent draft confirmed it.
+
+    Lineage fields (``annotator_id``, ``annotation_batch``, ``annotated_at``,
+    ``source_pool``) are optional on machine drafts. A human-confirmed fact
+    must carry all four (MLDATA-04). Pre-adjudication labels are kept, never
+    overwritten (MLDATA-03). ``adjudicated_by`` records HITL-07 SME
+    escalation and requires a named ``AdjudicationRule`` plus a non-empty
+    ``pre_adjudication`` trail so a disagreement is stored, not erased.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    kind: FactKind
+    polarity: FactPolarity = FactPolarity.TRUE
+    phrases: list[str] = Field(default_factory=list)
+    confirmed_by: ConfirmationSource | None = None
+    annotator_id: str | None = None
+    annotation_batch: str | None = None
+    annotated_at: str | None = None
+    source_pool: str | None = None
+    pre_adjudication: list[PreAdjudicationLabel] = Field(default_factory=list)
+    adjudicated_by: str | None = None
+    adjudication_rule: AdjudicationRule | None = None
+
+    @model_validator(mode="after")
+    def _has_a_matchable_phrase(self) -> ReferenceFact:
+        # A fact must expose at least one non-blank match target so scoring is never
+        # silently vacuous (rg-008): whitespace-only phrases do not count — match_targets
+        # would filter them to [""] and match nothing.
+        if not any(p.strip() for p in self.phrases) and not self.text.strip():
+            raise ValueError("reference_fact needs non-empty text or at least one non-blank phrase")
+        return self
+
+    @model_validator(mode="after")
+    def _human_confirmation_requires_lineage(self) -> ReferenceFact:
+        if self.confirmed_by not in HUMAN_CONFIRMATION_SOURCES:
+            return self
+        required = ("annotator_id", "annotation_batch", "annotated_at", "source_pool")
+        missing = [name for name in required if not (getattr(self, name) and str(getattr(self, name)).strip())]
+        if missing:
+            raise ValueError(
+                "human-confirmed reference_fact requires "
+                + ", ".join(missing)
+                + f" (confirmed_by={self.confirmed_by!r}; MLDATA-04)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_written_rule(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and self.adjudication_rule is None:
+            raise ValueError("adjudicated_by requires adjudication_rule (MLDATA-03 written disagreement rule)")
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_pre_labels(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and not self.pre_adjudication:
+            raise ValueError(
+                "adjudicated_by requires non-empty pre_adjudication (HITL-07 / MLDATA-03 disagreement trail)"
+            )
+        return self
+
+    def match_targets(self) -> list[str]:
+        """Non-empty phrases to match, defaulting to the fact text."""
+        targets = [p for p in self.phrases if p.strip()]
+        return targets or [self.text]
+
+
+class Provenance(BaseModel):
+    """Per-image sourcing + license record (PII/license screen, plan S1).
+
+    ``publishable`` gates the S5 gallery split: public figures + CC0/public-domain
+    are publishable to the research hub; private personal images (real contacts)
+    are LOCAL-ONLY and excluded from any rd-published artifact. It defaults to a
+    conservative value derived from the license so a missing flag never leaks a
+    private image (see ``is_publishable``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: ProvenanceSource
+    license: LicenseTag
+    url: str | None = None
+    note: str | None = None
+    publishable: bool | None = None  # None => derive conservatively from license
+
+    @property
+    def is_publishable(self) -> bool:
+        """Effective publishability: fail-closed on private source, then flag, then license.
+
+        A PRIVATE-source (localwp/operator) image is NEVER publishable — not by a
+        CC0/public-domain license and not by an explicit ``publishable=True`` — so a
+        mis-authored license or flag can never leak a personal photo (the crown-jewel
+        "never publish uploads" invariant). For public-eligible sources an explicit
+        flag wins, else only CC0 / public-domain publish by default (public figures
+        set the flag).
+        """
+        if self.source in PRIVATE_SOURCES:
+            return False
+        if self.publishable is not None:
+            return self.publishable
+        return self.license in (LicenseTag.CC0, LicenseTag.PUBLIC_DOMAIN)
+
+
+class SpatialFact(BaseModel):
+    """Relative-placement ground truth derived from curated boxes (plan S1).
+
+    ``reference`` is the second subject for binary relations (left_of/right_of/
+    above/below) and is null for foreground/background; ``between`` uses
+    ``reference`` plus ``reference2``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str
+    relation: SpatialRelation
+    reference: str | None = None
+    reference2: str | None = None
+    phrases: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _binary_relations_need_reference(self) -> SpatialFact:
+        binary = {
+            SpatialRelation.LEFT_OF,
+            SpatialRelation.RIGHT_OF,
+            SpatialRelation.ABOVE,
+            SpatialRelation.BELOW,
+        }
+        if self.relation in binary and not self.reference:
+            raise ValueError(f"{self.relation} requires a 'reference' subject")
+        if self.relation is SpatialRelation.BETWEEN and not (self.reference and self.reference2):
+            raise ValueError("between requires both 'reference' and 'reference2'")
+        return self
+
+    @property
+    def text(self) -> str:
+        """Human-readable label for reporting, e.g. 'Alice left_of Bob'."""
+        rel = self.relation.value
+        if self.relation is SpatialRelation.BETWEEN:
+            return f"{self.subject} between {self.reference} and {self.reference2}"
+        if self.reference:
+            return f"{self.subject} {rel} {self.reference}"
+        return f"{self.subject} {rel}"
+
+
+def legacy_import_lineage(*, name: str | None) -> dict[str, object]:
+    """Documented default lineage block for a pre-v3 box (rg-015).
+
+    Used only by the Slice 2 migration of existing boxes. The loader never
+    applies these defaults — a box without lineage fails validation.
+    ``decision`` is derived from the box's existing ``name`` (named vs
+    stranger). ``confidence`` is ``low`` because legacy labels were ungraded.
+    ``saw_machine_proposals`` is True (fail-closed). ``labeled_at`` is the
+    epoch sentinel (unknown). ``capture_session_id`` is the unknown-occasion
+    sentinel: it records that no session is recoverable. The exhaustive
+    gate rejects this token (S2R6-01); it does not mint an occasion key.
+    """
+    return {
+        "labeler_id": LEGACY_IMPORT_LABELER_ID,
+        "batch_id": LEGACY_IMPORT_BATCH_ID,
+        "capture_session_id": LEGACY_IMPORT_CAPTURE_SESSION_ID,
+        "pass_index": 0,
+        "labeled_at": LEGACY_IMPORT_LABELED_AT,
+        "tool_version": LEGACY_IMPORT_TOOL_VERSION,
+        "saw_machine_proposals": LEGACY_IMPORT_SAW_MACHINE_PROPOSALS,
+        "label_source": LabelSource.LEGACY_IMPORT.value,
+        "decision": (LabelDecision.NAMED if name else LabelDecision.STRANGER).value,
+        "confidence": LabelConfidence.LOW.value,
+        "arbitration_of": None,
+    }
+
+
+class LabelLineage(BaseModel):
+    """Per-box labeling provenance (PROV-01). A label without lineage cannot be
+    audited; lineage is required on every box of a v3 manifest, not
+    optional-with-default.
+
+    ``saw_machine_proposals`` is a FLAG, not a source. ``inconclusive`` is a
+    DECISION, not a confidence. ``capture_session_id`` is the writable surface
+    for the occasion key and is required on every box of an ``exhaustive``
+    manifest.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    labeler_id: str
+    batch_id: str
+    capture_session_id: str | None = None
+    pass_index: int
+    labeled_at: str
+    tool_version: str
+    saw_machine_proposals: bool
+    label_source: LabelSource
+    decision: LabelDecision
+    confidence: LabelConfidence
+    arbitration_of: list[str] | None = None
+
+
+class FaceBox(BaseModel):
+    """A ground-truth face region: normalized centre (x, y) + size (w, h) in 0..1, an
+    optional confirmed identity name, and a supported region source (iptc | mwg |
+    operator, where operator means human-drawn).
+
+    Persisted for ALL curated faces — named people AND anonymous strangers
+    (``name=None``) — so a face-detection bake-off (FIR-1) has box-level ground truth,
+    not just ``face_count``. Coords mirror identity_sources.FaceRegion (centre-point).
+
+    ``y`` may be omitted/null (VLM6-R2-G-01 / wF4). L→R ordering uses a per-box
+    missing-y fallback and surfaces ``order_degraded``. Detection association
+    (``associate_detections``) excludes null/invalid-y boxes from IoU matching
+    and stamps ``AssociationResult.geometry_incomplete_gt`` — never invents y,
+    never matches on x alone, never counts incomplete boxes as detector FNs
+    (wG2). A required ``y: float`` made the freeze corpus *structurally*
+    incapable of a non-zero ``labeled_y_missing_images`` counter.
+
+    ``lineage`` is required by ``load_manifest`` (v3). It is optional on the
+    model so ``load_legacy_manifest`` can return v2 boxes without inventing
+    lineage (rg-015). The v3 loader rejects ``None`` — it does not default it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float
+    y: float | None = None
+    w: float
+    h: float
+    name: str | None = None
+    source: FaceBoxSource | HistoricalFaceBoxSource
+    lineage: LabelLineage | None = None
+    # Separate from the region source (iptc/mwg/operator): this source marker
+    # resolves to a HumanAdjudicationRecord before scoring.
+    adjudication_source: str | None = None
+
+    @field_validator("adjudication_source")
+    @classmethod
+    def _adjudication_source_has_record_id(cls, value: str | None) -> str | None:
+        if value is not None and _HUMAN_ADJUDICATION_SOURCE_RE.fullmatch(value) is None:
+            raise ValueError("adjudication_source must be human_adjudicated:<review_record_id>")
+        return value
+
+
+class _SubjectModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class EvidenceSupportV1(_SubjectModel):
+    """Embedded audit declaration; acceptance establishes consistency, not truth."""
+
+    version: Literal[1]
+    authority_reference: str = Field(min_length=1)
+    review_reference: str = Field(min_length=1)
+    declarer_id: str = Field(min_length=1)
+    reviewer_id: str = Field(min_length=1)
+    basis: Literal["operator_image_declaration", "independent_image_evidence"]
+    claim: Literal["incomplete_subjects", "complete_subjects", "no_people_or_depictions"]
+    scope: Literal["image_people_and_depictions"]
+    source_original_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def _strict_version(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("version must be integer 1")
+        return value
+
+
+class SourceBindingV1(_SubjectModel):
+    digest_profile: Literal["golden_v3", "raw_report"]
+    namespace: str = Field(min_length=1)
+    source_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_entry_ordinal: int = Field(gt=0)
+    source_entry_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_original_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SubjectEvidenceV1(_SubjectModel):
+    version: Literal[1]
+    status: Literal["known", "partial", "unknown", "not_applicable"]
+    subject_ids: list[str]
+    identity_namespace: str | None
+    complete: bool
+    scope: Literal["image_people_and_depictions"]
+    authority: str = Field(min_length=1)
+    evidence_reference: str = Field(min_length=1)
+    support: EvidenceSupportV1 | None = Field(default=None, exclude_if=lambda value: value is None)
+    support_sha256: str | None = Field(default=None, exclude_if=lambda value: value is None, pattern=r"^[0-9a-f]{64}$")
+    source_binding: SourceBindingV1
+
+    _strict_version = field_validator("version", mode="before")(EvidenceSupportV1._strict_version.__func__)
+
+    @field_validator("support", "support_sha256", mode="before")
+    @classmethod
+    def _present_support_not_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("present support fields cannot be null")
+        return value
+
+    def state_is_consistent(self) -> bool:
+        ids, namespace = self.subject_ids, self.identity_namespace
+        if len(ids) != len(set(ids)):
+            return False
+        if self.status in ("known", "partial"):
+            if not ids or not namespace or ":" in namespace:
+                return False
+            if any(not key.startswith(namespace + ":") or not key[len(namespace) + 1 :] for key in ids):
+                return False
+        elif ids or namespace is not None:
+            return False
+        return self.complete == (self.status in ("known", "not_applicable"))
+
+    @model_validator(mode="after")
+    def _state(self, info: ValidationInfo) -> SubjectEvidenceV1:
+        if not (info.context and info.context.get("subject_shape_only")) and not self.state_is_consistent():
+            raise ValueError("inconsistent subject evidence state")
+        return self
+
+
+@dataclass(frozen=True)
+class SubjectRole:
+    kind: Literal["reported", "selection"]
+    selection_index: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.kind not in ("reported", "selection")
+            or (self.kind == "reported" and self.selection_index is not None)
+            or (self.kind == "selection" and (type(self.selection_index) is not int or self.selection_index < 1))
+        ):
+            raise ValueError("invalid subject role")
+
+
+SubjectErrorCode = Literal[
+    "outer_version",
+    "evidence_version",
+    "evidence_shape",
+    "state_consistency",
+    "source_binding",
+    "support_binding",
+    "evidence_conflict",
+]
+
+
+class SubjectEvidenceError(ManifestError):
+    def __init__(self, code: SubjectErrorCode, role: SubjectRole, entry_ordinal: int | None):
+        self.code = code
+        self.role = role
+        self.entry_ordinal = entry_ordinal
+        super().__init__(f"subject evidence invalid: {code}")
+
+
+@dataclass(frozen=True)
+class LegacySubjects:
+    labels: frozenset[str]
+
+
+@dataclass(frozen=True)
+class KnownSubjects:
+    keys: tuple[str, ...]
+    identity_namespace: str
+    support: EvidenceSupportV1
+
+
+@dataclass(frozen=True)
+class SupportedEmpty:
+    support: EvidenceSupportV1
+
+
+@dataclass(frozen=True)
+class IncompleteSubjects:
+    reason: Literal["missing_subject_evidence", "partial_subject_evidence", "unknown_subject_evidence"]
+
+
+SubjectObservation = LegacySubjects | KnownSubjects | SupportedEmpty | IncompleteSubjects
+
+
+@dataclass(frozen=True)
+class ValidatedSubjectDocument:
+    role: SubjectRole
+    entries: tuple[Mapping[str, object], ...]
+    observations: tuple[SubjectObservation, ...]
+
+
+def _subject_labels(value: object) -> tuple[str, ...]:
+    # Keep the report's original alias and recursive categorical-label behavior.
+    if isinstance(value, str):
+        return (value.strip(),) if value.strip() else ()
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(label for item in value for label in _subject_labels(item))
+    return ()
+
+
+_SUBJECT_ALIASES = ("subject_id", "subject_ids", "subject", "subjects", "present_identities")
+
+
+def _subject_digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def validate_subject_document(raw: Mapping[str, object], *, role: SubjectRole) -> ValidatedSubjectDocument:
+    """Validate every ordered row before display/indexing can discard provenance.
+
+    Phases run document-wide, so an earlier binding defect cannot mask a later
+    shape defect. Projection never calls the loader or verifies original bytes.
+    """
+    rows = raw.get("entries", raw.get("items", []))
+    if not isinstance(rows, list):
+        raise SubjectEvidenceError("evidence_shape", role, None)
+    entries = tuple(rows)
+    supplied = [
+        (i, row["subject_evidence"])
+        for i, row in enumerate(entries, 1)
+        if isinstance(row, Mapping) and "subject_evidence" in row
+    ]
+    if (
+        supplied
+        and "manifest_version" in raw
+        and (type(raw["manifest_version"]) is not int or raw["manifest_version"] != 3)
+    ):
+        raise SubjectEvidenceError("outer_version", role, None)
+    for ordinal, value in supplied:
+        if isinstance(value, Mapping):
+            versions = [value]
+            if isinstance(value.get("support"), Mapping):
+                versions.append(value["support"])
+            if any(type(item.get("version")) is not int or item.get("version") != 1 for item in versions):
+                raise SubjectEvidenceError("evidence_version", role, ordinal)
+    if any(not isinstance(row, Mapping) for row in entries):
+        raise SubjectEvidenceError("evidence_shape", role, None)
+    evidence: dict[int, SubjectEvidenceV1] = {}
+    for ordinal, value in supplied:
+        try:
+            evidence[ordinal] = SubjectEvidenceV1.model_validate(value, context={"subject_shape_only": True})
+        except ValidationError:
+            raise SubjectEvidenceError("evidence_shape", role, ordinal) from None
+    for ordinal, item in evidence.items():
+        if not item.state_is_consistent():
+            raise SubjectEvidenceError("state_consistency", role, ordinal)
+    if supplied:
+        container = "entries" if "entries" in raw else "items"
+        projection = dict(raw)
+        projection[container] = [
+            {key: value for key, value in row.items() if key != "subject_evidence"} for row in entries
+        ]
+        profile = "golden_v3" if "manifest_version" in raw else "raw_report"
+        if profile == "golden_v3":
+            try:
+                projection = GoldenManifest.model_validate(projection).model_dump()
+            except (ValidationError, ManifestError):
+                raise SubjectEvidenceError("evidence_shape", role, None) from None
+        try:
+            digest = _subject_digest(projection)
+        except (TypeError, ValueError):
+            # C(model_dump()) has no date encoding. Existing review datetimes
+            # cannot bind this projection; retain all legacy dump/hash recipes.
+            raise SubjectEvidenceError("source_binding", role, supplied[0][0]) from None
+        for ordinal, item in evidence.items():
+            projected = projection[container][ordinal - 1]
+            expected = {
+                "digest_profile": profile,
+                "namespace": f"manifest-sha256:{digest}",
+                "source_manifest_sha256": digest,
+                "source_entry_ordinal": ordinal,
+                "source_entry_sha256": _subject_digest(projected),
+                "source_original_sha256": projected.get("sha256"),
+            }
+            if item.source_binding.model_dump() != expected:
+                raise SubjectEvidenceError("source_binding", role, ordinal)
+    for ordinal, item in evidence.items():
+        support = item.support
+        if support is None:
+            valid = item.status == "unknown" and item.support_sha256 is None
+        else:
+            claim = {
+                "known": "complete_subjects",
+                "partial": "incomplete_subjects",
+                "not_applicable": "no_people_or_depictions",
+                "unknown": "incomplete_subjects",
+            }[item.status]
+            valid = (
+                item.support_sha256 == _subject_digest(support.model_dump())
+                and support.source_original_sha256 == item.source_binding.source_original_sha256
+                and support.authority_reference == item.authority
+                and support.review_reference == item.evidence_reference
+                and support.declarer_id != support.reviewer_id
+                and support.claim == claim
+                and (not item.complete or support.basis == "independent_image_evidence")
+            )
+        if not valid:
+            raise SubjectEvidenceError("support_binding", role, ordinal)
+    for ordinal, item in evidence.items():
+        row = entries[ordinal - 1]
+        if item.status == "not_applicable" and (
+            row.get("face_count") != 0
+            or type(row.get("face_count")) is not int
+            or any(_subject_labels(row.get(key)) for key in _SUBJECT_ALIASES)
+            or not isinstance(row.get("face_boxes", []), list)
+            # Human face declarations conflict with absence even without identity.
+            or bool(row.get("face_boxes", []))
+            or any(
+                not isinstance(box, Mapping) or _subject_labels(box.get("name")) for box in row.get("face_boxes", [])
+            )
+        ):
+            raise SubjectEvidenceError("evidence_conflict", role, ordinal)
+    observations: list[SubjectObservation] = []
+    for ordinal, row in enumerate(entries, 1):
+        item = evidence.get(ordinal)
+        if item is None:
+            labels = next((_subject_labels(row[key]) for key in _SUBJECT_ALIASES if key in row), ())
+            observations.append(
+                LegacySubjects(frozenset(labels)) if labels else IncompleteSubjects("missing_subject_evidence")
+            )
+        elif item.status == "known":
+            assert item.support is not None and item.identity_namespace is not None
+            observations.append(KnownSubjects(tuple(item.subject_ids), item.identity_namespace, item.support))
+        elif item.status == "not_applicable":
+            assert item.support is not None
+            observations.append(SupportedEmpty(item.support))
+        else:
+            observations.append(
+                IncompleteSubjects(
+                    "partial_subject_evidence" if item.status == "partial" else "unknown_subject_evidence"
+                )
+            )
+    return ValidatedSubjectDocument(role, entries, tuple(observations))
+
+
+class GoldenEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # annotation_mode is intentionally absent (S2R3-10 / S2R4-20): extra=forbid,
+    # no field. Persisted mode is document-level on GoldenManifest. The
+    # mixed-stamp / cannot-widen lattice is score-time raw-mapping only
+    # (report.py). The loader refuses an on-disk per-entry stamp by name
+    # (annotation_mode_is_document_level) rather than as an extra=forbid
+    # accident, so the contract is testable against real JSON.
+
+    subject_evidence: SubjectEvidenceV1 | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("subject_evidence", mode="before")
+    @classmethod
+    def _evidence_not_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("present subject_evidence cannot be null")
+        return value
+
+    path: str
+    sha256: str
+    media_id: int = Field(ge=1)  # synthetic, 1-based; never resets to zero (analyze keys image_<media_id>)
+    face_count: int = Field(ge=0)
+    present_identities: list[str]
+    context_pack: ContextPack = Field(default_factory=ContextPack)
+    # VLMFIX-S3-03: str only (not Optional) so null fails validation; use "" when N/A.
+    base_caption: str = ""
+    must_right: list[str]
+    easy_wrong: list[str]
+    policy: EntryPolicy
+    # E20-FUSION Slice 4: optional mis-attachment labels (absent on non-fusion corpora).
+    expected_attachments: list[ExpectedAttachment] = Field(default_factory=list)
+    # Per-entry opt-out for corpora that intentionally omit a reference caption
+    # without using empty string (reserved; loader also rejects JSON null).
+    base_caption_optional: bool = False
+    # --- VLM-6 S1 Golden-100 additions (all additive/optional) ---------------
+    difficulty: Difficulty | None = None
+    domain: Domain | None = None
+    reference_facts: list[ReferenceFact] = Field(default_factory=list)
+    spatial_facts: list[SpatialFact] = Field(default_factory=list)
+    # All curated face boxes incl. anonymous strangers (name=None) — detection ground
+    # truth for the FIR-1 bake-off; additive/optional (see FIR-1 §Coordination).
+    face_boxes: list[FaceBox] = Field(default_factory=list)
+    # FIR-11 Slice 1: provenance is required on the v3 gate path
+    # (``load_manifest`` fail-closes, naming every offending path). The model
+    # field is optional so ``load_legacy_manifest`` can return frozen v2 rows
+    # that omit it (golden150's six unprovenanced entries) without inventing a
+    # provenance block (rg-015). A v3 box/entry still cannot load unsigned.
+    provenance: Provenance | None = None
+    # FIR-5 S1: bake-off image-slice tags (additive; legacy entries omit → []).
+    tags: list[SliceTag] = Field(default_factory=list)
+    # Optional image-level cohort fallback; single-subject celebs01 only (S3d enforces).
+    demographic_cohort: str | None = None
+
+    @field_validator("path")
+    @classmethod
+    def _path_is_relative_to_corpus(cls, value: str) -> str:
+        return _validate_relative_image_path(value)
+
+    @field_validator("sha256")
+    @classmethod
+    def _sha256_is_hex(cls, value: str) -> str:
+        if not _SHA256_RE.fullmatch(value):
+            raise ValueError("sha256 must be 64 lowercase hex chars")
+        return value
+
+    @field_validator("base_caption", mode="before")
+    @classmethod
+    def _base_caption_not_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError(
+                "base_caption must be a string (use empty string when not applicable; JSON null is rejected)"
+            )
+        return value
+
+
+class GoldenManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manifest_version: int
+    annotation_mode: AnnotationMode
+    iou_threshold: float | None = Field(default=None, exclude_if=lambda value: value is None)
+    roster: list[str]
+    entries: list[GoldenEntry]
+    # Corpus-curation attestations are embedded in the pinned manifest so a
+    # score run can resolve every box-level human_adjudicated source offline.
+    adjudication_records: list[HumanAdjudicationRecord] = Field(default_factory=list)
+    # FIR-5 S1: roster-name -> demographic cohort; keys validated ⊆ roster at load.
+    roster_cohorts: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("iou_threshold", mode="before")
+    @classmethod
+    def _iou_threshold_is_real_number(cls, value: object) -> object:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise ValueError("iou_threshold must be a real number")
+        return value
+
+    @field_validator("manifest_version")
+    @classmethod
+    def _version_is_supported(cls, value: int, info: ValidationInfo) -> int:
+        if info.context and info.context.get("legacy"):
+            if value != LEGACY_MANIFEST_VERSION:
+                raise ValueError(f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {value}")
+            return value
+        if value != SUPPORTED_MANIFEST_VERSION:
+            raise ValueError(
+                f"unsupported manifest_version {value}; this loader understands "
+                f"version {SUPPORTED_MANIFEST_VERSION} only"
+            )
+        return value
+
+    @field_validator("entries")
+    @classmethod
+    def _entries_not_empty(cls, value: list[GoldenEntry]) -> list[GoldenEntry]:
+        if not value:
+            raise ValueError("manifest has no entries; an empty corpus cannot be scored")
+        return value
+
+    def _present_identities_fit_face_count(self) -> None:
+        """Reject identity claims that exceed the independently recorded face_count.
+
+        ``present_identities`` is identification ground truth. A list longer
+        than ``face_count`` is an unbacked claim in both annotation modes
+        (FIR-11-S2-04 / S2R2-05).
+        """
+        for index, entry in enumerate(self.entries):
+            n_ids = len(entry.present_identities)
+            if entry.face_count < n_ids:
+                raise ManifestError(
+                    f"present_identities_fit_face_count: entry[{index}] "
+                    f"{_printable_path(entry.path)}: face_count={entry.face_count} < "
+                    f"len(present_identities)={n_ids}",
+                    invariant="present_identities_fit_face_count",
+                    entry_index=index,
+                    entry_path=entry.path,
+                )
+
+    def _boxes_cover_face_count(self) -> None:
+        """Manifest-level coverage invariant (replaces retired entry-level check).
+
+        ``face_count`` is an independently recorded operator count, never
+        derived from ``len(face_boxes)``. Equality under ``exhaustive`` proves
+        internal consistency only — not exhaustiveness in the world.
+        """
+        for index, entry in enumerate(self.entries):
+            n_boxes = len(entry.face_boxes)
+            if self.annotation_mode is AnnotationMode.EXHAUSTIVE:
+                if n_boxes != entry.face_count:
+                    raise ManifestError(
+                        f"boxes_cover_face_count: exhaustive entry[{index}] "
+                        f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} != "
+                        f"face_count={entry.face_count}",
+                        invariant="boxes_cover_face_count",
+                        entry_index=index,
+                        entry_path=entry.path,
+                    )
+            elif self.annotation_mode is AnnotationMode.ROSTER_ONLY and n_boxes > entry.face_count:
+                raise ManifestError(
+                    f"boxes_cover_face_count: roster_only entry[{index}] "
+                    f"{_printable_path(entry.path)}: len(face_boxes)={n_boxes} > "
+                    f"face_count={entry.face_count}",
+                    invariant="boxes_cover_face_count",
+                    entry_index=index,
+                    entry_path=entry.path,
+                )
+
+    def _lineage_required_on_boxes(self) -> None:
+        """PROV-01: a label without lineage cannot be audited."""
+        for index, entry in enumerate(self.entries):
+            for box_index, box in enumerate(entry.face_boxes):
+                if box.lineage is None:
+                    raise ManifestError(
+                        f"label_lineage_required: entry[{index}] {_printable_path(entry.path)} "
+                        f"box[{box_index}] has no LabelLineage",
+                        invariant="label_lineage_required",
+                        entry_index=index,
+                        entry_path=entry.path,
+                    )
+
+    def _capture_session_required_when_exhaustive(self) -> None:
+        """Occasion key must be a real session on every exhaustive box.
+
+        ``LEGACY_IMPORT_CAPTURE_SESSION_ID`` is not a session — it is the
+        documented unknown-occasion marker minted for pre-v3 boxes. A
+        truthy sentinel must not clear this gate (S2R6-01 / rg-015).
+        """
+        if self.annotation_mode is not AnnotationMode.EXHAUSTIVE:
+            return
+        for index, entry in enumerate(self.entries):
+            for box_index, box in enumerate(entry.face_boxes):
+                session = None if box.lineage is None else box.lineage.capture_session_id
+                if not session or session == LEGACY_IMPORT_CAPTURE_SESSION_ID:
+                    detail = (
+                        "is missing capture_session_id"
+                        if not session
+                        else (f"carries unknown-occasion sentinel {LEGACY_IMPORT_CAPTURE_SESSION_ID!r}")
+                    )
+                    raise ManifestError(
+                        f"capture_session_id_required: exhaustive entry[{index}] "
+                        f"{_printable_path(entry.path)} box[{box_index}] {detail}",
+                        invariant="capture_session_id_required",
+                        entry_index=index,
+                        entry_path=entry.path,
+                    )
+
+    def _box_has_strict_scoring_lineage(self, box: FaceBox) -> bool:
+        """Whether a box otherwise qualifies for strict identity/detection scoring.
+
+        The strict scorers admit these blind, human-decided lineage tuples as
+        ground truth. They still need a resolved adjudication record before a
+        v3 manifest can supply that box to scoring.
+        """
+        if box.lineage is None:
+            return False
+        lineage = box.lineage
+        return (
+            lineage.label_source
+            in {
+                LabelSource.OPERATOR_BLIND,
+                LabelSource.OPERATOR_REPASS,
+                LabelSource.ARBITRATION,
+                LabelSource.GOLD_REFERENCE,
+            }
+            and lineage.saw_machine_proposals is False
+            and lineage.decision
+            in {
+                LabelDecision.NAMED,
+                LabelDecision.STRANGER,
+                LabelDecision.INCONCLUSIVE,
+            }
+        )
+
+    def _adjudication_references_resolve(self, *, require_strict_scoring_reviews: bool = False) -> None:
+        records: dict[str, HumanAdjudicationRecord] = {}
+        for record in self.adjudication_records:
+            if record.record_id in records:
+                raise ManifestError(
+                    f"human adjudication record id {record.record_id!r} is duplicated",
+                    invariant="adjudication_record_invalid",
+                )
+            records[record.record_id] = record
+
+        referenced: set[str] = set()
+        for entry_index, entry in enumerate(self.entries):
+            for box_index, box in enumerate(entry.face_boxes):
+                source = box.adjudication_source
+                if source is None:
+                    if require_strict_scoring_reviews and self._box_has_strict_scoring_lineage(box):
+                        raise ManifestError(
+                            "strict scoring requires a confirmed independent blind review "
+                            f"for entry[{entry_index}] "
+                            f"{_printable_path(entry.path)} box[{box_index}]",
+                            invariant="adjudication_record_required",
+                            entry_index=entry_index,
+                            entry_path=entry.path,
+                        )
+                    continue
+                match = _HUMAN_ADJUDICATION_SOURCE_RE.fullmatch(source)
+                if match is None:
+                    # FaceBox validates this shape; retain a fail-closed check
+                    # at the manifest cross-reference boundary as well.
+                    raise ManifestError(
+                        f"box adjudication_source is malformed: {source!r}",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                record_id = match.group(1)
+                record = records.get(record_id)
+                if record is None:
+                    raise ManifestError(
+                        f"human adjudication record {record_id!r} is missing for "
+                        f"entry[{entry_index}] {_printable_path(entry.path)} box[{box_index}]",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                if record.media_id != entry.media_id or record.box_index != box_index:
+                    raise ManifestError(
+                        f"human adjudication record {record_id!r} targets a different box",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                if box.lineage is None or record.reviewer_id == box.lineage.labeler_id:
+                    raise ManifestError(
+                        f"human adjudication record {record_id!r} is not independent of the original labeler",
+                        invariant="adjudication_record_invalid",
+                        entry_index=entry_index,
+                        entry_path=entry.path,
+                    )
+                referenced.add(record_id)
+
+        unused = set(records) - referenced
+        if unused:
+            raise ManifestError(
+                "human adjudication records must be referenced by a box: " + ", ".join(sorted(unused)),
+                invariant="adjudication_record_invalid",
+            )
+
+    @model_validator(mode="after")
+    def _enforce_v3_invariants(self, info: ValidationInfo) -> GoldenManifest:
+        if info.context and info.context.get("legacy"):
+            return self
+        self._present_identities_fit_face_count()
+        self._boxes_cover_face_count()
+        self._lineage_required_on_boxes()
+        self._capture_session_required_when_exhaustive()
+        self._adjudication_references_resolve()
+        return self
+
+
+def require_confirmed_blind_reviews_for_strict_scoring(
+    manifest: object,
+    *,
+    entries: Sequence[Mapping[str, object]] | None = None,
+) -> None:
+    """Reject strict scoring unless each strict-ready GT box has review.
+
+    Normal loading keeps optional review references available for historical
+    ingestion. Strict scoring entrypoints must call this guard with the loaded
+    manifest or its full model-dump before computing detection or identification.
+    Lightweight score-time mappings and duck-typed manifests are projected onto
+    the review fields only; unrelated document fields are not a scoring gate.
+    ``entries`` supplies the scorer's flattened GT rather than run metadata.
+    """
+    if isinstance(manifest, GoldenManifest):
+        manifest._adjudication_references_resolve(require_strict_scoring_reviews=True)
+        return
+    try:
+        if isinstance(manifest, Mapping):
+            raw_entries = entries if entries is not None else manifest.get("entries")
+            raw_records = manifest.get("adjudication_records") or []
+        else:
+            raw_entries = entries if entries is not None else getattr(manifest, "entries", None)
+            raw_records = getattr(manifest, "adjudication_records", None) or []
+        if raw_entries is None:
+            raise ValueError("manifest entries are unavailable")
+        review_entries = []
+        for raw_entry in raw_entries:
+            entry = raw_entry.model_dump() if hasattr(raw_entry, "model_dump") else dict(raw_entry)
+            # This private projection is used only for cross-reference checking,
+            # never as a loaded manifest. Boxes and review records are validated.
+            review_entries.append(
+                GoldenEntry.model_construct(
+                    path=entry["path"],
+                    media_id=entry["media_id"],
+                    face_boxes=[FaceBox.model_validate(box) for box in entry.get("face_boxes") or []],
+                )
+            )
+        records = [HumanAdjudicationRecord.model_validate(record) for record in raw_records]
+        validated = GoldenManifest.model_construct(entries=review_entries, adjudication_records=records)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ManifestError(
+            "strict scoring cannot read manifest review evidence",
+            invariant="adjudication_record_invalid",
+        ) from exc
+    validated._adjudication_references_resolve(require_strict_scoring_reviews=True)
+
+
+def _reject_per_entry_annotation_mode(entries_raw: object) -> None:
+    """Persisted annotation_mode is document-level (S2R3-10 / S2R4-20).
+
+    A per-entry stamp in a JSON file is not a loadable contract. The
+    mixed-stamp lattice lives on raw mappings at score time; the loader
+    must not let pydantic extra=forbid be the only rejection, because
+    that makes the decision look like a missing field rather than a
+    named document-level rule (rg-009).
+    """
+    if not isinstance(entries_raw, list):
+        return
+    for index, raw_entry in enumerate(entries_raw):
+        if not isinstance(raw_entry, dict):
+            continue
+        if "annotation_mode" not in raw_entry:
+            continue
+        path = raw_entry.get("path")
+        entry_path = path if isinstance(path, str) else None
+        raise ManifestError(
+            f"annotation_mode is document-level; per-entry stamp is not a "
+            f"persisted contract ("
+            f"{_printable_path(entry_path) if entry_path else f'entry[{index}]'})",
+            invariant=ANNOTATION_MODE_DOCUMENT_LEVEL_INVARIANT,
+            entry_index=index,
+            entry_path=entry_path,
+        )
+
+
+def _entry_field_is_populated(entry: GoldenEntry, field: str) -> bool:
+    """True when ``field`` carries non-empty metric-backing content on ``entry``."""
+    value = getattr(entry, field, None)
+    if value is None:
+        return False
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def inventory_corpus_fields(manifest: GoldenManifest) -> dict[str, FieldPopulation]:
+    """Report per-field population counts for stratification / metric backing.
+
+    Makes empty strata visible (MEAS-09) instead of silently collapsing every
+    per-stratum gate into one bucket (VLM6-R2-03 / EVAL-04).
+    """
+    total = len(manifest.entries)
+    out: dict[str, FieldPopulation] = {}
+    for field in STRATIFICATION_INVENTORY_FIELDS:
+        populated = sum(1 for entry in manifest.entries if _entry_field_is_populated(entry, field))
+        out[field] = FieldPopulation(field=field, populated=populated, total=total)
+    return out
+
+
+def require_metric_backing(manifest: GoldenManifest, field: str) -> FieldPopulation:
+    """Refuse to certify a metric whose backing field is empty corpus-wide.
+
+    Call this before any gate that buckets or scores on ``field``. A vacuous
+    0/N field must not return pass — it must name the field, the 0/N counts,
+    and the remedy (populate the field or declare a coverage gap with owner).
+    """
+    if field not in STRATIFICATION_INVENTORY_FIELDS:
+        raise ManifestError(
+            f"unknown metric-backing field {field!r}; known fields are {', '.join(STRATIFICATION_INVENTORY_FIELDS)}"
+        )
+    pop = inventory_corpus_fields(manifest)[field]
+    if pop.is_vacuous:
+        gap = SHIPPED_CORPUS_COVERAGE_GAPS.get(field)
+        gap_hint = (
+            f" Declared coverage gap: {gap}."
+            if gap
+            else (
+                f" Populate {field!r} on golden entries (derivable labels or operator "
+                "curation) before gating on it, or add it to SHIPPED_CORPUS_COVERAGE_GAPS "
+                "with owner=… and a concrete action."
+            )
+        )
+        raise ManifestError(
+            f"cannot certify metric backed by {field!r}: {pop.populated}/{pop.total} entries "
+            f"populate that field (vacuous corpus-wide; per-stratum gate would collapse to "
+            f"a single bucket).{gap_hint}"
+        )
+    return pop
+
+
+# Minimum populated entries for a critical slice to count as evaluable (EVAL-04).
+# Below this threshold the claim unit is disclosed as under-sampled, not certified.
+METRIC_BACKING_SLICE_THRESHOLD: int = 5
+
+# Scorer-facing consequences when a registry gap field is empty/under-sampled.
+# Kept next to the registry so disclosure cannot drift from SHIPPED_CORPUS_COVERAGE_GAPS.
+_GAP_SCORER_CONSEQUENCES: dict[str, str] = {
+    "face_boxes": (
+        "positional_identification never runs; set-based identity scoring cannot catch right-names-on-wrong-faces"
+    ),
+    "spatial_facts": "placement accuracy is vacuous (0 asserted claims)",
+    "reference_facts": "no trap coverage for fabricated-fact scoring (rate is undefined)",
+    "demographic_cohort": "demographic/cohort fairness slices have no sampling frame",
+}
+
+
+def compute_corpus_coverage_gaps(
+    entries: list[GoldenEntry] | list[object],
+    *,
+    threshold: int = METRIC_BACKING_SLICE_THRESHOLD,
+) -> dict[str, dict[str, object]]:
+    """Sampling-frame honesty for every SHIPPED_CORPUS_COVERAGE_GAPS field (AUDIT-07).
+
+    Always reports populated/total and a slice threshold — never a boolean that
+    hides a 1/N under-sampled field (VLM6-C-01). Driven by the package gap
+    registry so demographic_cohort cannot drift out of the anchor (VLM6-C-02).
+    Call from offline generators *and* live score paths (VLM6-E-07).
+
+    Returns a dict keyed by field name. Each value is a structured record::
+
+        {
+          "populated": int,
+          "total": int,
+          "threshold": int,
+          "below_threshold": bool,
+          "pi_zero": bool,
+          "reason": str,   # human-readable summary
+          "registry": str, # owner=… action=… from SHIPPED_CORPUS_COVERAGE_GAPS
+        }
+    """
+    total = len(entries)
+    out: dict[str, dict[str, object]] = {}
+    for field, registry in SHIPPED_CORPUS_COVERAGE_GAPS.items():
+        populated = 0
+        for entry in entries:
+            if isinstance(entry, GoldenEntry):
+                if _entry_field_is_populated(entry, field):
+                    populated += 1
+            else:
+                # Score-time callers pass JSON-shaped mappings rather than
+                # validated GoldenEntry objects. Read the same field from
+                # either representation so live provenance cannot undercount
+                # authored metric backing (AUDIT-07).
+                value = entry.get(field) if isinstance(entry, Mapping) else getattr(entry, field, None)
+                if value is None:
+                    continue
+                if isinstance(value, list) and len(value) == 0:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if value:
+                    populated += 1
+        below = populated < threshold
+        pi_zero = populated == 0
+        consequence = _GAP_SCORER_CONSEQUENCES.get(field, "metric claim units under-sampled")
+        reason = f"{populated}/{total} entries populate it (threshold={threshold}) — {consequence}"
+        out[field] = {
+            "populated": populated,
+            "total": total,
+            "threshold": threshold,
+            "below_threshold": below,
+            "pi_zero": pi_zero,
+            "reason": reason,
+            "registry": registry,
+        }
+    return out
+
+
+def metric_backing_refusals(manifest: GoldenManifest) -> dict[str, str]:
+    """Call ``require_metric_backing`` for every registry gap field; collect refusals.
+
+    Production gates must not treat a vacuous field as pass (EVAL-23). This
+    helper is the single place generators and score paths share (VLM6-C-07).
+    """
+    refusals: dict[str, str] = {}
+    for field in SHIPPED_CORPUS_COVERAGE_GAPS:
+        try:
+            require_metric_backing(manifest, field)
+        except ManifestError as exc:
+            refusals[field] = str(exc)
+    return refusals
+
+
+def resolve_verified_image(entry: GoldenEntry, images_root: Path | str) -> Path:
+    """Resolve ``entry.path`` under ``images_root`` and verify the sha256 pin.
+
+    Any path that reads image bytes must go through this (or ``load_manifest``
+    hash verification) so corpus drift cannot stay silent (VLM6-R2-05 / OBS-04).
+    """
+    root = Path(images_root)
+    # Validate and resolve the entry before checking whether the root exists.
+    # An unsafe spelling must not be treated as an ordinary missing file and
+    # then fall through to another source.
+    image_path = _resolve_image(root, entry.path)
+    if not root.is_dir():
+        raise ManifestError(
+            f"images directory not found: {_printable_path(root)} — set GOLDEN_IMAGES_DIR to the "
+            "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md) before "
+            "reading image bytes"
+        )
+    if image_path is None:
+        raise ManifestError(
+            f"image file missing: {_printable_path(entry.path)} (under {_printable_path(root)}) — re-rsync fixtures or "
+            "fix the manifest path (see scene/tests/seed/README.md)"
+        )
+    try:
+        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        filename = exc.filename if exc.filename is not None else image_path
+        if exc.strerror is not None:
+            message = exc.strerror
+        else:
+            message = str(exc.args[0] if exc.args else type(exc).__name__)
+        filename2 = getattr(exc, "filename2", None)
+        filename_display = _printable_path(filename)
+        filename2_display = _printable_path(filename2) if filename2 is not None else None
+        message_display = _printable_message(message)
+        details = f"filename={filename_display}"
+        if filename2_display is not None:
+            details = f"{details}, filename2={filename2_display}"
+        error_message = (
+            f"image file unreadable: {_printable_path(entry.path)} "
+            f"(under {_printable_path(root)}): {message_display} ({details})"
+        )
+        raise ManifestError(error_message) from exc
+    if digest != entry.sha256:
+        raise ManifestError(
+            f"sha256 mismatch for {_printable_path(entry.path)}: manifest {entry.sha256}, file {digest} — "
+            "image bytes drifted from the pinned corpus; re-bootstrap GOLDEN_IMAGES_DIR "
+            "or update the manifest pin after an intentional replacement"
+        )
+    return image_path
+
+
+def resolve_image_path(images_root: Path | str, rel_path: str) -> Path | None:
+    """Resolve an optional local corpus file while enforcing root containment.
+
+    A missing root or file returns ``None`` so callers may try an explicitly
+    pinned remote source. An existing symlink that resolves outside the root is
+    an error, because falling through to a remote source would hide a local
+    corpus escape.
+    """
+    # Keep lexical and symlink containment checks active even when the root is
+    # absent. A missing local file is a valid remote-fallback signal, but an
+    # unsafe path must fail closed first.
+    return _resolve_image(Path(images_root), rel_path)
+
+
+def load_manifest(
+    path: str,
+    images_dir: str | None = None,
+    *,
+    skip_hash_verification: bool = False,
+    hash_skip_reason: str | None = None,
+    metadata_only: bool = False,
+) -> GoldenManifest:
+    """Load and validate a v3 golden manifest; verify image hashes by default.
+
+    ``face_count`` is an operator-recorded count-first figure, never derived
+    from ``len(face_boxes)``. The coverage invariant compares those two
+    independently produced numbers (see module docstring).
+
+    Hash verification is the default (VLM6-R2-05 / OBS-04). Resolution rules:
+
+    ``metadata_only=True`` never resolves ``images_dir`` or ``GOLDEN_IMAGES_DIR``
+    and never calls ``_verify_hashes`` or ``resolve_verified_image``.
+    ``metadata_only=True`` requires ``skip_hash_verification=True`` and
+    ``hash_skip_reason`` or it raises ``ManifestError``.
+    ``metadata_only=True`` together with an explicit ``images_dir`` raises
+    ``ManifestError``.
+    ``images_dir=""`` raises ``ManifestError``; pass a real directory or
+    ``metadata_only=True``.
+    Explicit non-empty ``images_dir`` is always verified.
+    Else ``GOLDEN_IMAGES_DIR`` is verified when the directory exists.
+    Else ``skip_hash_verification=True`` is a metadata-only load that emits
+    ``HashVerificationSkippedWarning`` naming ``hash_skip_reason`` (or
+    ``"no reason supplied"``) and the path (OBS-04).
+    Else refuse with an actionable error.
+    ``hash_skip_reason`` raises ``ManifestError`` only when
+    ``skip_hash_verification`` is False; skip=True plus resolvable images
+    verifies silently (VLM6-W2-RV-01).
+
+    Raises ManifestError on: missing/unreadable file, malformed JSON, schema
+    violations, unsupported version, missing ``annotation_mode``, a
+    per-entry ``annotation_mode`` stamp (document-level only), empty corpus,
+    duplicate media_id/path, identities outside the roster, roster_cohorts keys
+    outside the roster, any entry missing ``provenance`` (FIR-11 Slice 1 —
+    required, fail-closed; every offending path is named in one error), a box
+    without ``LabelLineage``, an ``exhaustive`` box missing a real
+    ``capture_session_id`` (the legacy-import unknown-occasion sentinel
+    is rejected, not treated as a session), a coverage mismatch under the declared
+    ``annotation_mode``, missing image files or sha256 mismatches, and silent
+    no-verify attempts. Emits ``RubricEmptyWarning`` if the corpus defines no
+    Must-Right/Easy-Wrong entries — the caption hard gate is then vacuous but
+    that is surfaced, not silent (S1-02).
+
+    Frozen v2 artifacts are not loaded here — use ``load_legacy_manifest``.
+
+    Later-wave ``cli.py`` call sites that currently omit ``images_dir`` must either
+    pass ``images_dir=`` / rely on ``GOLDEN_IMAGES_DIR`` when they read pixels, or
+    pass ``skip_hash_verification=True`` for deliberate metadata-only loads
+    (see ``_cmd_score`` ~1193, determinism helpers ~1109/1137, ``_cmd_score_face``
+    ~1638/1653/1693, face fetch ~1536).
+    """
+    manifest_path = Path(path)
+    if not manifest_path.is_file():
+        raise ManifestError(
+            f"golden manifest not found: {_printable_path(manifest_path)} (expected scene/tests/seed/golden.json; see seed/README.md)"
+        )
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        if exc.filename is None:
+            raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc.strerror}") from exc
+        raise ManifestError(
+            f"golden manifest unreadable or malformed JSON: {exc.strerror}: {_printable_path(exc.filename)}"
+        ) from exc
+    except ValueError as exc:
+        raise ManifestError(f"golden manifest unreadable or malformed JSON: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ManifestError(f"golden manifest must be a JSON object, got {type(raw).__name__}")
+
+    if isinstance(raw.get("entries"), list) and any(
+        isinstance(row, Mapping) and "subject_evidence" in row for row in raw["entries"]
+    ):
+        validate_subject_document(raw, role=SubjectRole("reported"))
+
+    # Version and structural shape fail before field-level holes (FIR-11-SL1-R1-04):
+    # unsupported version / entries-not-a-list / entry-not-an-object must not
+    # surface as TypeError or as a missing-provenance report.
+    version = raw.get("manifest_version")
+    if version is not None and version != SUPPORTED_MANIFEST_VERSION:
+        raise ManifestError(
+            f"unsupported manifest_version {version}; this loader understands version {SUPPORTED_MANIFEST_VERSION} only"
+        )
+    entries_raw = raw.get("entries")
+    if entries_raw is not None and not isinstance(entries_raw, list):
+        raise ManifestError(f"manifest 'entries' must be a list, got {type(entries_raw).__name__}")
+    if isinstance(entries_raw, list):
+        for index, raw_entry in enumerate(entries_raw):
+            if not isinstance(raw_entry, dict):
+                raise ManifestError(
+                    f"manifest entry at index {index} must be an object, got {type(raw_entry).__name__}"
+                )
+
+    # v2 corpus contract (S6-01 / rg-008): base_caption is a first-class field, not
+    # an optional golden-only convention. Require the key on every entry so
+    # consumers can index entry["base_caption"] without KeyError; use "" when the
+    # corpus does not author a reference caption (e.g. bake-off subset).
+    if raw.get("manifest_version") == SUPPORTED_MANIFEST_VERSION:
+        for raw_entry in entries_raw or []:
+            path_slot = raw_entry.get("path")
+            if "base_caption" not in raw_entry:
+                raise ManifestError(
+                    f"manifest_version {SUPPORTED_MANIFEST_VERSION} requires 'base_caption' on "
+                    f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
+                    f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                    f"use empty string when not applicable"
+                )
+            if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
+                raise ManifestError(
+                    f"manifest_version {SUPPORTED_MANIFEST_VERSION} rejects null base_caption "
+                    f"(media_id={raw_entry.get('media_id')!r} path="
+                    f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                    f"use empty string when not applicable, or set base_caption_optional=true"
+                )
+
+    # FIR-11 Slice 1: provenance is required. Aggregate every missing/null
+    # entry into one ManifestError naming every offending path — fail-closed
+    # and not fail-first, so a junior operator sees the full hole list.
+    missing_provenance: list[str] = []
+    for raw_entry in entries_raw or []:
+        if raw_entry.get("provenance") is None:
+            entry_path = raw_entry.get("path")
+            media_id = raw_entry.get("media_id")
+            if isinstance(entry_path, str) and entry_path:
+                label = _printable_path(entry_path)
+                if media_id is not None:
+                    label = f"{label} (media_id={media_id})"
+            else:
+                label = f"media_id={media_id!r}"
+            missing_provenance.append(label)
+    if missing_provenance:
+        listed = ", ".join(missing_provenance)
+        raise ManifestError(
+            f"provenance is required (fail-closed); missing on {len(missing_provenance)} entries: {listed}"
+        )
+
+    if raw.get("annotation_mode") is None:
+        raise ManifestError(
+            "annotation_mode is required (exhaustive|roster_only)",
+            invariant="annotation_mode_required",
+        )
+    _reject_per_entry_annotation_mode(entries_raw)
+
+    try:
+        manifest = GoldenManifest.model_validate(raw)
+    except ManifestError:
+        raise
+    except ValidationError as exc:
+        raise ManifestError(f"golden manifest schema violation: {_format_validation_error(exc)}") from exc
+
+    seen_ids: set[int] = set()
+    seen_paths: set[str] = set()
+    for entry in manifest.entries:
+        if entry.media_id in seen_ids:
+            raise ManifestError(f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})")
+        seen_ids.add(entry.media_id)
+        if entry.path in seen_paths:
+            raise ManifestError(f"duplicate path {_printable_path(entry.path)} (each image must appear once)")
+        seen_paths.add(entry.path)
+
+    roster = set(manifest.roster)
+    for entry in manifest.entries:
+        for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
+            if name not in roster:
+                raise ManifestError(f"identity {name!r} in {_printable_path(entry.path)} is not in the roster")
+    for cohort_key in manifest.roster_cohorts:
+        if cohort_key not in roster:
+            raise ManifestError(f"roster_cohorts key {cohort_key!r} is not in the roster")
+
+    if not any(entry.must_right or entry.easy_wrong for entry in manifest.entries):
+        warnings.warn(
+            "golden corpus defines no Must-Right/Easy-Wrong rubric entries; the caption "
+            "hard gate and Easy-Wrong rubric are vacuous across the corpus (see seed/README.md)",
+            RubricEmptyWarning,
+            stacklevel=2,
+        )
+
+    # A reason without skip_hash_verification=True is a caller bug
+    # (VLM6-DELTA-05 / VLM6-W2-RV-01 / OBS-04). When skip is True and images
+    # resolve, verification still runs and the reason is unused.
+    if hash_skip_reason is not None and not skip_hash_verification:
+        raise ManifestError(
+            f"hash_skip_reason={hash_skip_reason!r} supplied but hash verification "
+            f"is not being skipped (skip_hash_verification={skip_hash_verification}). "
+            "A reason without a skip is a caller bug."
+        )
+    if images_dir == "":
+        raise ManifestError(
+            "images_dir must be a real directory path; use metadata_only=True "
+            "for deliberate metadata-only loads that must not resolve GOLDEN_IMAGES_DIR"
+        )
+    if metadata_only:
+        if images_dir is not None:
+            raise ManifestError(
+                "metadata_only=True cannot be combined with images_dir; "
+                "metadata_only never resolves an images directory"
+            )
+        if not skip_hash_verification or hash_skip_reason is None:
+            raise ManifestError("metadata_only=True requires skip_hash_verification=True and hash_skip_reason")
+        warnings.warn(
+            f"load_manifest: hash verification skipped ({hash_skip_reason}) for {_printable_path(path)}",
+            HashVerificationSkippedWarning,
+            stacklevel=2,
+        )
+        return manifest
+    env_images = os.environ.get("GOLDEN_IMAGES_DIR") or None
+    candidate = images_dir if images_dir is not None else env_images
+    images_exist = bool(candidate) and Path(candidate).is_dir()
+    # Explicit images_dir is always verified. Env is verified when the dir
+    # exists; a set-but-missing env does not resolve when skip is True.
+    must_verify = images_dir is not None or (bool(candidate) and (images_exist or not skip_hash_verification))
+    if must_verify:
+        _verify_hashes(manifest, Path(candidate))
+    elif skip_hash_verification:
+        # Named skip is still a silent no-op unless surfaced (VLM6-PANEL6L-rvM-03
+        # / OBS-04): a caller that flips this on for a real pixel-reading path
+        # would otherwise never learn the pins went unverified. The warning
+        # names the caller reason so metadata-only sites are distinguishable
+        # (VLM6-DELTA-05).
+        reason = hash_skip_reason if hash_skip_reason is not None else "no reason supplied"
+        warnings.warn(
+            f"load_manifest: hash verification skipped ({reason}) for {_printable_path(path)}",
+            HashVerificationSkippedWarning,
+            stacklevel=2,
+        )
+    else:
+        raise ManifestError(
+            "image hash verification is required by default but no images_dir was given "
+            "and GOLDEN_IMAGES_DIR is unset. Pass images_dir=... (or set GOLDEN_IMAGES_DIR) "
+            "to verify every entry's sha256 pin before any path that may read image bytes, "
+            "or pass skip_hash_verification=True only for deliberate metadata-only loads "
+            "that will not open image files (VLM6-R2-05 / OBS-04)."
+        )
+    return manifest
+
+
+def load_legacy_manifest(path: str, images_dir: str | None = None) -> GoldenManifest:
+    """Read-only v2 loader for Slice 5 bias-audit arms and Slice 3 audit-queue draw.
+
+    Not reachable from ``cli.py`` gate commands. Accepts ``manifest_version`` 2
+    only. Does **not** require ``annotation_mode``, ``LabelLineage``, or
+    ``provenance`` (so frozen golden150-draft, with its six unprovenanced
+    rows, can load). Does **not** apply the v3 coverage invariant.
+
+    Documented default (rg-015): a v2 document that omits ``annotation_mode``
+    is recorded as ``roster_only``. v2 manifests never claimed exhaustiveness —
+    that is why corpus646 was mis-scored as if every face were boxed. The
+    default is written into the returned object; it is not invented at
+    detection-scoring time.
+
+    ``manifest_version`` on the returned object stays 2.
+    """
+    manifest_path = Path(path)
+    if not manifest_path.is_file():
+        raise ManifestError(f"legacy manifest not found: {_printable_path(manifest_path)}")
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        if exc.filename is None:
+            raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc.strerror}") from exc
+        raise ManifestError(
+            f"legacy manifest unreadable or malformed JSON: {exc.strerror}: {_printable_path(exc.filename)}"
+        ) from exc
+    except ValueError as exc:
+        raise ManifestError(f"legacy manifest unreadable or malformed JSON: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ManifestError(f"legacy manifest must be a JSON object, got {type(raw).__name__}")
+
+    if isinstance(raw.get("entries"), list) and any(
+        isinstance(row, Mapping) and "subject_evidence" in row for row in raw["entries"]
+    ):
+        raise ManifestError("subject evidence invalid: outer_version")
+
+    version = raw.get("manifest_version")
+    if version != LEGACY_MANIFEST_VERSION:
+        raise ManifestError(f"legacy loader understands version {LEGACY_MANIFEST_VERSION} only; got {version}")
+    entries_raw = raw.get("entries")
+    if entries_raw is not None and not isinstance(entries_raw, list):
+        raise ManifestError(f"manifest 'entries' must be a list, got {type(entries_raw).__name__}")
+    if isinstance(entries_raw, list):
+        for index, raw_entry in enumerate(entries_raw):
+            if not isinstance(raw_entry, dict):
+                raise ManifestError(
+                    f"manifest entry at index {index} must be an object, got {type(raw_entry).__name__}"
+                )
+
+    for raw_entry in entries_raw or []:
+        path_slot = raw_entry.get("path")
+        if "base_caption" not in raw_entry:
+            raise ManifestError(
+                f"manifest_version {LEGACY_MANIFEST_VERSION} requires 'base_caption' on "
+                f"every entry (missing on media_id={raw_entry.get('media_id')!r} path="
+                f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                f"use empty string when not applicable"
+            )
+        if raw_entry.get("base_caption") is None and not raw_entry.get("base_caption_optional"):
+            raise ManifestError(
+                f"manifest_version {LEGACY_MANIFEST_VERSION} rejects null base_caption "
+                f"(media_id={raw_entry.get('media_id')!r} path="
+                f"{_printable_path(path_slot) if isinstance(path_slot, str) else path_slot}); "
+                f"use empty string when not applicable, or set base_caption_optional=true"
+            )
+
+    payload = dict(raw)
+    if payload.get("annotation_mode") is None:
+        # Documented default — v2 never claimed exhaustiveness (see docstring).
+        payload["annotation_mode"] = AnnotationMode.ROSTER_ONLY
+    _reject_per_entry_annotation_mode(entries_raw)
+
+    try:
+        manifest = GoldenManifest.model_validate(payload, context={"legacy": True})
+    except ManifestError:
+        raise
+    except ValidationError as exc:
+        raise ManifestError(f"legacy manifest schema violation: {_format_validation_error(exc)}") from exc
+
+    seen_ids: set[int] = set()
+    seen_paths: set[str] = set()
+    for entry in manifest.entries:
+        if entry.media_id in seen_ids:
+            raise ManifestError(f"duplicate media_id {entry.media_id} ({_printable_path(entry.path)})")
+        seen_ids.add(entry.media_id)
+        if entry.path in seen_paths:
+            raise ManifestError(f"duplicate path {_printable_path(entry.path)} (each image must appear once)")
+        seen_paths.add(entry.path)
+
+    roster = set(manifest.roster)
+    for entry in manifest.entries:
+        for name in (*entry.present_identities, *entry.must_right, *entry.easy_wrong):
+            if name not in roster:
+                raise ManifestError(f"identity {name!r} in {_printable_path(entry.path)} is not in the roster")
+    for cohort_key in manifest.roster_cohorts:
+        if cohort_key not in roster:
+            raise ManifestError(f"roster_cohorts key {cohort_key!r} is not in the roster")
+
+    if images_dir is not None:
+        _verify_hashes(manifest, Path(images_dir))
+    return manifest
+
+
+def _verify_hashes(manifest: GoldenManifest, images_root: Path) -> None:
+    if not images_root.is_dir():
+        raise ManifestError(
+            f"images directory not found: {_printable_path(images_root)} — set GOLDEN_IMAGES_DIR to the "
+            "rsync-bootstrapped fixture copy (see scene/tests/seed/README.md)"
+        )
+    for entry in manifest.entries:
+        resolve_verified_image(entry, images_root)
+
+
+def _resolve_image(images_root: Path, rel_path: str) -> Path | None:
+    """Resolve ``rel_path`` under ``images_root``, tolerating NFC/NFD drift (S1-07).
+
+    macOS stores decomposed (NFD) filenames while Linux preserves whatever bytes
+    were written; an rsync between them can flip the normalization form. Try the
+    exact bytes first, then the NFC and NFD normalizations so a non-ASCII path
+    resolves the same on either platform.
+    """
+    try:
+        _validate_relative_image_path(rel_path)
+    except (TypeError, ValueError) as exc:
+        raise ManifestError(
+            f"image path is not a safe relative corpus path: {_printable_path(rel_path)}",
+            invariant="image_path_containment",
+            entry_path=rel_path if isinstance(rel_path, str) else None,
+        ) from exc
+    try:
+        root = images_root.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, OSError):
+            filename = exc.filename if exc.filename is not None else images_root
+            if exc.strerror is not None:
+                message = exc.strerror
+            else:
+                message = str(exc.args[0] if exc.args else type(exc).__name__)
+            filename2 = getattr(exc, "filename2", None)
+        else:
+            filename = images_root
+            message = str(exc)
+            filename2 = None
+        filename_display = _printable_path(filename)
+        filename2_display = _printable_path(filename2) if filename2 is not None else None
+        message_display = _printable_message(message)
+        details = f"filename={filename_display}"
+        if filename2_display is not None:
+            details = f"{details}, filename2={filename2_display}"
+        error_message = f"image root cannot be resolved: {_printable_path(images_root)} ({details}): {message_display}"
+        raise ManifestError(
+            error_message,
+            invariant="image_path_containment",
+            entry_path=rel_path,
+        ) from exc
+    for candidate in dict.fromkeys(
+        (rel_path, unicodedata.normalize("NFC", rel_path), unicodedata.normalize("NFD", rel_path))
+    ):
+        image_path = images_root / candidate
+        try:
+            resolved = image_path.resolve(strict=False)
+            resolved.relative_to(root)
+            if resolved.is_file():
+                return resolved
+        except (OSError, RuntimeError, ValueError) as exc:
+            if isinstance(exc, OSError):
+                filename = exc.filename if exc.filename is not None else image_path
+                if exc.strerror is not None:
+                    message = exc.strerror
+                else:
+                    message = str(exc.args[0] if exc.args else type(exc).__name__)
+                filename2 = getattr(exc, "filename2", None)
+            else:
+                filename = image_path
+                message = str(exc)
+                filename2 = None
+            filename_display = _printable_path(filename)
+            filename2_display = _printable_path(filename2) if filename2 is not None else None
+            message_display = _printable_message(message)
+            details = f"root={_printable_path(images_root)}; filename={filename_display}"
+            if filename2_display is not None:
+                details = f"{details}, filename2={filename2_display}"
+            error_message = (
+                f"image path is outside corpus root: {_printable_path(rel_path)} ({details}): {message_display}"
+            )
+            raise ManifestError(
+                error_message,
+                invariant="image_path_containment",
+                entry_path=rel_path,
+            ) from exc
+    return None

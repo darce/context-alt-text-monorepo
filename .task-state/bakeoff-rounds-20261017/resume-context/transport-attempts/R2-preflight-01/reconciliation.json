@@ -1,0 +1,50 @@
+{
+  "at": 1792302047.639199,
+  "native_model_started": false,
+  "actual_author_ordinal_stays": 2,
+  "native_HEAD_unchanged": "c52863a5c5460bd28c71f61a3f3e4fced04ccec5",
+  "exit": 2,
+  "root_occupancy": {
+    "at": 1792302047.7366884,
+    "euid": 0,
+    "key": "feature-bakerounds-20261017-raw-auth-ini-3255682b",
+    "processes_seen": 317,
+    "roots": [
+      "/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b",
+      "/home/gate/workbay-sandbox/.venv-lane-feature-bakerounds-20261017-raw-auth-ini-3255682b",
+      "/tmp/raw-auth-initial-source",
+      "/tmp/raw-auth-whole-source-g1",
+      "/tmp/raw-auth-source-r2-protocol-redaction",
+      "/home/gate/workbay-sandbox/attempt-evidence-feature-bakerounds-20261017-raw-auth-ini-3255682b-82166-8763f03e7a5543bf",
+      "/home/gate/workbay-sandbox/.lane-out-feature-bakerounds-20261017-raw-auth-ini-3255682b-44570-716032ef6270fa79",
+      "/home/gate/workbay-sandbox/.lane-out-feature-bakerounds-20261017-raw-auth-ini-3255682b-82166-8763f03e7a5543bf",
+      "/home/gate/workbay-sandbox/attempt-evidence-feature-bakerounds-20261017-raw-auth-ini-3255682b-44570-716032ef6270fa79"
+    ],
+    "hits": [],
+    "unknown": [],
+    "pg_exit": 0,
+    "pg_health": {
+      "acx-prod-postgres-1": "healthy",
+      "acx-staging-postgres-1": "healthy",
+      "acx-dev-postgres-1": "healthy",
+      "acx-dev-fir-postgres-1": "healthy"
+    },
+    "pg_all_healthy": true,
+    "df_exit": 0,
+    "df": "Filesystem     1024-blocks      Used Available Capacity Mounted on\n/dev/sda1        202051056 165551256  36483416      82% /\n",
+    "apply": false
+  },
+  "files": {
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.operation-capacity.json": "2df9bc52322b95e03aead71e3c964a4563af35076816dc3acc1f04da858bf081",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.actual-native-admission.json": "26adfe8831d8bf41faaafed73e37b77c2d68e9a4d9895157a04a7951ba358cf9",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.memory-admission.json": "367a875366367730a13df0c789231d0483aa88f4a6d623e97d60cceefa4041d9",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.capacity-claim.json": "8e743521299573fef4f4066de7f1c37c9ad0306cc6f09cdedd00ece7090b468a",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.build.out": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.build.log": "0fd361fb210293f0908c761f50c5e0b76c19296834416b7291de529afa0ff094",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.build-receipt.json": "c60fb7ac3cd3ac681607982cac66c76537c8f37116cbf085b674832095bcf4ae",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.branch-alias.json": "789e795cfba378dfdef8408c4443f3e8c66ebf5e22e3763924199802cdff782f",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.warm-custody-check.json": "31a1051b57ce3458faf4f10255e838ac1693869ee166e9d12201f51d2bf88adc",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.warm-custody-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "RAW-AUTH-SOURCE-R2-PROTOCOL-REDACTION.warm-root-occupancy.json": "cd156e976f6296a412ab02f0396cdd24e5e9b0ef8ff97983ec8f63a95354b1bd"
+  }
+}

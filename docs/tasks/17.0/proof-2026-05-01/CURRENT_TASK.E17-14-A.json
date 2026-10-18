@@ -1,0 +1,45 @@
+{
+  "actions_pending": [],
+  "active": {
+    "focus": null,
+    "id": null,
+    "objective": "Probe task A",
+    "revision": 0,
+    "status": "in_progress",
+    "target_branch": "feature/a",
+    "target_worktree_path": "/tmp/e17-14-scratch-consumer-task-a",
+    "task_plan_path": "docs/tasks/task-a.md",
+    "task_ref": "E17-14-A",
+    "updated_at": "2026-05-01 23:04:06",
+    "updated_branch": "main",
+    "updated_by": "codex",
+    "updated_commit_sha": "8581437101c28c3f90d4f289e7e6753e4572cd03"
+  },
+  "blockers_open": [],
+  "dashboard_tasks": [],
+  "decisions_recent": [],
+  "findings_deferred": [],
+  "findings_open": [],
+  "lane_messages_open": [],
+  "review_coverage": {
+    "latest_review_run_id": null,
+    "latest_verdict": null,
+    "ok": true,
+    "open_findings_by_severity": {
+      "high": 0,
+      "low": 0,
+      "medium": 0
+    },
+    "recent_run_ids": [],
+    "reopened_findings_count": 0,
+    "run_count": 0,
+    "subject_path": null,
+    "task_ref": "E17-14-A"
+  },
+  "schema_version": 1,
+  "surface": "current_task",
+  "task_ref": "E17-14-A",
+  "tests_recent": [],
+  "worker_reports_recent": [],
+  "worktree_lanes": []
+}

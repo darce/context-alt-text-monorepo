@@ -1,0 +1,314 @@
+"""E20-FUSION Slice 4: fusion_runner emits acx-eval/v1 records; deterministic re-score.
+
+Input/label separation (S4A-03): harness inputs derive from raw fixture data
+(context text, present_identities, policy, fixture taxonomy/eval_scenario);
+``expected_attachments`` is read only by the scorer. The negative-control test
+proves the scorer genuinely discriminates (flipped labels produce hits).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts.eval_harness.fusion_runner import (
+    build_typed_context_pack,
+    manifest_entries_as_dicts,
+    run_fusion_eval,
+    score_misattachments,
+)
+from scripts.eval_harness.fusion_runner import (
+    main as fusion_main,
+)
+from scripts.eval_harness.manifest import load_manifest
+from scripts.eval_harness.report import build_reports
+from scripts.eval_harness.schema import SCHEMA, DocKind
+
+BAKEOFF = Path(__file__).parent / "seed" / "fusion_regression.json"
+
+
+@pytest.fixture(scope="module")
+def manifest():
+    # Metadata-only: run_fusion_eval → _synthetic_image_bytes; tests read labels/
+    # context_pack/policy/expected_attachments only — never open image bytes.
+    return load_manifest(
+        str(BAKEOFF),
+        skip_hash_verification=True,
+        hash_skip_reason="fusion tests read labels/policy only; image bytes never opened",
+        metadata_only=True,
+    )
+
+
+def test_bakeoff_labels_include_expected_attachments(manifest):
+    assert any(e.expected_attachments for e in manifest.entries)
+    plane = next(e for e in manifest.entries if e.path.endswith("mcm-planecrash.jpg"))
+    by_src = {a.fact_source: a for a in plane.expected_attachments}
+    assert by_src["identity"].decision == "dropped"
+    assert by_src["identity"].review_reason == "face_not_detected"
+    assert by_src["event"].decision == "caption"
+    assert by_src["event"].visible is False
+    assert by_src["place"].altitude == "caption"
+
+
+def test_staged_run_record_is_acx_eval_v1(manifest):
+    record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
+    assert record["schema"] == SCHEMA
+    assert record["kind"] == DocKind.RUN_RECORD.value
+    assert record["provenance"]["fusion_mode"] == "staged"
+    assert len(record["items"]) == len(manifest.entries)
+    assert all(item.get("error") is None for item in record["items"])
+    for item in record["items"]:
+        describe = item["describe"]
+        assert "alt_text_draft" in describe
+        assert "attachment_provenance" in describe
+
+
+def test_fusion_provenance_uses_canonical_manifest_digest_and_counts(manifest):
+    """VLM-6-CAN-03 / FIR-12-CAN-08: fetch identity is canonical and complete."""
+    from scripts.eval_harness.cli import _manifest_sha
+
+    record = run_fusion_eval(
+        manifest,
+        mode="staged",
+        head_sha="a" * 40,
+        started_at="2026-07-09T00:00:00Z",
+        limit=2,
+    )
+    provenance = record["provenance"]
+    assert provenance["manifest_sha256"] == _manifest_sha(manifest)
+    assert provenance["requested_limit"] == 2
+    assert provenance["manifest_entries"] == len(manifest.entries)
+    assert provenance["evaluated_entries"] == 2
+
+
+def test_fusion_limit_zero_is_rejected_instead_of_running_full_corpus(manifest):
+    with pytest.raises(ValueError, match="limit must be >= 1"):
+        run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, limit=0)
+
+
+def test_build_reports_deterministic_on_fusion_records(manifest):
+    record = run_fusion_eval(manifest, mode="staged", head_sha="b" * 40, started_at="2026-07-09T12:00:00Z")
+    entries = manifest_entries_as_dicts(manifest)
+    json_a, md_a = build_reports(record, entries)
+    json_b, md_b = build_reports(record, entries)
+    assert json_a == json_b
+    assert md_a == md_b
+    parsed = json.loads(json_a)
+    assert parsed["schema"] == SCHEMA
+    assert parsed["kind"] == DocKind.REPORT.value
+    assert parsed["counts"]["failed"] == 0
+
+
+def test_staged_zero_misattachments_on_labeled_corpus(manifest):
+    record = run_fusion_eval(manifest, mode="staged", head_sha="c" * 40, started_at="2026-07-09T00:00:00Z")
+    mis = score_misattachments(record, manifest)
+    assert mis["labeled_facts"] >= 10
+    assert mis["misattachments"] == 0, mis["hits"]
+
+
+def test_adhoc_has_more_misattachments_than_staged(manifest):
+    staged = run_fusion_eval(manifest, mode="staged", head_sha="d" * 40, started_at="2026-07-09T00:00:00Z")
+    adhoc = run_fusion_eval(manifest, mode="adhoc", head_sha="d" * 40, started_at="2026-07-09T00:00:00Z")
+    s_mis = score_misattachments(staged, manifest)["misattachments"]
+    a_mis = score_misattachments(adhoc, manifest)["misattachments"]
+    assert a_mis > s_mis
+    assert s_mis == 0
+
+
+def test_multi_identity_entries_object_attach_with_distinct_geometry(manifest):
+    """Two site-confirmed identities in one image both object-attach.
+
+    Each identity gets a distinct, non-overlapping face box matched 1:1 to its
+    own person phrase box (real merge.py containment). Identical geometry
+    would drop both as ambiguous_grounding, so this genuinely exercises
+    discrimination.
+    """
+    record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
+    for suffix, names in (
+        ("ccqw-candid.jpg", ("Russet Fathom", "Muted Current")),
+        ("auburn-daniel-sunglasses.jpg", ("Daniel Arce", "Auburn Current")),
+    ):
+        item = next(i for i in record["items"] if i["path"].endswith(suffix))
+        facts = {f["fact_label"]: f for f in item["describe"]["attachment_provenance"]["facts"]}
+        for name in names:
+            assert facts[name]["decision"] == "object", facts[name]
+            assert facts[name]["visible"] is True
+            assert facts[name]["review_reason"] is None
+
+
+def test_mcm_planecrash_success_criterion(manifest):
+    """Unconfirmed face not object-attached + garden picnic caption-level non-visible."""
+    record = run_fusion_eval(manifest, mode="staged", head_sha="e" * 40, started_at="2026-07-09T00:00:00Z")
+    item = next(i for i in record["items"] if i["path"].endswith("mcm-planecrash.jpg"))
+    facts = {f["fact_id"]: f for f in item["describe"]["attachment_provenance"]["facts"]}
+    identity = facts["identity:cluster:cluster-slate-willow"]
+    assert identity["decision"] == "dropped"
+    assert identity["altitude"] == "none"
+    assert identity["visible"] is False
+    assert identity["review_reason"] == "face_not_detected"
+
+    event = facts["event:garden-picnic"]
+    assert event["decision"] == "caption"
+    assert event["altitude"] == "caption"
+    assert event["visible"] is False
+    assert event["fact_source"] == "event"
+
+    place = facts["place:summer-garden"]
+    assert place["decision"] == "caption"
+    assert place["visible"] is False
+
+
+def test_context_pack_derives_from_fixture_not_labels(manifest):
+    """Pack identities come from context text + present_identities, not labels."""
+    roster = manifest.roster
+    painting = next(e for e in manifest.entries if e.path.endswith("linen-kestrel-painting.jpg"))
+    pack = build_typed_context_pack(painting, roster)
+    assert pack is not None and pack.identity is not None
+    (linen,) = pack.identity.identities
+    # Mentioned in context text but not site-confirmed → name-only (unconfirmed).
+    assert linen.name == "Linen Kestrel"
+    assert linen.cluster_id is None and linen.identity_id is None
+
+    plane = next(e for e in manifest.entries if e.path.endswith("mcm-planecrash.jpg"))
+    pack = build_typed_context_pack(plane, roster)
+    assert pack is not None and pack.identity is not None
+    (maria,) = pack.identity.identities
+    # Site-confirmed (present_identities) → recognition ids attached.
+    assert maria.cluster_id == "cluster-slate-willow"
+    # Taxonomy terms come from the fixture's context_pack.taxonomy_terms.
+    assert {(t.taxonomy, t.slug) for t in pack.taxonomy_terms} == {
+        ("event", "garden-picnic"),
+        ("place", "summer-garden"),
+    }
+
+
+def test_scorer_negative_control_flipped_label_is_flagged(manifest):
+    """The scorer discriminates: flipping an expected label must produce a hit."""
+    record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
+    flipped = manifest.model_copy(deep=True)
+    russet = next(
+        a
+        for e in flipped.entries
+        if e.path.endswith("ccqw-antartica.jpg")
+        for a in e.expected_attachments
+        if a.fact_label == "Russet Fathom"
+    )
+    russet.decision = "dropped"
+    russet.visible = False
+    mis = score_misattachments(record, flipped)
+    assert mis["misattachments"] == 1
+    assert mis["hits"][0]["fact_label"] == "Russet Fathom"
+    assert mis["hits"][0]["reason"] == "decision_or_visible_mismatch"
+
+
+def test_adhoc_claims_derive_from_generated_caption(manifest):
+    """Ad-hoc arm: fusion disabled, claims parsed from the caption text."""
+    record = run_fusion_eval(manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
+    item = next(i for i in record["items"] if i["path"].endswith("linen-kestrel-painting.jpg"))
+    describe = item["describe"]
+    # Same service path, model-free stub adapter (report banner keys off this).
+    assert describe["adapter"] == "seeded"
+    assert describe["attachment_provenance"]["derivation"] == "adhoc-caption-assertion"
+    caption = describe["visual_facts"]["caption"]
+    (linen,) = describe["attachment_provenance"]["facts"]
+    # The parroted context caption asserts the name; the claim mirrors that.
+    assert "Linen Kestrel" in caption
+    assert linen["decision"] == "object" and linen["visible"] is True
+    assert linen["target_evidence"] == "adhoc-caption-assertion"
+
+
+def test_adhoc_report_carries_stub_adapter_banner(manifest):
+    record = run_fusion_eval(manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
+    entries = manifest_entries_as_dicts(manifest)
+    _, md = build_reports(record, entries)
+    assert "seeded" in md
+    assert "NOT a caption-model baseline" in md
+
+
+def test_degrade_missing_labels_and_empty_context(manifest):
+    """Degrade paths: empty ContextPack / no expected labels → empty provenance."""
+    empty = next(e for e in manifest.entries if e.path.endswith("nina-machiavelli.jpeg"))
+    assert empty.expected_attachments == []
+    assert build_typed_context_pack(empty, manifest.roster) is None
+
+    record = run_fusion_eval(manifest, mode="staged", head_sha="f" * 40, started_at="2026-07-09T00:00:00Z", limit=None)
+    item = next(i for i in record["items"] if i["path"] == empty.path)
+    assert item["error"] is None
+    assert item["describe"]["attachment_provenance"]["facts"] == []
+
+
+def test_policy_disabled_pool_yields_no_typed_pack(manifest):
+    pool = next(e for e in manifest.entries if e.path.endswith("slate-pool.jpg"))
+    assert pool.policy.recognition_enabled is False
+    assert build_typed_context_pack(pool, manifest.roster) is None
+
+
+def test_cli_writes_reports(tmp_path, manifest):
+    code = fusion_main(
+        [
+            "--manifest",
+            str(BAKEOFF),
+            "--mode",
+            "both",
+            "--out-dir",
+            str(tmp_path),
+        ]
+    )
+    # bakeoff_golden is roster_only and unboxed — both metrics refuse.
+    # Reports are still written (CLI score contract); exit 3 is the gate.
+    assert code == 3
+    for mode in ("staged", "adhoc"):
+        assert (tmp_path / f"E20-FUSION-{mode}-run-record.json").is_file()
+        assert (tmp_path / f"E20-FUSION-{mode}-report.json").is_file()
+        assert (tmp_path / f"E20-FUSION-{mode}-report.md").is_file()
+        assert (tmp_path / f"E20-FUSION-{mode}-misattachment.json").is_file()
+    staged_mis = json.loads((tmp_path / "E20-FUSION-staged-misattachment.json").read_text())
+    adhoc_mis = json.loads((tmp_path / "E20-FUSION-adhoc-misattachment.json").read_text())
+    assert staged_mis["misattachments"] == 0
+    assert adhoc_mis["misattachments"] > 0
+    report = json.loads((tmp_path / "E20-FUSION-staged-report.json").read_text())
+    from scripts.eval_harness.cli import _manifest_sha
+
+    assert report["provenance"]["score_manifest_sha256"] == _manifest_sha(manifest)
+    assert report["provenance"]["manifest_matches_fetch"] is True
+
+
+def test_fusion_main_ignores_empty_golden_images_dir(tmp_path, monkeypatch):
+    """VLM6-RV3-Q4-01 / OBS-04: fusion_runner synthesizes bytes; empty env dir must load.
+
+    Mutation: removing metadata_only=True from fusion_runner.main load_manifest
+    fails with ManifestError: image file missing.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
+    code = fusion_main(
+        [
+            "--manifest",
+            str(BAKEOFF),
+            "--mode",
+            "staged",
+            "--out-dir",
+            str(tmp_path),
+        ]
+    )
+    # roster_only bakeoff_golden refuses detection — reports still written (exit 3).
+    assert code == 3
+    assert (tmp_path / "E20-FUSION-staged-run-record.json").is_file()
+
+
+def test_default_outputs_do_not_overwrite_published_evidence(tmp_path, monkeypatch):
+    from scripts.eval_harness import fusion_runner
+
+    module_path = tmp_path / "apps/service/scripts/eval_harness/fusion_runner.py"
+    module_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(fusion_runner, "__file__", str(module_path))
+    evidence = tmp_path / "docs/tasks/20.0/E20-FUSION-staged-report.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("published evidence")
+    code = fusion_runner.main(["--manifest", str(BAKEOFF), "--mode", "staged"])
+    assert code == 3
+    assert evidence.read_text() == "published evidence"
+    assert (module_path.parent / "out/fusion/E20-FUSION-staged-report.json").is_file()

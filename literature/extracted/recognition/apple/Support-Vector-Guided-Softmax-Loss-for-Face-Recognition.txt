@@ -1,0 +1,787 @@
+
+Support Vector Guided Softmax Loss for Face Recognition
+
+Xiaobo Wang1, Shuo Wang1, Shifeng Zhang2, Tianyu Fu1, Hailin Shi1, Tao Mei1 1JD AI Research 2 Institute of Automation, Chinese Academy of Science.
+{wangxiaobo8,wangshuo30,futianyu,shihailin,tmei}@jd.com,  shifeng.zhang@nlpr.ia.ac.cn
+
+
+
+Abstract
+
+  Face recognition has witnessed significant progresses due to the advances of deep convolutional neural networks (CNNs), the central challenge of which, is feature discrim- ination. To address it, one group tries to exploit mining- based strategies (e.g., hard example mining and focal loss) to focus on the informative examples. The other group de- votes to designing margin-based loss functions (e.g., angu- lar, additive and additive angular margins) to increase the feature margin from the perspective of ground truth class. Both of them have been well-verified to learn discrimina- tive features. However, they suffer from either the ambigu- ity of hard examples or the lack of discriminative power of other classes. In this paper, we design a novel loss function, namely support vector guided softmax loss (SV-Softmax), which adaptively emphasizes the mis-classified points (sup- port vectors) to guide the discriminative features learning. So the developed SV-Softmax loss is able to eliminate the ambiguity of hard examples as well as absorb the discrimi- native power of other classes, and thus results in more dis- crimiantive features. To the best of our knowledge, this is the first attempt to inherit the advantages of mining-based and margin-based losses into one framework. Experimental results on several benchmarks have demonstrated the effec- tiveness of our approach over state-of-the-arts.
+
+
+1. Introduction
+  Face recognition is a fundamental and of great practice values task in the community of computer vision and pat- ter recognition. The task of face recognition contains two categories, face identification to classify a given face to a specific identity, and face verification to determine whether a pair of face images are of the same identity. Though it has been extensively studied for decades [38, 2, 35, 25, 27, 21], there still exist a great many challenges for accurate face recognition, especially on large-scale test datasets, such as MegaFace Challenge [9] or Trillion Pairs Challenge1.
+
+1http://trillionpairs.deepglint.com/overview
+  
+In recent years, the advanced face recognition mod- els are usually built upon deep convolutional neural net- works [31, 7, 23] and the learned discriminative features play a significant role. To train deep models, the CNNs are generally equipped with classification loss functions [28, 32, 37, 10, 14, 36], metric learning loss functions
+[26, 20, 34] or both [18, 27, 37, 41]. Metric learning loss functions such as contrastive loss [26] or triplet loss
+[20] usually suffer from high computational cost. To avoid this problem, they require carefully designed sample min- ing strategies and the performance is very sensitive to these strategies. So increasingly more researchers shift their at- tentions to construct deep face recognition models by re- designing the classification loss functions.
+
+  Intuitively, face features are discriminative if their intra- class compactness and inter-class separability are well max- imized. However, as pointed out by many recent studies [37, 32, 14, 30, 36, 4], the current prevailing classification loss function (i.e., Softmax loss) usually lacks the power of feature discrimination for deep face recognition. To ad- dress this issue, one group proposes to explore the mining- based loss functions [22, 12, 24, 39]. Shrivastava et al. [22] develop a hard mining softmax (HM-Softmax) to improve the feature discrimination by constructing mini-batches us- ing high-loss examples. Among which, the percentage of hard examples is empirically decided and the easy exam- ples are completely discarded. In contrast, Lin et al. [12] design a relatively soft mining softmax, namely Focal loss (F-Softmax), to focus training on a sparse set of hard ex- amples. It usually achieves more promising results than the simple hard mining softmax. Yuan et al. [39] select the hard examples based on model complexity and train an ensemble to model examples of different hard levels. The other group prefers to design margin-based loss functions [14, 30, 4]. This group does not focus on optimizing hard examples but directly increasing the feature margin between differ- ent classes. Wen et al. [37] develop a center loss to learn centers for each identity to enhance the intra-class compact- ness. Wang et al. [32] and Ranjan et al. [19] propose to use a scale parameter to control the temperature of softmax loss, producing higher gradients to the well-separated samples to
+
+shrink the intra-class variance. Liu et al. [13, 14] intro- duce an angular margin (A-Softmax) between the ground truth class and other classes to encourage the larger inter- class variance. However, it is usually unstable and the op- timal parameters are hard to determinate. To enhance the stability of A-Softmax loss, several alternative approaches [30, 36, 15, 4] have been proposed. Wang et al. [30] design an additive margin (AM-Softmax) loss to stabilize the opti- mization and have achieved promising performance. Deng et al. [4] develop an additive angular margin (Arc-Softmax) loss, which has a more clear geometric interpretation.
+Although these two groups have been well-verified to
+2. 
+Preliminary Knowledge
+Softmax. Softmax loss is defined as the pipeline combi- nation of the last fully connected layer, the softmax func- tion and the cross-entropy loss. In face recognition, the
+weights wk, (where k ? {1, 2, . . . , K} and K is the num- ber of classes) and the feature x of the last fully connected
+layer are usually normalized and the magnitude is replaced as a scale parameter s [32, 30, 4]. In consequence, given an input feature vector x with its corresponding ground truth label y, the softmax loss can be formulated as follows:
+
+es cos(?wy,x)
+
+learn discriminative features for face recognition. The mo-
+tivation of mining-based losses is to focus on hard exam-
+
+L1 = - log
+
+
+s cos(?wy,x)	K k/=y
+
+es cos(?wk,x)
+
+,	(1)
+
+ples while margin-based losses are to enlarge the feature margin between different classes. Currently, they develop
+
+where cos(?
+
+
+wk,x
+
+) = wT x is the cosine similarity and
+
+independently and both of them have their own intrinsic drawbacks. To the mining-based losses, the definition of hard examples is ambiguous and they are often empiri- cally selected. How to semantically decide the hard exam- ples is still an open problem. To the margin-based losses, most of them learn discriminative features by enlarging the feature margin, only from the perspective of ground truth class (self-motivation). They usually ignore the discrimina- tive power from the perspective of other non-ground truth classes (other-motivation). Moreover, the relation between mining-based and margin-based losses remains unclear.
+To overcome the above shortcomings, this paper tries to
+
+?wk,x is the angle between wk and x. As pointed out by
+a great many studies [13, 14, 30, 4], the learned features with softmax loss are prone to be separable, rather than to be discriminative for face recognition.
+Mining-based Softmax. Hard example mining is becom- ing a common practice to effectively train deep CNNs. Its idea is to focus training on the informative examples, thus it usually results in more discriminative features. There are recent works that select hard examples based on loss value [22, 12] or model complexity [39] to learn discriminative features. Generally, they can be summarized as:
+es cos(?wy,x)
+
+design a new loss function, which adaptively emphasizes on
+the informative support vectors to bridge the gap between mining-based and margin-based losses and semantically in-
+
+L2 = -g(py) log
+
+
+s cos(?wy,x)	K k/=y
+
+es cos(?wk,x)
+
+, (2)
+
+tegrate them into one framework. To sum up, the main con-
+
+where p
+
+=	es cos(?wy,x )
+
+is the predicted
+
+tributions of this paper can be summarized as follows:
+
+y	s cos(?wy,x)	K k/=y
+
+es cos(?wk,x )
+
+
+• We propose a novel SV-Softmax loss, which eliminates the ambiguity of hard examples as well as absorbs the discriminative power of other classes by focusing on
+support vectors. To the best of our knowledge, this is the first attempt to semantically fuse the mining-based and margin-based losses into one framework.
+
+• We deeply analyze the relations of our SV-Softmax loss to the current mining-based and margin-based losses, and further develop an improved version SV-
+X-Softmax loss to enhance the feature discrimiantion.
+
+ground truth probability and g(py) is an indicator function.
+Basically, to the soft mining method Focal loss [12] (F- Softmax), g(py) = (1 - py)?, ? is a modulating factor. To the hard mining method HM-Softmax [22], g(py) = 0 when the sample is indicated as easy while g(py) = 1 when
+the sample is hard. However, the definition of hardness is ambiguous and they usually lead to sensitive performance. Margin-based Softmax. To directly enhance the feature discrimination, several margin-based softmax loss functions [14, 36, 30, 4] have been proposed in recent years. In sum- mary, they can be defined as follows:
+
+esf (m,?wy,x)
+
+Our code will be available at https://github.
+com/xiaoboCASIA/SV-X-Softmax.
+
+L3 = - log
+
+
+sf (m,?wy,x)	K k/=y
+
+es cos(?wk,x)
+
+,	(3)
+
+
+
+• We conduct extensive experiments on the benchmarks of LFW [8], MegaFace Challenge [9, 16] and Trillion Pairs Challenge, which have verified the superiority of
+our new approach over the baseline Softmax loss, the mining-based Softmax losses, the margin-based Soft- max losses, and their naive fusions.
+
+where f (m, ?wy,x) is a carefully designed margin function. Basically, f (m1, ?wy,x) = cos(m1?wy,x) is the motivation of A-Softmax loss [14], where m1 = 1 and is an integer. f (m2, ?wy,x) = cos(?wy,x) - m2 with m2 > 0 is the AM- Softmax loss [30]. f (m3, ?wy,x) = cos(?wy,x + m3) with m3 > 0 is the Arc-Softmax loss [4]. More generally, the
+
+
+/",&
+
+
+= 0; cos(0)*,+-
+
+
+) - cos(0)1,+-
+
+
+
+) 2 0
+
+
+SV-Softmax (probability view)
+5
+
+4
+
+
+F-Softmax (loss view)
+5
+
+4
+
+
+/",$
+
+
+= l; cos(0)*,+4
+
+
+3	3
+) - cos	< 0	2	2
+1	1
+
+Figure 1. A geometrical interpretation of SV-Softmax loss from
+
+
+0
+0	0.2	0.4	0.6	0.8	1
+probability of ground truth class
+
+
+0
+0	0.2	0.4	0.6	0.8	1
+probability of ground truth class
+
+feature perspective. The support vectors (red circle points) are those who are mis-classified by the current classifiers. SV-Softmax loss semantically focuses on optimizing such support vectors.
+
+
+margin function can be summarized into a combined ver- sion: f (m, ?wy,x) = cos(m1?wy,x + m3) - m2. However, all these methods achieve the feature margin only from the perspective of ground truth class y. They are not aware of the importance of other non-ground truth classes.
+
+3. Problem Formulation
+3.1. Naive Mining-Margin Softmax Loss
+
+Figure 2. From left to right: SV-Softmax loss vs. Mining-based softmax loss (e.g., Focal loss [12]). SV-Softmax loss semantically defines the hard examples (support vectors) and emphasizes them from the probability view, while the hard examples of Focal loss are ambiguous and are concerned from the loss view.
+
+
+without intuitive interpretation.
+  To address it, we alternatively introduce a more elegant way to focus training on the informative features (i.e., sup- port vectors). Specifically, we define a binary mask to adap- tively indicate whether a sample is selected as the support vector by a specific classifier in the current stage. To the end, the binary mask is defined as follows:
+
+  The mining-based loss functions aim to focus on the hard examples while the margin-based loss functions are to en-
+
+I = f 0, cos(?
+
+
+wy,x
+
+
+) - cos(?
+
+
+wk,x
+
+
+) = 0
+
+
+.	(5)
+
+large the feature margin between different classes. There-
+
+k
+1, cos(?w ,x) - cos(?w ,x) < 0
+
+y	k
+fore, these two branches can seamlessly incorporate into
+
+each other. The naive motivation to directly integrate them can be formulated as:
+
+esf (m,?wy,x)
+
+From the definition, we can see that if a sample is mis- classified, i.e., cos(?wy,x) - cos(?wk,x) < 0, it will be emphasized temporarily. In this way, the concept of hard
+examples is clearly defined and we mainly focus on such
+
+L4 = -g(py) log
+
+esf (m,?wy,x) +
+
+K
+k/=y
+
+s cos(?wk,x)
+
+.
+
+(4)
+
+a sparse set of support vectors. Consequently, our Support Vector Guided Softmax (SV-Softmax) loss is formulated:
+
+However, this formulation Eq. (4) only absorbs their own merits. It can not solve their respective shortcomings. De- tailedly, it only encourages the feature margin from the per- spective of the ground truth class by f (m, ?wy,x) (self-
+
+
+L5 = - log
+
+
+
+es cos(?wy,x)
+
+
+es cos(?wy,x)
++ LK	h(t, ?w ,x, Ik)e
+
+
+,
+s cos(?wk,x)
+(6)
+
+motivation), ignoring the feature discriminative power of
+other non-ground truth classes (other-motivation). More- over, the hard examples are still empirically selected by the indicator function g(py), without semantic guidance. In other words, the definition of hard examples is ambiguous.
+3.2. Support Vector Guided Softmax Loss
+  Intuition says that considering the well-separated feature vectors has little effect on the learning problem. That means the mis-classified feature vectors are more crucial to en- hance the feature discriminability. Motivated by this, the hard example mining [22] and the recent Focal loss [12] techniques are proposed to focus training on a sparse set of hard examples and ignore the vast number of easy ones dur- ing training. However, they either empirically sample hard examples according to loss values or empirically down- weight the easy examples by a modulating factor. In other words, the definition of hard examples is ambiguous, and
+
+where t is a preset hyperparameter and the indicator func- tion h(t, ?wk,x, Ik) is defined as:
+      h(t, ?w ,x, Ik ) = es(t-1)(cos(?wk,x)+1)Ik .	(7)
+Obviously, when t = 1, the designed SV-Softmax loss be- comes identical to the original softmax loss. Figure 1 gives the geometrical interpretation of our SV-Softmax loss.
+
+3.2.1 Relation to Mining-based Softmax Losses
+To illustrate the advantages of our SV-Softmax loss over the traditional mining-based loss functions (e.g., Focal loss [12]), we use the binary classification case as an example. Assume that we have two samples x1 and x2, both of them are from class 1. Figure 2 gives a diagram, where x1 is relatively hard while x2 is relatively easy. The traditional mining-based Focal loss is to differentially re-weight the
+
+
+
+Normalized feature and weights	Logits
+
+Logits
+
+Logits	Probability Ground truth Cross-entropy loss
+
+
+Figure 3. Pipeline of our SV-Softmax loss and its relations to the existing mining-based and margin-based losses. Our SV-Softmax loss semantically integrates the motivation of mining-based and margin-based losses into one framework, but from different viewpoints.
+
+
+
+Figure 4. From left to right: SV-Softmax loss vs. Margin-based softmax loss. SV-Softmax loss enlarges the feature margin from other classes (other-motivation) while current margin-based losses are directly from the ground truth class (self-motivation).
+
+
+losses of hard and easy examples, such that:
+
+Figure 5. From left to right: SV-Softmax loss vs. SV-X-Softmax loss. To increase the mining range, we adopt the margin-based de- cision boundaries to select support vectors. Thus the non-support vectors in SV-Softmax may be support vectors in SV-X-Softmax.
+
+from the perspective of ground truth class [14, 30, 4]:
+
+
+loss1* loss2*
+
+> loss1
+loss2
+
+
+.	(8)
+           
+cos(?1) = f (m, ?1) > cos(?2).	(10) In contrast, our SV-Softmax loss enlarge the feature mar-
+
+In that way, the importance of hard examples is emphasized. This strategy is directly from the loss perspective and the definition of hard examples is ambiguous. While our SV- Softmax loss is from a different way. Firstly, we semanti- cally define the hard examples (support vectors) according to the decision boundary. Then, to the support vector x1, we reduce its probability, such that:
+
+loss1* > loss1 .	(9)
+loss2	loss2
+In summary, the differences between SV-Softmax loss and mining-based Focal loss [12] are displayed in Figure 2.
+
+3.2.2 Relation to Margin-based Softmax Losses
+Similarly, assume that we have a sample x from class 1, and it is a little far way from its ground truth class, (e.g., the red circle point in Figure 4). The original softmax loss aims to
+make wT x > wT x ?? cos(?1) > cos(?2). To make the
+
+gin from the perspective of other non-ground truth classes.
+Specifically, we have introduced a margin function h*(t, ?2)
+to these mis-classified features:
+           cos(?1) > h*(t, ?2) = cos(?2),	(11)
+where h*(t, ?2) = log[h(t, ?2)ecos(?2)] = t cos(?2) + t - 1. Our SV-Softmax loss semantically enlarges the feature mar-
+gin from other non-ground truth classes while margin-based losses make theirs efforts from the ground truth class. For multi-class case, Our SV-Softmax loss is class-specific mar- gins. Figure 4 gives their geometrical comparison. To sum up, Figure 3 shows the pipeline of our SV-Softmax loss and its relations to the mining-based and margin-based losses.
+
+3.2.3 SV-X-Softmax
+According to the above discussions, our SV-Softmax loss semantically fuses the motivation of mining-based and margin-based losses into one framework, but from different
+viewpoints. Therefore, we can also absorb their strengths
+
+1	2
+
+objective more rigorous, margin-based losses usually intro- duce a margin function f (m, ?1) = cos(m1?1 + m3) - m2
+
+into our SV-Softmax loss. Specifically, to increase the min-
+ing range, we adopt the margin-based decision boundaries
+
+to indicate the support vectors. Consequently, the improved SV-X-Softmax loss can be formulated as:
+esf (m,?wy,x)
+
+
+
+Algorithm 1: SV-Softmax
+Input: A CNN feature x with its corresponding label y. Initialized parameters T in convolution layers.
+
+L6 = - log
+
+esf (m,?wy,x)
+
++ LK	h(t, ?w ,x, Ik)e
+
+,
+s cos(?wk,x)
+(12)
+
+Parameter W in the last fully connected layer. The learning rate ? and the indicator parameter t. The number of iteration a ? 0.
+
+where X is the margin-based losses. It can be A-Softmax
+[14], AM-Softmax [30] and Arc-Softmax [4] etc. The in- dicator mask Ik is re-computed according to margin-based decision boundaries2. Specifically,
+I  =	0, f (m, ?wy,x) - cos(?wk,x) = 0 .	(13)
+1, f (m, ?w ,x) - cos(?w ,x) < 0
+
+while not converged do
+1: a ? a + 1;
+2: According to the definition of hard examples (5), we compute the SV-Softmax loss by (6);
+3: Compute the back-propagation error of each CNN feature x by (15) and the weight W by (14);
+4: Update the parameters W and T by
+
+y	k	W (a+1) = W (a)	(a)  ?L5 
+?W (a)
+
+Figure 5 gives the geometrical illustration of our SV-X-
+Softmax loss. It is best because from the motivation of
+
+
+end
+
+T(a+1) = T(a)	(a)  ?L5  ?x(a)
+?x(a) ?T(a)
+
+margin-based losses, SV-X-Softmax loss enlarges the fea-
+ture margin by integrating the self-motivation of ground truth class and the other-motivation of other classes into one framework. While from the motivation of mining-based losses, it semantically enlarges the mining range.
+4. Optimazation
+  In this section, we show that the proposed SV-Softmax loss (6) is trainable and can be easily optimized by the typi- cal stochastic gradient descent. The difference between the original softmax loss and the proposed SV-Softmax loss lies in the last fully connected layer v = [v1, v2, . . . , vK]T = [cos(?w ,x), cos(?w ,x), . . . , cos(?w ,x)]T .
+  To the forward, when k = y, it is the same as the orig- inal softmax loss (i.e., vy = cos(?wy,x)). When k /= y, it has two cases, if the feature vector is easy for an spe-
+cific class, it is the same as the original softmax (i.e.,
+vk = cos(?wk,x)). Otherwise, it will be recomputed as log[h(t, ?w ,x)ecos(?wk,x)] = t cos(?w ,x) + t - 1. To the backward propagation, we use the chain rule to compute the partial derivative. The derivative of W and the CNN feature
+x of the last fully connected layer should be re-emphasized:
+
+Output: Parameters T and W .
+
+
+
+
+where the computation form of ?L5 is the same as the orig- inal softmax loss. The whole scheme for a single image is
+summarized in Algorithm 1. It is trivial to perform deriva- tion with mini-batch input. Moreover, it is also straightfor- ward to the SV-X-Softmax loss case.
+
+5. Experiments
+5.1. Datasets
+Training Data. The MS-Celeb-1M dataset [6] contains about 100k identities with 10 million images. However, it consists of a great many noisy face images. Fortunately, the trillionpairs consortium has made their efforts to get a high- quality version MS-Celeb-1M-v1c, which is well-cleaned with 86,876 identities and 3,923,399 aligned images.
+Validation Data. We employ Labelled Faces in the Wild (LFW) [8] as the validation data. LFW contains 13,233 web-collected images from 5,749 different identities, with
+large variations in pose, expression and illuminations.
+
+?? ?L5  ?v
+
+= ?L5 x,	k = y
+
+Test Data. We use two datasets, MegaFace [9] and Tril-
+
+	
+?v ?wy	?v
+
+lion Pairs3, as the test data. MegaFace datasets aim at eval-
+
+?L5
+
+= ?? ?L5  ?v
+
+= ?L5 x,	k /= y; v = v
+
+
+(14)
+
+uating the performance of face recognition algorithms at
+
+
+
+?W	?v
+?
+
+?wk	?v
+
+y	k	the million scale of distractors, which include gallery set
+and probe set. The gallery set, a subset of Flickr photos
+
+??	5	 = t 	5 x,  k /= y; v  < v
+
+from Yahoo, consists of more than one million images from
+
+
+
+?? ?L5 ?v = ?L5 w ,	k = y
+
+
+study, we use the Facescrub as the probe set, which contains
+
+?L5 =	?L5 ?v = ?L5 w ,	k /= y; v = v
+?L ?v	?L 
+
+
+(15)
+
+
+
+images are males, and 52,076 images are females. Trillion Pairs datasets are recently released as a public available test-
+
+
+
+
+2That why we uniformity call the hard examples as "support vectors",		
+
+because it is similar to the definition in [3].
+
+3http://trillionpairs.deepglint.com/overview
+
+MethodLFW 6000
+Pairs AccuracyLFW BLUFR
+TPR@FAR=1e-3LFW BLUFR
+TPR@FAR=1e-4LFW BLUFR
+TPR@FAR=1e-5BaselineSoftmax99.2699.4698.4495.24Mining-basedF-Softmax [12]99.4699.6298.7695.97HM-Softmax [22]99.2699.4898.4895.11A-Softmax [14]99.3699.6899.0997.20Margin-basedArc-Softmax[4]99.6399.8699.6898.18AM-Softmax [30]99.6199.8699.7598.18F-Arc-Softmax99.6699.8799.7398.32Naive-fusedF-AM-Softmax
+HM-Arc-Softmax99.66
+99.5199.87
+99.8699.76
+99.7098.39
+98.74HM-AM-Softmax99.6399.8799.7598.90SV-Softmax99.4899.7899.3998.14OursSV-Arc-Softmax99.7899.8599.7798.52SV-AM-Softmax99.7699.8799.8199.22
+Table 1. Verification performance (%) of different loss functions on LFW test data.
+
+
+
+celebrities in LFW name list. There are 274,000 images from 5,700 identities. DELFW is the distractors for ELFW. There are in total 1.58 million face images from Flickr.
+
+5.2. Experimental Settings
+Data Processing. We detect the faces by adopting the Face- Boxes detector [40] and localize five landmarks (two eyes, nose tip and two mouth corners) through a simple 6-layer CNN [5]. The detected faces are cropped and resized to
+120×120, and each pixel (ranged between [0,255]) in RGB images is normalized by subtracting 127.5 and then being
+divided by 128. For all the training faces, they are horizon- tally flipped with probability 0.5 for data augmentation.
+CNN Architecture. In face recognition, there are many kinds network architectures [14, 30, 29]. To be fair, the CNN architecture should be the same to test different loss functions. As suggested by the work [29], we use Attention- 56 [31] as our baseline architecture to achieve a good bal- ance between computation and accuracy. The output of Attention-56 has and finally gets a 512-dimension feature by the operation of averaging pooling. The scale parameter s has already been discussed sufficiently in previous works [30, 33]. In this paper, we directly fixed it to 30. For de- tails, the adopted Attention-56 architecture is provided in supplementary materials.
+Training. All the CNN models are trained with stochastic gradient descent (SGD) algorithm and trained from scratch, with the batch size of 32 on 4 P40 GPUs parallelly, total batch size 128. The weight decay is set to 0.0005 and the momentum is 0.9. The learning rate is initially 0.1 and di- vided by 10 at the 100k, 160k, 220k iterations, and we finish the training process at 240k iterations.
+Test. At the testing stage, only the features of original im- age are employed (512-dimension) to compose the face rep-
+
+
+resentation. All the reported results in this paper are eval- uated by a single model, without model ensemble or other fusion strategies.
+  To the evaluation metrics, the cosine distance of features is computed as the similarity score. Face identification and verification are conducted by ranking and thresholding the scores. Specifically, for face identification, the Cumulative Match Characteristics (CMC) curves are adopted to evalu- ate the Rank-1 face identification accuracy. For face verifi- cation, the Receiver Operating Characteristic (ROC) curves are adopted. The true positive rate (TPR) at low false ac- ceptance rate (FAR) is emphasized since in real applications false acceptance gives higher risks than false rejection. We test our models on several popular public face datasets, in- cluding LFW [8], MegaFace Challenge [9, 16] and the re- cent Trillion Pairs Challenge. Specifically, for LFW, the unrestricted with labeled outside data on 6000 pairs ac- curacy [8] and the BLUFR [11] protocols are reported. For Megaface Challenge, the identification Rank-1 accu- racy and the verification rate TPR@FAR =1e-6 are reported. For Trillion Pairs Challenge, every pair between ELFW and DELFW is used. There are in total 0.4 trillion pairs. To the face identification task, they provide a 1.58 million-size gallery and a 270k-size query for top-1 identification and the metric TPR@FAR=1e-3 is reported. While to the face verification task, the verification rate TPR@FAR=1e-9 is reported. For more details about the protocols, please refer to the works [8, 11, 9].
+  To the compared methods, we compare our method with the baseline Softmax loss (Softmax) and the recently proposed state-of-the-arts, including 2 mining-based soft- max losses (i.e., hard example mining (HM-Softmax [22]) and Focal loss (F-Softmax [12])), 3 margin-based soft- max losses (the angular Softmax loss (A-Softmax[34]), the
+
+
+100
+
+99
+
+98
+
+97
+
+96
+
+95
+
+LFW
+
+1.0 1.05 1.1 1.15 1.2 1.25 1.3
+Parameter t
+
+
+95
+94
+93
+92
+91
+90
+89
+88
+87
+86
+85
+1.0 1.05 1.1 1.15 1.2 1.25 1.3
+Parameter t
+
+
+Figure 6. From left to right: Identification and Verification perfor- mance (%) of SV-Softmax loss with different indicator parameter t on LFW and MegaFace, respectively.
+
+
+additive margin Softmax loss (AM-Softmax[30]), and the additive angular margin Softmax loss (Arc-Softmax[4])) and their 4 naive fusions (F-AM-Softmax, F-Arc-Softmax, HM-AM-Softmax and HM-Arc-Softmax). For all the compared methods, their source codes can be downloaded from the github or from authors' webpages.  The corre-
+
+
+
+
+
+
+Table 2. Results (%) of different losses on MegaFace Challenge.
+
+sponding parameters are determined according to their sug- gestions (e.g., the feature margin parameter m is 0.35 for AM-Softmax and is 0.5 for Arc-Softmax). For more details, please refer to the supplementary materials.
+
+
+100
+
+
+98
+
+
+96
+
+
+94
+
+
+92
+
+Identification with 1M distractors
+
+
+1
+
+
+0.98
+
+
+0.96
+
+
+0.94
+
+
+0.92
+
+Verification with 1M Distractors
+
+5.3. Effects of indicator parameter t
+
+90
+
+
+88
+
+
+86
+100
+
+
+
+
+
+
+101
+
+
+
+
+
+
+102
+
+
+
+
+
+
+103
+
+
+
+
+
+
+104
+
+
+
+
+
+
+105	106
+
+0.9
+
+
+0.88
+
+
+0.86
+10-6
+
+
+
+
+
+
+10-5
+
+
+
+
+
+
+10-4
+
+
+
+
+
+
+10-3
+
+
+
+
+
+
+10-2
+
+
+
+
+
+
+10-1  100
+
+Since the indicator parameter t plays an important role
+
+Rank
+
+False Positive Rate (FAR)
+
+in the developed SV-Softmax loss, we first conduct ex- periments to search its possible best value. By varying t from 1.0 to 1.3 (If t is larger than 1.4, the model may fail to converge), we use the Attention-56 network and the SV-Softmax loss to train models on the MS-Celeb-1M-v1c dataset and evaluate its performance on the validation set LFW. As illustrated in the left sub-figure of Figure 6, with t being increased, the 6000 pairs accuracy and the BLUFR of LFW are improved consistently, and get saturated at
+t = 1.2. This demonstrates the effectiveness of our SV- Softmax loss (compared t /= 1.0 with t = 1.0). To validate the sensitivity of our indicator parameter t, we directly use
+the trained models to test them on MegaFace, the effects are reported in the right sub-figure of Figure 6. From the curves, we can see that our SV-Softmax loss is insensitive to the indicator parameter t in a certain range. According to this study, t is set to fixed 1.2 in the subsequent experiments.
+5.4. Experiments on LFW
+  Table 4 provides the quantitative results of all the com- petitors on LFW dataset. The bold number in each column represents the best performance. To the 6000 pairs accuracy protocol, it is well-known that this protocol is typical and easy for deep face recognition, and all the competitors can achieve over 99% accuracy rate. So the improvement of our SV-Softmax loss is not quite large. From the numbers, we observe that the naive fusions of mining-based and margin- based losses, e.g., HM-AM-Softmax and F-AM-Softmax,
+
+Figure 7. Left: CMC curves of different loss functions with 1M distractors on MegaFace [9] Set 1. Right: ROC curves of different loss functions with 1M distractors on MegaFace [9] Set 1.
+
+
+outperform the simple mining-based or margin-based ones. Despite this, our imporved SV-AM-Softmax still achieves about 0.3% improvements. To the BLUFR protocol, the similar trends as the 6000 pairs accuracy, our improved SV- AM-Softmax loss achieves the best performance among all the competitors. Due to the evaluation protocols on LFW are nearly to be saturated, it would be better to test our mod- els on MegaFace and Trillion Pair Challenges.
+5.5. Experiments on MegaFace Challenge
+  Table 5 shows the identification and verification results on MegaFace dataset. In particular, compared with the baseline Softmax loss and the mining-based Softmax losses, our SV-Softmax loss achieves at least 3% improvements at both the Rank-1 identification rate and the verification TPR@FAR=1e-6 rate. The reason is that our SV-Softmax loss has clearly defined the hard examples (i.e., support vec- tors), thus it is better than existing mining-based losses. While compared with the margin-based Softmax losses, the performance of our SV-Softmax loss is slightly lower than them. This is reasonable because the support vectors de- cided by the Softmax decision boundary in SV-Softmax loss may not be enough for learning discriminative fea-
+
+LFW
+6000
+AccuracyLFW BLUFR
+TPR @FAR=1e-3LFW BLUFR
+TPR @FAR=1e-4LFW BLUFR
+TPR @FAR=1e-599.85 (our)
+99.87 (1st)99.92
+- -99.89
+- -99.13
+- -
+
+
+
+
+
+
+
+
+
+
+
+
+
+Table 3. Performance (%) of different loss functions on Trillion Pairs Challenge.
+
+
+tures. Our improved versions SV-Arc-Softmax and SV- AM-Softmax losses, wherein the support vectors are deter- mined by the margin-based decision boundaries, can further boost the performance because they absorb the complemen- tary merits of margin-based losses. Specifically, to our SV- AM-Softmax loss, it beats the best margin-based competitor AM-Softmax loss by a large margin (about 2.4% at Rank- 1 identification rate and 1.9% verification rate). Compared with the naive fusions of mining-based and margin-based losses, our improved SV-AM-Softmax loss is also better than them. It is about 2.4% higher at Rank-1 identifica- tion rate and 1.8% higher at verification rate than the sec- ond best competitor HM-AM-Softmax loss. To sum up, our imporved SV-X-Softmax losses, which eliminate the ambi- guity of hard examples as well as absorb the discriminative power of other classes by focusing on support vectors, are inherently the best in the current stage. In Figure 7, we draw both of the CMC curves to evaluate the performance of face identification and the ROC curves to evaluate the performance of face verification on MegaFace Set 1. From the curves, we can see the similar trends at other measures. In this experiment, our SV-Softmax loss with its improved version SV-AM-Softmax approach have shown their supe- riority for both the identification and verification tasks.
+
+5.6. Experiments on Trillion Pairs Challenge
+  Table 3 displays the performance comparison on the re- cent Trillion Pairs Challenge, from which, we can con- clude that the results exhibit the same trends that emerged on LFW and MegaFace datasets. Besides, the trends are more obvious. Concretely, both of the current mining-based and margin-based losses are better than the simple softmax
+
+Table 4. Performance (%) of SV-AM-Softmax loss on LFW.
+
+MegaFace Identification
+Rank-1@1e6MegaFace Verification
+TPR@FAR=1e-698.82 (our)
+99.93 (1st)99.03 (our)
+99.93 (1st)
+Table 5. Performance (%) of SV-AM-Softmax loss on MegaFace.
+
+Trillion Pairs Identification
+TPR@FAR=1e-3Trillion Pairs Verification
+TPR@FAR=1e-982.25 (our)
+85.67 (1st)78.49 (our)
+82.29 (1st)
+Table 6. Performance (%) of SV-AM-Softmax loss on Trillion Pairs.
+
+
+losses, because the motivation of margin-based losses is to enhance the feature discrimination while the motivation of mining-based losses is to focus training on hard exam- ples. Their naive fusions can slightly improve the perfor- mance further. However, the naive fusions are still suffer- ing from the ambiguity of hard examples and the lack of discriminative power of other classes. Therefore, they are limited for face recognition. Our SV-X-Softmax (e.g., SV- AM-Softmax) losses absorb the strengths and discard the drawbacks of the current ming-based and margin-based loss functions, thus they achieve the highest performance.
+
+6. Improvement by Designing Architectures
+  To further boost the performance, we try to make the adopted Attention-56 [31] architecture deeper. Specifically, we change the stages of [1,1,1] used in Attention-56 into [3,6,2]. Moreover, inspired by [4], we incorporate the IRSE module into the architecture. The results are displayed in Tables 4-6. Note that all current results are training based on the simple MS-Celeb-1Mv1c dataset and only the single model performance is reported. From the numbers, we can see that our SV-AM-Softmax loss has achieved the compet- itive absolute performance. In the future, it would be better to fuse the MS1M-ArcFace [4] and Asian datasets4 and de- sign model ensemble methods (e.g., feature concatenation).
+
+7. Conclusion
+  This paper has proposed a simple but very effective loss function, namely support vector guided softmax loss
+
+loss for face recognition. However, the margin-based losses		
+
+usually achieve higher performance than the mining-based
+
+4http://trillionpairs.deepglint.com/data
+
+(i.e., SV-Softmax), for face recognition. In specific, SV- Softmax loss explicitly concentrates on optimizing the sup- port vectors. Thus it semantically integrates the motivation of mining-based and margin-based loss functions into one framework. Consequently, it is intrinsically better than the current mining-based losses, margin-based losses and their naive fusions. Extensive experiments on several benchmark datasets have clearly demonstrated the advantages of our new approach over the state-of-the-art alternatives.
+
+References
+[1] Fg-net aging database. http://www.fgnet.rsunit. com/. 2010.
+[2] S. Cai, W. Zuo, L. Zhang, X. Feng, and P. Wang. Support vector guided dictionary learning. In ECCV, 2014.
+[3] C. Cortes and V. Vapnik. Support-vector networks. Machine learning, 20(3), 1995.
+[4] J. Deng, J. Guo, and S. Zafeiriou. Arcface: Additive an- gular margin loss for deep face recognition. arXiv preprint arXiv:1801.07698, 2018.
+[5] Z.-H. Feng, J. Kittler, M. Awais, P. Huber, and X.-J. Wu. Wing loss for robust facial landmark localisation with convo- lutional neural networks. arXiv preprint arXiv:1711.06753, 2017.
+[6] Y. Guo, L. Zhang, Y. Hu, X. He, and J. Gao. Ms-celeb-1m: A dataset and benchmark for large-scale face recognition. In ECCV, 2016.
+[7] K. He, X. Zhang, and S. Ren. Deep residual learning for image recognition. In CVPR, 2016.
+[8] G. Huang, M. Ramesh, T. Berg, and E. Miller. Labeled faces in the wild: A database for studying face recognition in un- constrained enviroments. In Technical Report, 2007.
+[9] I. Kemelmacher-Shlizerman, S. M. Seitz, D. Miller, and
+E. Brossard. The megaface benchmark: 1 million faces for recognition at scale. In CVPR, 2016.
+[10] X. Liang, X. Wang, Z. Lei, S. Liao, and S. Li. Soft-margin softmax for deep classification. In ICONIP, 2017.
+[11] S. Liao, Z. Lei, D. Yi, and S. Z. Li. A benchmark study of large-scale unconstrained face recognition. In ICB, 2014.
+[12] Y. Lin, P. Goyal, and R. Girshick. Focal loss for dense object detection. In ICCV, 2017.
+[13] W. Liu, Y. Wen, and Z. Yu. Large-margin softmax loss for convolutional neural networks. In ICML, 2016.
+[14] W. Liu, Y. Wen, Z. Yu, M. Li, and L. Song. Sphereface: Deep hypersphere embedding for face recognition. In CVPR, 2017.
+[15] Y. Liu, H. Li, and X. Wang. Learning deep features via con- generous cosine loss for person recognition. In ICCV, 2017.
+[16] A. Nech and I. Kemelmacher-Shlizerman. Level playing field for million scale face recognition. In CVPR, 2017.
+[17] H.-W. Ng and S. Winkler. A data-driven approach to clean- ing large face datasets. In ICIP, 2014.
+[18] O. Parkhi, A. Vedaldi, and A. Zisserman. Deep face recog- nition. In BMVC, 2015.
+[19] 
+R. Ranjan, C. Castillo, and R. Chellappa. L2-constrained softmax loss for discriminative face verification. arXiv preprint arXiv:1703.09507., 2017.
+[20] F. Schroff, D. Kalenichenko, and J. Philbin. Facenet: A uni- fied embedding for face recognition and clustering. In CVPR, 2015.
+[21] H. Shi, X. Wang, D. Yi, Z. Lei, X. Zhu, and S. Z. Li. Cross- modality face recognition via heterogeneous joint bayesian. IEEE Signal Processing Letters, 24(1):81-85, 2017.
+[22] A. Shrivastava, A. Gupta, and R. Girshick. Training region- based object detectors with online hard example mining. In CVPR, 2016.
+[23] K. Simonyan and Z. Andrew. Very deep convolutional net- works for large-scale image recognition. arXiv preprint arXiv:1409.1556, 2014.
+[24] H. Song, Y. Xiang, S. Jegelka, and S. Savarese. Deep metric learning via lifted structured feature embedding. In CVPR, 2016.
+[25] Y. Sun, Y. Chen, and X. Wang. Deep learning face represen- tation by joint identification-verification. In NIPS, 2014.
+[26] Y. Sun, X. Wang, and X. Tang. Deep learning face represen- tation from predicting 10,000 classes. In CVPR, 2014.
+[27] Y. Sun, X. Wang, and X. Tang. Deeply learned face repre- sentations are sparse, selective, and robust. In CVPR, 2015.
+[28] Y. Taigman, M. Yang, and M. Ranzato. Deepface: Closing the gap to human-level performance in face verification. In CVPR, 2014.
+[29] F. Wang, L. Chen, C. Li, S. Huang, Y. Chen, C. Qian, and
+C. C. Loy. The devil of face recognition is in the noise. In
+ECCV, 2018.
+[30] F. Wang, J. Cheng, W. Liu, and H. Liu. Additive margin softmax for face verification. IEEE Signal Processing Let- ters, 25(7):926-930, 2018.
+[31] F. Wang, M. Jiang, C. Qian, S. Yang, C. Li, H. Zhang,
+X. Wang, and X. Tang. Residual attention network for image classification. arXiv preprint arXiv:1704.06904, 2017.
+[32] F. Wang, X. Xiang, J. Chen, and A. Yuille. Normface: l2 hypersphere embedding for face verification.. In ACM MM, 2017.
+[33] H. Wang, Y. Wang, Z. Zhou, X. Ji, Z. Li, D. Gong, J. Zhou, and W. Liu. Cosface: Large margin cosine loss for deep face recognition. arXiv preprint arXiv:1801.09414, 2018.
+[34] J. Wang, F. Zhou, and S. Wen. Deep metric learning with angular loss. In ICCV, 2017.
+[35] X. Wang, X. Guo, and S. Z. Li. Adaptively unified semi- supervised dictionary learning with active points. In ICCV, 2015.
+[36] X. Wang, S. Zhang, Z. Lei, S. Liu, X. Guo, and S. Z. Li. Ensemble soft-margin softmax loss for image classification. arXiv preprint arXiv:1805.03922, 2018.
+[37] Y. Wen, K. Zhang, and Z. Li. A discriminative feature learn- ing approach for deep face recognition. In ECCV, 2016.
+[38] J. Wright, A. Y. Yang, A. Ganesh, S. S. Sastry, and Y. Ma. Robust face recognition via sparse representation. PAMI, 2009.
+[39] Y. Yuan, K. Yang, and C. Zhang. Hard-aware deeply cas- caded embedding. In ICCV, 2017.
+
+[40] S. Zhang, X. Zhu, Z. Lei, H. Shi, X. Wang, and S. Z. Li. Faceboxes: A cpu real-time face detector with high accuracy. In IJCB, 2017.
+[41] Y. Zheng, D. K. Pal, and M. Savvides. Ring loss: Convex feature normalization for face recognition. In CVPR, 2018.
+
+
+
+

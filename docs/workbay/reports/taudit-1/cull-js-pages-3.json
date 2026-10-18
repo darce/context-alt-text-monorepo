@@ -1,0 +1,18 @@
+{
+  "lane": "cull-js-pages-3",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 37,
+  "tests_in_partition": 564,
+  "results": [
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.labelPanelReachable.test.tsx::ScanTabContent source dispatches open_label",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.labelPanelReachable.test.tsx:220 - reads ScanTabContent.tsx as text and only asserts that the open_label string is present; it would still pass if that literal remained in an unreachable or unused branch.",
+      "canon": "TEST-15",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

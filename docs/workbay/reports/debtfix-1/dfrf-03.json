@@ -1,0 +1,66 @@
+{
+  "lane": "dfrf-03",
+  "base": "ca065abdaa0f0e3fc9e2c4a2106e3c149e211b50",
+  "results": [
+    {
+      "db_id": 16829,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:21,27,96 - the primary is explicitly end-to-end embeddable-face recall and the plan disclaims a general recognition-profile winner; identification remains context.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No new fix is indicated; the plan already scopes the primary claim to embeddable-face yield."
+    },
+    {
+      "db_id": 16920,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/corpus.py:798-804 - _validate_record_dimensions returns for non-ok outcomes and requires positive integer dimensions only for successful ingests.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No new fix is indicated; failed-ingest records can be counted without decoded dimensions."
+    },
+    {
+      "db_id": 16797,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/cross_stack_bench.py:65-74 and scripts/bench/preflight.py:73-80 - the run command does not skip preflight, which checks the service-reported OpenCV major and rejects anything other than 5 before run-dir creation; test_preflight.py:133-140 covers refusal of a service reporting 4.x.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No new fix is indicated for the reported 4-to-5 transition; the CLI cannot start a benchmark against the pre-upgrade runtime."
+    },
+    {
+      "db_id": 16805,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/api/main.py:284-291,590-591 - app startup defaults ACX_DESCRIPTION_ADAPTER to florence_small; config/env/manifest.d/21-service-vm.toml:115-118 lists only florence_small and GPU profiles as allowed live demo values.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No new fix is indicated; the seeded adapter is no longer the application default and is excluded from allowed live demo values."
+    },
+    {
+      "db_id": 16833,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:410 - the normative disclosure names the reported estimand as end-to-end embeddable-face precision/recall and states that this path does not isolate detector-only localization.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No new fix is indicated; the report label and disclosure match the public-export measurement scope."
+    },
+    {
+      "db_id": 16818,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:367 - FIR-7's baseline is explicitly redrawn only after Slice 3 publishes de-novo labels and bias evidence, using the post-Slice-3 manifest.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No new fix is indicated; the baseline seal is sequenced after Slice 3 evidence."
+    }
+  ]
+}

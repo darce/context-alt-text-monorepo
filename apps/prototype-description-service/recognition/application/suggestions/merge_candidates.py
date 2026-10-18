@@ -1,0 +1,316 @@
+"""Rank other clusters as merge candidates for a probe cluster (GPUFLOW-2 B6)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+import numpy as np
+
+from recognition.application.settings import ClusteringSettings
+from recognition.application.suggestions.embedding_space import (
+    cluster_embedding_model,
+    models_are_same_space,
+)
+from recognition.application.suggestions.roster_candidates import SimilarityBand, band_for
+from recognition.config.settings import resolve_effective_clustering_settings
+from recognition.domain.cluster import IdentityCluster
+from recognition.domain.repositories import ClusterRepository, MergeSuggestionRepository
+from recognition.domain.suggestion import SuggestionStatus
+from recognition.domain.suggestion_details import MergeSuggestionDetails
+from recognition.shared.similarity import extract_face_embedding
+
+_PAGE_SIZE = 1000
+
+
+@dataclass(frozen=True)
+class MergeCandidate:
+    cluster_id: str
+    name: str
+    similarity: float
+    band: SimilarityBand
+
+
+@dataclass(frozen=True)
+class MergeCandidatesResult:
+    cluster_id: str
+    candidates: list[MergeCandidate]
+
+
+@dataclass(frozen=True)
+class _RankedMergeCandidate:
+    raw_similarity: float
+    candidate: MergeCandidate
+
+
+async def list_merge_candidates(
+    tenant_id: str,
+    cluster_id: str,
+    *,
+    cluster_repository: ClusterRepository,
+    merge_suggestion_repository: MergeSuggestionRepository,
+    settings: ClusteringSettings | None = None,
+) -> MergeCandidatesResult:
+    """Rank other clusters by raw centroid cosine and current pending evidence.
+
+    The returned similarity is the merged centroid/pending score, optionally
+    raised by a pending suggestion whose timestamp and membership evidence are
+    current. Ranking uses that returned score, then the candidate name and id
+    as deterministic tie-breakers. Band cuts come from the injected
+    ClusteringSettings.
+    Missing embeddings omit the candidate (rg-015).
+    """
+    inference_settings = settings or resolve_effective_clustering_settings()
+    probe = await cluster_repository.get_by_id(cluster_id)
+    if probe is None or probe.id is None or str(probe.tenant_id) != str(tenant_id):
+        raise LookupError("cluster not found")
+    clusters = await _list_tenant_clusters(cluster_repository, tenant_id)
+    scored_probe = _cluster_by_id(clusters, str(probe.id)) or probe
+    pending = await _list_pending_suggestions(merge_suggestion_repository, tenant_id)
+    pending_by_peer = _fresh_pending_by_peer(pending, scored_probe, clusters)
+    return MergeCandidatesResult(
+        cluster_id=str(scored_probe.id),
+        candidates=_rank_candidates(scored_probe, clusters, pending_by_peer, inference_settings),
+    )
+
+
+async def _list_tenant_clusters(cluster_repository: ClusterRepository, tenant_id: str) -> list[IdentityCluster]:
+    collected: list[IdentityCluster] = []
+    offset = 0
+    while True:
+        page = await cluster_repository.get_by_tenant(tenant_id, limit=_PAGE_SIZE, offset=offset)
+        collected.extend(page)
+        if len(page) < _PAGE_SIZE:
+            return collected
+        offset += _PAGE_SIZE
+
+
+async def _list_pending_suggestions(
+    repository: MergeSuggestionRepository, tenant_id: str
+) -> list[MergeSuggestionDetails]:
+    collected: list[MergeSuggestionDetails] = []
+    offset = 0
+    while True:
+        page = await repository.list_pending_with_details(tenant_id, limit=_PAGE_SIZE, offset=offset)
+        collected.extend(page)
+        if len(page) < _PAGE_SIZE:
+            return collected
+        offset += _PAGE_SIZE
+
+
+def _rank_candidates(
+    probe: IdentityCluster,
+    clusters: list[IdentityCluster],
+    pending_by_peer: dict[str, float],
+    settings: ClusteringSettings,
+) -> list[MergeCandidate]:
+    probe_id = str(probe.id)
+    probe_centroid = _centroid_vector(probe)
+    if probe_centroid is None:
+        return []
+    probe_model = cluster_embedding_model(probe)
+    ranked: list[_RankedMergeCandidate] = []
+    for cluster in clusters:
+        candidate = _score_candidate(probe_id, probe_centroid, probe_model, cluster, pending_by_peer, settings)
+        if candidate is not None:
+            ranked.append(candidate)
+    ranked.sort(
+        key=lambda row: (
+            -row.candidate.similarity,
+            row.candidate.name.casefold(),
+            row.candidate.cluster_id,
+        )
+    )
+    return [row.candidate for row in ranked]
+
+
+def _score_candidate(
+    probe_id: str,
+    probe_centroid: np.ndarray,
+    probe_model: str | None,
+    cluster: IdentityCluster,
+    pending_by_peer: dict[str, float],
+    settings: ClusteringSettings,
+) -> _RankedMergeCandidate | None:
+    other_id = str(cluster.id or "")
+    if not other_id or other_id == probe_id:
+        return None
+    if not models_are_same_space(probe_model, cluster_embedding_model(cluster)):
+        return None
+    centroid = _centroid_vector(cluster)
+    if centroid is None:
+        return None
+    raw_similarity = _raw_cosine_similarity(probe_centroid, centroid)
+    similarity = raw_similarity
+    pending_similarity = pending_by_peer.get(other_id)
+    if pending_similarity is not None:
+        similarity = max(similarity, pending_similarity)
+    display_similarity = min(1.0, float(similarity))
+    return _RankedMergeCandidate(
+        raw_similarity=raw_similarity,
+        candidate=MergeCandidate(
+            cluster_id=other_id,
+            name=_cluster_name(cluster),
+            similarity=display_similarity,
+            band=band_for(display_similarity, settings),
+        ),
+    )
+
+
+def _fresh_pending_by_peer(
+    pending: list[MergeSuggestionDetails],
+    probe: IdentityCluster,
+    clusters: list[IdentityCluster],
+) -> dict[str, float]:
+    probe_id = str(probe.id)
+    by_id = {str(cluster.id): cluster for cluster in clusters if cluster.id}
+    now = datetime.now(tz=UTC)
+    best: dict[str, tuple[datetime, float]] = {}
+    for row in pending:
+        peer_id = _peer_id(row, probe_id)
+        other = by_id.get(peer_id) if peer_id is not None else None
+        observed = _suggestion_observed_at(row)
+        if peer_id is None or other is None or observed is None:
+            continue
+        if (
+            not _is_usable_pending(row, now)
+            or not _is_fresh(observed, probe, other)
+            or not _membership_matches_live(row, probe, other)
+        ):
+            continue
+        previous = best.get(peer_id)
+        if (
+            previous is None
+            or observed > previous[0]
+            or (observed == previous[0] and float(row.similarity) > previous[1])
+        ):
+            best[peer_id] = (observed, float(row.similarity))
+    return {peer_id: similarity for peer_id, (_when, similarity) in best.items()}
+
+
+def _is_usable_pending(row: MergeSuggestionDetails, now: datetime) -> bool:
+    status = row.status
+    status_value = status.value if isinstance(status, SuggestionStatus) else str(status)
+    if status_value != SuggestionStatus.PENDING.value:
+        return False
+    expires_at = row.expires_at
+    return expires_at is None or _as_utc(expires_at) >= now
+
+
+def _is_fresh(observed: datetime, probe: IdentityCluster, other: IdentityCluster) -> bool:
+    mutation = _latest_mutation(probe, other)
+    return mutation is None or _as_utc(observed) >= mutation
+
+
+def _membership_matches_live(
+    row: MergeSuggestionDetails,
+    probe: IdentityCluster,
+    other: IdentityCluster,
+) -> bool:
+    """Require counts and representative identities to match live membership.
+
+    ``created_at`` only identifies when a cluster was created, not when its
+    membership changed. A pending score without count or representative
+    identity evidence is therefore unsafe to blend into the live centroid
+    result.
+    """
+    probe_id = str(probe.id).casefold()
+    left_id = str(row.cluster_a_id).casefold()
+    right_id = str(row.cluster_b_id).casefold()
+    if left_id == probe_id:
+        observed_probe_count = row.cluster_a_identity_count
+        observed_other_count = row.cluster_b_identity_count
+        observed_probe_representative = row.cluster_a_representative_identity_id
+        observed_other_representative = row.cluster_b_representative_identity_id
+    elif right_id == probe_id:
+        observed_probe_count = row.cluster_b_identity_count
+        observed_other_count = row.cluster_a_identity_count
+        observed_probe_representative = row.cluster_b_representative_identity_id
+        observed_other_representative = row.cluster_a_representative_identity_id
+    else:
+        return False
+
+    return (
+        observed_probe_count is not None
+        and observed_other_count is not None
+        and observed_probe_count == probe.identity_count
+        and observed_other_count == other.identity_count
+        and _same_identity_id(observed_probe_representative, probe.representative_identity_id)
+        and _same_identity_id(observed_other_representative, other.representative_identity_id)
+    )
+
+
+def _latest_mutation(probe: IdentityCluster, other: IdentityCluster) -> datetime | None:
+    stamps = [
+        _as_utc(stamp)
+        for cluster in (probe, other)
+        for stamp in (cluster.created_at, cluster.updated_at, cluster.centroid_refreshed_at)
+        if isinstance(stamp, datetime)
+    ]
+    return max(stamps) if stamps else None
+
+
+def _suggestion_observed_at(row: MergeSuggestionDetails) -> datetime | None:
+    observed = row.refreshed_at or row.created_at
+    return _as_utc(observed) if isinstance(observed, datetime) else None
+
+
+def _same_identity_id(observed: str | None, current: str | None) -> bool:
+    """Compare representative identity ids while tolerating UUID casing."""
+    return (str(observed).casefold() if observed is not None else None) == (
+        str(current).casefold() if current is not None else None
+    )
+
+
+def _peer_id(row: MergeSuggestionDetails, probe_id: str) -> str | None:
+    probe = probe_id.lower()
+    left = str(row.cluster_a_id)
+    right = str(row.cluster_b_id)
+    if left.lower() == probe:
+        return right
+    if right.lower() == probe:
+        return left
+    return None
+
+
+def _cluster_by_id(clusters: list[IdentityCluster], cluster_id: str) -> IdentityCluster | None:
+    for cluster in clusters:
+        if str(cluster.id) == cluster_id:
+            return cluster
+    return None
+
+
+def _cluster_name(cluster: IdentityCluster) -> str:
+    label = cluster.label
+    if label is None:
+        return ""
+    return str(label).strip()
+
+
+def _centroid_vector(cluster: IdentityCluster) -> np.ndarray | None:
+    centroid = cluster.centroid
+    if centroid is None:
+        return None
+    vector = np.asarray(centroid, dtype=np.float32)
+    if vector.size == 0:
+        return None
+    return vector
+
+
+def _raw_cosine_similarity(embedding_a: np.ndarray, embedding_b: np.ndarray) -> float:
+    """Compute unclamped cosine over the shared face-embedding slice."""
+    face_a = np.asarray(extract_face_embedding(embedding_a), dtype=np.float32).reshape(-1)
+    face_b = np.asarray(extract_face_embedding(embedding_b), dtype=np.float32).reshape(-1)
+    norm_a = float(np.linalg.norm(face_a))
+    norm_b = float(np.linalg.norm(face_b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    normalized_a = face_a / norm_a
+    normalized_b = face_b / norm_b
+    return float(np.dot(normalized_a, normalized_b))
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

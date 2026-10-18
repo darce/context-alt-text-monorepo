@@ -1,0 +1,10 @@
+{
+  "at": 1792292091.014194,
+  "native_head": "b410ac508b889ca4c76fb74d3b217f4762cfc840",
+  "native_tree": "34db5ccace0a290843492d1584ecbcb7b2bc77dd",
+  "native_base": "7f27acf31569672349536a0a312cc33f6a29e304",
+  "ref": "refs/remotes/bakeoff/raw-auth-initial-source-native",
+  "delta_bundle_bytes": 10890,
+  "delta_bundle_sha256": "a0143d51854e78cd3ec83a38cf599fc91e7607e3fa23324cf048f911fa129db7",
+  "preserved_actual_ancestry": true
+}

@@ -1,0 +1,72 @@
+{
+  "lane": "hrev-svc-rec",
+  "base": "57eb151417a52df980219cc5faac0338f7ecdcb3",
+  "executed": [
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_health_numeric_runtime_fingerprint.py recognition/tests/unit/test_face_pipeline_provenance.py recognition/tests/unit/test_centroid_recomputation.py recognition/tests/integration/test_observability_persistence.py",
+      "result": "fail",
+      "detail": "Pytest did not start: uv failed to remove shared .venv-lane-feature-debtfix-1-hrev-svc-rec-b085c5da/bin/alembic because the filesystem is read-only. Retried with --no-sync per lane guidance."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_health_numeric_runtime_fingerprint.py recognition/tests/unit/test_face_pipeline_provenance.py recognition/tests/unit/test_centroid_recomputation.py recognition/tests/integration/test_observability_persistence.py",
+      "result": "fail",
+      "detail": "The no-sync run reached the DB-backed integration test, then pytest reported Timeout (0:04:00)! while the async db_session fixture awaited its aiosqlite connection worker. The command was interrupted (exit 130) before pytest printed a final summary."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16824,
+      "finding_id": "DADJ-5770",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/health.py:161-174 - the health detail JSON includes OpenCV, ONNX Runtime, NumPy, SciPy, Pillow, HDBSCAN, pgvector, and comparison_token; the helper appends it to model_cache.detail.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_health_numeric_runtime_fingerprint.py::test_health_detail_publishes_every_numeric_runtime_version_and_token"
+    },
+    {
+      "db_id": 16805,
+      "finding_id": "DADJ-10161",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/api/main.py:286 - the unset ACX_DESCRIPTION_ADAPTER defaults to DescriptionProfile.FLORENCE_SMALL.value.",
+      "guard_test": "apps/prototype-description-service/scene/tests/test_description_profiles.py::test_api_profile_resolver_defaults_to_florence_small"
+    },
+    {
+      "db_id": 16813,
+      "finding_id": "DADJ-5731",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py:430-447 - resolved_versions hashes seven installed versions into a stable comparability_token; tests change HDBSCAN and assert the token changes.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_provenance.py::test_numeric_runtime_fingerprint_reads_live_versions; apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_provenance.py::test_comparability_token_partitions_on_cluster_runtime_changes"
+    },
+    {
+      "db_id": 16801,
+      "finding_id": "DADJ-5771",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py:388-389 - _start_run_context adds numeric_runtime_fingerprint.as_payload() to settings_snapshot passed to create_recognition_run.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_provenance.py::test_clustering_run_snapshot_persists_full_runtime_fingerprint"
+    },
+    {
+      "db_id": 16785,
+      "finding_id": "DADJ-5696",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/recognition/application/health.py:173-174 - model_cache.detail receives a machine-readable numeric_runtime_fingerprint marker; the health test asserts all nine keys and the comparison token.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_health_numeric_runtime_fingerprint.py::test_health_detail_publishes_every_numeric_runtime_version_and_token"
+    }
+  ],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py",
+      "line": 436,
+      "title": "Fingerprint labels the cv2 version as the resolved OpenCV wheel",
+      "defect": "resolved_versions maps opencv-python to self.opencv_version, which comes from cv2.__version__. In this checkout cv2 reports 5.0.0 while uv.lock resolves opencv-python 5.0.0.93, so the advertised exact resolved version and comparison token omit the wheel build version.",
+      "failure_scenario": "If a deployment changes from opencv-python 5.0.0.93 to another 5.0.0.* wheel while cv2.__version__ remains 5.0.0, run snapshots keep the same OpenCV version and comparison token despite a changed resolved package.",
+      "fix": "Record importlib.metadata.version('opencv-python') in resolved_versions (and the active opencv-python-headless distribution when installed); retain cv2.__version__ as a separate runtime field and include the resolved distribution identity in comparability_token.",
+      "test_file": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_provenance.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "All five assigned findings hold; the residual MediaIdentity concern is refuted because the ORM and schema expose quality_score used by ensure_matview. A medium OpenCV wheel-version fingerprint gap remains, and the lane test run is blocked by an aiosqlite fixture timeout after uv required the no-sync fallback."
+}

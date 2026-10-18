@@ -1,0 +1,362 @@
+{
+  "manifest_version": 3,
+  "annotation_mode": "roster_only",
+  "roster": [
+    "Gilded Cypress",
+    "Russet Ridgeway",
+    "Sable Verity",
+    "Slate Willow",
+    "Sylvan Orchard",
+    "Opaline Tanner",
+    "Brisk Compass"
+  ],
+  "entries": [
+    {
+      "media_id": 610,
+      "path": "personal/brisk_compass_610.jpg",
+      "sha256": "7e172d0c4e8ccefae337e580bee3a4529c0e1aab5f7d5786848033d4562adad4",
+      "face_count": 1,
+      "present_identities": [
+        "Brisk Compass"
+      ],
+      "must_right": [
+        "Brisk Compass"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 524.5,
+          "y": 407.5,
+          "w": 113.0,
+          "h": 143.0,
+          "name": "Brisk Compass",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
+      ],
+      "context_pack": {
+        "people": "Brisk Compass"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 584,
+      "path": "personal/opaline_tanner_584.jpg",
+      "sha256": "e906537e673024c69da5588dbb63e201e08d9343076b84cb2a2145f14483b293",
+      "face_count": 1,
+      "present_identities": [
+        "Opaline Tanner"
+      ],
+      "must_right": [
+        "Opaline Tanner"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 507.5,
+          "y": 266.5,
+          "w": 135.0,
+          "h": 183.0,
+          "name": "Opaline Tanner",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
+      ],
+      "context_pack": {
+        "people": "Opaline Tanner"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 330,
+      "path": "personal/slate_willow_330.jpg",
+      "sha256": "e00a3ccd11fe1eba3d88ac09f8e807484884525d553cba6264e84d38ffc9e359",
+      "face_count": 1,
+      "present_identities": [
+        "Slate Willow"
+      ],
+      "must_right": [
+        "Slate Willow"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 180.5,
+          "y": 211.0,
+          "w": 69.0,
+          "h": 94.0,
+          "name": "Slate Willow",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
+      ],
+      "context_pack": {
+        "people": "Slate Willow"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 212,
+      "path": "personal/sylvan_orchard_212.jpg",
+      "sha256": "7f4f7e11c879419a5d672f9ecc30d6f05fdcf210eafdd6e74cd9a8d8c10fdc41",
+      "face_count": 3,
+      "present_identities": [
+        "Sylvan Orchard"
+      ],
+      "must_right": [
+        "Sylvan Orchard"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 946.5,
+          "y": 1897.5,
+          "w": 109.0,
+          "h": 157.0,
+          "name": "Sylvan Orchard",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        },
+        {
+          "x": 330.0,
+          "y": 1961.0,
+          "w": 452.0,
+          "h": 482.0,
+          "name": "Sylvan Orchard",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        },
+        {
+          "x": 1553.0,
+          "y": 1847.5,
+          "w": 340.0,
+          "h": 443.0,
+          "name": "Sylvan Orchard",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
+      ],
+      "context_pack": {
+        "people": "Sylvan Orchard"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 172,
+      "path": "personal/russet_ridgeway_172.jpg",
+      "sha256": "849ddad34de8f0b5a9348a071eb3e3c3efa37a8391ee8a6cb179cc322d77a5e6",
+      "face_count": 2,
+      "present_identities": [
+        "Russet Ridgeway",
+        "Sable Verity"
+      ],
+      "must_right": [
+        "Russet Ridgeway",
+        "Sable Verity"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 172.5,
+          "y": 375.0,
+          "w": 47.0,
+          "h": 64.0,
+          "name": "Sable Verity",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        },
+        {
+          "x": 223.5,
+          "y": 377.5,
+          "w": 47.0,
+          "h": 59.0,
+          "name": "Russet Ridgeway",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
+      ],
+      "context_pack": {
+        "people": "Russet Ridgeway, Sable Verity"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 87,
+      "path": "personal/gilded_cypress_87.jpg",
+      "sha256": "c9dd15c399458899c84d7b7c60c20437755c1c1d547541ebd5e177a3d3d046f0",
+      "face_count": 1,
+      "present_identities": [
+        "Gilded Cypress"
+      ],
+      "must_right": [
+        "Gilded Cypress"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 682.0,
+          "y": 250.0,
+          "w": 188.0,
+          "h": 270.0,
+          "name": "Gilded Cypress",
+          "source": "workbench",
+          "lineage": {
+            "labeler_id": "legacy-import",
+            "batch_id": "fir-11-slice-2-v3-migration",
+            "pass_index": 0,
+            "labeled_at": "1970-01-01T00:00:00Z",
+            "capture_session_id": "legacy-import-unknown-session",
+            "tool_version": "legacy-import",
+            "saw_machine_proposals": true,
+            "label_source": "legacy_import",
+            "confidence": "low",
+            "arbitration_of": null,
+            "decision": "named"
+          }
+        }
+      ],
+      "context_pack": {
+        "people": "Gilded Cypress"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    }
+  ]
+}

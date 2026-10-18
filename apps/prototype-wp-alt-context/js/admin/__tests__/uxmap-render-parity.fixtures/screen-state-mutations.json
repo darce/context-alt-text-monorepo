@@ -1,0 +1,22 @@
+[
+  {
+    "name": "identical before",
+    "value": null,
+    "before": true
+  },
+  {
+    "name": "identical after",
+    "value": null,
+    "before": false
+  },
+  {
+    "name": "conflicting before",
+    "value": "retired_state",
+    "before": true
+  },
+  {
+    "name": "conflicting after",
+    "value": "retired_state",
+    "before": false
+  }
+]

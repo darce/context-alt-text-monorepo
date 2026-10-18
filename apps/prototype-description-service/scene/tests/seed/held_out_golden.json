@@ -1,0 +1,668 @@
+{
+  "manifest_version": 3,
+  "annotation_mode": "roster_only",
+  "roster": [
+    "Hollow Pennant",
+    "Russet Fathom",
+    "Tidal Harbor",
+    "Daniel Arce",
+    "Gilded Cypress",
+    "Muted Current",
+    "Auburn Current",
+    "Linen Kestrel",
+    "Slate Willow",
+    "Muted Yarrow"
+  ],
+  "entries": [
+    {
+      "path": "mock_images/Breiðamerkurjökull.jpg",
+      "sha256": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9",
+      "media_id": 1,
+      "face_count": 1,
+      "present_identities": [
+        "Slate Willow"
+      ],
+      "context_pack": {
+        "title": "Slate Willow inside the Breiðamerkurjökull ice cave",
+        "caption": "Slate Willow crouching beneath blue glacial ice in Iceland.",
+        "description": "Slate Willow, in a white climbing helmet with a headlamp and a fur-hooded black parka, crouches on wet rocks inside the blue ice cave at Breiðamerkurjökull with a camera at her side."
+      },
+      "must_right": [
+        "Slate Willow"
+      ],
+      "easy_wrong": [
+        "Russet Fathom",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Slate Willow crouches on wet dark rocks inside a blue glacial ice cave, wearing a white helmet with a headlamp and a fur-trimmed black parka, a camera slung beside her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/quiet-nye.jpg",
+      "sha256": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda",
+      "media_id": 2,
+      "face_count": 1,
+      "present_identities": [
+        "Hollow Pennant"
+      ],
+      "context_pack": {
+        "title": "Hollow Pennant's birthday mirror selfie",
+        "caption": "Hollow Pennant in a Happy Birthday tiara sticking her tongue out.",
+        "description": "Hollow Pennant takes a hotel-bathroom mirror selfie in a rhinestone Happy Birthday tiara and teal crop top, sticking her tongue out."
+      },
+      "must_right": [
+        "Hollow Pennant"
+      ],
+      "easy_wrong": [
+        "Muted Yarrow",
+        "Auburn Current"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Hollow Pennant, wearing a rhinestone Happy Birthday tiara and a teal top, sticks her tongue out while taking a mirror selfie with her phone in a marble hotel bathroom.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "medium",
+      "domain": "mirrors"
+    },
+    {
+      "path": "mock_images/ccqw-bar.jpg",
+      "sha256": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6",
+      "media_id": 4,
+      "face_count": 1,
+      "present_identities": [
+        "Russet Fathom"
+      ],
+      "context_pack": {
+        "title": "Russet Fathom at the bar",
+        "caption": "Russet Fathom leaning on a wooden bar counter.",
+        "description": "Russet Fathom rests her arms on a worn wooden bar counter in a cream graphic tee, bottles and taps lining the back bar behind her."
+      },
+      "must_right": [
+        "Russet Fathom"
+      ],
+      "easy_wrong": [
+        "Slate Willow",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Russet Fathom leans on a dark wooden bar counter in a cream t-shirt with a dark graphic, with liquor bottles and bar taps lit behind her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/ccqw-candid.jpg",
+      "sha256": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
+      "media_id": 5,
+      "face_count": 4,
+      "present_identities": [
+        "Russet Fathom",
+        "Muted Current"
+      ],
+      "context_pack": {
+        "title": "Russet Fathom and Muted Current on a night out",
+        "caption": "Russet Fathom and Muted Current at a warmly lit bar.",
+        "description": "Russet Fathom and Muted Current share a night out at a warmly lit bar, with other patrons reflected in the mirror behind them."
+      },
+      "must_right": [
+        "Russet Fathom",
+        "Muted Current"
+      ],
+      "easy_wrong": [
+        "Muted Yarrow",
+        "Hollow Pennant"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Russet Fathom and Muted Current pose together at a warmly lit bar table, with other patrons visible in the background near a mirror.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
+    },
+    {
+      "path": "mock_images/ccqw-running-2.jpg",
+      "sha256": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9",
+      "media_id": 11,
+      "face_count": 1,
+      "present_identities": [
+        "Russet Fathom"
+      ],
+      "context_pack": {
+        "title": "Russet Fathom crosses the finish line",
+        "caption": "Russet Fathom mid-stride at a winter road race.",
+        "description": "Russet Fathom, in a teal beanie, sunglasses, black neck gaiter, and green running kit with a race bib and a magenta layer tied at her waist, leaps mid-stride past spectators lining the barricades."
+      },
+      "must_right": [
+        "Russet Fathom"
+      ],
+      "easy_wrong": [
+        "Slate Willow",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Russet Fathom runs mid-leap at a winter road race in a teal beanie, sunglasses, black neck gaiter, and green running outfit with a race bib, spectators watching from behind barricades.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/ccqw-sunglasses-flowers.jpg",
+      "sha256": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19",
+      "media_id": 13,
+      "face_count": 1,
+      "present_identities": [
+        "Russet Fathom"
+      ],
+      "context_pack": {
+        "title": "Russet Fathom under the magnolias",
+        "caption": "Russet Fathom smiling beneath pink magnolia blossoms.",
+        "description": "Russet Fathom, in a grey cap and rose-tinted sunglasses with low pigtails, smiles under a canopy of pink magnolia blossoms against a blue sky."
+      },
+      "must_right": [
+        "Russet Fathom"
+      ],
+      "easy_wrong": [
+        "Slate Willow",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Russet Fathom smiles beneath pink magnolia blossoms in a grey cap and rose-tinted sunglasses, sunlight flaring through the branches against a blue sky.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "medium",
+      "domain": "faces",
+      "tags": [
+        "sunglasses"
+      ]
+    },
+    {
+      "path": "mock_images/ccqw-sunglasses.jpg",
+      "sha256": "4163f17f853f80f7e7b38fd80ea53af1c3c93441d5865dbdb382ac5f5b782adf",
+      "media_id": 14,
+      "face_count": 1,
+      "present_identities": [
+        "Russet Fathom"
+      ],
+      "context_pack": {
+        "title": "Russet Fathom on the rooftop",
+        "caption": "Russet Fathom in sunglasses under a clear blue sky.",
+        "description": "Russet Fathom smiles in dark sunglasses and a cream hoodie on a rooftop terrace, windblown hair catching the sun, city towers on the horizon."
+      },
+      "must_right": [
+        "Russet Fathom"
+      ],
+      "easy_wrong": [
+        "Slate Willow",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Russet Fathom smiles in dark sunglasses and a cream hoodie on a sunny rooftop, her windblown hair lit by the sun, with a small tree and city skyline behind her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "medium",
+      "domain": "faces",
+      "tags": [
+        "sunglasses"
+      ]
+    },
+    {
+      "path": "mock_images/ccqw-underexposed.jpg",
+      "sha256": "6e341aa64418923f9e2ea18eb20e733d094ccb53ac68d565fb4aa1dc4f6722f4",
+      "media_id": 15,
+      "face_count": 1,
+      "present_identities": [
+        "Russet Fathom"
+      ],
+      "context_pack": {
+        "title": "Russet Fathom on the street",
+        "caption": "Russet Fathom in a grainy black-and-white street shot.",
+        "description": "Russet Fathom pauses mid-stride on a city sidewalk with a shoulder bag, in a grainy, underexposed black-and-white frame beside a beverage truck."
+      },
+      "must_right": [
+        "Russet Fathom"
+      ],
+      "easy_wrong": [
+        "Slate Willow",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Russet Fathom walks along a city sidewalk carrying a large shoulder bag in a grainy, underexposed black-and-white photograph, a beverage truck parked across the street.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "hard",
+      "domain": "low_light"
+    },
+    {
+      "path": "mock_images/ccqw.blurry.jpg",
+      "sha256": "054a9b14823ef9d7ca0cb8bb4d44c4908b9c5bf7de7080306e65e03523caba5b",
+      "media_id": 16,
+      "face_count": 1,
+      "present_identities": [
+        "Russet Fathom"
+      ],
+      "context_pack": {
+        "title": "Russet Fathom at the show",
+        "caption": "Russet Fathom blurred in pink stage light.",
+        "description": "Russet Fathom's face glows out of focus behind netting and bokeh lights, washed in pink concert lighting."
+      },
+      "must_right": [
+        "Russet Fathom"
+      ],
+      "easy_wrong": [
+        "Slate Willow",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Russet Fathom's face appears soft and out of focus behind netting and glowing bokeh lights, bathed in pink and magenta light.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "hard",
+      "domain": "faces",
+      "tags": [
+        "blur"
+      ]
+    },
+    {
+      "path": "mock_images/example-gildedcypress-goldleaf.jpeg",
+      "sha256": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04",
+      "media_id": 18,
+      "face_count": 1,
+      "present_identities": [
+        "Gilded Cypress"
+      ],
+      "context_pack": {
+        "title": "Gilded Cypress in gold leaf",
+        "caption": "Gilded Cypress wearing gold leaf makeup and red lipstick.",
+        "description": "Gilded Cypress, hair pinned up, wears flakes of gold leaf across her face, shoulders, and chest with bold red lipstick and gold drop earrings, standing in a kitchen."
+      },
+      "must_right": [
+        "Gilded Cypress"
+      ],
+      "easy_wrong": [
+        "Slate Willow",
+        "Russet Fathom"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Gilded Cypress stands in a kitchen with her hair pinned up, gold leaf flaking across her face, shoulders, and chest, wearing red lipstick, a gold collar necklace, and gold drop earrings.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/k.mcc-1.jpg",
+      "sha256": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28",
+      "media_id": 19,
+      "face_count": 2,
+      "present_identities": [
+        "Auburn Current"
+      ],
+      "context_pack": {
+        "title": "Auburn Current's birthday princess moment",
+        "caption": "Auburn Current celebrating under the balloon arch.",
+        "description": "Auburn Current celebrates at a birthday party beneath a purple, green, and gold balloon arch, with a Birthday Princess sash and tiara in the mix."
+      },
+      "must_right": [
+        "Auburn Current"
+      ],
+      "easy_wrong": [
+        "Muted Yarrow",
+        "Tidal Harbor"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Auburn Current celebrates at a birthday party beneath an arch of purple, green, and gold balloons in front of a round mirror, a Birthday Princess sash and tiara completing the look.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "medium",
+      "domain": "people"
+    },
+    {
+      "path": "mock_images/auburn-1.jpeg",
+      "sha256": "ed83b4f5861fe50cd6b0548a6e18d5633846f59bd68a4995a1745861c5b811da",
+      "media_id": 20,
+      "face_count": 1,
+      "present_identities": [
+        "Auburn Current"
+      ],
+      "context_pack": {
+        "title": "Auburn Current and her Aussie",
+        "caption": "Auburn Current hugging an Australian Shepherd by the fireplace.",
+        "description": "Auburn Current, in a cream sweater, kneels on a wood floor hugging a blue merle Australian Shepherd in front of a marble fireplace."
+      },
+      "must_right": [
+        "Auburn Current"
+      ],
+      "easy_wrong": [
+        "Muted Yarrow",
+        "Tidal Harbor"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Auburn Current kneels in a cream sweater beside a marble fireplace, smiling with her arms around a fluffy blue merle Australian Shepherd.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/auburn-boat.jpg",
+      "sha256": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
+      "media_id": 21,
+      "face_count": 3,
+      "present_identities": [
+        "Auburn Current"
+      ],
+      "context_pack": {
+        "title": "Auburn Current out on the water",
+        "caption": "Auburn Current in her pink bucket hat on the bow.",
+        "description": "Auburn Current, in a pink bucket hat and striped top, lounges on the bow of a motorboat with a friend on a hazy summer day."
+      },
+      "must_right": [
+        "Auburn Current"
+      ],
+      "easy_wrong": [
+        "Muted Yarrow",
+        "Tidal Harbor"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Auburn Current sits on the bow of a motorboat in a pink bucket hat and striped crop top, smiling beside a friend in a red swimsuit on a hazy day on the water.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
+    },
+    {
+      "path": "mock_images/auburn-pool.jpg",
+      "sha256": "52e20b0e2a5079d25dc2af25c8c4eeff07408252a0b2adb288db91c955d389a8",
+      "media_id": 24,
+      "face_count": 1,
+      "present_identities": [
+        "Auburn Current"
+      ],
+      "context_pack": {
+        "title": "Auburn Current in the pool",
+        "caption": "Auburn Current floating in a tiled indoor pool.",
+        "description": "Auburn Current floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, near the Shallow Water lettering at the pool edge."
+      },
+      "must_right": [
+        "Auburn Current"
+      ],
+      "easy_wrong": [
+        "Muted Yarrow",
+        "Tidal Harbor"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Auburn Current floats on her back in a black swimsuit in the pale green water of a tiled indoor pool, her tattooed arm sweeping the surface.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/linen-kestrel-2.jpg",
+      "sha256": "33c54fbb5d4762dc1497725a748ec9ee4a850a2de49bad34348a9353c34a45dc",
+      "media_id": 25,
+      "face_count": 1,
+      "present_identities": [
+        "Linen Kestrel"
+      ],
+      "context_pack": {
+        "title": "Linen Kestrel in black and white",
+        "caption": "Linen Kestrel looking up in round glasses.",
+        "description": "Linen Kestrel, bald with round black-rimmed glasses, lies back against a patterned pillow in a high-contrast black-and-white overhead portrait."
+      },
+      "must_right": [
+        "Linen Kestrel"
+      ],
+      "easy_wrong": [
+        "Daniel Arce"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Linen Kestrel, bald and wearing round black-rimmed glasses, looks up at the camera in a high-contrast black-and-white portrait against a dark pillow.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/slate-cocktail.jpg",
+      "sha256": "19413ef423beccfff22a0f962ec0262c33a73b3899438f4b8e660296f69d6147",
+      "media_id": 28,
+      "face_count": 4,
+      "present_identities": [
+        "Slate Willow"
+      ],
+      "context_pack": {
+        "title": "Slate Willow at the gala dinner",
+        "caption": "Slate Willow and friends dressed up at a formal dinner.",
+        "description": "Slate Willow, in a white slip dress and red lipstick, takes a selfie with three friends in evening dresses at a set table in an ornate gilded dining room."
+      },
+      "must_right": [
+        "Slate Willow"
+      ],
+      "easy_wrong": [
+        "Russet Fathom",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Slate Willow, wearing a white slip dress and red lipstick, leans into a selfie with three friends in evening dresses around a set table in an ornate dining room with gilded mouldings and velvet drapes.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
+    },
+    {
+      "path": "mock_images/slate-party.jpg",
+      "sha256": "5e51ec4730c5e5c1ebb8f0122e26e69e19c38068125ab55801957d9499597e61",
+      "media_id": 29,
+      "face_count": 3,
+      "present_identities": [
+        "Slate Willow"
+      ],
+      "context_pack": {
+        "title": "Slate Willow and the cake",
+        "caption": "Slate Willow biting into a slice of cake.",
+        "description": "Slate Willow, in a sparkly top, bites a striped slice of cake while a phone on a selfie stick films her, a couple embracing in the background of the party room."
+      },
+      "must_right": [
+        "Slate Willow"
+      ],
+      "easy_wrong": [
+        "Russet Fathom",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Slate Willow bites into a striped slice of cake in a sparkly top while a phone screen shows her live, with a couple embracing near shelves in the background.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
+    },
+    {
+      "path": "mock_images/mcm-planecrash.jpg",
+      "sha256": "4dd4c1ddb589fce8335891680a18367e4e8e9db449569de889826b692f0ca053",
+      "media_id": 33,
+      "face_count": 1,
+      "present_identities": [
+        "Slate Willow"
+      ],
+      "context_pack": {
+        "title": "Slate Willow at the plane wreck",
+        "caption": "Slate Willow climbing into the wrecked fuselage.",
+        "description": "Slate Willow, in a fur-hooded parka, steps up into the torn aluminum fuselage of the abandoned DC-3 wreck on a grey black-sand plain."
+      },
+      "must_right": [
+        "Slate Willow"
+      ],
+      "easy_wrong": [
+        "Russet Fathom",
+        "Gilded Cypress"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Slate Willow climbs into the torn aluminum fuselage of an abandoned plane wreck in a fur-hooded black parka, a flat grey black-sand plain stretching behind her.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/muted-bar.jpg",
+      "sha256": "dbbf96ca265c69610b3974ba2a58920224af83130613ccd13e6a41fd7886e05e",
+      "media_id": 36,
+      "face_count": 1,
+      "present_identities": [
+        "Muted Yarrow"
+      ],
+      "context_pack": {
+        "title": "Muted Yarrow at the pink bar",
+        "caption": "Muted Yarrow with a margarita under pink neon.",
+        "description": "Muted Yarrow, in a black backless top and sheer patterned skirt, holds a salt-rimmed margarita at a pink-lit bar beneath a Pink Panther poster and an antique mirror."
+      },
+      "must_right": [
+        "Muted Yarrow"
+      ],
+      "easy_wrong": [
+        "Auburn Current",
+        "Hollow Pennant"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Muted Yarrow stands at a pink-lit bar in a black backless top and sheer patterned skirt, holding a salt-rimmed margarita near a Pink Panther poster, her hair reflected in an antique mirror.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "easy",
+      "domain": "faces"
+    },
+    {
+      "path": "mock_images/muted-group-party.jpg",
+      "sha256": "e7081767186f95d469cbd8792a0361d6580e14637688beab9914ec55eb158740",
+      "media_id": 37,
+      "face_count": 6,
+      "present_identities": [
+        "Muted Yarrow"
+      ],
+      "context_pack": {
+        "title": "Muted Yarrow's pajama party",
+        "caption": "Muted Yarrow dancing with friends in matching pink satin.",
+        "description": "Muted Yarrow raises a drink among five friends in matching pink satin pajamas, dancing by an iridescent foil curtain and a silver number balloon."
+      },
+      "must_right": [
+        "Muted Yarrow"
+      ],
+      "easy_wrong": [
+        "Hollow Pennant",
+        "Auburn Current"
+      ],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "base_caption": "Muted Yarrow celebrates with five friends in matching pink satin pajamas beside an iridescent pink foil curtain, one raising a red drink high under a silver balloon.",
+      "provenance": {
+        "source": "fixture",
+        "license": "fixture",
+        "note": "vendored eval-corpus fixture"
+      },
+      "difficulty": "hard",
+      "domain": "crowds"
+    }
+  ]
+}

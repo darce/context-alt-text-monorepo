@@ -1,0 +1,142 @@
+classDiagram
+    %% ======================================================================
+    %% RECOGNITION SERVICE - CLASS OVERVIEW (key services + pipelines)
+    %% Keep this diagram compact; see domain/ and components/ for details.
+    %% ======================================================================
+
+    %% Domain (core types)
+    class MediaIdentity {
+        id: str
+        media_id: str
+        embedding: ndarray
+        confidence: float
+        cluster_id: str?
+    }
+    class IdentityCluster {
+        id: str
+        label: str?
+        is_labeled: bool
+        user_confirmed: bool
+        identity_count: int
+    }
+    class ClusterRepresentative
+    class AssignmentSuggestion
+    class Job {
+        id: str
+        type: JobType
+        status: JobStatus
+        progress_completed: int
+        progress_total: int
+    }
+
+    MediaIdentity --> IdentityCluster : member_of
+    IdentityCluster --> ClusterRepresentative : has
+    MediaIdentity --> AssignmentSuggestion : suggested
+
+    %% Assignment pipeline
+    class AssignmentCandidate {
+        identity: MediaIdentity
+        cluster_id: str
+        discovery_method: DiscoveryMethod
+        discovery_similarity: float
+    }
+    class AssignmentDecision {
+        outcome: AssignmentOutcome
+        candidate: AssignmentCandidate
+        rejection_reason: str?
+        suggestion_confidence: float?
+    }
+    class AssignmentOutcome {
+        <<enumeration>>
+        ACCEPT
+        SUGGEST
+        REJECT
+    }
+    class DiscoveryMethod {
+        <<enumeration>>
+        REPRESENTATIVE
+        CENTROID
+        GRAPH
+    }
+    class AssignmentGate
+    class AssignmentWriter
+    class AssignmentCheck {
+        <<interface>>
+    }
+    class BlockCheck
+    class ConstraintCheck
+    class ConfidenceCheck
+
+    AssignmentGate --> AssignmentCheck : runs
+    AssignmentCheck <|.. BlockCheck
+    AssignmentCheck <|.. ConstraintCheck
+    AssignmentCheck <|.. ConfidenceCheck
+    AssignmentGate --> AssignmentDecision
+    AssignmentDecision --> AssignmentOutcome
+
+    %% Discovery pipeline
+    class DiscoveryAlgorithm {
+        <<interface>>
+    }
+    class RepresentativeDiscovery
+    class CentroidDiscovery
+    class GraphDiscovery
+    class GraphAlgorithm {
+        <<interface>>
+    }
+    class HdbscanGraphAlgorithm
+
+    DiscoveryAlgorithm <|.. RepresentativeDiscovery
+    DiscoveryAlgorithm <|.. CentroidDiscovery
+    DiscoveryAlgorithm <|.. GraphDiscovery
+    GraphDiscovery --> GraphAlgorithm
+    GraphAlgorithm <|.. HdbscanGraphAlgorithm
+    DiscoveryAlgorithm --> AssignmentCandidate
+
+    %% Application services
+    class ScanQueueService
+    class ScanService
+    class ClusterService
+    class SuggestionService
+    class JobService
+
+    ClusterService --> AssignmentGate
+    ClusterService --> RepresentativeDiscovery
+    ClusterService --> CentroidDiscovery
+    ClusterService --> GraphDiscovery
+    ClusterService --> AssignmentWriter
+    ClusterService --> SuggestionService
+    ScanService --> MediaIdentity
+    SuggestionService --> AssignmentSuggestion
+    JobService --> Job
+
+    class JobStatus {
+        <<enumeration>>
+        PENDING
+        RUNNING
+        COMPLETED
+        FAILED
+    }
+    class JobType {
+        <<enumeration>>
+        ANALYZE
+        CLUSTERING
+        CURATION
+        SPLIT
+    }
+    Job --> JobStatus
+    Job --> JobType
+
+    %% Observability
+    class ClusteringLogger
+    class BatchJobReport
+    class ObservabilityRepository
+    class RecognitionRunContext
+
+    ClusterService --> ClusteringLogger
+    ClusteringLogger --> BatchJobReport
+    ClusteringLogger --> RecognitionRunContext
+    ObservabilityRepository --> BatchJobReport
+
+    note for ClusterService "Legend: ENTRY = external entrypoint; Dashed arrow = optional wiring."
+    note for ClusterService "Code anchors: recognition/application/orchestration/cluster_service.py; recognition/application/assignment/gate.py; recognition/application/discovery/*; recognition/observability/*"

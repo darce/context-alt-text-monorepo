@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/Users/daniel/Development/heuristics-canon-research/distilled/business/scheduling-pinedo.md",
+    "bytes": 24122,
+    "sha256": "11db619cc4b3b790633fa7689d77e60f32e147434f7192c77618148a4096b2f0",
+    "reading": "source distillation read: applicable chapter/component mechanisms and scope caveats; not primary book claim"
+  },
+  {
+    "path": "/Users/daniel/Development/heuristics-canon-research/distilled/graph/pinedo-scheduling.md",
+    "bytes": 24360,
+    "sha256": "5fb6ab7f1c4b00147b946c9255165a444108dcbdfcf6e929701596fdc9c4bedb",
+    "reading": "source distillation read: applicable chapter/component mechanisms and scope caveats; not primary book claim"
+  },
+  {
+    "path": "/Users/daniel/Development/heuristics-canon-research/distilled/graph/sinnen-task-scheduling-parallel-systems.md",
+    "bytes": 41988,
+    "sha256": "b2840cadd40faf70836ec1b9d053a5bdba06cadaa8e4317439ec29f6ee23040d",
+    "reading": "source distillation read: applicable chapter/component mechanisms and scope caveats; not primary book claim"
+  },
+  {
+    "path": "/Users/daniel/Development/heuristics-canon-research/distilled/graph/algorithm-design-manual-grph-30-31.md",
+    "bytes": 17598,
+    "sha256": "751cf029d786035100296bba8c919421430c6e1546aba2ec0dd03c871e33c44e",
+    "reading": "source distillation read: applicable chapter/component mechanisms and scope caveats; not primary book claim"
+  }
+]

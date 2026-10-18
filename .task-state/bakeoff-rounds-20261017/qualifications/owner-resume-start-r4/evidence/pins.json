@@ -1,0 +1,34 @@
+{
+  "base_commit": "faee65dcdb642fb1a772fdaaf28bfb11d0ef58b9",
+  "baseline_manifest_sha256": "70831dc4247ebd31b34094f915aadf36534116ff0aaa26339ad3abdaccbfef26",
+  "candidate_manifest_sha256": "991aa72e923562bec93659190e87f9d223514da3073b424df5d36a60f1e77406",
+  "baseline": {
+    "capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+    "final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+    "guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+    "observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+    "owner-custody.py": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+    "owner-window.py": "a2bbcccbc02e61a081e58d0de1a793d7b90ee0c2bb2ee15c9ea9722f47a8fc0c",
+    "root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62"
+  },
+  "candidate": {
+    "capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+    "final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+    "guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+    "observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+    "owner-custody.py": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+    "owner-window.py": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600",
+    "root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62"
+  },
+  "test_sha256": "d4acb4713c998db0f0ce538a10aba15511998419c8f9125c5b480d12255c8b00",
+  "root_plan_sha256": "2cb2e528325b8c79df268ad5cb48f3fb5dae35fbd48a52bf19e50314e10f84fe",
+  "supplied_context_sha256": {
+    "root-red.json": "9601d929c32ab93da53ecbfb1dbbbccea3f923fbfc91c0fbd6fbb9f75e521b14",
+    "readonly-other-guards.json": "ae91f12b79d9d31e373d9be19d02a49f5801f5321baaf7a5863d9ba4c18adf40",
+    "semantic.json": "fda3b830a6d1a0cf2eda8f568cfaa6988cc8e7c82efbfa0b3a110cb09a45a198",
+    "canon-rows.md": "37c55a245b5620306e6060dfc8535ee689e943490aca8eb1781d24f14535f8ff",
+    "OWNER-FLOW-CONTROLS-R2.py": "369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062"
+  },
+  "root_fixture_test_sha256": "292e89d9fb7a6ecd5648468110e8aa60a5e897b990bad597f16344b507171790",
+  "root_coordinator_sha256": "02f83198381e421c12e20fa5d6670753cb2ad1852ddf21908dffc0e97ec47c95"
+}

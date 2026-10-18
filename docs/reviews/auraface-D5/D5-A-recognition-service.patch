@@ -1,0 +1,327 @@
+diff --git a/scripts/deploy/recognition-service.sh b/scripts/deploy/recognition-service.sh
+index 5b2e005..ee8be81 100755
+--- a/scripts/deploy/recognition-service.sh
++++ b/scripts/deploy/recognition-service.sh
+@@ -2953,6 +2953,156 @@ else:
+ ' "$mode" "$directory" "$live" "$base" "$bounds" "$env" "$transaction"
+ }
+
++# Restore admission never creates snapshots, candidates, journals or live files.
++# lstat every component: unreadable/nonregular state is not proven absence.
++edge_restore_file() {
++  edge_op python3 -c '
++import os,stat,sys
++from pathlib import Path
++path=Path(sys.argv[1]); required=sys.argv[2] == "required"
++try:
++    for parent in reversed(path.parents):
++        if not stat.S_ISDIR(parent.lstat().st_mode): raise ValueError("unsafe parent")
++    mode=path.lstat().st_mode
++    if not stat.S_ISREG(mode): raise ValueError("not a regular file")
++except FileNotFoundError:
++    if required: raise SystemExit("missing verified restore file: "+str(path))
++    print("absent")
++except (OSError,ValueError) as error:
++    raise SystemExit("unsafe or unknown restore file: "+str(path)+": "+str(error))
++else:
++    print("present")
++' "$1" "${2:-required}"
++}
++
++edge_topology_plan() {
++  edge_op python3 -c '
++import hashlib,os,re,stat,sys
++from pathlib import Path
++root,env,transaction,current,remote,unit=sys.argv[1:]
++def regular(path):
++    path=Path(path)
++    try:
++        for parent in reversed(path.parents):
++            if not stat.S_ISDIR(parent.lstat().st_mode): raise ValueError("unsafe parent")
++        if not stat.S_ISREG(path.lstat().st_mode): raise ValueError("not a regular file")
++    except FileNotFoundError:
++        return False
++    return True
++def pointer(path):
++    value=path.read_text().rstrip("\n")
++    prefix=str(Path(root)/env)+"/"
++    if not value.startswith(prefix) or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*",value[len(prefix):]) or ".." in value:
++        raise ValueError("invalid topology snapshot pointer")
++    return Path(value)
++def plan():
++    directory=Path(root)/env/transaction
++    ready=regular(directory/"topology.ready")
++    pending=regular(directory/"topology.pending")
++    if pending and not ready: raise ValueError("topology snapshot is incomplete")
++    if not ready:
++        if current == "current-only": return []
++        if regular(directory/"edge-cutover.ready"): return []
++        latest=Path(root)/env/"latest"
++        if regular(latest):
++            directory=pointer(latest)
++            if not regular(directory/"topology.ready"):
++                raise ValueError("selected topology snapshot is incomplete")
++        else:
++            directory=None
++    pairs=[(Path(remote)/"docker-compose.env.yml","docker-compose.env.yml"),
++           (Path("/etc/systemd/system")/(unit+".service"),unit+".service")]
++    if env == "prod": pairs.append((Path(remote)/"docker-compose.admin.yml","docker-compose.admin.yml"))
++    legacy=directory is None
++    if legacy and not any(regular(Path(str(live)+suffix)) for live,_ in pairs for suffix in (".bak",".bak.absent")):
++        return []
++    if not legacy:
++        if not regular(directory/"db-init.ready"):
++            raise ValueError("selected topology bootstrap snapshot is incomplete")
++        pairs.append((Path(remote)/"db/docker-prod-init/001-extensions.sql","db-init/001-extensions.sql"))
++    rows=[]
++    for live,name in pairs:
++        snapshot=Path(str(live)+".bak") if legacy else directory/name
++        absent=Path(str(snapshot)+".absent")
++        exists,missing=regular(snapshot),regular(absent)
++        regular(live)  # live may be absent; symlinks and unknown state refuse
++        if exists == missing: raise ValueError("missing or ambiguous verified topology snapshot: "+str(live))
++        if exists:
++            if not live.parent.is_dir(): raise ValueError("missing topology destination directory")
++            digest=hashlib.sha256(snapshot.read_bytes()).hexdigest()
++        else:
++            digest="absent"
++        rows.append("\t".join((str(snapshot if exists else absent),str(live),digest)))
++    return rows
++try:
++    rows=plan()
++except (OSError,ValueError) as error:
++    print("topology restore admission refused: "+str(error),file=sys.stderr)
++    sys.exit(2)
++print("\n".join(rows),end="")
++' "$backup_root" "$env" "$transaction" "$1" "/opt/acx-backend/$env" "acx-$env"
++}
++
++edge_restore_admit() {
++  local mode="$1" ready pointer pointed selected
++  source_dir="$transaction_dir"
++  ready="$(edge_restore_file "$source_dir/edge.ready" optional)" || return $?
++  if [[ "$ready" == absent ]]; then
++    if [[ "$mode" == current-only ]]; then
++      # An empty edge directory is also made by a topology-only snapshot.
++      for selected in Caddyfile Caddyfile.pre-cutover docker-compose.caddy.yml generation.json; do
++        [[ "$(edge_restore_file "$source_dir/edge/$selected" optional)" == absent ]] || {
++          echo 'incomplete current edge snapshot; refusing restore' >&2; return 2;
++        }
++      done
++      source_dir=""
++      return 0
++    fi
++    pointer="$backup_root/$env/edge-cutover.current"
++    edge_restore_file "$pointer" >/dev/null || return $?
++    pointed="$(cat -- "$pointer")" || return $?
++    case "$pointed" in "$backup_root/$env/"*/edge/Caddyfile.pre-cutover) ;; *) return 2 ;; esac
++    selected="${pointed#"$backup_root/$env/"}"; selected="${selected%/edge/Caddyfile.pre-cutover}"
++    [[ "$selected" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*$ && "$selected" != *..* ]] || return 2
++    source_dir="$backup_root/$env/$selected"
++    edge_restore_file "$source_dir/edge.ready" >/dev/null || return $?
++  fi
++  # Generation refusal keeps its status 75, including missing evidence.
++  edge_generation check "$source_dir" || return $?
++  source="$source_dir/edge/Caddyfile.pre-cutover"
++  edge_restore_file "$source" >/dev/null || return $?
++  edge_restore_file "$source_dir/edge/docker-compose.caddy.yml" >/dev/null || return $?
++  edge_restore_file "$live" >/dev/null || return $?
++  edge_restore_file "$base" >/dev/null || return $?
++  edge_restore_file "$overlay" optional >/dev/null || return $?
++  source_bounds="$(_edge_portal_bounds "$source")" || return $?
++  live_bounds="$(_edge_portal_bounds "$live")" || return $?
++  edge_owned || return $?
++  edge_required_networks "$source_dir/edge/docker-compose.caddy.yml" "$overlay" >/dev/null || return $?
++  edge_generation check "$source_dir"
++}
++
++edge_topology_apply() {
++  local mode="$1" plan current snapshot destination digest
++  plan="$(edge_topology_plan "$mode")" || return $?
++  [[ -n "$plan" ]] || return 0
++  while IFS=$'\t' read -r snapshot destination digest; do
++    # Recompute the complete plan at each commit point. Changed sources,
++    # absence markers, pointers or destinations cannot inherit old admission.
++    current="$(edge_topology_plan "$mode")" || return $?
++    [[ "$current" == "$plan" ]] || return 75
++    edge_owned || return $?
++    if [[ -n "${source_dir:-}" ]]; then edge_generation check "$source_dir" || return $?; fi
++    if [[ "$digest" == absent ]]; then
++      edge_op rm -f -- "$destination" || return $?
++      [[ ! -e "$destination" && ! -L "$destination" ]] || return 2
++    else
++      edge_copy "$snapshot" "$destination" || return $?
++    fi
++  done <<<"$plan"
++  edge_op systemctl daemon-reload
++}
++
+ edge_snapshot() {
+   edge_plain_live || return $?
+   if [[ -e "$transaction_dir/edge.ready" ]]; then
+@@ -3184,25 +3334,29 @@ transaction=$transaction" || exit $?
+       edge_op rm -f -- "$backup_root/$env/cutover-inflight" || exit $?
+     fi
+     ;;
+-  restore)
++  admit-runtime|restore-topology)
+     edge_owned || exit $?
+     mode="$1"
+-    source_dir="$transaction_dir"
+-    if [[ ! -f "$source_dir/edge.ready" ]]; then
+-      if [[ "$mode" == current-only ]]; then exit 0; fi
+-      pointer="$backup_root/$env/edge-cutover.current"
+-      [[ -f "$pointer" && ! -L "$pointer" ]] || { echo 'missing verified edge snapshot; refusing' >&2; exit 1; }
+-      pointed="$(cat -- "$pointer")"
+-      case "$pointed" in "$backup_root/$env/"*/edge/Caddyfile.pre-cutover) ;; *) exit 2 ;; esac
+-      [[ "$pointed" != *..* ]] || exit 2
+-      source_dir="${pointed%/edge/Caddyfile.pre-cutover}"
++    edge_topology_plan "$mode" >/dev/null || exit $?
++    if [[ "$action" == admit-runtime ]]; then
++      edge_restore_admit "$mode" || exit $?
++    else
++      # Topology-only snapshots are legitimate. If an edge snapshot was also
++      # recorded, keep its generation fence at every topology commit point.
++      source_dir=""
++      if [[ -e "$transaction_dir/edge.ready" || -L "$transaction_dir/edge.ready" ||
++            -e "$backup_root/$env/edge-cutover.current" || -L "$backup_root/$env/edge-cutover.current" ]]; then
++        edge_restore_admit "$mode" || exit $?
++      fi
++      edge_topology_apply "$mode" || exit $?
+     fi
+-    edge_generation check "$source_dir" || exit $?
+-    source="$source_dir/edge/Caddyfile.pre-cutover"
+-    [[ -f "$source" && ! -L "$source" ]] || exit 2
++    ;;
++  restore)
++    edge_owned || exit $?
++    mode="$1"
++    edge_restore_admit "$mode" || exit $?
++    [[ -n "$source_dir" ]] || exit 0
+     edge_op install -d -m 700 -- "$transaction_dir/edge" || exit $?
+-    source_bounds="$(_edge_portal_bounds "$source")" || exit $?
+-    live_bounds="$(_edge_portal_bounds "$live")" || exit $?
+     if python3 -c '
+ import sys
+ from pathlib import Path
+@@ -3218,6 +3372,7 @@ sys.exit(0 if block(sys.argv[1],sys.argv[2]) == block(sys.argv[3],sys.argv[4]) e
+       edge_unmanaged "$source" "$transaction_dir/edge/restore.base" || exit $?
+       edge_merge "$transaction_dir/edge/restore.base" "$transaction_dir/edge/restore.candidate" || exit $?
+     fi
++    edge_generation check "$source_dir" || exit $?
+     edge_copy "$transaction_dir/edge/restore.candidate" "$live" || exit $?
+     if [[ -f "$source_dir/edge/docker-compose.caddy.yml" ]]; then
+       edge_copy "$source_dir/edge/docker-compose.caddy.yml" "$base" || exit $?
+@@ -3927,85 +4082,9 @@ verify_restored_runtime() {
+
+ restore_topology_backups() {
+   recognition_edge_assert_if_active || return 75
+-  local env="$1" remote_dir unit timeout restore_current_only=0
+-  if [[ "${2:-}" == "current-only" ]]; then
+-    restore_current_only=1
+-  fi
+-  remote_dir="$(env_to_remote_dir "$env")" || return 1
+-  unit="$(env_to_unit "$env")" || return 1
+-  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
++  local env="$1" mode="${2:-}"
+   log "Restoring compose/unit topology for ${env} from the verified transaction snapshot"
+-  recognition_edge_command "set -euo pipefail
+-     backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
+-     transaction_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
+-     latest_file=\"\$backup_root/${env}/latest\"
+-     topology_dir=\"\$transaction_dir\"
+-     legacy=0
+-     restore_current_only='${restore_current_only}'
+-     if [ "\$restore_current_only" = 1 ] && sudo test -f "\$topology_dir/topology.pending" && ! sudo test -f "\$topology_dir/topology.ready"; then
+-       echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
+-       exit 1
+-     fi
+-     if [ "\$restore_current_only" = 1 ] && ! sudo test -f "\$topology_dir/topology.ready"; then
+-       echo 'no current-transaction topology snapshot; topology left untouched'
+-       exit 0
+-     fi
+-     if sudo test -f \"\$topology_dir/topology.pending\" && ! sudo test -f \"\$topology_dir/topology.ready\"; then
+-       echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
+-       exit 1
+-     fi
+-     if ! sudo test -f \"\$topology_dir/topology.ready\" && sudo test -f \"\$topology_dir/edge-cutover.ready\"; then
+-       topology_dir=
+-     elif ! sudo test -f \"\$topology_dir/topology.ready\" && sudo test -f \"\$latest_file\"; then
+-       latest_dir=\$(sudo cat \"\$latest_file\")
+-       case \"\$latest_dir\" in
+-         \"\$backup_root/${env}/\"*) topology_dir=\"\$latest_dir\" ;;
+-         *) echo 'invalid topology snapshot pointer' >&2; exit 1 ;;
+-       esac
+-     elif ! sudo test -f \"\$topology_dir/topology.ready\"; then
+-       topology_dir=
+-       if sudo test -f '${remote_dir}/docker-compose.env.yml.bak' \
+-         || sudo test -f '${remote_dir}/docker-compose.env.yml.bak.absent' \
+-         || sudo test -f '/etc/systemd/system/${unit}.service.bak' \
+-         || sudo test -f '/etc/systemd/system/${unit}.service.bak.absent'; then
+-         legacy=1
+-       fi
+-     fi
+-     restore_one() {
+-       live=\"\$1\"; snapshot=\"\$2\"; absent=\"\$3\"
+-       if sudo test -f \"\$snapshot\"; then
+-         sudo cp -p -- \"\$snapshot\" \"\$live\"
+-         sudo cmp -s -- \"\$snapshot\" \"\$live\" || { echo \"restored topology verification failed: \$live\" >&2; return 1; }
+-         echo \"restored:\$live\"
+-       elif sudo test -f \"\$absent\"; then
+-         sudo rm -f -- \"\$live\"
+-         sudo test ! -e \"\$live\" || { echo \"prior-absence topology restore failed: \$live\" >&2; return 1; }
+-         echo \"removed-prior-file:\$live\"
+-       else
+-         echo \"missing verified topology snapshot or prior-absence marker: \$live\" >&2
+-         return 1
+-       fi
+-     }
+-     if [ -n \"\$topology_dir\" ]; then
+-       restore_one '${remote_dir}/docker-compose.env.yml' \"\$topology_dir/docker-compose.env.yml\" \"\$topology_dir/docker-compose.env.yml.absent\"
+-       restore_one '/etc/systemd/system/${unit}.service' \"\$topology_dir/${unit}.service\" \"\$topology_dir/${unit}.service.absent\"
+-       if [ '${env}' = prod ]; then
+-         restore_one '${remote_dir}/docker-compose.admin.yml' \"\$topology_dir/docker-compose.admin.yml\" \"\$topology_dir/docker-compose.admin.yml.absent\"
+-       fi
+-       if sudo test -f \"\$topology_dir/db-init.ready\"; then
+-         restore_one '${remote_dir}/db/docker-prod-init/001-extensions.sql' \"\$topology_dir/db-init/001-extensions.sql\" \"\$topology_dir/db-init/001-extensions.sql.absent\"
+-       fi
+-     elif [ \"\$legacy\" = 1 ]; then
+-       restore_one '${remote_dir}/docker-compose.env.yml' '${remote_dir}/docker-compose.env.yml.bak' '${remote_dir}/docker-compose.env.yml.bak.absent'
+-       restore_one '/etc/systemd/system/${unit}.service' '/etc/systemd/system/${unit}.service.bak' '/etc/systemd/system/${unit}.service.bak.absent'
+-       if [ '${env}' = prod ]; then
+-         restore_one '${remote_dir}/docker-compose.admin.yml' '${remote_dir}/docker-compose.admin.yml.bak' '${remote_dir}/docker-compose.admin.yml.bak.absent'
+-       fi
+-     else
+-       echo 'no topology mutation snapshot recorded; leaving compose and unit files unchanged'
+-       exit 0
+-     fi
+-     sudo systemctl daemon-reload"
++  recognition_edge_remote restore-topology "$env" "$mode"
+ }
+
+ restore_edge_backups() {
+@@ -4241,6 +4320,14 @@ recover_persisted_cutover() {
+ restore_runtime_topology() {
+   recognition_edge_assert_if_active || return 75
+   local env="$1" restore_mode="${2:-}"
++  # D5-A / D4-C2 (19144): admit BOTH restore plans before either writer.
++  # Canon v0.26.2 [FLOW-17] Validate mutations before applying them;
++  # Source: The Site Reliability Workbook, ch. 13. [RLSE-08] Rollback written
++  # before ship; Sources: Continuous Delivery, ch. 10 + Continuous Delivery,
++  # ch. 12. Rehearsal: test_aura_d5_restore_admission.py (native published path).
++  # Join this candidate mechanically, then independently review the combined
++  # tree. This author result does not close D4-C1 or P6-R1/R2, or approve ship.
++  recognition_edge_remote admit-runtime "$env" "$restore_mode" || return $?
+   if [[ "${restore_mode}" == "current-only" ]]; then
+     restore_topology_backups "$env" current-only || return $?
+     restore_edge_backups "$env" current-only || return $?
+@@ -4886,6 +4973,9 @@ restore_runtime_and_edge() {
+     warn "could not restore prior ACX_IMAGE_REPO before runtime rollback"
+     return "${sticky_status}"
+   fi
++  # This recovery entry also composes topology and edge restoration. Preserve
++  # sticky resource cleanup above, then admit both protected restore plans.
++  recognition_edge_remote admit-runtime "$env" "" || return $?
+   if ! restore_topology_backups "${env}"; then
+     warn "could not restore compose/unit topology from .bak before rollback"
+     return 1

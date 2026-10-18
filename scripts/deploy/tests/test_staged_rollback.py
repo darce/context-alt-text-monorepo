@@ -28,6 +28,15 @@ def _run_rollback(
         f"""\
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Unit orchestration boundary: real edge ownership is exercised in test_aura_edge_fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{
+  if [[ "$1" == *"systemctl restart"* ]]; then
+    record "run_with_deadline rollback systemctl restart acx-prod"
+  else
+    record "recognition_edge_command $1"
+  fi
+}}
 RECORD_FILE={shlex.quote(str(records))}
 ROLLBACK_DIGEST={shlex.quote(ROLLBACK_DIGEST)}
 ROLLBACK_SHA={shlex.quote("b" * 40)}
@@ -196,6 +205,15 @@ def test_cutover_health_image_only_keeps_image_identity_without_sha(tmp_path: Pa
             f"""\
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Unit orchestration boundary: real edge ownership is exercised in test_aura_edge_fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{
+  if [[ "$1" == *"systemctl restart"* ]]; then
+    record "run_with_deadline rollback systemctl restart acx-prod"
+  else
+    record "recognition_edge_command $1"
+  fi
+}}
 DEPLOY_SHA={shlex.quote(deploy_sha)}
 ACX_CUTOVER_HEALTH_ATTEMPTS=1
 ACX_CUTOVER_HEALTH_SLEEP=0

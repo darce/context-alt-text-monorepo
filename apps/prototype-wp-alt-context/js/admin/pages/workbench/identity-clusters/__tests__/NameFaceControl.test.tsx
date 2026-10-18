@@ -93,6 +93,72 @@ const TypedNameFace = ({
   );
 };
 
+describe('curated person picker choices', () => {
+  it('shows one canonical person for a mirrored suggestion and binds its stored ID', () => {
+    const rosterPerson = person(41, 'Kirstie McCarrel');
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({
+      options: [
+        { value: 'cluster:synthetic', label: 'kirstie mccarrel', source: 'cluster', group: NAMING_GROUP_SUGGESTED, suggestion_id: 'synthetic-suggestion' },
+        rosterPerson,
+        rosterPerson,
+      ],
+      value: 'Kirst',
+      onOptionConfirm,
+      onRejectSuggestion: vi.fn(),
+    });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('listbox')).toHaveAccessibleName('People');
+    expect(screen.queryByText('Group')).not.toBeInTheDocument();
+    expect(screen.queryByText('Person')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reject/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'Confirm match with Kirstie McCarrel' }));
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 41, name: 'Kirstie McCarrel' });
+    expect(onOptionConfirm).not.toHaveBeenCalled();
+  });
+
+  it('canonicalizes against the full roster before budgeting and keyboard confirmation', () => {
+    const rosterPerson = person(41, 'Kirstie McCarrel');
+    const others = [person(42, 'Ada'), person(43, 'Grace'), person(44, 'Alan'), person(45, 'Pat')];
+    const { onCommit } = renderControl({
+      options: [
+        { value: 'cluster:first', label: 'Kirstie McCarrel', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
+        { value: 'cluster:second', label: 'Kirstie McCarrel', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
+        ...others,
+      ],
+      resolutionOptions: [rosterPerson, ...others],
+    });
+    const input = screen.getByRole('combobox');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(5);
+    expect(screen.getByRole('option', { name: 'Confirm match with Pat' })).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 41, name: 'Kirstie McCarrel' });
+  });
+
+  it('keeps distinct same-name person IDs as explicit choices and typed input ambiguous', () => {
+    const first = person(41, 'Alex Rivera');
+    const second = person(42, 'Alex Rivera');
+    const options: ComboboxOption[] = [
+      { value: 'cluster:ambiguous', label: 'Alex Rivera', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
+      first, first, second,
+    ];
+    expect(resolveNameFaceInput(options, 'Alex Rivera')).toEqual({
+      kind: 'ambiguous', name: 'Alex Rivera', matches: [first, second],
+    });
+    const { onCommit } = renderControl({ options, value: 'Alex Rivera' });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+    fireEvent.click(screen.getAllByRole('option')[2]);
+    expect(onCommit).toHaveBeenCalledWith({ kind: 'roster', rosterEntryId: 42, name: 'Alex Rivera' });
+    expect(resolveNameFaceInput([first, first], 'Alex Rivera')).toEqual({
+      kind: 'roster', rosterEntryId: 41, name: 'Alex Rivera',
+    });
+  });
+});
+
 describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
   it('ArrowDown twice then Enter confirms the second option', async () => {
     const onOptionConfirm = vi.fn();
@@ -351,8 +417,8 @@ describe('NameFaceControl distinct confirm names (UXW2-3-R1-15)', () => {
     });
 
     fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
-    expect(screen.getByRole('option', { name: 'Confirm match with Ada Lovelace (Person)' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Confirm match with Grace Hopper (Person)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Confirm match with Ada Lovelace' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Confirm match with Grace Hopper' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject Ada Lovelace' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject Grace Hopper' })).toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: 'Confirm match' })).toHaveLength(0);

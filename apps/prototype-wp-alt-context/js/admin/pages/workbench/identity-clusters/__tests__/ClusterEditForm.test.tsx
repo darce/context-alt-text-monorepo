@@ -316,8 +316,7 @@ describe('ClusterEditForm', () => {
     vi.useRealTimers();
   });
 
-  it('includes source in Suggested cluster accessible names (A11Y-04 / FIX-7)', () => {
-    // Predicted first failure: aria-label is bare "Person A" without Cluster source
+  it('names suggested choices using the person label', () => {
     render(
       <ClusterEditForm
         {...defaultProps}
@@ -327,7 +326,7 @@ describe('ClusterEditForm', () => {
     );
     openNamingList();
 
-    expect(screen.getByRole('option', { name: /Person A \(Group\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Confirm match with Person A/i })).toBeInTheDocument();
   });
 
   it('unwraps cluster: namespaced values on confirm', async () => {

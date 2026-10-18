@@ -335,7 +335,8 @@ export const useClusterSuggestionsLoader = ({
       atRestLabeledLoading ||
       (enabled && rosterLoading),
     namingReady: enabled && rosterStatus === 'success',
-    retryRoster: () => { void refetchRoster(); },
+    // Roster HTTP does not consume query cancellation; share the pending read.
+    retryRoster: () => { void refetchRoster({ cancelRefetch: false }); },
     rosterError,
     rosterCandidateOptions,
     isError: (canQuerySuggestions && suggestionsError) || (canQueryRosterCandidates && rosterCandidatesError),

@@ -436,7 +436,10 @@ try:
     depth = sites = 0
     addresses = []
     protected = set(sys.argv[2].split())
-    body = "\n".join(lines[begin + 1:end])
+    # Every body record is LF-terminated, including the one before END. Keep
+    # that delimiter while validating so a final CRLF cannot become a bare CR.
+    # Extraction below still emits the original bytes, including EOF at END.
+    body = "".join(line + "\n" for line in lines[begin + 1:end])
     # Caddy ignores CR rather than treating it as a token boundary. CRLF is
     # supported; a standalone CR is refused rather than mis-parsed as a space.
     if "\r" in body.replace("\r\n", ""):

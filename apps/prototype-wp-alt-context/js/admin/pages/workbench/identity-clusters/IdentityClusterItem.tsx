@@ -175,6 +175,9 @@ export const IdentityClusterItem = ({
   const {
     options,
     isLoading: suggestionsLoading,
+    namingReady,
+    rosterError,
+    retryRoster,
     isError: suggestionsError,
     retry: retrySuggestions,
     findClusterByLabel,
@@ -524,7 +527,9 @@ export const IdentityClusterItem = ({
             labelInput={editState.labelInput}
             onLabelChange={setLabel}
             options={options}
-            isLoading={suggestionsLoading}
+            isLoading={namingReady === undefined ? suggestionsLoading : !namingReady}
+            rosterError={rosterError}
+            onRetryRoster={retryRoster}
             suggestionsError={suggestionsError}
             onRetrySuggestions={retrySuggestions}
             isPending={mutations.isPending || saveStatus !== 'idle'}

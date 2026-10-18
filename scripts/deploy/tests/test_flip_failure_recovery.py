@@ -47,6 +47,8 @@ def _run_driver(tmp_path: Path, driver_body: str) -> tuple[str, list[str]]:
         f"""\
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Unit orchestration boundary: real edge ownership is exercised in test_aura_edge_fence.
+recognition_edge_assert_if_active() {{ return 0; }}
 RECORD_FILE={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORD_FILE"; }}
 log() {{ record "log $*"; }}

@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+
 from conftest import _write_executable
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
@@ -354,6 +355,10 @@ def _sticky_shell(tmp_path: Path, command: str) -> str:
     sudo.chmod(0o755)
     return f'''
 source "{SCRIPT}"
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_begin() {{ return 0; }}
+recognition_edge_finish() {{ return 0; }}
+recognition_edge_command() {{ ACX_RECOGNITION_OWNERSHIP_CHECK=: ssh "$1"; }}
 export PATH="{bin_dir}:$PATH"
 env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
 run_with_deadline() {{ shift 2; "$@"; }}
@@ -681,6 +686,9 @@ def test_convergence_failure_restores_prior_sticky_image_repo(tmp_path: Path) ->
     digest = "a" * 64
     command = f'''
 source "{SCRIPT}"
+# This fixture replaces all runtime operations; edge ownership has real-helper tests.
+recognition_edge_begin() {{ return 0; }}
+recognition_edge_assert_if_active() {{ return 0; }}
 ACX_BOOT_SMOKE=0
 ACX_CONVERGE_RUNTIME=1
 ACX_IMAGE_REPO="$IMAGE_BASE"
@@ -1135,9 +1143,7 @@ env_to_tag {env}
     )
 
 
-def _run_assert_remote_env_image_tag(
-    env: str, file_tag: str
-) -> subprocess.CompletedProcess[str]:
+def _run_assert_remote_env_image_tag(env: str, file_tag: str) -> subprocess.CompletedProcess[str]:
     """Exercise the fail-closed remote ACX_IMAGE_TAG guard without SSH."""
     command = f'''
 source "{SCRIPT}"
@@ -1620,7 +1626,7 @@ ACX_CANONICAL_HEALTH_SLEEP=0
 ACX_ROLLBACK_VERIFY_ATTEMPTS={attempts}
 ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_VERIFY_EXPECT_LOCAL=1
-ACX_CANDIDATE_DIGEST_REF="iad.ocir.io/test/acx-backend@sha256:{'a' * 64}"
+ACX_CANDIDATE_DIGEST_REF="iad.ocir.io/test/acx-backend@sha256:{"a" * 64}"
 verify_running_image_matches_deployed() {{ return 0; }}
 verify_live_gpu_snapshots() {{ return 0; }}
 read_running_api_image_id() {{ printf '%s\\n' '{running_image_id}'; }}
@@ -4606,7 +4612,9 @@ assert_rollback_fence dev 1
 def _health_program() -> str:
     result = subprocess.run(
         ["bash", "-c", _function_body("health_probe_program") + "\nhealth_probe_program"],
-        text=True, capture_output=True, check=True,
+        text=True,
+        capture_output=True,
+        check=True,
     )
     assert "'" not in result.stdout
     return result.stdout
@@ -4636,12 +4644,12 @@ def test_health_program_http(status: int, actual: str, expected_sha: str) -> Non
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        program = _health_program().replace(
-            "127.0.0.1:8000", f"127.0.0.1:{server.server_port}"
-        )
+        program = _health_program().replace("127.0.0.1:8000", f"127.0.0.1:{server.server_port}")
         result = subprocess.run(
             [sys.executable, "-c", program] + ([expected_sha] if expected_sha else []),
-            text=True, capture_output=True, check=False,
+            text=True,
+            capture_output=True,
+            check=False,
         )
     finally:
         server.shutdown()
@@ -4677,7 +4685,9 @@ def test_health_program_connection_refused(expected_sha: str) -> None:
         program = _health_program().replace("127.0.0.1:8000", f"127.0.0.1:{port}")
         result = subprocess.run(
             [sys.executable, "-c", program] + ([expected_sha] if expected_sha else []),
-            text=True, capture_output=True, check=False,
+            text=True,
+            capture_output=True,
+            check=False,
         )
     output = result.stdout + result.stderr
     assert result.returncode == 1
@@ -4689,14 +4699,12 @@ def test_health_program_connection_refused(expected_sha: str) -> None:
 @pytest.mark.parametrize("probe", ["canonical", "cutover"])
 @pytest.mark.parametrize("rc,cause", [(1, "connection refused"), (124, "deadline exceeded")])
 def test_health_attempt_has_one_warning(probe: str, rc: int, cause: str) -> None:
-    health_budget = (
-        "ACX_CUTOVER_HEALTH" if probe == "cutover" else "ACX_CANONICAL_HEALTH"
-    )
+    health_budget = "ACX_CUTOVER_HEALTH" if probe == "cutover" else "ACX_CANONICAL_HEALTH"
     command = f"""
 source "{SCRIPT}"
 env_to_remote_dir() {{ echo /tmp; }}
 env_to_compose_files() {{ echo -f compose.yml; }}
-remote_image_id_for_digest() {{ echo sha256:{'b' * 64}; }}
+remote_image_id_for_digest() {{ echo sha256:{"b" * 64}; }}
 run_with_deadline() {{ printf 'connection refused\nextra noise\n' >&2; return {rc}; }}
 warn() {{ echo "$*"; }}
 {health_budget}_ATTEMPTS=2
@@ -4704,7 +4712,7 @@ warn() {{ echo "$*"; }}
 ACX_VERIFY_ATTEMPTS=9
 OCI_USER=test
 OCI_HOST=test
-probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
+probe_{probe}_api_health dev image@sha256:{"b" * 64} {"a" * 40}
 """
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True)
     assert result.returncode == 1
@@ -4719,11 +4727,14 @@ probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
         assert cause in line
 
 
-@pytest.mark.parametrize("exception", [
-    "TimeoutError()",
-    "urllib.error.URLError(TimeoutError())",
-    'ValueError("invalid body\\nsecond line")',
-])
+@pytest.mark.parametrize(
+    "exception",
+    [
+        "TimeoutError()",
+        "urllib.error.URLError(TimeoutError())",
+        'ValueError("invalid body\\nsecond line")',
+    ],
+)
 def test_health_program_exceptions_are_one_line(exception: str) -> None:
     program = _health_program()
     harness = (
@@ -4734,7 +4745,8 @@ def test_health_program_exceptions_are_one_line(exception: str) -> None:
     )
     result = subprocess.run(
         [sys.executable, "-c", harness + program],
-        text=True, capture_output=True,
+        text=True,
+        capture_output=True,
     )
     assert result.returncode == 1
     output = result.stdout + result.stderr

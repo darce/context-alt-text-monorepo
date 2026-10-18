@@ -19,6 +19,9 @@ def _run_driver(tmp_path: Path, statements: str, **extra_env: str) -> subprocess
     command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Isolate compensation decisions/payloads; real ownership is tested with P helper.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 preflight_env_manifest() {{ return 0; }}
@@ -49,6 +52,9 @@ def _run_real_driver(tmp_path: Path, statements: str) -> subprocess.CompletedPro
     command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Isolate compensation decisions/payloads; real ownership is tested with P helper.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 deploy_env_lease() {{ return 0; }}
@@ -87,6 +93,9 @@ def _run_lease_driver(tmp_path: Path, statements: str) -> subprocess.CompletedPr
     command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Isolate compensation decisions/payloads; real ownership is tested with P helper.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 preflight_env_manifest() {{ return 0; }}
@@ -194,6 +203,9 @@ def _topology_restore_fixture(tmp_path: Path, *, pending: bool = False) -> dict[
     driver = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Isolate compensation decisions/payloads; real ownership is tested with P helper.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 run_with_deadline() {{ shift 2; "$@"; }}
 env_to_remote_dir() {{ printf '%s\\n' "$FAKE_REMOTE_DIR"; }}
 ACX_DEPLOY_BACKUP_ROOT="$BACKUP_ROOT"

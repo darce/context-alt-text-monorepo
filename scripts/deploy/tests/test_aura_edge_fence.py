@@ -43,7 +43,7 @@ def edge(tmp_path):
     _write_executable(binary / "sudo", '#!/bin/sh\nexec "$@"\n')
     _write_executable(
         binary / "ssh",
-        '#!/bin/bash\nremote="${@: -1}"\nremote=${remote//\\/opt\\/acx-backend/$REMOTE_ROOT}\nremote=${remote//\\/etc\\/systemd\\/system/$SYSTEMD_ROOT}\nif [[ "$remote" == "bash -s" ]]; then sed "s|/opt/acx-backend|$REMOTE_ROOT|g" | bash -s; else exec bash -c "$remote"; fi\n',
+        '#!/bin/bash\nremote="${@: -1}"\nremote=${remote//\\/opt\\/acx-backend/$REMOTE_ROOT}\nremote=${remote//\\/etc\\/systemd\\/system/$SYSTEMD_ROOT}\nif [[ "$remote" == "bash -s" ]]; then sed "s|/opt/acx-backend|$REMOTE_ROOT|g" | bash -s; else sed "s|/etc/systemd/system|$SYSTEMD_ROOT|g" | bash -c "$remote"; fi\n',
     )
     _write_executable(
         binary / "docker",

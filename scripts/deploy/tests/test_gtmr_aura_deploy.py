@@ -111,7 +111,7 @@ if [[ "$remote" == "bash -s" ]]; then
 fi
 remote=${remote//\/opt\/acx-backend/${PROBE_ROOT}\/opt\/acx-backend}
 remote=${remote//\/etc\/systemd\/system/${PROBE_ROOT}\/etc\/systemd\/system}
-exec bash -c "$remote"
+sed "s|/etc/systemd/system|${PROBE_ROOT}/etc/systemd/system|g" | bash -c "$remote"
 """,
     "sudo": '#!/bin/sh\n# sudo double: the remote fixture user already owns PROBE_ROOT.\nexec "$@"\n',
     "docker": r"""#!/usr/bin/env bash
@@ -163,6 +163,7 @@ class Fixture:
         self.tmp = tmp
         self.root = tmp / "remote"
         self.root.mkdir()
+        (self.root / "opt/acx-backend/app").mkdir(parents=True)
         self.bin = tmp / "bin"
         self.bin.mkdir()
         self.digests = tmp / "digests.txt"
@@ -183,6 +184,7 @@ class Fixture:
             "LC_ALL": "C",
             "HOME": str(self.tmp),
             "TMPDIR": "/tmp",
+            "EDGE_LOCK_STATE_ROOT": str(self.tmp),
             "OCI_USER": "deploy-test",
             "OCI_HOST": "fake-host.invalid",
             "ACX_REMOTE_COMMAND_TIMEOUT": "5",
@@ -202,8 +204,24 @@ class Fixture:
 
 
 @pytest.fixture
-def fx(tmp_path: Path) -> Fixture:
-    return Fixture(tmp_path)
+def fx(tmp_path: Path):
+    fixture = Fixture(tmp_path)
+    yield fixture
+    # Topology tests keep the same real owner across independent SSH calls.
+    for handle in tmp_path.glob("shared-edge-lock.*"):
+        subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"; edge_lock_release "$2" 2',
+                "_",
+                str(DEPLOY / "lib/shared-edge.sh"),
+                str(handle),
+            ],
+            env=fixture.env(),
+            capture_output=True,
+            timeout=5,
+        )
 
 
 def _transcript(fx: Fixture, result: subprocess.CompletedProcess[str]) -> str:
@@ -232,7 +250,12 @@ def _driver(fx: Fixture, body: str, *, env_extra: dict[str, str] | None = None) 
     Production runs with ``set -euo pipefail``; a failing command substitution in an
     assignment aborts there. Probes that need a status use explicit ``|| rc=$?``.
     """
-    script = f'source "{SCRIPT}"\nGREEN=\nYELLOW=\nRED=\nRESET=\n{body}\n'
+    ownership = ""
+    journal = fx.root / "opt/acx-backend/app/activation.journal"
+    if journal.is_file():
+        fields = dict(line.split("=", 1) for line in journal.read_text().splitlines())
+        ownership = f"ACX_EDGE_HANDLE={fields['handle']}\nACX_EDGE_ENV={fields['env']}\n"
+    script = f'source "{SCRIPT}"\nGREEN=\nYELLOW=\nRED=\nRESET=\n{ownership}{body}\n'
     return subprocess.run(
         ["/bin/bash", "-c", script],
         cwd=REPO,
@@ -340,6 +363,10 @@ def _seed_env(fx: Fixture, env: str) -> None:
         lines += [
             "RECOGNITION_FACE_PIPELINE_PROFILE=auraface",
             "PGVECTOR_DIM=512",
+            f"POSTGRES_USER=acx_{env.replace('-', '_')}",
+            f"POSTGRES_DB=alt_context_{env.replace('-', '_')}",
+            f"POSTGRES_DSN=postgresql+asyncpg://acx_{env.replace('-', '_')}:fixture@postgres:5432/alt_context_{env.replace('-', '_')}",
+            f"POSTGRES_SYNC_DSN=postgresql+psycopg://acx_{env.replace('-', '_')}:fixture@postgres:5432/alt_context_{env.replace('-', '_')}",
             f"COMPOSE_PROJECT_NAME=acx-{env}",
             f"ACX_NETWORK_NAME=acx-{env}-net",
             f"ACX_PGDATA_PATH=/opt/acx-backend/data/{env}-pgdata",
@@ -546,6 +573,7 @@ def test_existing_lease_lifecycle_is_healthy_control(fx: Fixture, env: str) -> N
 
 RECEIPT_WRITE_READ = r"""
 ACX_DEPLOY_TRANSACTION_ID=tx-receipt
+recognition_edge_begin @ENV@ || exit $?
 rc=0; write_deployed_release_receipt @ENV@ @SHA@ @DIGEST@ || rc=$?; echo "RESULT write $rc"
 rc=0; read_deployed_release_receipt @ENV@ || rc=$?; echo "RESULT read $rc"
 """
@@ -835,7 +863,8 @@ def test_aura_unknown_runtime_state_never_bootstraps(fx: Fixture, label: str) ->
 
 
 ROLLBACK_PROBE = r"""
-# Digest-prefix checks isolate the registry fence; real edge fencing has its own tests.
+# Digest-prefix checks isolate the registry fence; admission and real edge fencing have their own tests.
+preflight_remote_face_pipeline_models() { :; }
 recognition_edge_begin() { :; }
 recognition_edge_finish() { :; }
 init_deploy_ocir_docker_config() { :; }
@@ -1131,7 +1160,7 @@ def test_unit_install_does_not_continue_after_dotenv_transport_failure(fx):
     systemd.mkdir(parents=True)
     result = _driver(
         fx,
-        "if install_rendered_unit dev-auraface; then echo FALSE_GREEN; else echo REFUSED; fi\n",
+        "recognition_edge_begin dev-auraface || exit $?\nif install_rendered_unit dev-auraface; then echo FALSE_GREEN; else echo REFUSED; fi\n",
         env_extra={"PROBE_FAIL": "RECOGNITION_SECRET_BACKEND"},
     )
     assert "REFUSED" in result.stdout, _transcript(fx, result)

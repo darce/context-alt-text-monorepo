@@ -160,6 +160,9 @@ def test_write_deployed_release_receipt_validates_and_atomically_writes(tmp_path
         f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
+# Packet-only unit boundary; real owned publication is covered by D4 integration.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ ssh "$1"; }}
 run_with_deadline() {{ shift 2; "$@"; }}
 ssh() {{
   printf '%s\\n' "$*" >>"{ssh_log}"

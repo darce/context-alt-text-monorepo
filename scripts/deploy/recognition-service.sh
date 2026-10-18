@@ -357,8 +357,10 @@ compensate_interrupted_deploy() {
         return 1
       fi
       log "Interrupted deploy of ${env} at phase ${phase}; compensating"
-      restore_runtime_topology "${env}" current-only || warn "topology restore failed for ${env}"
-      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      restore_runtime_topology "${env}" current-only || rollback_status=$?
+      recognition_edge_assert_if_active || return 75
+      restore_prior_image_repo_env || return $?
+      return "$rollback_status"
       ;;
     tag_promoted)
       if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" || "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
@@ -1276,11 +1278,21 @@ _remote_dotenv_snapshot() {
   fi
   for key in "$@"; do
     value=""
+    local occurrences=0
     while IFS= read -r line; do
       if [[ "${line}" == "${key}="* ]]; then
+        occurrences=$((occurrences + 1))
         value="${line#"${key}="}"
       fi
     done <<<"${raw}"
+    case "$key" in
+      POSTGRES_USER | POSTGRES_DB | POSTGRES_DSN | POSTGRES_SYNC_DSN)
+        ((occurrences <= 1)) || {
+          warn "ambiguous duplicate database configuration"
+          return 2
+        }
+        ;;
+    esac
     if [[ ${#value} -ge 2 && "${value}" == \"*\" ]]; then
       value="${value:1:${#value}-2}"
     elif [[ ${#value} -ge 2 && "${value}" == \'*\' ]]; then
@@ -1325,6 +1337,48 @@ assert_remote_env_image_tag() {
   assert_snapshot_image_tag "$env" "ACX_IMAGE_TAG=$file_tag"
 }
 
+# Admit only an explicit single-store URL subset whose identity is the same in
+# SQLAlchemy asyncpg and psycopg connect arguments. Query keys override authority
+# fields in those drivers (and libpq has service/hostaddr/options indirection).
+# Refuse that entire ambiguous surface; never print a DSN or parser exception.
+assert_aura_database_identity() {
+  local env="$1" snapshot="$2"
+  printf '%s\n' "$snapshot" | python3 -c '
+import re, sys
+from urllib.parse import unquote, urlsplit
+
+def check():
+    env=sys.argv[1]
+    values=dict(line.split("=",1) for line in sys.stdin.read().split("\n") if "=" in line)
+    role="acx_"+env.replace("-","_")
+    database="alt_context_"+env.replace("-","_")
+    if values.get("POSTGRES_USER") != role or values.get("POSTGRES_DB") != database:
+        return False
+    for key,driver in (("POSTGRES_DSN","postgresql+asyncpg"),
+                       ("POSTGRES_SYNC_DSN","postgresql+psycopg")):
+        raw=values.get(key,"")
+        if not raw or any(ord(c) <= 32 or ord(c) >= 127 for c in raw): return False
+        if re.search(r"%(?![0-9a-fA-F]{2})",raw) or "?" in raw or "#" in raw: return False
+        if not raw.startswith(driver+"://"): return False
+        url=urlsplit(raw)
+        if url.scheme != driver or url.netloc.count("@") != 1: return False
+        credentials,authority=url.netloc.split("@")
+        if ":" not in credentials or authority != "postgres:5432": return False
+        user,password=credentials.split(":",1)
+        if not password or unquote(user,errors="strict") != role: return False
+        if unquote(url.path,errors="strict") != "/"+database: return False
+    return True
+
+try:
+    valid=check()
+except (ValueError,UnicodeError):
+    valid=False
+if not valid:
+    print("Aura database identity refused: require explicit isolated async/sync roles, database, postgres:5432 and no query overrides",file=sys.stderr)
+sys.exit(0 if valid else 1)
+' "$env"
+}
+
 preflight_remote_face_pipeline_models() {
   local env="$1" profile="" timeout
   # dev-fir verifies the FIR (YuNet+SFace) bundle; Aura tiers verify the AuraFace
@@ -1343,6 +1397,10 @@ preflight_remote_face_pipeline_models() {
   local remote_dir models_dir_cfg models_path models_dir remote_out remote_err remote_err_file
   local remote_diagnostic remote_diagnostic_sanitized remote_rc=0
   local profile_cfg dim_cfg aura_models_cfg snapshot
+  local -a aura_store_keys=()
+  if [[ "$profile" == auraface ]]; then
+    aura_store_keys=(POSTGRES_USER POSTGRES_DB POSTGRES_DSN POSTGRES_SYNC_DSN)
+  fi
   remote_dir="$(env_to_remote_dir "$env")" || return 1
 
   # Authoritative models dir is RECOGNITION_FACE_PIPELINE_MODELS_DIR [sr-007] (C-10).
@@ -1354,7 +1412,7 @@ preflight_remote_face_pipeline_models() {
     ACX_IMAGE_TAG ACX_MODELS_PATH RECOGNITION_FACE_PIPELINE_MODELS_DIR \
     RECOGNITION_FACE_PIPELINE_PROFILE PGVECTOR_DIM RECOGNITION_AURAFACE_MODELS_DIR \
     ACX_ENV COMPOSE_PROJECT_NAME ACX_NETWORK_NAME ACX_PGDATA_PATH \
-    RECOGNITION_AUTH_ENABLED RECOGNITION_ADMIN_ENABLED)" ||
+    RECOGNITION_AUTH_ENABLED RECOGNITION_ADMIN_ENABLED "${aura_store_keys[@]}")" ||
     fail "could not read face_pipeline configuration from ${remote_dir}/.env on ${SSH_TARGET}; cannot verify face_pipeline models"
   assert_snapshot_image_tag "$env" "$snapshot"
   models_dir_cfg="$(_dotenv_snapshot_get "${snapshot}" RECOGNITION_FACE_PIPELINE_MODELS_DIR)"
@@ -1378,6 +1436,7 @@ preflight_remote_face_pipeline_models() {
       actual="$(_dotenv_snapshot_get "$snapshot" "$key")"
       [[ "$actual" == "$expected" ]] || fail "${env} requires its isolated ${key} configuration; refusing cross-stack or unsafe configuration"
     done
+    assert_aura_database_identity "$env" "$snapshot" || fail "${env} database isolation admission failed"
     profile_cfg="$(_dotenv_snapshot_get "${snapshot}" RECOGNITION_FACE_PIPELINE_PROFILE)"
     dim_cfg="$(_dotenv_snapshot_get "${snapshot}" PGVECTOR_DIM)"
     aura_models_cfg="$(_dotenv_snapshot_get "${snapshot}" RECOGNITION_AURAFACE_MODELS_DIR)"
@@ -1777,12 +1836,14 @@ validated_deadline() {
 # Keep the credential-store path out of unrelated children (git, ssh, rsync,
 # build tooling). Only registry-facing local Docker commands receive it.
 local_docker_with_config() {
+  if [[ -n "${ACX_EDGE_HANDLE:-}" ]]; then recognition_edge_assert_if_active || return 75; fi
   DOCKER_CONFIG="${ACX_DEPLOY_OCIR_CONFIG_DIR}" \
     ACX_OCIR_DOCKER_CONFIG_DIR="${ACX_DEPLOY_OCIR_CONFIG_DIR}" \
     docker "$@"
 }
 
 remote_docker_with_config() {
+  if [[ -n "${ACX_EDGE_HANDLE:-}" ]]; then recognition_edge_assert_if_active || return 75; fi
   local config_q arg quoted_args="" remote_dir=""
   # An uninitialized config keeps DOCKER_CONFIG empty (docker's default), never a bare /tmp/.
   if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
@@ -2041,8 +2102,14 @@ promote_gate() {
     # can be compensated before the deploy exits.
     if ! (converge_runtime "$env"); then
       warn "Runtime convergence failed for ${env}; restoring the prior topology and sticky repository"
-      restore_runtime_topology "$env" || warn "topology restore failed for ${env}"
-      restore_prior_image_repo_env
+      local restore_status=0
+      restore_runtime_topology "$env" || restore_status=$?
+      recognition_edge_assert_if_active || return 75
+      restore_prior_image_repo_env || return $?
+      ((restore_status == 0)) || {
+        warn "topology restore failed for ${env}; journal retained"
+        return "$restore_status"
+      }
       ACX_DEPLOY_PHASE=""
       return 1
     fi
@@ -2065,6 +2132,7 @@ promote_gate() {
 restore_prior_image_repo_env() {
   local env="${ACX_PRIOR_IMAGE_REPO_ENV:-}"
   [[ -n "${env}" ]] || return 0
+  recognition_edge_assert_if_active || return 75
   image_repo_resource restore "$(env_to_remote_dir "$env")" "${ACX_IMAGE_REPO_OWNER_ID:-}" ""
 }
 
@@ -2148,7 +2216,8 @@ install_rendered_unit() {
     fi
   fi
   rendered="$(render_unit "$env" "$secret_backend")" || return $?
-  printf '%s\n' "$rendered" | run_with_deadline "$timeout" "unit installation for $env" ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
+  recognition_edge_assert_if_active || return 75
+  recognition_edge_install "/etc/systemd/system/${unit}.service" "$rendered"$'\n'
 }
 
 # API-only compose for the additive cutover candidate. Shares the live
@@ -2229,6 +2298,7 @@ EOF
 # atomic rename. Never remove the lock file. Noncooperating/root writers are
 # outside this protocol; this does not make registry tag updates linearizable.
 image_repo_resource() {
+  recognition_edge_assert_if_active || return 75
   local action="$1" remote_dir="$2" owner="$3" value="$4" timeout program
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   program="$(
@@ -2238,6 +2308,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -2254,11 +2325,21 @@ def refuse(code=1):
     raise SystemExit(code)
 
 
+def still_owned():
+    check = os.environ.get("ACX_RECOGNITION_OWNERSHIP_CHECK")
+    if not check:
+        refuse(75)
+    result = subprocess.run(["bash", "-c", check], timeout=int(timeout), stdout=subprocess.DEVNULL)
+    if result.returncode:
+        refuse(75)
+
+
 def repo_ok(v):
     return isinstance(v, str) and (not v or repo_re.fullmatch(v))
 
 
 try:
+    still_owned()
     lock = os.open(path + ".acx-image-repo.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     if not stat.S_ISREG(os.fstat(lock).st_mode):
         refuse()
@@ -2271,6 +2352,7 @@ try:
             if time.monotonic() >= deadline:
                 refuse()
             time.sleep(0.05)
+    still_owned()
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -2338,6 +2420,7 @@ try:
     kept += prefix + json.dumps(state, separators=(",", ":")).encode("ascii") + b"\n"
     staged = None
     try:
+        still_owned()
         fd, staged = tempfile.mkstemp(prefix=".env.acx-", dir=root)
         with os.fdopen(fd, "wb") as stream:
             os.fchown(stream.fileno(), metadata.st_uid, metadata.st_gid)
@@ -2345,6 +2428,7 @@ try:
             stream.write(kept)
             stream.flush()
             os.fsync(stream.fileno())
+        still_owned()
         os.replace(staged, path)
         staged = None
         directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
@@ -2354,16 +2438,15 @@ try:
             os.close(directory)
     finally:
         if staged is not None:
+            still_owned()
             os.unlink(staged)
     if action == "claim":
         print(owner)
-except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError):
     refuse()
 PY_RESOURCE
   )"
-  run_with_deadline "${timeout}" "sticky repository ${action}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo python3 -c $(remote_quote "${program}") $(remote_quote "${remote_dir}") $(remote_quote "${action}") $(remote_quote "${owner}") $(remote_quote "${value}") ${timeout}"
+  recognition_edge_command "python3 -c $(remote_quote "${program}") $(remote_quote "${remote_dir}") $(remote_quote "${action}") $(remote_quote "${owner}") $(remote_quote "${value}") ${timeout}"
 }
 
 deploy_env_lease() {
@@ -2692,7 +2775,9 @@ clear_remote_image_repo_env() {
   preflight_ssh
   install_deploy_interrupt_traps
   deploy_env_lease acquire "$env" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to clear the image repository"
+  recognition_edge_begin "$env" || return $?
   if image_repo_resource clear "$(env_to_remote_dir "$env")" "" ""; then
+    recognition_edge_finish || return $?
     deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after clearing the image repository"
   else
     rc=$?
@@ -2830,8 +2915,49 @@ edge_apply() {
   fi
   edge_verify_networks
 }
+# A fresh lock fences writers, but does not make an old per-env pointer the
+# owner of global state. Bind rollback to the full unmanaged Caddy bytes and
+# Compose bytes last installed by this snapshot. Portal-only changes are merged
+# from live, never taken as evidence of ownership of the rest of the edge.
+edge_generation() {
+  local mode="$1" directory="$2" bounds
+  edge_plain_live || return $?
+  bounds="$(_edge_portal_bounds "$live")" || return $?
+  edge_owned || return $?
+  edge_bounded_run python3 -c '
+import hashlib,json,os,sys
+from pathlib import Path
+mode,directory,live,base,bounds,env,transaction=sys.argv[1:]
+record=Path(directory)/"edge/generation.json"
+def digest(data): return hashlib.sha256(data).hexdigest()
+data=Path(live).read_bytes()
+if bounds != "none":
+    first,last=map(int,bounds.split())
+    parts=data.split(b"\n")
+    lines=[part+b"\n" for part in parts[:-1]]+[parts[-1]]
+    data=b"".join(lines[:first-1]+lines[last:])
+state={"version":1,"unmanaged":digest(data),"compose":digest(Path(base).read_bytes())}
+if mode == "check":
+    try:
+        if record.is_symlink(): raise ValueError()
+        saved=json.loads(record.read_bytes())
+        if saved != state: raise ValueError()
+    except (OSError,ValueError):
+        print("stale or unproven global edge generation; refusing restore",file=sys.stderr)
+        sys.exit(75)
+else:
+    fd=os.open(record,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,"w") as stream:
+        json.dump(state,stream,sort_keys=True)
+        stream.flush(); os.fsync(stream.fileno())
+' "$mode" "$directory" "$live" "$base" "$bounds" "$env" "$transaction"
+}
+
 edge_snapshot() {
   edge_plain_live || return $?
+  if [[ -e "$transaction_dir/edge.ready" ]]; then
+    edge_generation check "$transaction_dir" || return $?
+  fi
   edge_op install -d -m 700 -- "$transaction_dir/edge" || return $?
   local name source destination
   for name in Caddyfile docker-compose.caddy.yml; do
@@ -2844,6 +2970,9 @@ edge_snapshot() {
   done
   if [[ ! -e "$transaction_dir/edge/Caddyfile.pre-cutover" ]]; then
     edge_copy "$live" "$transaction_dir/edge/Caddyfile.pre-cutover" || return $?
+  fi
+  if [[ ! -e "$transaction_dir/edge.ready" ]]; then
+    edge_generation record "$transaction_dir" || return $?
   fi
   edge_emit "$transaction_dir/edge.ready" ready || return $?
   edge_emit "$backup_root/$env/edge-cutover.current" "$transaction_dir/edge/Caddyfile.pre-cutover"
@@ -2919,6 +3048,7 @@ case "$action" in
     edge_op docker run --rm -v "$scratch/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile || exit $?
     edge_copy "$scratch/Caddyfile" "$live" || exit $?
     edge_copy "$scratch/docker-compose.caddy.yml" "$base" || exit $?
+    edge_generation record "$transaction_dir" || exit $?
     # Only create this rollout's network; inventory failure is never absence.
     inventory="$(edge_op docker network ls --format '{{.Name}}')" || exit $?
     selected="acx-$env-net"
@@ -2979,6 +3109,37 @@ phase=completed" || exit $?
     edge_lock_release "$handle" 5 || rc=$?
     exit "$rc"
     ;;
+  install)
+    edge_owned || exit $?
+    destination="$1"; encoded="$2"; permissions="$3"
+    case "$destination" in
+      "$edge_dir/$env/"*|"/etc/systemd/system/acx-$env.service"|"/etc/systemd/system/acx-$env-next.service") ;;
+      *) exit 2 ;;
+    esac
+    [[ "$destination" != *..* && "$destination" != *[!A-Za-z0-9_./-]* && "$permissions" == 644 ]] || exit 2
+    staged="$(edge_op mktemp "$edge_dir/.recognition-file.XXXXXX")" || exit $?
+    edge_op bash -c 'printf "%s" "$1" | base64 -d >"$2"' _ "$encoded" "$staged" || exit $?
+    edge_copy "$staged" "$destination" || exit $?
+    edge_op chmod "$permissions" -- "$destination" || exit $?
+    if [[ "$destination" == /etc/systemd/system/* ]]; then edge_op systemctl daemon-reload || exit $?; fi
+    edge_op rm -f -- "$staged"
+    ;;
+  command)
+    edge_owned || exit $?
+    # Fence each mutating tool inside this SSH operation, including commands
+    # in snapshot functions and fallbacks. Python and nested receipt producers
+    # also use the same read-only check at their internal commit points.
+    ACX_RECOGNITION_OWNERSHIP_CHECK="$(declare -f)
+$(declare -p EDGE_OP_DEADLINE EDGE_OP_MAX_DEADLINE EDGE_OP_KILL_GRACE)
+$(declare -p handle budget journal env transaction)
+edge_owned"
+    export ACX_RECOGNITION_OWNERSHIP_CHECK
+    sudo() { edge_owned || exit 75; command sudo "$@"; }
+    docker() { edge_owned || exit 75; command docker "$@"; }
+    systemctl() { edge_owned || exit 75; command systemctl "$@"; }
+    python3() { edge_owned || exit 75; command python3 "$@"; }
+    eval "$1"
+    ;;
   check)
     edge_owned
     ;;
@@ -3015,6 +3176,7 @@ status=traffic_on_next" || exit $?
     fi
     # cp writes through the existing regular file: the Caddy bind inode survives.
     edge_copy "$candidate" "$live" || exit $?
+    edge_generation record "$transaction_dir" || exit $?
     edge_apply reload || exit $?
     if [[ "$target" == canonical ]]; then
       edge_emit "$backup_root/$env/cutover-committed" "status=canonical
@@ -3035,6 +3197,7 @@ transaction=$transaction" || exit $?
       [[ "$pointed" != *..* ]] || exit 2
       source_dir="${pointed%/edge/Caddyfile.pre-cutover}"
     fi
+    edge_generation check "$source_dir" || exit $?
     source="$source_dir/edge/Caddyfile.pre-cutover"
     [[ -f "$source" && ! -L "$source" ]] || exit 2
     edge_op install -d -m 700 -- "$transaction_dir/edge" || exit $?
@@ -3046,7 +3209,9 @@ from pathlib import Path
 def block(path,bounds):
     if bounds == "none": return b""
     first,last=map(int,bounds.split())
-    return b"".join(Path(path).read_bytes().splitlines(keepends=True)[first-1:last])
+    parts=Path(path).read_bytes().split(b"\n")
+    lines=[part+b"\n" for part in parts[:-1]]+[parts[-1]]
+    return b"".join(lines[first-1:last])
 sys.exit(0 if block(sys.argv[1],sys.argv[2]) == block(sys.argv[3],sys.argv[4]) else 1)' "$source" "$source_bounds" "$live" "$live_bounds"; then
       edge_copy "$source" "$transaction_dir/edge/restore.candidate" || exit $?
     else
@@ -3056,8 +3221,10 @@ sys.exit(0 if block(sys.argv[1],sys.argv[2]) == block(sys.argv[3],sys.argv[4]) e
     edge_copy "$transaction_dir/edge/restore.candidate" "$live" || exit $?
     if [[ -f "$source_dir/edge/docker-compose.caddy.yml" ]]; then
       edge_copy "$source_dir/edge/docker-compose.caddy.yml" "$base" || exit $?
+      edge_generation record "$source_dir" || exit $?
       edge_apply recreate || exit $?
     else
+      edge_generation record "$source_dir" || exit $?
       edge_apply reload || exit $?
     fi
     ;;
@@ -3086,6 +3253,20 @@ recognition_edge_remote() {
     ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 -l "${OCI_USER}" -- "${OCI_HOST}" "$command" <<<"$program"
 }
 
+# Execute a target mutation with the same owned handle and journal on the
+# target, including protected mutations within snapshots and compensation.
+recognition_edge_install() {
+  local destination="$1" content="$2" encoded
+  recognition_edge_assert_if_active || return 75
+  encoded="$(printf '%s' "$content" | python3 -c 'import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')" || return $?
+  recognition_edge_remote install "$ACX_EDGE_ENV" "$destination" "$encoded" 644
+}
+
+recognition_edge_command() {
+  recognition_edge_assert_if_active || return 75
+  recognition_edge_remote command "$ACX_EDGE_ENV" "$1"
+}
+
 recognition_edge_begin() {
   local env="$1" handle
   if [[ -n "${ACX_EDGE_HANDLE:-}" ]]; then
@@ -3099,7 +3280,10 @@ recognition_edge_begin() {
   ACX_EDGE_ENV="$env"
 }
 recognition_edge_assert_if_active() {
-  [[ -n "${ACX_EDGE_HANDLE:-}" ]] || return 0
+  [[ -n "${ACX_EDGE_HANDLE:-}" ]] || {
+    warn "edge ownership missing; refusing mutation"
+    return 75
+  }
   if ! recognition_edge_remote check "${ACX_EDGE_ENV:-${1:-}}"; then
     warn "edge ownership lost; retaining journal and refusing all continued compensation"
     return 75
@@ -3121,6 +3305,8 @@ recognition_edge_release() {
 
 prepare_runtime_topology_backups() {
   local env="$1" edge_apply_edge="${2:-0}" remote_dir unit edge_dir timeout
+  recognition_edge_begin "$env" || return $?
+  recognition_edge_assert_if_active || return 75
   if [[ "$edge_apply_edge" == 1 ]]; then
     recognition_edge_begin "$env" || return $?
     recognition_edge_remote snapshot "$env" || return $?
@@ -3131,9 +3317,7 @@ prepare_runtime_topology_backups() {
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   [[ "${edge_apply_edge}" == "0" || "${edge_apply_edge}" == "1" ]] || return 1
   log "Snapshotting compose/unit topology for ${env} before mutation"
-  run_with_deadline "${timeout}" "snapshot topology backups for ${env}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "set -euo pipefail
+  recognition_edge_command "set -euo pipefail
      backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
      backup_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
      sudo install -d -m 700 -- \"\$backup_dir\" \"\$backup_dir/edge\"
@@ -3204,14 +3388,12 @@ converge_runtime() {
   recognition_edge_begin "$env" || return $?
   prepare_runtime_topology_backups "$env" "$apply" || return $?
   _ship_runtime_file() {
-    local src="$1" dest="$2"
+    local src="$1" dest="$2" encoded
     recognition_edge_assert_if_active || return 75
-    run_with_deadline "$timeout" "ship runtime file for $env" ssh -l "$OCI_USER" -- "$OCI_HOST" \
-      "set -eu; tmp=\$(mktemp); trap 'rm -f -- \"\$tmp\"' EXIT; cat >\"\$tmp\"; sudo cp -- \"\$tmp\" $(remote_quote "$dest"); sudo chmod 644 -- $(remote_quote "$dest")" <"$src"
+    encoded="$(python3 -c 'import base64,sys; print(base64.b64encode(open(sys.argv[1],"rb").read()).decode())' "$src")" || return $?
+    recognition_edge_remote install "$ACX_EDGE_ENV" "$dest" "$encoded" 644
   }
-  recognition_edge_assert_if_active || return 75
-  run_with_deadline "$timeout" "bootstrap bind directory for $env" ssh -l "$OCI_USER" -- "$OCI_HOST" \
-    "sudo install -d -m 755 -- $(remote_quote "$remote_dir/db/docker-prod-init")" || return $?
+  recognition_edge_command "sudo install -d -m 755 -- $(remote_quote "$remote_dir/db/docker-prod-init")" || return $?
   _ship_runtime_file "$SERVICE_DIR/db/docker-prod-init/001-extensions.sql" "$remote_dir/db/docker-prod-init/001-extensions.sql" || return $?
   _ship_runtime_file "$SERVICE_DIR/docker-compose.env.yml" "$remote_dir/docker-compose.env.yml" || return $?
   if [[ "$env" == prod ]]; then
@@ -3695,9 +3877,7 @@ repair_blob_volume_ownership() {
   log "Repairing acx_blobs ownership on ${env} (probe-then-chown; fix-blob-ownership profile)"
   # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
   # Probe runs as root via the repair profile image; uid 10001 is the Dockerfile acx user.
-  if ! run_with_deadline "${timeout}" "blob ownership repair for ${env}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "cd '${remote_dir}' && docker compose ${compose_files} --profile repair run --rm --entrypoint sh fix-blob-ownership -c '
+  if ! recognition_edge_command "cd '${remote_dir}' && docker compose ${compose_files} --profile repair run --rm --entrypoint sh fix-blob-ownership -c '
       root=/var/lib/acx-blobs
       uid=\$(stat -c %u \"\$root\" 2>/dev/null || echo unknown)
       if [ \"\$uid\" = \"10001\" ]; then
@@ -3755,9 +3935,7 @@ restore_topology_backups() {
   unit="$(env_to_unit "$env")" || return 1
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Restoring compose/unit topology for ${env} from the verified transaction snapshot"
-  run_with_deadline "${timeout}" "restore topology backups for ${env}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "set -euo pipefail
+  recognition_edge_command "set -euo pipefail
      backup_root='${ACX_DEPLOY_BACKUP_ROOT}'
      transaction_dir=\"\$backup_root/${env}/${ACX_DEPLOY_TRANSACTION_ID}\"
      latest_file=\"\$backup_root/${env}/latest\"
@@ -3845,9 +4023,7 @@ recreate_cutover_candidate() {
   remote_dir="$(env_to_remote_dir "$env")" || return 1
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Force-stopping and recreating cutover candidate ${next_unit}"
-  if ! run_with_deadline "${timeout}" "recreate cutover candidate ${next_unit}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "set -euo pipefail
+  if ! recognition_edge_command "set -euo pipefail
      sudo systemctl stop $(remote_quote "${next_unit}")
      cd $(remote_quote "${remote_dir}")
      docker compose -p $(remote_quote "${next_project}") -f docker-compose.cutover.yml rm -fs api
@@ -3865,9 +4041,7 @@ abort_cutover_candidate() {
   remote_dir="$(env_to_remote_dir "$env")" || return 1
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Draining cutover candidate ${next_unit}"
-  if ! run_with_deadline "${timeout}" "drain cutover candidate ${next_unit}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "set -euo pipefail
+  if ! recognition_edge_command "set -euo pipefail
      if stop_out=\"\$(sudo systemctl stop $(remote_quote "${next_unit}") 2>&1)\"; then
        [ -z \"\${stop_out}\" ] || printf '%s\n' \"\${stop_out}\" >&2
      else
@@ -3931,9 +4105,7 @@ enable_cutover_candidate() {
   next_unit="$(env_to_next_unit "$env")" || return 1
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   log "Enabling cutover candidate ${next_unit} until canonical routing is committed"
-  run_with_deadline "${timeout}" "enable cutover candidate ${next_unit}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo systemctl enable $(remote_quote "${next_unit}")"
+  recognition_edge_command "sudo systemctl enable $(remote_quote "${next_unit}")"
 }
 
 cutover_inflight_present() {
@@ -3982,16 +4154,14 @@ commit_cutover_state() {
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   inflight="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-inflight"
   committed="${ACX_DEPLOY_BACKUP_ROOT}/${env}/cutover-committed"
-  run_with_deadline "${timeout}" "commit cutover ${env}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null && sudo rm -f -- $(remote_quote "${inflight}")" ||
+  recognition_edge_command "printf 'status=canonical\ntransaction=%s\n' $(remote_quote "${ACX_DEPLOY_TRANSACTION_ID}") | sudo tee $(remote_quote "${committed}") >/dev/null && sudo rm -f -- $(remote_quote "${inflight}")" ||
     return 1
   ACX_CUTOVER_COMMITTED=1
   ACX_TRAFFIC_FLIPPED=0
 }
 
 recover_interrupted_cutover() {
-  local env="${ACX_CUTOVER_ENV:-}" inflight_rc=0
+  local env="${ACX_CUTOVER_ENV:-}" inflight_rc=0 restore_status=0
   [[ -n "${env}" ]] || return 0
   if [[ "${ACX_CUTOVER_COMMITTED:-0}" == "1" && "${ACX_TRAFFIC_FLIPPED:-0}" != "1" ]]; then
     return 0
@@ -4024,7 +4194,13 @@ recover_interrupted_cutover() {
       return 1
     fi
     return 0
+  else
+    restore_status=$?
   fi
+  # Stale global generation is an ownership refusal even with a fresh lock.
+  # It cannot license candidate enablement as a fallback.
+  ((restore_status != 75)) || return 75
+  recognition_edge_assert_if_active || return 75
   warn "edge restore after interrupt failed; leaving candidate ${env}-next enabled and serving"
   enable_cutover_candidate "${env}" || warn "could not enable cutover candidate after failed edge restore"
   return 1
@@ -4066,14 +4242,14 @@ restore_runtime_topology() {
   recognition_edge_assert_if_active || return 75
   local env="$1" restore_mode="${2:-}"
   if [[ "${restore_mode}" == "current-only" ]]; then
-    restore_topology_backups "$env" current-only || return 1
-    restore_edge_backups "$env" current-only || return 1
+    restore_topology_backups "$env" current-only || return $?
+    restore_edge_backups "$env" current-only || return $?
     return 0
   else
-    restore_topology_backups "$env" || return 1
-    restore_edge_backups "$env" || return 1
+    restore_topology_backups "$env" || return $?
+    restore_edge_backups "$env" || return $?
   fi
-  abort_cutover_candidate "$env" || return 1
+  abort_cutover_candidate "$env" || return $?
 }
 
 flip_edge_alias() {
@@ -4215,23 +4391,18 @@ probe_canonical_api_health() {
 
 ship_cutover_candidate_units() {
   recognition_edge_assert_if_active || return 75
-  local env="$1" remote_dir next_unit
+  local env="$1" remote_dir next_unit content
   remote_dir="$(env_to_remote_dir "$env")" || return 1
   next_unit="$(env_to_next_unit "$env")" || return 1
   log "Shipping cutover candidate unit ${next_unit} on ${SSH_TARGET}"
-  if ! render_cutover_compose | ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "cat > '/tmp/docker-compose.cutover.yml' && sudo cp '/tmp/docker-compose.cutover.yml' '${remote_dir}/docker-compose.cutover.yml' && rm -f '/tmp/docker-compose.cutover.yml'"; then
-    warn "could not ship cutover compose for ${env}"
-    return 1
-  fi
-  if ! render_next_unit "$env" | ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "cat > '/tmp/${next_unit}.service' && sudo cp '/tmp/${next_unit}.service' '/etc/systemd/system/${next_unit}.service' && rm -f '/tmp/${next_unit}.service' && sudo systemctl daemon-reload"; then
-    warn "could not ship cutover unit ${next_unit}"
-    return 1
-  fi
+  content="$(render_cutover_compose)" || return $?
+  recognition_edge_install "$remote_dir/docker-compose.cutover.yml" "$content"$'\n' || return $?
+  content="$(render_next_unit "$env")" || return $?
+  recognition_edge_install "/etc/systemd/system/$next_unit.service" "$content"$'\n'
 }
 
 do_restart() {
+  recognition_edge_assert_if_active || return 75
   local env="$1" expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
   local unit next_unit expected_repo env_tag pulled_digest expected_sha timeout remote_dir
   ACX_RESTART_EVIDENCE_PHASE="pre_candidate"
@@ -4345,8 +4516,7 @@ do_restart() {
   log "Restarting ${unit} onto the candidate image (traffic on ${next_unit})"
   recognition_edge_assert_if_active || return 75
   ACX_LIVE_DISRUPTED=1
-  if ! run_with_deadline "${timeout}" "systemctl restart ${unit}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart ${unit}"; then
+  if ! recognition_edge_command "sudo systemctl restart ${unit}"; then
     warn "systemctl restart ${unit} failed; traffic remains on ${next_unit}"
     return 1
   fi
@@ -4613,6 +4783,7 @@ restore_registry_env_tag() {
 }
 
 staged_rollback_runtime() {
+  recognition_edge_assert_if_active || return 75
   local env="$1" unit next_unit timeout
   unit="$(env_to_unit "$env")" || return 1
   next_unit="$(env_to_next_unit "$env")" || return 1
@@ -4676,8 +4847,7 @@ staged_rollback_runtime() {
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   recognition_edge_assert_if_active || return 75
   ACX_LIVE_DISRUPTED=1
-  if ! run_with_deadline "${timeout}" "rollback systemctl restart ${unit}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then
+  if ! recognition_edge_command "sudo systemctl restart $(remote_quote "${unit}")"; then
     warn "rollback restart failed; traffic remains on ${next_unit} serving the rollback image"
     return 1
   fi
@@ -4754,8 +4924,8 @@ restore_runtime_and_edge() {
       skip_edge_cleanup=1
     else
       assert_remote_env_image_tag "$env"
-      if ! run_with_deadline "${inspect_timeout}" "rollback systemctl restart ${unit}" \
-        ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then
+      recognition_edge_assert_if_active || return 75
+      if ! recognition_edge_command "sudo systemctl restart $(remote_quote "${unit}")"; then
         warn "could not restart ${unit} on the restored image"
         return 1
       fi
@@ -4913,6 +5083,7 @@ do_rollback() {
   fi
   init_deploy_ocir_docker_config
   preflight_ssh
+  if is_aura_env "$env"; then preflight_remote_face_pipeline_models "$env"; fi
   preflight_remote_ocir_auth
   deploy_env_lease acquire "${env}" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing rollback"
   rollback_ref="${IMAGE_BASE}:rollback-${rollback_id}"
@@ -5514,6 +5685,7 @@ write_deployed_release_receipt() {
     dev | dev-fir | staging | prod | dev-auraface | staging-auraface | prod-auraface) ;;
     *) return 1 ;;
   esac
+  recognition_edge_assert_if_active || return 75
   remote_dir="$(env_to_remote_dir "${env}")" || return 1
   timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   transaction="${ACX_DEPLOY_TRANSACTION_ID:-}"
@@ -5523,15 +5695,20 @@ env=$2
 sha=$3
 digest_ref=$4
 transaction=$5
+ownership_check=$6
+owned() { bash -c "$ownership_check"; }
+owned || exit 75
 tmp=$(mktemp "$dir/.deployed-release.XXXXXX")
-trap '\''rm -f -- "$tmp"'\'' EXIT
+trap '\''owned && rm -f -- "$tmp"'\'' EXIT
+owned || exit 75
 python3 -c '\''import datetime,json,sys; env,sha,digest_ref,transaction=sys.argv[1:]; deployed_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"); print(json.dumps({"env":env,"sha":sha,"digest_ref":digest_ref,"deployed_at":deployed_at,"transaction":transaction},separators=(",",":")))'\'' "$env" "$sha" "$digest_ref" "$transaction" >"$tmp"
+owned || exit 75
 chmod 600 "$tmp"
+owned || exit 75
 mv -f -- "$tmp" "$dir/deployed-release.json"
 trap - EXIT'
-  remote_command="sudo sh -c $(remote_quote "${remote_script}") sh $(remote_quote "${remote_dir}") $(remote_quote "${env}") $(remote_quote "${sha}") $(remote_quote "${digest_ref}") $(remote_quote "${transaction}")"
-  run_with_deadline "${timeout}" "deployed release receipt write for ${env}" \
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "${remote_command}"
+  remote_command="sudo sh -c $(remote_quote "${remote_script}") sh $(remote_quote "${remote_dir}") $(remote_quote "${env}") $(remote_quote "${sha}") $(remote_quote "${digest_ref}") $(remote_quote "${transaction}") \"\$ACX_RECOGNITION_OWNERSHIP_CHECK\""
+  recognition_edge_command "$remote_command"
 }
 
 read_deployed_release_receipt() {
@@ -6251,8 +6428,9 @@ do_reset() {
   deploy_env_lease acquire "$env" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing reset"
   # Face-pipeline weights must exist before reset restarts the runtime (C-02).
   preflight_remote_face_pipeline_models "$env"
+  recognition_edge_begin "$env" || return $?
   log "Executing reset on ${SSH_TARGET}"
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" "bash -s" <<<"${remote_cmd}"
+  recognition_edge_command "$remote_cmd" || return $?
 
   log "Verifying readiness at ${ready_url}"
   # Brief settle window: systemd start is async; the unit may need a few seconds
@@ -6274,7 +6452,9 @@ do_reset() {
   # Unquoted multi-word form: OpenSSH joins destination args into the remote command, so
   # remote argv is: bash -s -- <remote_dir> <env> <tenant_id> <site_url>. The env label
   # was validated by env_to_unit above; tenant_id and site_url were charset-validated above.
-  ssh -l "${OCI_USER}" -- "${OCI_HOST}" bash -s -- "${remote_dir}" "${env}" "${tenant_id}" "${site_url}" <<'BOOTSTRAP'
+  local bootstrap_body
+  bootstrap_body="$(
+    cat <<'BOOTSTRAP'
 set -euo pipefail
 remote_dir="$1"
 env="$2"
@@ -6286,6 +6466,9 @@ sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.mana
 echo "==> Creating post-reset service-mode API key (operator: copy api_key= line into the plugin)"
 sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env "${env}" create --tenant "${tenant_id}" < /dev/null
 BOOTSTRAP
+  )" || return $?
+  recognition_edge_command "bootstrap_reset() { $bootstrap_body; }; bootstrap_reset $(remote_quote "$remote_dir") $(remote_quote "$env") $(remote_quote "$tenant_id") $(remote_quote "$site_url")" || return $?
+  recognition_edge_finish || return $?
 
   deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after reset"
   log "Reset complete. ${ready_url} returned ready and a fresh service-mode API key was printed above."

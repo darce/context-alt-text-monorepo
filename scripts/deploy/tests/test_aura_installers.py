@@ -93,7 +93,9 @@ def test_receipted_sync_preserves_digest_through_admission_and_restart(tmp_path,
     result = _driver(
         fx,
         f"""
-write_deployed_release_receipt dev-auraface {SHA} {DIGEST}
+recognition_edge_begin dev-auraface || exit $?
+write_deployed_release_receipt dev-auraface {SHA} {DIGEST} || exit $?
+recognition_edge_finish || exit $?
 pin_deploy_sha() {{ DEPLOY_SHA={SHA}; }}
 # This test covers receipt-to-ship wiring; real edge ownership is exercised
 # separately with the P helper, including dead holders and pending journals.

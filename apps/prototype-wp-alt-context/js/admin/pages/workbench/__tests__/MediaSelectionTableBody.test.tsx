@@ -37,25 +37,29 @@ vi.mock('../../../api/describeApi', async () => {
   };
 });
 
-const { queueDrafts } = vi.hoisted(() => ({
-  queueDrafts: {
-    draftsByMediaId: {} as Record<
-      number,
-      {
-        mediaId: number;
-        draftText: string;
-        existingAlt: boolean;
-        runId: string | null;
-        source: string;
-      }
-    >,
-    historyByMediaId: {} as Record<number, QueueDraft[]>,
-    isLoading: false,
-    isError: false,
-    error: null as Error | null,
-    historyTruncated: false,
-  },
-}));
+const { queueDrafts } = vi.hoisted(() => {
+  const draftsByMediaId: Record<
+    number,
+    {
+      mediaId: number;
+      draftText: string;
+      existingAlt: boolean;
+      runId: string | null;
+      source: string;
+    }
+  > = {};
+  const historyByMediaId: Record<number, QueueDraft[]> = {};
+  return {
+    queueDrafts: {
+      draftsByMediaId,
+      historyByMediaId,
+      isLoading: false,
+      isError: false,
+      error: null as Error | null,
+      historyTruncated: false,
+    },
+  };
+});
 
 vi.mock('../../../hooks/useQueueDrafts', () => ({
   QUEUE_DRAFT_SOURCE: {

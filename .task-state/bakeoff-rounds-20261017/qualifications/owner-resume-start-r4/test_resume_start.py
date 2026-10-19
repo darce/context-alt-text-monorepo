@@ -2,8 +2,10 @@
 """UNIT CONTROLS ONLY: complete CLI dispatch and unchanged custody refusal seams.
 
 CLI dependencies explicitly substituted: euid assertion (0), custody bootstrap,
-directory/window descriptors, and intent seal (raises DispatchReached before any
+directory/window descriptors, procedure ownership, and intent seal (raises DispatchReached before any
 guardian launch). This never proves root, sudo, publication, or a live operation.
+Matching-procedure validation, checkpoint readiness and window fencing execute
+the real helpers on private files with explicit current-UID ownership mapping.
 Guard/guardian refusal controls use the complete unchanged custody module, actual
 author credentials, sealed author-owned temporary receipts and real local fences.
 No writer is supplied: every guardian case must refuse before writer allocation.
@@ -45,13 +47,19 @@ class DispatchReached(Exception):
     pass
 
 
-def dispatch(mode, predecessor):
+def dispatch(mode, predecessor, *, pending=False, matching_procedure=True):
     """Execute every byte of the CLI; stop at intent seal, before Popen."""
     c = load_custody()
     raw = (SOURCE / 'owner-window.py').read_bytes()
+    actual_uid = os.geteuid()
     with tempfile.TemporaryDirectory(prefix='resume-cli-unit.') as root:
-        window = dict(id=WINDOW_ID, path=root, procedure=str(SOURCE))
+        window = dict(id=WINDOW_ID, path=root,
+                      procedure=str(SOURCE) if matching_procedure else root)
+        if pending:
+            (Path(root) / 'checkpoints').mkdir(mode=0o700)
+            (Path(root) / 'checkpoints/pending.json').write_text('{}')
         plan = {}
+        seams = []
         fake = types.ModuleType('owner_custody')
         fake.check = c.check
         fake.Paths = c.Paths
@@ -59,10 +67,29 @@ def dispatch(mode, predecessor):
         fake.read_at = lambda *a, **k: (SOURCE / 'owner-custody.py').read_bytes()
         fake.validate_window = lambda *a: (os.open(root, os.O_RDONLY | os.O_DIRECTORY), window)
         fake.subdir = lambda fd, *a, **k: os.dup(fd)
+        fake.lock_path = c.lock_path
+        fake.unlock = c.unlock
+
+        def validate_procedure(fd, value, stage):
+            c.check(value is window and Path(stage) == SOURCE, 'unexpected procedure seam')
+            # Map only the staged directory descriptor; validate_procedure still
+            # reads the real absent receipt and enforces exact procedure equality.
+            with patch.object(c, 'directory', side_effect=fake.directory):
+                c.validate_procedure(fd, value, stage)
+            seams.append('validate_procedure')
+
+        def checkpoint_ready(fd):
+            c.check(seams == ['validate_procedure'], 'procedure validation must precede operation')
+            with patch.object(os, 'geteuid', return_value=actual_uid):
+                c.checkpoint_ready(fd)
+            seams.append('checkpoint_ready')
+
+        fake.validate_procedure = validate_procedure
+        fake.checkpoint_ready = checkpoint_ready
 
         def intent_seal(fd, name, value):
-            os.close(fd)  # operation has not entered its own descriptor finally yet
             c.check(name == 'intent.json', 'unexpected dispatch seam')
+            c.check(seams == ['validate_procedure', 'checkpoint_ready'], 'missing custody seam')
             plan.update(value)
             raise DispatchReached()
 
@@ -126,6 +153,17 @@ class ResumeControls(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.assertEqual(dispatch(mode, '-'),
                                  dict(outcome='refused', error='explicit previous operation required'))
+                self.assertEqual(dispatch(mode, PREVIOUS),
+                                 dict(outcome='dispatch', action=mode, previous=PREVIOUS))
+
+    def test_cli_custody_seams_refuse_before_intent(self):
+        for mode in ('start', 'stop', 'auto'):
+            with self.subTest(mode=mode):
+                self.assertEqual(dispatch(mode, PREVIOUS, matching_procedure=False),
+                                 dict(outcome='refused', error='window/procedure mismatch'))
+                self.assertEqual(dispatch(mode, PREVIOUS, pending=True), dict(
+                    outcome='refused',
+                    error='checkpoint pending; explicit exact-window checkpoint recovery required'))
                 self.assertEqual(dispatch(mode, PREVIOUS),
                                  dict(outcome='dispatch', action=mode, previous=PREVIOUS))
 

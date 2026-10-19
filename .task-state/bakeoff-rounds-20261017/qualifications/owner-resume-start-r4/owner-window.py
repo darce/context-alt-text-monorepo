@@ -4,6 +4,7 @@
 new-window -> window path; inspect W -> immutable read-only source receipts;
 start|stop|auto W PREVIOUS_OP_OR_DASH -> fresh operation UUID after proven write;
 reconcile W WINDOW_ID -> latest proven operation, or none;
+checkpoint W EXACT_WINDOW_ID -> structured JSON, bounded same-window archive;
 withdraw W WINDOW_ID -> owned AUTO operation, or none; no forced STOP;
 outdir W PHASE -> fresh protected observation directory; id W -> immutable ID.
 Every publication JSON remains the canonical native payload at top level.
@@ -44,14 +45,26 @@ print(json.dumps({'files':{n:base64.b64encode(b).decode() for n,b in files.items
  status,view=c.native_job(lambda:c.view(paths,'inspect'),5); c.check(status==0 and view is not None,'read-only inspect unknown'); c.seal(wfd,'inspect.json',view)
 
 def operation(wfd,w,action,previous):
- op=str(uuid.uuid4()); ops=c.subdir(wfd,'ops'); ofd=c.subdir(ops,op,create=True); os.close(ops)
- plan=dict(id=op,window=w['id'],action=action,previous=previous); c.seal(ofd,'intent.json',plan)
- log=os.open('guardian.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=ofd)
+ # Serialize creation as well as publication against checkpoint inventory.
+ # A pending checkpoint must not gain a new op between manifest and recovery.
+ fence=c.lock_path(P(w['path'])/'window.lock',time.monotonic()+15)
+ ofd=None
  try:
-  child=subprocess.Popen([sys.executable,'-B',str(A/'owner-window.py'),'--guardian',w['path'],op],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,close_fds=True)
-  # This is only launch diagnostics; native writer-stopped.json is proof.
-  c.seal(ofd,'client-launch.json',dict(guardian_pid=child.pid,operation=op,window=w['id']))
- finally: os.close(log)
+  c.checkpoint_ready(wfd)
+  op=str(uuid.uuid4()); ops=c.subdir(wfd,'ops')
+  try: ofd=c.subdir(ops,op,create=True)
+  finally: os.close(ops)
+  plan=dict(id=op,window=w['id'],action=action,previous=previous); c.seal(ofd,'intent.json',plan)
+  log=os.open('guardian.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=ofd)
+  try:
+   child=subprocess.Popen([sys.executable,'-B',str(A/'owner-window.py'),'--guardian',w['path'],op],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,close_fds=True)
+   # This is only launch diagnostics; native writer-stopped.json is proof.
+   c.seal(ofd,'client-launch.json',dict(guardian_pid=child.pid,operation=op,window=w['id']))
+  finally: os.close(log)
+ except BaseException:
+  if ofd is not None: os.close(ofd)
+  raise
+ finally: c.unlock([fence])
  deadline=time.monotonic()+35
  try:
   while time.monotonic()<deadline:
@@ -82,7 +95,7 @@ if mode=='new-window':
  print(W); raise SystemExit(0)
 W=sys.argv[2]; wfd,w=c.validate_window(W)
 try:
- c.check(w['procedure']==str(A),'window/procedure mismatch')
+ c.validate_procedure(wfd,w,A)
  if mode=='--guardian':
   op=sys.argv[3]; ops=c.subdir(wfd,'ops'); ofd=c.subdir(ops,op); os.close(ops)
   try:
@@ -98,6 +111,9 @@ try:
   previous=None if sys.argv[3]=='-' else sys.argv[3]
   c.check(mode=='start' or previous is not None,'explicit previous operation required')
   print(operation(wfd,w,mode,previous))
+ elif mode=='checkpoint':
+  c.check(len(sys.argv)==4 and sys.argv[3]==w['id'],'exact window handoff mismatch')
+  print(json.dumps(c.checkpoint(wfd,paths,w),sort_keys=True))
  elif mode in ('reconcile','withdraw'):
   c.check(sys.argv[3]==w['id'],'exact window handoff mismatch'); op=reconciled(wfd)
   if mode=='withdraw' and op is not None:

@@ -70,7 +70,6 @@ export const useJobStateMachineEffects = ({
   setIsWaitingForScanCompletion,
   sseStatus,
   removeJob,
-  cluster,
   latestClusterJob,
   currentPhase,
   syncTrigger,
@@ -79,7 +78,6 @@ export const useJobStateMachineEffects = ({
   setProjectionSyncState,
   setProjectionError,
 }: JobStateMachineEffectsOptions) => {
-  const backendHandledClustering = scanStatus?.type === 'clustering' || scanStatus?.progress?.phase === 'clustering';
   const lastProjectionAttemptRef = useRef<string | null>(null);
   const syncProjectionRef = useRef(syncTrigger.mutateAsync);
   const projectionSnapshotVersion = useMemo(
@@ -136,17 +134,16 @@ export const useJobStateMachineEffects = ({
     runAfterCooldown(() => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
     });
-    if (!backendHandledClustering && batchRunStatus.failed_total === 0 && batchRunStatus.accepted_total > 0) {
-      cluster();
-    }
+    // Successful scans enqueue their own clustering on the backend. A terminal
+    // batch must never invoke the separate operator-only whole-tenant command,
+    // even when the selected job response has not arrived yet.
   }, [
     batchRunStatus,
-    backendHandledClustering,
     activeJobs,
     isWaitingForScanCompletion,
     removeJob,
-    cluster,
     queryClient,
     setIsWaitingForScanCompletion,
   ]);

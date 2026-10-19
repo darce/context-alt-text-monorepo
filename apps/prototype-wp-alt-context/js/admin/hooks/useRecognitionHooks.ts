@@ -26,6 +26,10 @@ import {
 import { queryKeys } from '../api/queryKeys';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
 
+// SSE supplies live progress. Status polling is a recovery path and shares the
+// tenant's request budget with findings, media, and sync requests.
+const JOB_STATUS_POLL_MS = 5_000;
+
 /**
  * Returns the polling interval for a recognition job status query.
  * Exported so tests can exercise the real logic rather than duplicating it.
@@ -33,11 +37,11 @@ import { gateRefetchInterval } from '../utils/recognitionCooldown';
 export const getJobRefetchInterval = (data: JobStatusResponse | undefined): number | false => {
   const isActive = data?.status === 'running' || data?.status === 'pending';
   const isAwaitingProjection = data?.progress?.phase === 'awaiting_projection';
-  return isActive || isAwaitingProjection ? 1500 : false;
+  return isActive || isAwaitingProjection ? JOB_STATUS_POLL_MS : false;
 };
 
 export const getBatchRunRefetchInterval = (data: BatchRunStatus | undefined): number | false =>
-  data && !data.terminal_state ? 1500 : false;
+  data && !data.terminal_state ? JOB_STATUS_POLL_MS : false;
 
 export const useScanIdentities = (options?: UseMutationOptions<BatchAnalyzeResponse, Error, number[], unknown>) =>
   useMutation<BatchAnalyzeResponse, Error, number[]>({
@@ -102,9 +106,13 @@ export const useCombinedScanStatus = (
   activeJobIds: string[],
   batchRunId: string | null,
 ): CombinedScanStatus => {
-  const scanStatusQuery = useScanStatus(jobId, Boolean(jobId));
-  const multiScanStatus = useMultiScanStatus(activeJobIds, activeJobIds.length > 0);
   const batchRunStatusQuery = useBatchRunStatus(batchRunId, Boolean(batchRunId));
+  // A batch aggregate replaces per-child network polling. Keep disabled child
+  // observers for cached status/error cleanup, and follow one primary job for
+  // auto-chained clustering and projection (including after local jobs clear).
+  const primaryJobId = jobId ?? activeJobIds.at(-1) ?? batchRunStatusQuery.data?.child_job_ids.at(-1) ?? null;
+  const scanStatusQuery = useScanStatus(primaryJobId, Boolean(primaryJobId));
+  const multiScanStatus = useMultiScanStatus(activeJobIds, activeJobIds.length > 0 && !batchRunId);
   return { scanStatusQuery, multiScanStatus, batchRunStatusQuery };
 };
 

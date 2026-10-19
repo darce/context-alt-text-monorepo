@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
 import types
@@ -31,12 +32,54 @@ def extracted():
 
 
 class DriverTests(unittest.TestCase):
+    def test_native_guard_accepts_actual_runner_scope(self):
+        references=Path(__file__).parents[2]/'references'
+        producer=json.loads((references/'native-launcher-producer.json').read_text())
+        runner=ast.parse((references/'run_selected_root_resume_qualification.py').read_text())
+        run=next(n for n in runner.body if isinstance(n,ast.FunctionDef)and n.name=='run')
+        command=next(n for n in run.body if isinstance(n,ast.Assign)and any(isinstance(t,ast.Name)and t.id=='command'for t in n.targets))
+        # Evaluate the actual launcher expression without importing or running it.
+        launcher={'UNIT':'fixture.scope'}
+        exec(compile(ast.Module(body=[command],type_ignores=[]),'<runner-command>','exec'),launcher)
+        properties=[arg.removeprefix('--property=')for arg in shlex.split(launcher['command'][-1])if arg.startswith('--property=')]
+        self.assertEqual(properties,producer['runner_properties'])
+        self.assertEqual(producer['cpu_max'],'50000 100000')
+        self.assertEqual(producer['memory_max'],'2147483648')
+        self.assertEqual(producer['memory_swap_max'],'max')
+        self.assertEqual(producer['forward_disk_bytes'],1024**3)
+
+        source,tree=load_source()
+        def assigns(node,name):
+            return isinstance(node,ast.Assign)and any(isinstance(t,ast.Name)and t.id==name for t in node.targets)
+        start=next(i for i,n in enumerate(tree.body)if assigns(n,'helper_bytes'))
+        stop=next(i for i,n in enumerate(tree.body)if assigns(n,'N'))
+        prefix=compile(ast.Module(body=tree.body[start:stop],type_ignores=[]),'<native-guard-prefix>','exec')
+        helper=b'# guard-prefix helper fixture\n'
+        with tempfile.TemporaryDirectory()as td:
+            root=Path(td);cgroup=root/'sys/fs/cgroup/fixture.scope';cgroup.mkdir(parents=True)
+            membership=root/'proc-self-cgroup';membership.write_text('0::/fixture.scope\n')
+            (cgroup/'memory.swap.max').write_text(producer['memory_swap_max']+'\n')
+            def mapped(value):
+                return {'/sys/fs/cgroup':root/'sys/fs/cgroup','/proc/self/cgroup':membership}[value]
+            for cpu,memory,accepted in [(producer['cpu_max'],producer['memory_max'],True),('100000 100000',producer['memory_max'],False),(producer['cpu_max'],'4294967296',False)]:
+                with self.subTest(cpu=cpu,memory=memory,swap=producer['memory_swap_max']):
+                    (cgroup/'cpu.max').write_text(cpu+'\n');(cgroup/'memory.max').write_text(memory+'\n')
+                    ns=dict(reviewed_helper=extracted()['reviewed_helper'],HELPER_B64=base64.b64encode(helper),HELPER_SHA256=hashlib.sha256(helper).hexdigest(),Path=mapped,os=__import__('os'))
+                    with patch('os.getuid',return_value=0),patch('os.geteuid',return_value=0):
+                        if accepted:
+                            exec(prefix,ns)
+                            self.assertEqual(ns['cg'],cgroup)
+                            self.assertEqual(ns['helper_bytes'],helper)
+                        else:
+                            with self.assertRaises(AssertionError):exec(prefix,ns)
+
     def test_placeholder_and_wrong_hash_refused(self):
         f=extracted()['reviewed_helper']
         with self.assertRaises(ValueError):f('__unfilled__','__unfilled__')
         with self.assertRaises(ValueError):f(base64.b64encode(b'helper'),'0'*64)
         data=Path(__file__).parents[2]/'references/gpu_vllm_maintenance.py'
-        helper=data.read_bytes()
+        # Scoped exports omit the helper; pin validation accepts arbitrary bytes.
+        helper=data.read_bytes()if data.exists()else b'# sealed helper fixture\n'
         self.assertEqual(f(base64.b64encode(helper),hashlib.sha256(helper).hexdigest()),helper)
 
     def test_private_transfer_actual_setup_producer(self):
@@ -131,7 +174,11 @@ class DriverTests(unittest.TestCase):
         self.assertNotIn('1543415',source);self.assertNotIn('credential_b64',source)
         manifest=next(ast.literal_eval(n.value)for n in tree.body if isinstance(n,ast.Assign)and any(isinstance(t,ast.Name)and t.id=='MODEL_MANIFEST'for t in n.targets))
         ref=Path(__file__).parents[2]/'references/model-download-spec.json'
-        self.assertEqual(manifest,json.loads(ref.read_bytes()));self.assertEqual(len(manifest['components']),14)
+        if ref.exists():self.assertEqual(manifest,json.loads(ref.read_bytes()))
+        else:
+            # The exported literal retains the full manifest and its frozen pin.
+            self.assertEqual(hashlib.sha256(json.dumps(manifest,indent=2).encode()).hexdigest(),'a55b7821d05f42c0c1db92f80013d59373f722e1e0d0552e4572a1c43a34f05a')
+        self.assertEqual(len(manifest['components']),14)
         compile(source,'driver','exec')
         compile(Path(__file__).with_name('run_qwen8_vllm_all38_r23.py').read_text(),'wrapper','exec')
 

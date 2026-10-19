@@ -1,5 +1,7 @@
 # APP-1 offline residual scope — 2026-09-22
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 This is a bounded context/requirements census after the supplied landed
 receipts. It does not re-review repaired scene, recognition, operator, worker,
 or evaluator implementations, change MCP status, assign prices, or claim beta
@@ -82,7 +84,7 @@ missing required artifacts. That is enforcement proof, not a full V packet;
 `app1-offline-evidence-reconciliation-20260922.md`.
 
 The required declarations are in
-`docs/scopes/app-altcontext-beta-clerk-polar-evals.json`:
+`docs/scopes/app-altcontext-beta-clerk-stripe-evals.json`:
 
 - The beta gate requires `APP-SC-01` through `APP-SC-18`, fresh nonempty
   results, and sandbox/operational evidence. Expansion separately requires
@@ -100,16 +102,16 @@ The required declarations are in
 | Cases | Can be prepared offline now | What still cannot be claimed offline |
 | --- | --- | --- |
 | `APP-SC-01`, `02`, `03`, `05`, `06`, `07`, `08`, `11` | Deterministic contract tests, fresh typed JUnit/provenance, and negative/fault-injection coverage can be prepared. | A fresh full-manifest result is still required; the evaluator's 29 unit tests are not these case receipts. |
-| `APP-SC-13` | Local Clerk/Polar-outage fault injection and preservation of local API access can be prepared. | Any genuine provider outage rehearsal remains provider/account evidence, if required by the final V protocol. |
+| `APP-SC-13` | Local Clerk/Stripe-outage fault injection and preservation of local API access can be prepared. | Any genuine provider outage rehearsal remains provider/account evidence, if required by the final V protocol. |
 | `APP-SC-04`, `14` | A mocked/local browser harness, accessibility assertions, and typed artifact schema can be prepared. | The required two-tenant Clerk browser journey, deployed host/CSP loading, and browser-to-WordPress first-caption evidence await Clerk accounts and the live/staging host. |
 | `APP-SC-09`, `15`, `16`, `17` | Test cases and artifact/provenance checks can be prepared; bounded local fault injection is useful. | V requires real PostgreSQL non-owner RLS/concurrency, reset-role denial, an authorized restore/replay drill, host-boundary probes, and actual alert/telemetry privacy evidence. Restore authorization and the native PG environment are not available here. |
-| `APP-SC-10`, `12`, `18` | Fake-provider checkout, transition, signature, retry, and isolation fixtures can be prepared. | Genuine Polar sandbox checkout/webhook/cancel/refund/recovery and paid-transition evidence requires a provisioned Polar account/catalog/credentials; no fake fixture is live proof. |
+| `APP-SC-10`, `12`, `18` | Fake-provider checkout, transition, signature, retry, and isolation fixtures can be prepared. | Genuine Stripe sandbox checkout/webhook/cancel/refund/recovery and paid-transition evidence requires a provisioned Stripe account/catalog/credentials; no fake fixture is live proof. |
 | `APP-SC-19` | Only the report schema and evaluator declaration can be prepared. | The cohort study requires admitted users and observed attempts; its named report must not be fabricated. |
 | `APP-SC-20` | Only the dossier schema/checklist can be prepared. | Merchant/catalog/notice/restore/rollback evidence and an explicitly authorized live transaction receipt necessarily await live-provider access and authorization. |
 
 This follows Plan 0002 V: run the full declared testpaths with fresh JUnit and
 provenance, then obtain real PostgreSQL/RLS, restore, host, alert/telemetry,
-Clerk, Polar, and two-tenant browser evidence. The coordinator-supplied native
+Clerk, Stripe, and two-tenant browser evidence. The coordinator-supplied native
 61-test receipt in `app1-offline-cross-slice-validation-20260922.md` is not a
 substitute for that packet and is not rerun here. `[CARD-06][GRPH-14][RELEASE-IT-FAIL-CLOSED]`
 
@@ -118,7 +120,7 @@ substitute for that packet and is not rerun here. `[CARD-06][GRPH-14][RELEASE-IT
 No additional evaluator code task is justified in this lane. Offline work is
 limited to preparing truthful typed case artifacts for the cases above and
 preserving their exact case IDs; the remaining gate is external for the live
-Clerk/Polar/browser/host/restore/cohort/paid portions. Accounts, credentials,
+Clerk/Stripe/browser/host/restore/cohort/paid portions. Accounts, credentials,
 live services, protected environments, and live charges were not accessed.
 P05 is not marked fixed, and no second evaluator fix/review is proposed.
 

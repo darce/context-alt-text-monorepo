@@ -1,5 +1,7 @@
 # Competitive Analysis: AltText.ai vs AltContext (2026-07-14)
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 **Status:** Research synthesis, durable. Decomposable into task plans.
 **Sources:** ~35 alttext.ai pages ingested 2026-07-14 (pricing, support, solutions/{wordpress,cms,ecommerce,shopify}, /docs/, 26 blog posts + 5 index-discovered posts). Evaluated against `heuristics-canon/lexicons/` (business-marketing, accessibility, design-aesthetics, writing, engineering) and the canonical launch plan (`docs/gtm/altcontext-productization-launch-plan.md`).
 **Verdict up front:** AltText.ai validates the market and does our category education for free. It does not, and structurally cannot, do verified identity, honest confidence, or a per-tenant accuracy flywheel. The GTM plan's shape survives contact with this competitor; adjustments are to framing, pricing narrative, and a handful of table-stakes workflow items already flagged in the E19 roadmap.
@@ -77,7 +79,7 @@ What the canon says we must NOT copy:
 - **Content volume.** No content mill. Cadence stays founder-led and fallibility-forward (launch plan Move 2).
 
 ### Explicitly unchanged
-Wave order (secrets → telemetry+concierge → self-serve → payments → launch), concierge-first first-dollar motion, Clerk/Polar/PostHog/Sentry buy-stack, freemium split, quiet-summer/loud-fall timing, north-star KPI (captions accepted + paying conversions). Nothing in their playbook argues against any of these; their success via WP.org freemium is direct confirmation of D5.
+Wave order (secrets → telemetry+concierge → self-serve → payments → launch), concierge-first first-dollar motion, Clerk/Stripe/PostHog/Sentry buy-stack, freemium split, quiet-summer/loud-fall timing, north-star KPI (captions accepted + paying conversions). Nothing in their playbook argues against any of these; their success via WP.org freemium is direct confirmation of D5.
 
 ---
 
@@ -119,7 +121,7 @@ From their documentation (genuinely good, independent of product):
 - **Launch plan (`docs/gtm/altcontext-productization-launch-plan.md`)**: no structural change. Fold §3 items into existing tracks: MK (Us-vs-Them rows, cornerstone content briefs, anchor-defusal framing), DS (people-photo hero comparison in demo), AP (concierge script pricing question), LS (WP.org floor confirmation). Suggest a short "Competitive frame" subsection in §2 citing this doc.
 - **E15 / E21**: no scope change. This analysis strengthens the E21 phase 3 review-flow priority (correction UX is the flywheel and the visible differentiator) and the first-visitor walkthrough gate.
 - **E19 / context-aware description roadmap**: already benchmarks AltText.ai for table stakes (validating that call). Add two items to its phase 3/4 backlog: post-content alt refresh (denormalized alt re-sync) and explicit skip/overwrite bulk modes. Note OCR + brand recognition as competitor capabilities for the phase 5/6 differentiation review, and writing-style presets as a phase 4+ config candidate.
-- **ADRs**: none invalidated, none newly required now. ADR-014 (Polar/MoR) unaffected; their credit model is a pricing-page concern, not a processor concern. A future "MCP server as distribution surface" ADR is a deliberate deferral (post-launch), anchored to ADR-010 precedent.
+- **ADRs**: none invalidated, none newly required now. ADR-014 now selects standard Stripe direct with seller-owned tax; their credit model is a pricing-page concern, not a processor concern. A future "MCP server as distribution surface" ADR is a deliberate deferral (post-launch), anchored to ADR-010 precedent.
 - **New epic candidates (post-MVP parking lot, in rough order of expected pull)**: multilingual generation + translation billing; WooCommerce/ecommerce metadata fusion; AltContext MCP server; GEO/AI-visibility reporting on structured facts.
 
 ## 7. Decomposition seeds (for later task plans)

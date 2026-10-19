@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "suite_id": "app-1-beta-clerk-polar",
+  "suite_id": "app-1-beta-clerk-stripe",
   "owner": "APP-1",
-  "description": "PROVISIONAL DATA ONLY. Local E16-7-style manifest, not registered in the absent packages/workbay-system eval registry. Named tests and runner are implementation deliverables. Deterministic fixtures do not replace sandbox, browser, restore, cohort study or authorized live evidence. Describes the recommended Clerk-identity/local-key/Polar stack, pending review. S1 proves chosen integrations; alternatives require a concrete blocker and coherent contract/case amendments. In-house API-key management is retained.",
-  "command": "cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python scripts/run_app_portal_evals.py --manifest ../../docs/scopes/app-altcontext-beta-clerk-polar-evals.json --group deterministic",
+  "description": "PROVISIONAL DATA ONLY. Local E16-7-style manifest, not registered in the absent packages/workbay-system eval registry. Named tests and runner are implementation deliverables. Deterministic fixtures do not replace sandbox, browser, restore, cohort study or authorized live evidence. Describes the recommended Clerk-identity/local-key/Stripe stack, pending review. S1 proves chosen integrations; alternatives require a concrete blocker and coherent contract/case amendments. In-house API-key management is retained.",
+  "command": "cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python scripts/run_app_portal_evals.py --manifest ../../docs/scopes/app-altcontext-beta-clerk-stripe-evals.json --group deterministic",
   "threshold": {
     "kind": "junit_counts",
     "max_failures": 0,
@@ -14,7 +14,7 @@
     "app-1",
     "beta",
     "clerk",
-    "polar",
+    "stripe",
     "tenancy",
     "billing"
   ],
@@ -110,7 +110,7 @@
     {
       "id": "APP-SC-13",
       "group": "deterministic",
-      "criterion": "Clerk/Polar outages are bounded and preserve valid local API access within policy.",
+      "criterion": "Clerk/Stripe outages are bounded and preserve valid local API access within policy.",
       "status": "planned",
       "test": "recognition/tests/api/test_portal_provider_outages.py::test_provider_outage_preserves_local_api_within_policy"
     },

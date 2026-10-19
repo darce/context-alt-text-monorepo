@@ -1,5 +1,7 @@
 # AltContext Productization & Launch Plan
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > **Status:** Planning (durable, decomposable). **Authored:** 2026-07-09. **Merged + canon-reviewed:** 2026-07-09.
 > **Supersedes:** the split `00`–`05` GTM docs (merged into this single file after a heuristics-canon review pass).
 > **Scope:** Take AltContext from "deployed backend + prototype plugin" to "self-serve SaaS with paying WordPress customers." Connects the already-planned *technical* launch (E15 demo, E16 SaaS-ops) to the *commercial* launch (demo funnel, user management, CRM, payments, marketing, moat, GTM, WP.org).
@@ -14,7 +16,7 @@ This revision was reviewed against all three heuristics-canon lexicons. Material
 
 | # | Finding | Canon | Fix |
 |---|---|---|---|
-| C1 | Leaned on WP.org as *the* channel; ignored platform-landlord risk across WP.org, Clerk, Polar, OCI-free | `[BOOT-07]` hostile-landlord | Added §11 multi-homing/portability posture; WP.org is *a* node, not the only one |
+| C1 | Leaned on WP.org as *the* channel; ignored platform-landlord risk across WP.org, Clerk, Stripe, OCI-free | `[BOOT-07]` hostile-landlord | Added §11 multi-homing/portability posture; WP.org is *a* node, not the only one |
 | C2 | Customer contact path (email list) implicitly left inside vendors | `[BOOT-01]` own before polish | §6 makes the owned email list an in-house system of record |
 | C3 | Free tier had no stated conversion trigger | `[BOOT-06]` freemium kill switch | §3/§7 free tier now carries an explicit conversion hypothesis |
 | C4 | Pricing lacked a floor concept; KPI risked reach-vanity | `[BOOT-04]` rate floor, `[BOOT-08]` payers-per-1k | §7 pricing floor; §13 north-star is paying conversions |
@@ -35,7 +37,7 @@ All rule IDs cited in this doc were verified present in the canon.
 | API-key minter | `/admin` JSON router (`routers/admin.py`) + HTML console (`admin_console.py`) — primitive, operator-only | recognition service HTTP layer |
 | Demo topology | `demo.altcontext.com` = WP+MariaDB containers on the OCI VM behind Caddy, as one real tenant | E15-28 |
 | Identity model | Explicit tenant + key minted via `manage_api_keys`; **never URL-derived/JIT** | E15-24 |
-| Build-vs-buy stack | Decided (buy): auth = WorkOS/Clerk · billing = Polar · errors = Sentry · analytics = PostHog · email = Resend | `roadmap-saas-operations.md` (E16) |
+| Build-vs-buy stack | Decided (buy): auth = WorkOS/Clerk · billing = Stripe · errors = Sentry · analytics = PostHog · email = Resend | `roadmap-saas-operations.md` (E16) |
 | WP plugin | Prototype: facial recognition + roster/curation, sovereign local-read | `apps/prototype-wp-alt-context/` |
 | Marketing site | Brittle Fly.io Node/Prisma stack (256MB, crashes under load) | `altcontext-marketing-monorepo/` |
 | Business DB plan | Two-DB model, shared `tenant_id`; `leads` table already envisioned | `roadmap-saas-operations.md` |
@@ -67,7 +69,7 @@ Persona timing = planning cadence, not prophecy: don't force a grand launch whil
 
 - **Phase 0 — Demo funnel + measurement (Jul–Aug, quiet).** Public `demo.altcontext.com` (E15-28) with Before/After + face proof; per-prospect demos + short-slug URLs (§5); PostHog + Sentry wired (§9 — *no funnel, no launch* `[PROD-01]`); landing reskin (§8, 1 week max). **Gate:** a non-Daniel human completes the demo unaided; events land in PostHog.
 - **Phase 1 — Self-serve free tier + accounts (Aug–Sep, quiet).** Clerk live; `app.altcontext.com` dashboard; business API + `acx_business` DB; `/admin` minter consolidated behind it (§6). Free tier soft-metered with a stated conversion trigger `[BOOT-06]`. **Gate:** 3–5 hand-recruited betas self-onboard and generate real captions `[PROD-06]`.
-- **Phase 2 — Payments + paid conversion (Sep, start loud).** Polar checkout + webhooks → plan enforcement. Validate price with paid intent before scaling `[GTM-01][GTM-02]`. **Gate:** ≥1 *unsolicited* paid conversion at target price — the real PMF falsifier `[PROD-04]`.
+- **Phase 2 — Payments + paid conversion (Sep, start loud).** Stripe checkout + webhooks → plan enforcement. Validate price with paid intent before scaling `[GTM-01][GTM-02]`. **Gate:** ≥1 *unsolicited* paid conversion at target price — the real PMF falsifier `[PROD-04]`.
 - **Phase 3 — Launch motions + WP.org (Sep–Nov, loud).** WP.org submission + freemium split (§11); founder build-in-public + network activation (§10); community surface feeding the flywheel. **Gate:** WP.org approved; first *inbound* signups.
 - **Phase 4 — Compounding (Nov+).** Retention, onboarding funnels, OAuth, referrals, case studies. Persona caution: stabilize, don't rebrand under stress `[STRAT-08]`.
 
@@ -79,7 +81,7 @@ Two shapes, run in **parallel**:
 
 | Shape | Friction | For | When |
 |---|---|---|---|
-| **Concierge** (do-it-for-them) | A DM + manual `/admin` provision + a Polar payment link | The 5–15 warm contacts with image-heavy WP sites *today* | **Now** `[GTM-03][GTM-01]` |
+| **Concierge** (do-it-for-them) | A DM + manual `/admin` provision + a Stripe payment link | The 5–15 warm contacts with image-heavy WP sites *today* | **Now** `[GTM-03][GTM-01]` |
 | **Self-serve** | Card → key → plugin, no human | Long-tail WP owners via WP.org + content | Phase 2+ |
 
 **The fastest dollar is concierge to a warm contact.** Self-serve machinery makes the *second hundred* cheap; concierge makes the *first five* real and teaches pitch/price/objections `[PROD-03]`. **Do not gate the first sale on the billing system.**
@@ -137,9 +139,9 @@ Buy identity, billing, email, telemetry (commodity, security-critical, zero diff
 Your **business DB is the hub; `tenant_id` (UUID) is the universal join key.** The governing rules:
 
 - **Name one system of record per datum; never dual-write** — derive the second copy from the first's change log `[DATA-14]`.
-- **Reference external aggregates by ID only** (`clerk_user_id`, `polar_customer_id`, `crm_contact_id`) — don't copy their whole record into yours `[DOM-04]`.
+- **Reference external aggregates by ID only** (`clerk_user_id`, `stripe_customer_id`, `crm_contact_id`) — don't copy their whole record into yours `[DOM-04]`.
 - **Never reach into a vendor's DB, and never let a vendor read yours** — integrate via API + webhooks; single writer owns each table `[RES-11][ARCH-02]`.
-- **Translate at the boundary** — your schema/API shapes are yours; don't leak Clerk/Polar field names into your model `[API-10]`.
+- **Translate at the boundary** — your schema/API shapes are yours; don't leak Clerk/Stripe field names into your model `[API-10]`.
 - **All inbound webhooks idempotent** — dedupe on event id; keep an audit log `[API-02][RES-01]`.
 - **Own a direct contact path** — the customer email list (with consent) is an in-house SoR, so no landlord can sever your reach `[BOOT-01][BOOT-07]`.
 - **Record the ownership map as an ADR** `[ARCH-07]`.
@@ -157,14 +159,14 @@ Your **business DB is the hub; `tenant_id` (UUID) is the universal join key.** T
 | **Customer email + contact consent** | **You** (cached from Clerk, with consent) | email, consent flag | owned direct contact path `[BOOT-01][BOOT-07]` |
 | Password / session / MFA / OAuth tokens | **Clerk** | *nothing* (only `clerk_user_id`) | never store credentials `[STRAT-02]` |
 | Name / avatar / profile PII | **Clerk** (opt. CRM) | optional cached projection | not product-critical; by-ID `[API-10]` |
-| Card / payment method / invoice / tax | **Polar (MoR)** | *nothing sensitive*; `polar_customer_id` | never store PAN; MoR owns VAT/tax |
-| Subscription status | **Polar** → projected to you | cached status + `current_period_end` | drives entitlement; derived from Polar's webhook stream `[DATA-14]` |
+| Card / payment method / invoice / tax | **Stripe payments; AltContext is seller** | *nothing sensitive*; `stripe_customer_id` | never store PAN; AltContext manually calculates tax and owns seller tax obligations |
+| Subscription status | **Stripe** → projected to you | cached status + `current_period_end` | drives entitlement; derived from Stripe's webhook stream `[DATA-14]` |
 | Product/behavioral events, funnels, replay | **PostHog** | `posthog_distinct_id` link only | analytics store, not SoR |
 | Errors / traces | **Sentry** | *nothing* (correlation_id links) | diagnostics store |
 | Sales pipeline: notes, stage, deal history, email threads | **CRM (if adopted)** | `crm_contact_id` link | relationship data, not product SoR |
 | Transactional email send/deliverability | **Resend** | optional send-status via webhook | deliverability infra |
 
-**One-directional derivation, never dual-write** `[DATA-14]`: identity flows Clerk→you; billing flows Polar→you; you never write auth/payment *truth* back. Recognition data trusts `tenant_id` set by the auth middleware after it validates the key against the business DB (the two-DB / shared-UUID model already in `roadmap-saas-operations.md`).
+**One-directional derivation, never dual-write** `[DATA-14]`: identity flows Clerk→you; billing flows Stripe→you; you never write auth/payment *truth* back. Recognition data trusts `tenant_id` set by the auth middleware after it validates the key against the business DB (the two-DB / shared-UUID model already in `roadmap-saas-operations.md`).
 
 ### 6.4 CRM — what makes sense here, and when
 
@@ -185,7 +187,7 @@ Your **business DB is the hub; `tenant_id` (UUID) is the universal join key.** T
 
 ## 7. Payments & the money pipeline
 
-The vendor pieces were chosen (Clerk, Polar); the *connected flow from stranger to provisioned paying tenant* was missing. Here it is:
+The vendor pieces were chosen (Clerk, Stripe); the *connected flow from stranger to provisioned paying tenant* was missing. Here it is:
 
 ```
 Stranger → "Start free" (site / WP.org)
@@ -193,7 +195,7 @@ Stranger → "Start free" (site / WP.org)
         → Dashboard (app.altcontext.com): API key + install steps + usage
              → install WP plugin, paste key → first caption → PostHog "activated"
                   → hits free cap / wants faces-at-scale  [BOOT-06 conversion trigger]
-                       → Polar checkout ──webhook subscription.active──► Business API:
+                       → Stripe checkout ──webhook verified subscription state──► Business API:
                             plan=pro, raise quota + rate tier, Resend receipt
 ```
 
@@ -206,7 +208,7 @@ Stranger → "Start free" (site / WP.org)
 - Respect a **rate floor** — don't price where you'd resent the work after fees; below the floor the asset burns out `[BOOT-04]`.
 - Test an **agency/multi-site tier** anchored on compliance value before assuming $49 is the ceiling; **repackage, don't discount** `[STRAT-11]`.
 
-**Minimal-friction launch options (ranked by time-to-first-dollar):** (A) concierge + Polar payment link — *days*, works today, do first; (B) public Polar link + manual provision — ~1 week bridge; (C) full self-serve — the scale motion. Don't gate the first sale on C `[PROD-03]`.
+**Minimal-friction launch options (ranked by time-to-first-dollar):** (A) concierge + Stripe payment link — *days*, works today, do first; (B) public Stripe link + manual provision — ~1 week bridge; (C) full self-serve — the scale motion. Don't gate the first sale on C `[PROD-03]`.
 
 **Onboarding = activation.** Optimize signup → key → install → **first accepted caption**. Show the API key *and* copy-paste WP install steps on one screen (highest-drop step); Resend welcome email with 3-step setup + demo link; fire `activated` on first caption, nudge at 24h `[PROD-01][AIPX-02]`.
 
@@ -313,7 +315,7 @@ Four moves, in order — do not skip to Move 3.
 
 **Submission sequence:** harden → write `readme.txt` → submit → resolve the phone-home disclosure thread fast → SVN commit + tag + screenshots → seed initial reviews from Move-1 customers `[GTM-05]`.
 
-**Platform-landlord posture (the fix for C1)** `[BOOT-07]`: WP.org, Clerk, Polar, and the OCI *free* tier are all landlords who can change terms or reclaim capacity. Mitigations, sized to a bootstrap (multi-home the masters, not everything, before you need to):
+**Platform-landlord posture (the fix for C1)** `[BOOT-07]`: WP.org, Clerk, Stripe, and the OCI *free* tier are all landlords who can change terms or reclaim capacity. Mitigations, sized to a bootstrap (multi-home the masters, not everything, before you need to):
 - **Own the customer email list in-house** (§6) so no listing removal severs your reach `[BOOT-01]`.
 - **WP.org is a channel, not the channel** — Moves 1, 2, 4 exist so a delisting doesn't zero the funnel.
 - **Keep provisioning reproducible from the repo** (already the E15-28 rule) so the OCI free tier is replaceable, not a snowflake — if Oracle reclaims it, redeploy elsewhere.
@@ -374,9 +376,9 @@ Each slice has a self-contained objective + a verification. **`Ready?`** column:
 | AP-2 | Business API service (tenant CRUD, key lifecycle over `/admin`) | create-tenant→key round-trips; recognition validates | **Epic** |
 | AP-3 | Clerk integration + `user.*` webhooks (idempotent) → tenant lifecycle; cache email+consent | new signup auto-creates free tenant; email stored | **Epic** |
 | AP-4 | `app.altcontext.com` dashboard: key, usage, install steps, upgrade link | signed-in user sees key + usage | **Epic** |
-| AP-5 | Polar products + checkout + `subscription.*` webhooks → plan/quota enforcement | test purchase flips tenant to pro | **Epic** |
+| AP-5 | Stripe products + checkout + `subscription.*` webhooks → plan/quota enforcement | test purchase flips tenant to pro | **Epic** |
 | AP-6 | Resend welcome + receipt from `mail.altcontext.com` | signup→welcome; purchase→receipt | Atomic |
-| AP-7 | Concierge fast-path: `make` recipe + Polar payment link (ship week 1) | operator sells + provisions one customer by hand | Atomic |
+| AP-7 | Concierge fast-path: `make` recipe + Stripe payment link (ship week 1) | operator sells + provisions one customer by hand | Atomic |
 | AP-8 | CRM projection sync (DB→Attio via API on lifecycle events, one-way) | tenant lifecycle event appears in CRM by `tenant_id` | Atomic |
 | MK-1 | Static landing implementing §8 skeleton + copy | responsive; one primary CTA above fold | **Epic** |
 | MK-2 | Before/After hero component (real image, 3 caption tiers) | matches §8; mobile-readable | Atomic |

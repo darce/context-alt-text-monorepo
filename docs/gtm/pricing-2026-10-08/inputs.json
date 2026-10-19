@@ -2,7 +2,7 @@
   "as_of": "2026-10-08",
   "currency": "USD",
   "start_month": "2026-11-01",
-  "scope": "Still images only. Institutional customers are separately billed organizations or departments, not professor seats. Scenarios are conditional targets, not probability forecasts.",
+  "scope": "Still images only. Institutional customers are separately billed organizations or departments, not professor seats. Scenarios are conditional targets, not probability forecasts. Payment fees are conservative unvalidated scenario provisions, not a Stripe quote; replace from the configured seller account before commercial use.",
   "plans": [
     {"name":"Department","monthly_price":149,"monthly_images":2000,"annual_price":1490,"annual_images":24000,"overage_price":0.06},
     {"name":"Team","monthly_price":249,"monthly_images":5000,"annual_price":2490,"annual_images":60000,"overage_price":0.05},
@@ -69,7 +69,6 @@
     {"key":"yuja","title":"YuJa enterprise pricing","ref":"https://www.yuja.com/pricing/","note":"Quote-based institutional licensing and pilots; no public comparable image price."},
     {"key":"yuja_ai","title":"Panorama AI alternative text","ref":"https://support.yuja.com/hc/en-us/articles/24677216746391-How-Does-Panorama-Use-AI-to-Generate-Alternative-Text","note":"Extracts images from documents and generates descriptions. Vendor feature statement, not an independent quality evaluation."},
     {"key":"dbgallery","title":"DBGallery 2025 pricing update","ref":"https://dbgallery.com/2025-price-change","note":"AI descriptions, OCR and face recognition; 20% education/nonprofit/government discount. Current base price not recoverable from dynamic pricing page."},
-    {"key":"polar","title":"Polar pricing","ref":"https://polar.sh/resources/pricing","note":"Starter 5%+$0.50; Pro $20/month and 3.8%+$0.40. International-card and payout extras omitted from default base, covered by sensitivity."},
     {"key":"runpod","title":"Runpod GPU pricing","ref":"https://www.runpod.io/pricing","note":"L4 Pod $0.49/hour; grouped 24 GB serverless listing $0.69/hour. Price quotes do not establish model throughput or region availability."},
     {"key":"runpod_billing","title":"Runpod Serverless billing","ref":"https://docs.runpod.io/serverless/pricing","note":"Worker-start to worker-stop billing includes initialization, execution and idle time. Flex scales to zero."},
     {"key":"stripe_strategy","title":"Stripe Atlas SaaS pricing","ref":"https://stripe.com/guides/atlas/saas-pricing","note":"Packaging should track customer value and salient differences. Guidance does not establish AltContext willingness to pay."},

@@ -92,20 +92,7 @@ config, not secrets (`ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`,
 `ACX_CLERK_AUTHORIZED_PARTIES`): session JWTs are verified against Clerk's
 public JWKS, no backend Clerk secret.
 
-> **Billing-provider update (superseded 2026-09-30; clarified 2026-10-17):** Polar is obsolete and will not be provisioned. Billing will use standard Stripe Checkout Sessions on AltContext's own Stripe account plus Stripe Billing (excluding Stripe Managed Payments and any merchant-of-record arrangement), per APP-1 decision (2026-09-22) and APP1RB-1 decision `claude_decision_billing_is_stripe_direct_polar_is_removed_20260930` (2026-09-30). Polar references below are legacy code/history only; do not provision Polar accounts, catalogs, or `POLAR_*` secrets.
-
-`POLAR_WEBHOOK_SECRET` and
-`POLAR_ACCESS_TOKEN` are read through the secret provider. Only the webhook
-secret is boot-checked: if it is missing, `create_app` raises `portal and
-billing composition requires: POLAR_WEBHOOK_SECRET`. A missing
-`POLAR_ACCESS_TOKEN` does not stop boot; the first Polar API call fails
-instead (fail-late). On prod (`oci_vault`) map both in
-`RECOGNITION_VAULT_SECRET_MAP` before the flag turns on. No
-`app.altcontext.com` vhost exists in the Caddyfile yet. APP-1 keeps local
-`api_keys` as the key store
-(Clerk-managed keys are out of scope):
-[app-altcontext-beta-clerk-polar-scope.md](../../../docs/scopes/app-altcontext-beta-clerk-polar-scope.md);
-E16-7 [e16-7-tenant-selfserve-key-panel-scope.md](../../../docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md).
+**Selected billing secrets:** [ADR-014](../../../docs/adrs/ADR-014-payment-processor-merchant-of-record-selection.md) requires standard Stripe direct with seller-owned manual tax. Mode-correct Stripe API and webhook endpoint secrets must be mapped and validated by the selected adapter before activation. This inventory does not claim that adapter is deployed; do not provision a superseded billing stack.
 
 ### 4. Human accounts
 
@@ -127,7 +114,6 @@ verification only — they are not merged into the tenant API-key system.
 
 `.gitignore` already ignores `apps/prototype-wp-alt-context/.env.local` and allowlists
 `!.env.local.example` / `!.env*.example`.
-
 ## Deployable env templates (where vars are declared)
 
 The templates listed here are generated from `config/env/manifest.d/`. Update the manifest and regenerate templates using the [environment manifest runbook](../../../docs/runbooks/env-manifest.md); do not hand-edit generated templates.
@@ -179,7 +165,6 @@ widens the blast radius of one leak to every env; CARD-10).
 | DB password | `ALTER ROLE <POSTGRES_USER> PASSWORD '<new>'` in the env's postgres container, then set the same value in `POSTGRES_PASSWORD`, `POSTGRES_DSN` and `POSTGRES_SYNC_DSN`, then `systemctl restart acx-<env>` | New Vault secret version, then `ALTER ROLE`, then restart; see `infra/oci/vault-instance-principal-runbook.md` § 5 |
 | `RECOGNITION_ADMIN_TOKEN` | Edit the value (≥32 chars), restart | New Vault secret version, restart |
 | Tenant API keys | Not in any env file. `/admin` exists only on prod; revoke/re-mint with `manage_api_keys --env <stack-env>` inside the target stack's API container, where `<stack-env>` exactly matches its runtime `ACX_ENV` (`prod`, `staging`, `dev`, or `dev-fir`; see `infra/oci/README.md` reset step 8). A pgdata reset orphans keys. | prod `/admin`, `make admin-oci-mint`, or `manage_api_keys --env prod` in the prod API container; target: `/portal` rotate/revoke (APP-1) |
-| `POLAR_WEBHOOK_SECRET` / `POLAR_ACCESS_TOKEN` (obsolete; superseded by Stripe direct 2026-09-30) | legacy code only | Do not provision. Future billing secrets are `STRIPE_*` on AltContext's own Stripe account (Checkout Sessions + Stripe Billing, excluding Managed Payments/MoR). |
 | `OCIR_AUTH_TOKEN` | — | `make ocir-token-rotate` |
 
 `POSTGRES_PASSWORD` only initializes a **fresh** pgdata directory. Changing it

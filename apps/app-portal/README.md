@@ -1,5 +1,7 @@
 # AltContext account portal
 
+> **Billing authority:** [ADR-014](../../docs/adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 Standalone React/Vite SPA for app.altcontext.com account chrome. Clerk authenticates a person. Tenant UUID comes only from same-origin `GET /portal/me`. This package does not mint keys, claim invitations, or render billing.
 
 ## Offline constraint
@@ -16,7 +18,7 @@ Copy `.env.example`. Vite bakes these at build time:
 | `VITE_CLERK_FAPI`            | no                    | Frontend API origin, production `https://clerk.altcontext.com`. Used by operators when wiring CSP. |
 | `VITE_PORTAL_ENABLED`        | no                    | Public flag. `false`/`0`/`off` → degraded unavailable. Default on.                                 |
 
-Never put `CLERK_SECRET_KEY`, Polar OATs, invitation tokens, or API keys in this package.
+Never put `CLERK_SECRET_KEY`, Stripe secret keys, invitation tokens, or API keys in this package.
 
 ## Run against the dev API
 
@@ -68,4 +70,4 @@ Production choices:
 
 ## Not in this slice
 
-Claim/invitation, API keys, usage, and billing UI. Live Clerk/Polar rehearsal. Host Caddy edits.
+Claim/invitation, API keys, usage, and billing UI. Live Clerk/Stripe rehearsal. Host Caddy edits.

@@ -1,5 +1,7 @@
 # Plan 0001 - APP-1: app.altcontext.com beta, keys, and billing
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 - **Task ID:** APP-1 (standalone integration task; related to E16 and GTM AP-3/AP-4/AP-5).
 - **Task Plan Status:** proposed.
 - **Date:** 2026-09-19.
@@ -7,17 +9,17 @@
 - **Worktree:** `../context-alt-text-monorepo-app-1`.
 - **Baseline inspected:** `213fad181474e5739a3b4859536f28792638cdeb`.
 - **Delivery now:** reviewable planning documents and eval data only. No feature implementation, vendor purchase, invitations, live charges or deployment.
-- **Intake:** [scope](../scopes/app-altcontext-beta-clerk-polar-scope.md), MCP decision #12633.
+- **Intake:** [scope](../scopes/app-altcontext-beta-clerk-stripe-scope.md), MCP decision #12633.
 - **Recommended launch path:** [converged stack, source-book corpus, roadmap and execution rationale](../assessments/current/app-portal-launch-recommendation-2026-09-19.md). This is the current recommendation, awaiting planning review.
 - **Vendor reassessment:** [payment and key build/buy pipeline](../assessments/current/app-portal-build-buy-reassessment-2026-09-19.md), including fresh semantic retrieval and current primary sources.
 - **Evidence:** [prior art, refreshed vendors and canon reasoning](../assessments/current/app-portal-prior-art-and-vendors-2026-09-19.md).
-- **Eval specification:** [APP-1 data](../scopes/app-altcontext-beta-clerk-polar-evals.json).
+- **Eval specification:** [APP-1 data](../scopes/app-altcontext-beta-clerk-stripe-evals.json).
 
 > **2026-09-21 continuation:** The foundation implementation landed in `e2a539107` and is present on main. The original status, baseline/current-state inventory and S0–S7 sequence below are historical planning context, not a claim that all features are absent or that launch is complete. [Plan 0002](0002-app-altcontext-launch-continuation-task-plan.md) owns the remaining-work inventory and proposed DAG. APP-R1..R6 and APP-SC-01..20 remain the product/acceptance contract. No new dispatch is authorized.
 
 ## Objective
 
-Let an invited WordPress customer sign up at app.altcontext.com, obtain and safely rotate a tenant API key, see their allowance, and use the service free during beta. Implement the paid conversion path before beta release, prove it in Polar sandbox, and later enable explicit paid checkout without replacing accounts, tenants or keys.
+Let an invited WordPress customer sign up at app.altcontext.com, obtain and safely rotate a tenant API key, see their allowance, and use the service free during beta. Implement the paid conversion path before beta release, prove it in Stripe sandbox, and later enable explicit paid checkout without replacing accounts, tenants or keys.
 
 ## Product decision and success hypothesis
 
@@ -44,7 +46,7 @@ The earlier E16-7 docs landed **without implementation** (handoff #11754). Reuse
 | Tenant identity | Single owner, stable `(Clerk issuer, subject)` -> tenant UUID; no organization switcher | Confirm whether actual beta users require multiple admins before S1 |
 | Key authority | Retain existing local issuance, hashes and verification; Clerk authenticates the person | Characterize reuse in S1; keep the panel narrow. Reopen managed keys only on demonstrated implementation/support advantage under the same accepted policies |
 | UI/runtime | FastAPI server-rendered page, small supported Clerk browser integration and small same-origin mutation script | S1 must prove real login, renewal, logout and secret response display; no unsupported no-JS assumption |
-| Billing vendor | Implement Polar Starter behind one thin adapter | Confirm actual account/product/payout eligibility and prove sandbox lifecycle. Stripe Managed Payments/Paddle are triggered alternatives, not mandatory parallel implementations |
+| Billing vendor | Implement standard Stripe direct behind one thin adapter | Confirm actual account/product/payout eligibility and prove sandbox lifecycle. Standard Stripe only; AltContext manually calculates tax. Managed Payments and merchant-of-record arrangements are excluded |
 | Beta envelope | 10-20 tenants, 30 days, 200 successful image jobs each, one active job per tenant | Measure cost and approve numeric limits before invites; lock the paid monthly price, allowance and conversion test before invites too |
 | Beta budget | Proposed US$50 incremental ceiling per 30 days; existing hosting excluded | Founder chooses currency/ceiling; enforce worst-case admission budget, do not rely only on cloud budget alerts |
 | Pricing | One paid monthly offer with a versioned allowance initially | Approve exact price and allowance, and the day-30 checkout action with its 14-day observation window, before invitations; old $19/$49 and 5k/25k tables are historical hypotheses, not authorized prices |
@@ -55,7 +57,7 @@ Out of scope: unlimited public beta, automatic paid conversion, paid overages, c
 
 ### Recommended implementation baseline
 
-Proceed with Clerk identity, the existing local API-key authority, and Polar Starter. The linked launch recommendation supersedes the reassessment's mandatory comparative-spike sequence. S0 records hard requirements and actual eligibility; S1 proves the selected integrations and characterizes key reuse. Use a proposed total two engineer-day discovery timebox, then record evidence and remaining work; this is not a production delivery estimate or permission to waive a failed security gate. A concrete failure triggers one targeted alternative evaluation. Otherwise proceed to S2..S6 without reopening the vendor market.
+Proceed with Clerk identity, the existing local API-key authority, and standard Stripe direct. The linked launch recommendation supersedes the reassessment's mandatory comparative-spike sequence. S0 records hard requirements and actual eligibility; S1 proves the selected integrations and characterizes key reuse. Use a proposed total two engineer-day discovery timebox, then record evidence and remaining work; this is not a production delivery estimate or permission to waive a failed security gate. A concrete failure triggers one targeted alternative evaluation. Otherwise proceed to S2..S6 without reopening the vendor market.
 
 **Do not retire in-house API-key management in this beta.** Retain issuance/hash storage/verification/rotation/revocation in the existing service, buy human login/session/recovery, and build only a thin tenant self-service panel. No generic API gateway or second credential authority. Current APP-R2/APP-R4 contracts now describe the recommended stack, still awaiting review; any later provider change requires a coherent contract/eval amendment before implementation.
 
@@ -80,15 +82,15 @@ flowchart LR
   Browser --> Clerk[Clerk login]
   Clerk --> App
   App --> Local[Local tenant / keys / entitlements]
-  App --> Polar[Polar checkout and customer portal]
-  Polar --> Inbox[Verified durable webhook inbox]
+  App --> Stripe[Stripe checkout and customer portal]
+  Stripe --> Inbox[Verified durable webhook inbox]
   Inbox --> Projector[Billing reconciliation worker]
   Projector --> Local
   WP[WordPress plugin] --> API[Recognition / description API]
   API --> Local
 ```
 
-Clerk owns login/session identity. Polar owns financial subscription/payment facts. AltContext owns tenant UUID, access authorization, beta grants, key hashes and usage accounting. Local billing rows are projections, not independently edited subscription truth. Keep vendor IDs exportable; user email is contact data, not an ongoing access-control key. Provider calls stay outside the recognition/description request path.
+Clerk owns login/session identity. Stripe owns financial subscription/payment facts. AltContext owns tenant UUID, access authorization, beta grants, key hashes and usage accounting. Local billing rows are projections, not independently edited subscription truth. Keep vendor IDs exportable; user email is contact data, not an ongoing access-control key. Provider calls stay outside the recognition/description request path.
 
 For beta, extend the existing service/database instead of adding the older proposed `acx_business` writer. Use separate bounded portal/webhook execution and DB pools as required to prevent authentication or reconciliation bursts starving recognition. Reset privileges must be restricted to explicitly allowlisted recognition data, not database/schema ownership. This is logical isolation with a shared-host failure domain; an ADR amendment must acknowledge that limit and define the later split trigger.
 
@@ -123,17 +125,17 @@ Implement aggregate per-tenant and global daily limits, max input/batch sizes, b
 
 Usage reads show used/reserved/remaining, period and `as_of`; never fabricated counts. Read-after-write is required for keys/entitlement mutations; asynchronous usage rollups may lag at most 60 seconds and label pending values. Billing allowance and compute cost are distinct; never silently convert beta usage to paid arrears. Plan quotas and effective rate limits come from local tenant entitlements, not frozen `api_keys.rate_limit_tier`; define how legacy operator/demo keys retain their existing policy without bypassing tenant safety caps.
 
-### APP-R4: Polar adapter, billing and paid transition
+### APP-R4: Stripe adapter, billing and paid transition
 
 Thin server-only `BillingProvider` operations: create/recover checkout, create customer portal session, retrieve authoritative customer/subscription state, verify/normalize webhook. Store customer IDs with environment and provider; unique `(provider, environment, customer_id)` plus tenant mapping. Use internal tenant UUID as external reference, never an arbitrary checkout email as ownership. Server chooses allowlisted product/price/currency from a versioned catalog. Checkout and return URLs use an allowlist; client-supplied amount, tenant, customer ID or success status cannot grant access.
 
-Production `payments_enabled=false` prevents live checkout creation server-side. The ordinary beta has **no Polar subscription and no stored payment method**. A separately isolated staging app, Clerk instance, database, Polar sandbox tokens/product IDs and webhook secrets support test checkout. Test/sandbox events cannot mutate production entitlements. Selected UX testers can rehearse in clearly labelled test accounts; do not conflate these events with live beta activation or revenue.
+Production `payments_enabled=false` prevents live checkout creation server-side. The ordinary beta has **no Stripe subscription and no stored payment method**. A separately isolated staging app, Clerk instance, database, Stripe sandbox tokens/product IDs and webhook secrets support test checkout. Test/sandbox events cannot mutate production entitlements. Selected UX testers can rehearse in clearly labelled test accounts; do not conflate these events with live beta activation or revenue.
 
-Checkout retries use a durable checkout-attempt row. Reuse an existing unexpired session when safe. If the vendor request outcome is ambiguous, reconcile by the attempt/customer mapping before creating another; do not assume Polar supports any undocumented idempotency header. A unique local upgrade intent and subscription-conflict handling prevent two tabs producing two authorized subscriptions unnoticed. S1 settles the real API behavior and safe retry protocol.
+Checkout retries use a durable checkout-attempt row. Reuse an existing unexpired session when safe. If the vendor request outcome is ambiguous, reconcile by the attempt/customer mapping before creating another; do not assume Stripe supports any undocumented idempotency header. A unique local upgrade intent and subscription-conflict handling prevent two tabs producing two authorized subscriptions unnoticed. S1 settles the real API behavior and safe retry protocol.
 
 Webhook receiver verifies the exact raw body and timestamp/signature using a pinned supported SDK, then inserts a unique `(provider, environment, event_id)` inbox row before 2xx. Duplicate delivery is successful; invalid signature is rejected; persistence failure returns retryable failure. Unknown valid events are recorded/ignored explicitly. Bounded worker claims with leases retry durable inbox rows and quarantine exhausted items. Do not use an untracked in-process background task as the only delivery guarantee.
 
-Prefer events as **reconciliation triggers**. Per customer, serialize reconciliation, fetch current provider state with timeout, and update the local projection and derived entitlement atomically. An event arriving while reconciliation is running leaves another pending generation; stale workers cannot overwrite a newer result. Never order billing truth solely by arrival time or generic event timestamp. Poll a bounded cursor of accounts at least every 15 minutes (proposal) to recover missed events; operator can reconcile one tenant. `customer.state_changed` is useful but refund/dispute/period-end details may require subscription/order event/API data verified by S1 fixtures.
+Prefer events as **reconciliation triggers**. Per customer, serialize reconciliation, fetch current provider state with timeout, and update the local projection and derived entitlement atomically. An event arriving while reconciliation is running leaves another pending generation; stale workers cannot overwrite a newer result. Never order billing truth solely by arrival time or generic event timestamp. Poll a bounded cursor of accounts at least every 15 minutes (proposal) to recover missed events; operator can reconcile one tenant. `customer.subscription.updated` is useful but refund/dispute/period-end details may require subscription/order event/API data verified by S1 fixtures.
 
 | Local state | Entry and processing policy | Recovery / transition |
 | --- | --- | --- |
@@ -191,8 +193,8 @@ Alert owner: founder/on-call operator. Alert on oldest pending webhook/reconcili
 | Browser -> Clerk -> portal | Portal/auth | JWT/claim contract, CSRF, invitation and stable tenant binding; real browser renewal/logout test |
 | Portal -> keys | Credential service | Tenant-bound operations, bounded history, one-time responses, concurrency/idempotency and existing admin regression tests |
 | Plugin -> service | Recognition/description | Local tenant entitlement/admission checks; no new vendor call; existing header compatibility and readable 401/403/429/retry behavior |
-| Portal -> Polar | Billing adapter | Server-owned catalog/customer map, checkout attempt recovery, hosted portal; sandbox fixtures |
-| Polar -> app | Billing inbox/worker | Signature/raw body, durable dedupe, reordered/missed-event reconciliation, environment isolation |
+| Portal -> Stripe | Billing adapter | Server-owned catalog/customer map, checkout attempt recovery, hosted portal; sandbox fixtures |
+| Stripe -> app | Billing inbox/worker | Signature/raw body, durable dedupe, reordered/missed-event reconciliation, environment isolation |
 | Usage -> entitlement/cost | Admission service | Reservation/finalization, period boundaries, no double counting or per-key bypass |
 | Restore -> runtime | Operations | No revived credentials, measured RPO/RTO, reconciliation and traffic gate |
 
@@ -205,15 +207,15 @@ Each implementation slice first establishes failing behavioral tests, records th
 | Slice | Goal and owned surfaces | Depends on | Proof / mapped criteria |
 | --- | --- | --- | --- |
 | **S0 - reconcile contracts** | Recommended-stack requirements and account/product/payout eligibility; integration owner: APP-R1..R6 spec, E16-7 reuse/disposition, ADR-014 refresh, route/metering inventory, role/reset model, cost envelope, catalog proposal | Plan review | Named E16-7 finding dispositions with evidence; complete endpoint/state/usage matrix; no duplicate task ownership |
-| **S1 - real integrations** | Auth/billing owner: Clerk browser + FastAPI JWT and Polar sandbox proof, plus existing local-key characterization; test an alternative only if the recommended path fails a stated requirement; pin supported SDKs; snapshot redacted claims/webhook fixtures | S0 decisions | Actual sign-in/renew/logout; verified email source; valid/invalid webhook signature; checkout/portal/cancel/refund state; ambiguous-checkout retry behavior. Record actual effort, blocking account/lifecycle gaps, remaining work and any required contract amendments. No secrets committed |
+| **S1 - real integrations** | Auth/billing owner: Clerk browser + FastAPI JWT and Stripe sandbox proof, plus existing local-key characterization; test an alternative only if the recommended path fails a stated requirement; pin supported SDKs; snapshot redacted claims/webhook fixtures | S0 decisions | Actual sign-in/renew/logout; verified email source; valid/invalid webhook signature; checkout/portal/cancel/refund state; ambiguous-checkout retry behavior. Record actual effort, blocking account/lifecycle gaps, remaining work and any required contract amendments. No secrets committed |
 | **S2 - durable keys** | Credential owner: schema truth and restricted reset grants, tenant-bound repositories, extracted key service, creation/rotation/revoke, selected recovery mechanism and bounded history | S0, S1 auth contract | APP-SC-02..06, 15; preserve existing admin contract. Rotation service and repository ship together |
 | **S3 - self-service account** | Portal owner: onboarding/invites, identity links, beta grants, auth dependencies, portal renderer and JS; app mount and Caddy through integration owner | S1, S2 | APP-SC-01, 07, 13, 14, 16; real invited user obtains key, connects WordPress, completes one job |
 | **S4 - allowance and cost** | Admission owner: new usage reservation/entitlement service and repositories, all scoped billable routes, usage UI, cost controls and reaper contract | S3 | APP-SC-08, 09, 17; race at remaining=1, duplicate completion, failure/cancel/restart, global cost ceiling and no per-key bypass |
-| **S5 - billing lifecycle** | Billing owner: new Polar adapter, checkout attempt/customer map, signed inbox, reconciliation worker, billing view/hosted portal; schema/app integration serialized | S1, S3, S4 | APP-SC-10..12, 18; sandbox complete lifecycle, duplicates/reordering/missed events, provider outage and concurrent upgrade |
+| **S5 - billing lifecycle** | Billing owner: new Stripe adapter, checkout attempt/customer map, signed inbox, reconciliation worker, billing view/hosted portal; schema/app integration serialized | S1, S3, S4 | APP-SC-10..12, 18; sandbox complete lifecycle, duplicates/reordering/missed events, provider outage and concurrent upgrade |
 | **S6 - complete beta rehearsal** | Integration/UX/ops owner: full browser journey, privacy telemetry, accessibility, backup/restore/alerts, beta runbook and fixture validation | S2..S5 | APP-SC-13..17, 19; zero-charge invariant, staged restore and role failure tests, observed test onboarding; beta readiness gate |
 | **S7 - paid activation** | Release owner: approved live catalog/secrets/account, customer notice and opt-in conversion, live canary and rollback drill | S6 + paid gate | APP-SC-18, 20; no tenant/key migration or beta arrears. Actual charge requires explicit authorization at execution |
 
-New proposed production surfaces: `recognition/application/services/{portal_identity_service,tenant_entitlement_service,usage_admission_service,billing_service}.py`; `recognition/infrastructure/{billing/polar_provider,repositories/portal_identity_repository,repositories/billing_repository,repositories/usage_repository}.py`; `recognition/interface_adapters/http/{deps/portal_auth,routers/portal,routers/billing_webhooks,portal_console}.py`; `scripts/billing_reconcile.py`; `scripts/ship_security_journal.py` only if S0 selects journal-based recovery instead of standard WAL/PITR. Split only when the existing package layout supports it; S0 records exact names. Do not create empty adapters or an entire Business API process solely to match historical names.
+New proposed production surfaces: `recognition/application/services/{portal_identity_service,tenant_entitlement_service,usage_admission_service,billing_service}.py`; `recognition/infrastructure/{billing/stripe_provider,repositories/portal_identity_repository,repositories/billing_repository,repositories/usage_repository}.py`; `recognition/interface_adapters/http/{deps/portal_auth,routers/portal,routers/billing_webhooks,portal_console}.py`; `scripts/billing_reconcile.py`; `scripts/ship_security_journal.py` only if S0 selects journal-based recovery instead of standard WAL/PITR. Split only when the existing package layout supports it; S0 records exact names. Do not create empty adapters or an entire Business API process solely to match historical names.
 
 ## Verification and eval data
 
@@ -226,11 +228,11 @@ Implement `scripts/run_app_portal_evals.py` (new) in the RED work to validate th
 Planned commands from `apps/prototype-description-service/`:
 
 ```sh
-ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python scripts/run_app_portal_evals.py --manifest ../../docs/scopes/app-altcontext-beta-clerk-polar-evals.json --group deterministic
+ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python scripts/run_app_portal_evals.py --manifest ../../docs/scopes/app-altcontext-beta-clerk-stripe-evals.json --group deterministic
 ACX_STRICT_GATE=1 ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python -m pytest --junitxml=../../.task-state/evals/app1-full.xml
 ```
 
-The runner path is a deliverable, not an existing command. Browser tests must hit the rendered portal and staging WordPress with two distinct tenants; real Clerk/Polar sandbox is a separate contract rehearsal from offline signed fixtures. Operational restore, actual alert delivery and authorized live checkout require evidence artifacts and cannot be satisfied by mocking a provider client.
+The runner path is a deliverable, not an existing command. Browser tests must hit the rendered portal and staging WordPress with two distinct tenants; real Clerk/Stripe sandbox is a separate contract rehearsal from offline signed fixtures. Operational restore, actual alert delivery and authorized live checkout require evidence artifacts and cannot be satisfied by mocking a provider client.
 
 | ID | Observable acceptance | Evidence owner |
 | --- | --- | --- |
@@ -246,7 +248,7 @@ The runner path is a deliverable, not an existing command. Browser tests must hi
 | APP-SC-10 | Server-bound checkout and portal sessions cannot cross tenant/catalog/environment; concurrent retry is safe | S5 fixtures + real sandbox |
 | APP-SC-11 | Durable verified webhook dedupe survives crashes, reorder and dropped events; reconciliation converges | S5 inbox/worker restart tests |
 | APP-SC-12 | Paid/cancel/past-due/recovery/refund-hold/staleness follow exact time rules; key stays unchanged | S5 table-driven state tests + sandbox |
-| APP-SC-13 | Clerk/Polar outage preserves valid local API access within policy and shows bounded recoverable portal failures | S3/S5 fault injection |
+| APP-SC-13 | Clerk/Stripe outage preserves valid local API access within policy and shows bounded recoverable portal failures | S3/S5 fault injection |
 | APP-SC-14 | Keyboard/mobile/screen-reader journey covers first use, secret, rotation, expiry and billing pending | S6 browser/a11y artifact |
 | APP-SC-15 | Restore/replay twice preserves revoked/cutoff/replacement state; uncertain WAL/journal tail stays closed | S2/S6 integration test + real restore drill |
 | APP-SC-16 | App/API public hosts block admin/internal paths; reset role cannot erase credential/customer authority | S2/S3 live staging probes + SQL grants tests |
@@ -268,7 +270,7 @@ Flags are server-controlled and independent: portal enabled, beta admission open
 ## Consolidated checklist
 
 - [ ] S0: choose one implementation owner, reconcile E16-7 deferred items and authority docs, review APP-R1..R6 spec/catalog/cost policy.
-- [ ] S1: prove Clerk identity/Polar sandbox and local-key reuse; record effort/gaps, pin versions and sanitized fixtures; escalate only concrete fallback triggers.
+- [ ] S1: prove Clerk identity/Stripe sandbox and local-key reuse; record effort/gaps, pin versions and sanitized fixtures; escalate only concrete fallback triggers.
 - [ ] S2: deliver tenant-safe key lifecycle, atomic evidence, reset containment and durable recovery.
 - [ ] S3: deliver actual self-service onboarding and working WordPress connection.
 - [ ] S4: deliver correct allowance/usage and enforceable compute budget.
@@ -280,4 +282,4 @@ Flags are server-controlled and independent: portal enabled, beta admission open
 
 ## Review packet and remaining choices
 
-Review this plan with its scope, evidence note and eval data. Review the recommended Clerk-identity/local-key/Polar stack, then settle tenancy, free-beta budget/allowance/cohort and exact paid monthly price/allowance and conversion test before invitations. Vendor-account eligibility and S1 proof remain release inputs; the default is no longer a mandatory multi-vendor bake-off. Then verify S0 crosswalk, webhook/entitlement edge cases, SDK-supported browser flow and recovery assumptions against code. Planning review findings belong in MCP. The task is complete **as a draft deliverable** when these artifacts are coherent and discoverable; implementation and user-study completion remain unchecked.
+Review this plan with its scope, evidence note and eval data. Review the recommended Clerk-identity/local-key/Stripe stack, then settle tenancy, free-beta budget/allowance/cohort and exact paid monthly price/allowance and conversion test before invitations. Vendor-account eligibility and S1 proof remain release inputs; the default is no longer a mandatory multi-vendor bake-off. Then verify S0 crosswalk, webhook/entitlement edge cases, SDK-supported browser flow and recovery assumptions against code. Planning review findings belong in MCP. The task is complete **as a draft deliverable** when these artifacts are coherent and discoverable; implementation and user-study completion remain unchecked.

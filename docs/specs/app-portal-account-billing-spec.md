@@ -1,91 +1,39 @@
 # APP-1 portal account and billing contract
 
-> **Status:** proposed planning contract. Not implementation. Not a Polar production cutover.
+> **Status:** proposed planning contract. Not implementation. Not a Stripe production cutover.
 > **Date:** 2026-09-22 UTC.
 > **Task:** APP-1. Lane: `billing-contract`.
 > **Owner of this file:** P / billing-contract. Downstream owners are named per surface below.
-> **Supersedes:** the missing-spec placeholder in [Plan 0001](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md) and the contract gaps listed in [Plan 0002](../plans/0002-app-altcontext-launch-continuation-task-plan.md) node P/C/H/R.
+> **Supersedes:** the missing-spec placeholder in [Plan 0001](../plans/0001-app-altcontext-beta-clerk-stripe-task-plan.md) and the contract gaps listed in [Plan 0002](../plans/0002-app-altcontext-launch-continuation-task-plan.md) node P/C/H/R.
 
-This document freezes the portable hosted-checkout, tenant-identity, durable-attempt, webhook, and recovery contracts that C (schema/provider), H (portal HTTP), and R (reconciliation processing) must implement. Polar remains the provisional sandbox adapter behind the existing `BillingProvider` boundary. Paid live traffic stays behind the separate paid gate.
+This document freezes the portable hosted-checkout, tenant-identity, durable-attempt, webhook, and recovery contracts that C (schema/provider), H (portal HTTP), and R (reconciliation processing) must implement. Standard Stripe direct is the selected integration behind the existing `BillingProvider` boundary; adapter implementation and sandbox qualification remain separate work. Paid live traffic stays behind the separate paid gate.
 
 ## Provenance
 
-Inspected this lane checkout at `60fb6dd246238275b243342e0cbad6ffff0b84ce` (sandbox history-stripped). Dispatch brief named feature/app-1 base `581405f99`. Graph index may lag; facts below are from files in this checkout.
+**PLANNED CONTRACT, not deployed implementation.** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) is the accepted authority: standard Stripe direct on AltContext's own account, Clerk authentication, and AltContext-owned manual tax calculation and seller obligations. Stripe Managed Payments and merchant-of-record arrangements are excluded.
 
-**Planning sources**
+Portable tenant, attempt and admission contracts remain in force. Earlier vendor-specific SDK, signature, pagination and environment behavior has been removed; historical adapter receipts do not qualify Stripe. Implementation must pin the Stripe API/SDK and genuine sandbox fixtures. No provider cutover is claimed.
 
-- [Plan 0002](../plans/0002-app-altcontext-launch-continuation-task-plan.md)
-- [Checkout / portability assessment](../assessments/current/app-altcontext-checkout-provider-portability-and-link-2026-09-22.md)
-- [Plan 0001 APP-R1..R6 and APP-SC-01..20](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md)
-
-**Exact source in this checkout**
-
-- `apps/prototype-description-service/recognition/domain/portal_contracts.py` — `BillingProvider`, identity/entitlement protocols
-- `apps/prototype-description-service/recognition/infrastructure/billing/polar_provider.py` — `PolarBillingProvider`
-- `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py` — seven tenant-bound routes
-- `apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_auth.py` — `require_portal_principal`
-- `apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_composition.py` — sandbox flag with live default URL
-- `apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py` — `POST /billing/webhooks/polar`
-- `apps/prototype-description-service/db/models/portal_billing.py` — projection + inbox, no checkout-attempt table
-- `apps/prototype-description-service/scripts/billing_reconcile.py` — retrieve-known-state worker, no enumeration
-
-**Vendor documentation (pin at use time; not proof of our implementation)**
-
-- Polar API base URLs: production `https://api.polar.sh`, sandbox `https://sandbox-api.polar.sh` ([API overview](https://polar.sh/docs/api-reference))
-- Polar checkout sessions and `external_customer_id` ([Checkout API](https://polar.sh/docs/features/checkout/session))
-- Polar list endpoints: `page` (default 1) and `limit` (default 10, max 100) with `pagination.max_page` ([API overview](https://polar.sh/docs/api-reference))
-- Polar webhook delivery: pass **headers + raw body** to `validate_event`; secrets generated on or after 2026-09-08 00:00 UTC are Standard Webhooks; older secrets are Polar HMAC over the UTF-8 bytes of the full `whsec_…` string ([Webhook delivery](https://polar.sh/docs/integrate/webhooks/delivery))
-- Polar sandbox isolation ([Sandbox](https://polar.sh/docs/integrate/sandbox))
-- Polar core subscription list: `GET /v1/subscriptions/` ([List subscriptions](https://polar.sh/docs/api-reference/2026-04/subscriptions/list-subscriptions))
-- Standard Webhooks signed content `{webhook-id}.{webhook-timestamp}.{body}` ([spec](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md))
-
-**Canon** (https://github.com/darce/heuristics-canon): `REF-15`, `DOM-03`, `CARD-06`, `CARD-15`, `CARD-16`, `GRPH-09`, `GRPH-31`, `PERF-11`, `PERF-13`. Engineering rules, not vendor capability evidence.
-
-Protocol pytest smoke is **not** spec-correctness proof. Fake-provider tests are the C/H/R admission bar; Polar sandbox evidence is a later V packet.
-
----
+References: [Checkout Sessions](https://docs.stripe.com/api/checkout/sessions/create), [API keys/modes](https://docs.stripe.com/keys), [webhook verification](https://docs.stripe.com/events/manage-webhook-endpoints#signature-errors), [customer portal](https://docs.stripe.com/customer-management).
 
 ## 1. Terminology (`DOM-03`)
 
-Do not say “provider” without a qualifier.
-
-| Term | Meaning |
+| Term | Authority |
 | --- | --- |
-| Clerk subject | Verified interactive identity (`iss` + `sub`). Never a tenant id, API key, or billing customer. |
-| Local tenant | Stable AltContext UUID. Owns keys, usage, entitlement. Survives vendor change (`CARD-16`). |
-| API key | Local credential. Billing events must not rotate, revoke, or re-mint keys. |
-| Internal plan code | AltContext catalog key (example: `starter_monthly`). Browser sends only this. |
-| Hosted checkout | Vendor-hosted payment UI (Polar Checkout, Stripe Checkout, Paddle overlay). |
-| Wallet / Link | Optional checkout acceleration. Not authentication and not merchant-of-record. |
-| Processor | Card network acquirer behind the seller (Polar documents Stripe as processor). |
-| Merchant of record / seller account | Legal seller. Namespaced as `seller_account`. Polar: organization id bound to the OAT. |
-| Billing customer / subscription ids | Vendor ids. Stored only in mappings keyed by `(provider, environment, seller_account)`. |
-| Entitlement | Local grant of work (`beta_active` / `paid_active` / closed). Return URLs never grant it. |
-
----
+| Local tenant | Stable AltContext UUID owning keys, usage and entitlement. |
+| Clerk identity | Interactive sign-in; does not own allowance or API keys. |
+| Stripe direct | Payment processing; AltContext is the seller. |
+| Seller account | AltContext's Stripe account identity, namespaced with environment. |
+| Hosted checkout / portal | Stripe payment collection / invoice and subscription management. |
+| Usage ledger | AltContext's durable units, reservations and audited grants. |
+| Site cap | WordPress attempt safety limit, not the tenant's account balance. |
+| Tax | AltContext determines and manually calculates tax and handles seller obligations. |
 
 ## 2. Inspected gaps (current code is not this contract)
 
-These are observations from this checkout, not claims that main has shipped them.
+Tenant/key, admission, checkout-attempt and reconciliation seams exist. Historical adapter code and offline receipts must not be described as a qualified Stripe integration. Inspect the exact branch before implementation.
 
-1. **`BillingProvider`** (`portal_contracts.py:169-201`) today:
-   - `create_checkout_session(tenant_id, plan_code, success_url, cancel_url) -> str`
-   - `create_portal_session(tenant_id, return_url) -> str`
-   - `retrieve_state(provider_customer_id, provider_subscription_id, request_timeout)`
-   - `verify_webhook(raw_body, signature) -> bool`
-   - `parse_event(raw_body)`
-   Missing: durable-attempt handle, `retrieve_checkout`, **bounded enumeration**, webhook **header set**.
-2. **`PolarBillingProvider.create_checkout_session`** computes a **fixed** idempotency key from `(environment, tenant_id, plan_code, success_url, cancel_url)` (`_checkout_idempotency_key`). There is no `checkout_attempt` row. A later purchase after Polar `checkout.expired` with the same URLs reuses the same vendor key. Checkout payload has `metadata.tenant_id` but **does not** set Polar `external_customer_id` (portal sessions do).
-3. **`portal.py`** has exactly seven routes: `GET /portal/me`, `GET/POST /portal/keys`, `GET /portal/keys/{id}`, `POST .../rotate`, `POST .../revoke`, `GET /portal/usage`. **No** claim, checkout, or manage route.
-4. **`require_portal_principal`** requires a resolved tenant. Claim cannot use it. Unverified email and missing identity both return generic `403 portal access denied`.
-5. **`portal_composition.py`**: `billing_environment` defaults to `"sandbox"` while `_DEFAULT_POLAR_BASE_URL = "https://api.polar.sh"` (live). `PolarBillingProvider._DEFAULT_BASE_URL` is the same live host. Polar documents sandbox as `https://sandbox-api.polar.sh`.
-6. **`verify_webhook`** HMACs **raw body only** and compares a single signature string. Polar documents Standard Webhooks over `{id}.{timestamp}.{body}` plus a legacy Polar HMAC. Router `billing_webhooks.py` collects `webhook-signature` / Polar aliases and a delivery timestamp, but the protocol still takes `signature: str` only. Inbox unique key is `(provider, provider_event_id)` — no environment or seller account.
-7. **`retrieve_state`** requires a **known** customer or subscription id. `billing_reconcile.py` has no list/enumerate path, so a remote orphan subscription cannot be discovered (`GRPH-09` recovery path missing).
-8. **Schema** (`portal_billing.py`): `billing_subscription_projection` unique on `(provider, provider_customer_id)`; no `environment`, no `seller_account`, no `checkout_attempt`, no reconciliation cursor/lease.
-
-C must extend the protocol and schema. H must add the three HTTP routes on **`portal.py`** (same owner as `/me` and keys; do not split claim into a second router unless H later extracts it as a whole). R consumes C’s enumeration; R does not invent provider APIs.
-
----
+Reuse the existing `BillingProvider` protocol, tenant-scoped repositories, local usage authority and durable inbox/worker pattern. Supply attempt-owned idempotency, financial-state reconciliation, genuine signature verification and mode/seller isolation. Grant shared-file ownership before schema, route or composition edits.
 
 ## 3. Identity and tenancy
 
@@ -124,10 +72,8 @@ Existing `require_portal_principal` remains for `/me`, keys, usage, checkout, ma
 | --- | --- | --- |
 | `tenants.id` | local UUID | n/a |
 | Clerk `(issuer, subject)` | `portal_identity` unique | issuer |
-| Polar customer / subscription / checkout ids | mapping + projection | `(provider, environment, seller_account)` |
-| Polar `external_customer_id` | sent to Polar | `"{environment}:{tenant_id}"` (keep current Polar adapter scoping so sandbox/live cannot alias) |
+| Stripe customer / subscription / checkout ids | mapping + projection | `(provider, environment, seller_account)` |
 
-`seller_account` is required in **local** unique keys even when Polar OATs are org-scoped, so a second Polar organization or a later Paddle/Stripe seller cannot collide (`CARD-16`).
 
 ---
 
@@ -162,7 +108,7 @@ Admin CSRF (`admin_auth.py` Origin vs Host) is a different surface. Do not reuse
 
 `invitation_token` is the single-use secret. Server hashes it (existing invitation row stores only the hash), binds redemption to normalized verified email + expiry + one successful principal.
 
-**Atomic transaction (one commit):** redeem invitation → create tenant → link `(issuer, subject, email)` → `grant_beta(...)`. Any audit/outbox/required write failure **rolls back the entire claim** (finding 14472). No webhook, checkout, or Polar call in this transaction. Beta **must not** create a Polar customer or subscription (`APP-SC-07`).
+**Atomic transaction (one commit):** redeem invitation → create tenant → link `(issuer, subject, email)` → `grant_beta(...)`. Any audit/outbox/required write failure **rolls back the entire claim** (finding 14472). No webhook, checkout, or Stripe call in this transaction. Beta **must not** create a Stripe customer or subscription (`APP-SC-07`).
 
 **Responses**
 
@@ -197,9 +143,9 @@ Content-Type: application/json
 { "plan_code": "starter_monthly", "return_path": "/billing/return" }
 ```
 
-Server maps `plan_code` → configured product id. Server sets `success_url` and `cancel_url` from allowlisted origin + `return_path` (default `/billing/return` and `/billing/cancel`). Client cannot choose catalog price or Polar product id.
+Server maps `plan_code` → configured Stripe Price ID. Server sets `success_url` and `cancel_url` from allowlisted origin + `return_path` (default `/billing/return` and `/billing/cancel`). Client cannot choose catalog price or Stripe Price ID.
 
-**Durable attempt owns idempotency** (section 5). HTTP layer does not call Polar until the attempt row is committed.
+**Durable attempt owns idempotency** (section 5). HTTP layer does not call Stripe until the attempt row is committed.
 
 **Responses**
 
@@ -210,14 +156,14 @@ Server maps `plan_code` → configured product id. Server sets `success_url` and
 | 401 | Auth | same as `/me` |
 | 403 | Payments disabled (beta) | `{ "code": "payments_disabled" }` |
 | 403 | CSRF origin | `csrf_origin_denied` |
-| 409 | Open **ambiguous** attempt for this tenant+plan still pending reconcile | `{ "code": "checkout_ambiguous", "attempt_id" }` — do not create another Polar checkout |
+| 409 | Open **ambiguous** attempt for this tenant+plan still pending reconcile | `{ "code": "checkout_ambiguous", "attempt_id" }` — do not create another Stripe checkout |
 | 409 | Tenant already `paid_active` for this plan | `{ "code": "already_subscribed" }` |
 | 422 | Unknown `plan_code` | `unknown_plan_code` |
 | 422 | Bad `return_path` / origin | `invalid_return_path` |
 | 422 | Idempotency-Key reused with different fingerprint | `idempotency_key_reuse` (parity with keys) |
-| 503 | Provider timeout after persist / Polar 5xx classified ambiguous | `{ "code": "checkout_ambiguous", "attempt_id" }` — HTTP 503 with `Retry-After: 1` |
+| 503 | Provider timeout after persist / Stripe 5xx classified ambiguous | `{ "code": "checkout_ambiguous", "attempt_id" }` — HTTP 503 with `Retry-After: 1` |
 
-**Return URL after Polar redirect never grants paid benefits.** Browser landing on `success_url` may show `pending` until webhook or reconciliation applies `BillingState`. `APP-SC-10`, `APP-SC-18`.
+**Return URL after Stripe redirect never grants paid benefits.** Browser landing on `success_url` may show `pending` until webhook or reconciliation applies `BillingState`. `APP-SC-10`, `APP-SC-18`.
 
 ### 4.4 `POST /portal/billing/manage`
 
@@ -234,7 +180,7 @@ Server maps `plan_code` → configured product id. Server sets `success_url` and
 | 422 | Bad return path | `invalid_return_path` |
 | 503 | Provider failure | `billing_portal_unavailable` |
 
-Manage sessions cannot create subscriptions or change tenant. Polar Customer Portal API is the vendor UI; AltContext remains source of entitlement.
+Manage sessions cannot create subscriptions or change tenant. Stripe customer portal is the vendor UI; AltContext remains source of entitlement.
 
 ### 4.5 Existing seven routes
 
@@ -244,7 +190,7 @@ Unchanged by this spec except: H must **stop** constructing tenant-bound service
 
 ## 5. Durable checkout attempts (C)
 
-Persist intent **before** any vendor mutation (DDIA: durable transaction then idempotent sink). Polar’s `Idempotency-Key` header is a vendor hint, not our source of truth.
+Persist intent **before** any vendor mutation (DDIA: durable transaction then idempotent sink). Stripe’s `Idempotency-Key` header is a vendor hint, not our source of truth.
 
 ### 5.1 Attempt row
 
@@ -254,15 +200,15 @@ Table `billing_checkout_attempt`. Follow the verified repository migration autho
 | --- | --- |
 | `id` | UUID PK (`attempt_id` returned to HTTP) |
 | `tenant_id` | FK, RLS with other tenant tables |
-| `provider` | `polar` (fake-provider tests use `fake`) |
+| `provider` | `stripe` (fake-provider tests use `fake`) |
 | `environment` | `sandbox` \| `live` |
-| `seller_account` | Polar organization id (required text) |
+| `seller_account` | Stripe account ID (required text) |
 | `plan_code` | Internal code |
-| `idempotency_key` | **Attempt-owned** opaque key sent to Polar |
+| `idempotency_key` | **Attempt-owned** opaque key sent to Stripe |
 | `client_idempotency_key` | HTTP `Idempotency-Key` |
 | `request_fingerprint` | Canonical JSON of tenant, plan, success_url, cancel_url, environment, seller_account |
 | `status` | see state machine |
-| `provider_checkout_id` | nullable until Polar returns |
+| `provider_checkout_id` | nullable until Stripe returns |
 | `checkout_url` | nullable |
 | `last_error_class` | `none` \| `ambiguous` \| `rejected` \| `expired` |
 | `created_at` / `updated_at` | timestamptz |
@@ -279,56 +225,44 @@ An active attempt for one plan conflicts with creating an active attempt for ano
 
 ```text
 created
-  -> provider_requested   # Polar POST in flight; row already committed
-  -> pending              # Polar returned checkout URL / id
+  -> provider_requested   # Stripe POST in flight; row already committed
+  -> pending              # Stripe returned checkout URL / id
   -> ambiguous            # timeout/5xx after persist; must retrieve_checkout or enumerate
   -> succeeded            # authoritative paid subscription mapped
-  -> expired              # Polar checkout.expired or retrieve shows expired
+  -> expired              # Stripe checkout.expired or retrieve shows expired
   -> canceled             # user cancel; no charge
   -> failed               # 4xx / payments disabled / validation
 ```
 
 Transitions to `succeeded` **only** from webhook/reconcile applying `BillingState.status=active`, never from HTTP return.
 
-Expired or canceled attempts **do not** reuse `idempotency_key`. A new purchase mints a new attempt row and a new Polar key. This is why the current hash-of-URLs key is insufficient.
+Expired or canceled attempts **do not** reuse `idempotency_key`. A new purchase mints a new attempt row and a new Stripe key. This is why the current hash-of-URLs key is insufficient.
 
 ### 5.3 Concurrency
 
-Equivalent HTTP retries share the existing open attempt (same client key + fingerprint → replay URL). Different fingerprint + same client key → 422. Timeout after Polar 2xx that the client never saw stays `pending`/`ambiguous` until `retrieve_checkout` (`GET /v1/checkouts/{id}`).
+Equivalent HTTP retries share the existing open attempt (same client key + fingerprint → replay URL). Different fingerprint + same client key → 422. Timeout after Stripe 2xx that the client never saw stays `pending`/`ambiguous` until `retrieve_checkout` (`GET /v1/checkouts/{id}`).
 
-Do **not** hold a row lock across the Polar HTTP call (Release It: timeout + bulkhead). Pattern: insert `created` and commit; set `provider_requested`; call Polar with attempt `idempotency_key`; update `pending` or `ambiguous`. Reconciliation is the second exit (`CARD-15`).
+Do **not** hold a row lock across the Stripe HTTP call (Release It: timeout + bulkhead). Pattern: insert `created` and commit; set `provider_requested`; call Stripe with attempt `idempotency_key`; update `pending` or `ambiguous`. Reconciliation is the second exit (`CARD-15`).
 
-### 5.4 Polar adapter call (provisional)
+### 5.4 Stripe adapter call (provisional)
 
-`POST {base}/v1/checkouts/` with:
+Use `POST https://api.stripe.com/v1/checkout/sessions` through the pinned Stripe SDK/API:
 
-- `products: [configured_product_id]` — server catalog only; no ad-hoc prices in v1
-- `external_customer_id: "{environment}:{tenant_id}"`
-- `metadata: { tenant_id, environment, seller_account, attempt_id }`
-- `success_url`, `return_url` (cancel) already origin-checked
-- header `Idempotency-Key: <attempt.idempotency_key>`
-- header `Authorization: Bearer <OAT>`
+- Server-owned `mode=subscription` and `line_items` with the configured recurring Price ID and quantity.
+- Tenant-mapped Stripe `customer`, opaque `client_reference_id` and safe attempt/environment/tenant metadata; never choose a tenant from checkout email.
+- Allowlisted `success_url` and `cancel_url`.
+- Attempt-owned `Idempotency-Key` and mode-correct secret credential.
+- Explicit manual tax treatment from AltContext's approved seller policy; no automatic tax or merchant-of-record product by implication.
 
-Polar documents `external_customer_id` as the reconciliation handle and disables email edit when set. Current adapter omits it on checkout; C must add it.
-
-`create_checkout_session` returns a typed checkout ID + URL result; C’s **service** (`checkout_service.py`) owns attempt lifecycle. Protocol additions in section 7.
-
----
+The service persists attempt state and returns a typed session ID and URL. Browser return does not grant entitlement. Reconcile an ambiguous original attempt before creating another payment.
 
 ## 6. Environment and live-safety
 
-| Setting | Sandbox default | Live |
-| --- | --- | --- |
-| `POLAR_ENVIRONMENT` / `billing_environment` | `sandbox` | `live` (explicit only) |
-| `POLAR_BASE_URL` | `https://sandbox-api.polar.sh` | `https://api.polar.sh` |
-| `POLAR_PAYMENTS_ENABLED` | `false` until sandbox rehearsal | separately authorized |
-| Tokens / webhook secrets / product ids | sandbox org | live org — never mixed |
+Local environment vocabulary may be `sandbox` / `live`, but Stripe test/live requests use the same `https://api.stripe.com` host. Separate API credentials, webhook secrets, object IDs and seller mappings; do not invent a sandbox host or rely on host-only mode checks. Validate Stripe `livemode` against local environment where applicable.
 
-**Fail closed before any vendor call:** if `environment=sandbox` and base host is `api.polar.sh` (or vice versa), raise at composition **and** at `PolarBillingProvider.__init__`. Current code is incoherent: sandbox flag + live default URL. U owns composition wiring; C owns the adapter constructor check so a miswired test cannot call live (`CARD-06`).
+`payments_enabled=false` rejects new checkout/manage mutations. Keep signature processing and reconciliation for existing customers available. CLI-forwarded endpoint secrets and Dashboard endpoint secrets differ. Never print secrets.
 
-`payments_enabled=false` must reject checkout/manage with 403 `payments_disabled` and must not create Polar customers. Webhook signature verification still runs so sandbox fixtures can be tested with payments off.
-
----
+Free beta grants remain local and zero-charge. Login, key recovery and billing recovery stay available when expensive work pauses.
 
 ## 7. `BillingProvider` protocol (C owns; R/H consume)
 
@@ -341,7 +275,7 @@ class CheckoutSession(Protocol):
 
 class EnumerationPage(Protocol):
     items: tuple[BillingState, ...]
-    next_cursor: str | None  # opaque; Polar adapter may encode page number
+    next_cursor: str | None  # opaque; selected adapter uses a supported opaque cursor
     exhausted: bool
 
 class BillingProvider(Protocol):
@@ -370,41 +304,19 @@ class BillingProvider(Protocol):
 
 Coordinator amendment 2026-09-22: client idempotency uniqueness is tenant-scoped; identical keys used by different tenants must not collide or disclose another attempt. Existing installations need a verified upgrade path, regardless of historical greenfield planning.
 
-### 7.1 Enumeration (vendor-supported Polar path)
+### 7.1 Enumeration (vendor-supported Stripe path)
 
-Polar core API: `GET /v1/subscriptions/?page=&limit=` with optional `organization_id`. Pagination object has `total_count` and `max_page`. Max `limit` is 100; this contract uses **`limit=50`** (`PERF-13` headroom vs Polar sandbox 100 req/min).
+Use the pinned Stripe customer/subscription APIs and supported cursor pagination. Bind opaque cursors to provider/environment/seller. Explicitly bound page size, per-call timeout, whole-run deadline, lease and work cap; do not copy page-number semantics from another API.
 
-Cursor is opaque to R. Polar adapter encodes `page` as decimal string. Bound: max **20 pages per `--once` run** (1000 subscriptions) then persist cursor and exit. Per-item failure does not abort the page (`rg-007`).
-
-**No network I/O while a DB row lock is held.** Lease the cursor row, commit, then GET, then persist progress.
-
-Reject a remote subscription whose `organization_id` ≠ configured `seller_account`, or whose `customer.external_id` does not parse to this environment’s tenant, or whose tenant mapping is missing — **quarantine**, do not invent a tenant from email.
+Retrieve current subscription, invoice and payment state through tenant-owned customer mappings. Webhooks trigger reconciliation; arrival order does not determine financial truth. Persist resumable cursors and per-item failures. Genuine sandbox evidence is required.
 
 ### 7.2 Webhook verification (APP1-HG-45)
 
-Polar SDK: `validate_event(body, headers, secret)` — **full header map**, not a concatenated signature string.
+Verify the exact unmodified raw body, `Stripe-Signature` and correct endpoint secret with the supported Stripe SDK verifier and timestamp tolerance. Reject invalid/malformed/mode-mismatched events. Accept no alternate vendor headers, body-only HMAC or legacy signing algorithm.
 
-Required headers to persist with the raw body (audit; do not log secrets):
+Selected endpoint: `POST /billing/webhooks/stripe`. Persist a deduplicated inbox keyed by provider/environment/seller/event ID before 2xx; duplicates grant nothing twice. Persistence failure is retryable. Reconcile in the bounded durable worker.
 
-- `webhook-id` (or Polar/Svix aliases)
-- `webhook-timestamp` / `svix-timestamp`
-- `webhook-signature` / `x-polar-signature` / `polar-signature`
-
-Verification rules:
-
-1. Body cap 1 MiB (already in router).
-2. Delivery timestamp within 300s (already `_DELIVERY_TIMESTAMP_HEADERS`).
-3. Standard Webhooks HMAC over `{webhook-id}.{webhook-timestamp}.{raw_body}` when the configured secret is the post-2026-09-08 scheme; **also** try Polar legacy HMAC (UTF-8 bytes of full `whsec_…`) because Polar SDKs try both. Fake provider uses **fixtures**, not guessed production signatures.
-4. Constant-time compare. Parse only after verify returns true.
-5. This packet does **not** claim the current `PolarBillingProvider.verify_webhook(raw_body, signature)` accepts genuine Polar deliveries.
-
-Router stays `POST /billing/webhooks/polar`, 202 after durable inbox insert, projection bounded (existing 2s persist / 1s projection). Polar times out at 10s and retries up to 10 times; keep handler under 2s.
-
-Inbox unique: `(provider, environment, seller_account, provider_event_id)`. Duplicate delivery → 202 with no second projection (`APP-SC-11`).
-
-Webhook arrival **never** grants entitlement by itself; `apply_billing_state` is the only paid transition.
-
----
+Pin genuine fixtures for checkout, invoice payment/failure, subscription updates/deletion and required refund/dispute cases. Offline historical verifier tests are not Stripe delivery proof.
 
 ## 8. Recovery and reconciliation (C schema + protocol; R processing)
 
@@ -426,7 +338,7 @@ Table `billing_reconciliation_cursor`:
 | `lease_owner` / `lease_until` | fencing; steal only after expiry (`GRPH-31`) |
 | `last_progress_at` | stall detector: `--once` that makes zero progress cannot report healthy success |
 
-Worker: lease (short, e.g. 30s), commit, page Polar with `request_timeout=8`, persist items individually, advance cursor, heartbeat. Timeouts are failures of that page, not success. Bounded work per run.
+Worker: lease (short, e.g. 30s), commit, call Stripe with `request_timeout=8`, persist items individually, advance cursor, heartbeat. Timeouts are failures of that page, not success. Bounded work per run.
 
 ### 8.2 Entitlement application
 
@@ -448,31 +360,17 @@ Return-from-checkout with `status=pending` is a UI state, not `paid_active`.
 
 ## 9. Schema and ownership edges
 
-```text
-C: 001_identity_schema.py, portal_billing models,
-   portal_contracts.BillingProvider, polar_provider.py,
-   checkout_attempt_repository.py, checkout_service.py
-        │
-        ├─► R: scripts/billing_reconcile.py  (processing only)
-        ├─► H: routers/portal.py claim/checkout/manage
-        │         uses checkout_service; does not call Polar directly
-        ├─► K: billing_webhooks.py header pass-through after C protocol change
-        └─► U: portal_composition.py factories, env/base coherence, payments_enabled
-```
+C owns `BillingProvider`, selected adapter and checkout-attempt schema/service. H owns portal/webhook HTTP. R owns reconciliation. U owns usage/admission composition. Serialize overlapping schema, route and composition edits.
 
-Shared-file rule: C is sole editor of `polar_provider.py` and the protocol. U wires the factory after C lands. H is sole editor of `portal.py` routes. Claim and checkout are **not** split across routers in this contract.
-
----
+Namespace mappings and dedupe by provider/environment/seller. Tenant, operation and attempt identities stay local. Historical namespaces need a reviewed drained-writer migration before activation; this documentation change performs no migration.
 
 ## 10. Portability (do not build a multi-provider framework)
 
-`REF-15`: keep one adapter. Polar is provisional. Paddle/Stripe would implement the same protocol. No second production adapter in APP-1. Switching before the first live payment avoids migrating an active book (`CARD-15`, `CARD-16`). Link/wallets are Polar/Stripe checkout features, not seller choice — see the [portability assessment](../assessments/current/app-altcontext-checkout-provider-portability-and-link-2026-09-22.md).
-
----
+Keep one selected standard Stripe adapter behind the existing protocol. Retain exportable mappings and local keys/usage. An interface does not automatically migrate customers/payment methods or seller tax obligations. No second provider or live cutover is authorized.
 
 ## 11. Acceptance matrix
 
-**Bar for C/H/R merge:** fake `BillingProvider` + real PostgreSQL. Polar sandbox evidence is V, not this spec.
+**Bar for C/H/R merge:** fake `BillingProvider` + real PostgreSQL. Stripe sandbox evidence is V, not this spec.
 
 ### 11.1 Fake-provider (required now)
 
@@ -486,18 +384,18 @@ Shared-file rule: C is sole editor of `polar_provider.py` and the protocol. U wi
 | FP-06 | Second checkout after `expired` | new attempt, new provider key, not the hash-of-URLs collision |
 | FP-07 | Success return URL hit before webhook | usage/entitlement still beta/closed; `GET /usage` not `paid_active` |
 | FP-08 | Webhook duplicate same `(provider, env, seller, event_id)` | 202; projection once |
-| FP-09 | Webhook missing `webhook-id` / bad signature fixture | 401; no inbox row |
+| FP-09 | Webhook missing `Stripe-Signature` / bad signature fixture | 401; no inbox row |
 | FP-10 | Enumerate page includes subscription with no local row | R creates quarantine or mapped projection from `external_id`; never from request tenant header |
-| FP-11 | Enumerate `organization_id` mismatch | quarantine; no tenant invented |
+| FP-11 | Enumerate seller-account namespace mismatch | quarantine; no tenant invented |
 | FP-12 | `--once` worker leased but 0 pages progressed | non-zero exit; not healthy |
 | FP-13 | Sandbox env + live base URL in composition | constructor/composition error; no HTTP |
 | FP-14 | Foreign `attempt_id` / billing id on tenant B | 404/403; no scope change (`APP-SC-02`) |
 | FP-15 | Manage with no customer mapping | 409 `billing_customer_missing` |
 | FP-16 | Billing active does not rotate keys | key ids unchanged (`APP-SC-12`) |
 
-### 11.2 Polar sandbox (later V; do not implement in this lane)
+### 11.2 Stripe sandbox (later V; do not implement in this lane)
 
-Valid and invalid genuine-format signatures (both Standard Webhooks and legacy Polar HMAC), checkout → webhook → paid, cancel, refund_hold, expired session new purchase, sandbox token against live URL rejected, two-tenant isolation. Record sanitized fixtures. No live charges.
+Require genuine Stripe signatures, checkout → durable inbox → reconciliation → entitlement, renewal, failed payment, cancel, refund/dispute, expired-session recovery and interrupted checkout. Test duplicate/reordered events, mode/seller mismatch and two-tenant isolation. Return before reconciliation stays pending. Offline doubles and historical adapter receipts are separate evidence.
 
 ### 11.3 APP-SC mapping
 
@@ -506,7 +404,7 @@ Valid and invalid genuine-format signatures (both Standard Webhooks and legacy P
 | 01 | FP-01 claim atomicity |
 | 02 | FP-14 isolation |
 | 03 | Bearer/CSRF/unverified email |
-| 07 | FP-04 zero Polar on beta |
+| 07 | FP-04 zero Stripe on beta |
 | 10 | server catalog + origin + attempt idempotency |
 | 11 | FP-08/09 inbox + R cursor |
 | 12 | FP-16 keys stable; status table §8.2 |
@@ -519,9 +417,9 @@ APP-SC-19/20 remain beta observation and paid canary; out of this spec.
 
 ## 12. Explicit non-goals
 
-- Production Polar/Paddle/Stripe cutover or secret reads.
+- Production payment cutover or secret reads.
 - Multi-provider runtime framework or Link-as-auth.
-- Implementing `portal.py` / `polar_provider.py` in this planning lane.
+- Implementing `portal.py` / `selected Stripe adapter (planned)` in this planning lane.
 - Changing allowance numbers, prices, or grace policy (operator decisions).
 - Cookie Clerk sessions.
 - Treating protocol unit smoke as launch evidence (`CARD-06`).
@@ -530,4 +428,4 @@ APP-SC-19/20 remain beta observation and paid canary; out of this spec.
 
 ## 13. Open operator inputs (do not invent)
 
-Catalog `plan_code` → Polar product id, `seller_account` / organization id, `APP_PUBLIC_ORIGIN`, `APP_ALLOWED_ORIGINS`, failed-payment grace, stale-entitlement timeout, USD as **development** currency only. Clerk/Polar provisioning remains blocker 821 for rehearsal, not for this contract.
+Catalog `plan_code` → Stripe Price ID, `seller_account` / Stripe account ID, `APP_PUBLIC_ORIGIN`, `APP_ALLOWED_ORIGINS`, failed-payment grace, stale-entitlement timeout, USD as **development** currency only. Clerk/Stripe provisioning remains blocker 821 for rehearsal, not for this contract.

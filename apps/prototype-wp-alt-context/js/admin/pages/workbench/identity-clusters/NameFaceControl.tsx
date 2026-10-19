@@ -38,17 +38,6 @@ const optionSource = (option: ComboboxOption): 'person' | 'cluster' | null => {
   return source ?? null;
 };
 
-const sourceBadgeLabel = (option: ComboboxOption): string | null => {
-  const source = optionSource(option);
-  if (source === 'person') {
-    return __('Person', 'alt-context');
-  }
-  if (source === 'cluster') {
-    return __('Group', 'alt-context');
-  }
-  return null;
-};
-
 /** Band display for backend roster-candidate rows: a band word, never a bare percentage (HAI-08). */
 const matchBandDisplay = (band: ComboboxMatchBand): { label: string; tone: 'high' | 'medium' | 'weak' } => {
   if (band === 'strong') {
@@ -68,9 +57,34 @@ const personMatchesFor = (
   if (!folded) {
     return [];
   }
-  return options.filter(
-    (option) => optionSource(option) === 'person' && normalizeNameFaceLabel(option.label) === folded,
-  );
+  const seen = new Set<string>();
+  return options.filter((option) => {
+    if (optionSource(option) !== 'person' || normalizeNameFaceLabel(option.label) !== folded) {
+      return false;
+    }
+    const key = String(option.value);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+};
+
+/** Producers resolve binding proof before truncation; the control dedupes IDs only. */
+const canonicalNamingOptions = (
+  options: readonly ComboboxOption[],
+): ComboboxOption[] => {
+  const seen = new Set<string>();
+  const canonical: ComboboxOption[] = [];
+  for (const option of options) {
+    const key = String(option.value);
+    if (!seen.has(key)) {
+      seen.add(key);
+      canonical.push(option);
+    }
+  }
+  return canonical;
 };
 
 /** Max overlay rows; Suggested budget first so persons/All Labels are not starved (FIX-6). */
@@ -277,7 +291,14 @@ export const NameFaceControl = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const matchingOptions = React.useMemo(() => matchingOptionsFor(options, value), [options, value]);
+  const canonicalOptions = React.useMemo(
+    () => canonicalNamingOptions(options),
+    [options],
+  );
+  const matchingOptions = React.useMemo(
+    () => matchingOptionsFor(canonicalOptions, value),
+    [canonicalOptions, value],
+  );
   const displayedOptions = React.useMemo(
     () => budgetOverlayOptions(matchingOptions),
     [matchingOptions],
@@ -583,14 +604,6 @@ export const NameFaceControl = ({
               const optionId = `${listboxId}-opt-${index}`;
               const selected = index === activeIndex;
               const bandDisplay = option.band === undefined ? null : matchBandDisplay(option.band);
-              const optionName = sourceBadgeLabel(option)
-                ? sprintf(
-                    /* translators: 1: person/group name, 2: source (Person or Group) */
-                    __('%1$s (%2$s)', 'alt-context'),
-                    option.label,
-                    sourceBadgeLabel(option) ?? '',
-                  )
-                : option.label;
               return (
                 <div
                   key={option.value}
@@ -612,25 +625,11 @@ export const NameFaceControl = ({
                       }
                     }}
                     title={sprintf(__('Confirm match with %s', 'alt-context'), option.label)}
-                    aria-label={
-                      sourceBadgeLabel(option)
-                        ? sprintf(
-                            /* translators: 1: person/group name, 2: source (Person or Group) */
-                            __('Confirm match with %1$s (%2$s)', 'alt-context'),
-                            option.label,
-                            sourceBadgeLabel(option) ?? '',
-                          )
-                        : sprintf(__('Confirm match with %s', 'alt-context'), option.label)
-                    }
+                    aria-label={sprintf(__('Confirm match with %s', 'alt-context'), option.label)}
                   >
                     <span className={`${classPrefix}__suggestion-label`}>
                       {highlightMatch(option.label, value)}
                     </span>
-                    {sourceBadgeLabel(option) && (
-                      <span className="acx-badge acx-badge--source" data-source={option.source ?? ''}>
-                        {sourceBadgeLabel(option)}
-                      </span>
-                    )}
                     {bandDisplay !== null && (
                       <span className={`${classPrefix}__match-score ${classPrefix}__match-score--${bandDisplay.tone}`}>
                         <span className={`${classPrefix}__match-score-band`}>{bandDisplay.label}</span>
@@ -655,7 +654,7 @@ export const NameFaceControl = ({
                     <span className={`${classPrefix}__suggestion-confirm`} aria-hidden="true">
                       ✓
                     </span>
-                    <span className="screen-reader-text">{optionName}</span>
+                    <span className="screen-reader-text">{option.label}</span>
                   </div>
                   {!!option.suggestion_id && !!onRejectSuggestion && (
                     <button

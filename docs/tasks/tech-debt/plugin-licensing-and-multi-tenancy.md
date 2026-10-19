@@ -1,5 +1,7 @@
 # Plugin Usage, Licensing, and Multi-Tenancy Models
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > **Type**: tech-debt registry + today's-default decision
 > **Date**: 2026-06-08
 > **Owner task**: `MAINT-demo-usage-model-20260608`
@@ -67,7 +69,7 @@ Captured so the demo's shortcut does not erase the larger product question. Each
 
 - **Backend multi-tenancy**: deep — `tenant_id` on identities, clusters, jobs, centroids, merge-suggestions, cluster-blocks, clustering reports/feedback, audit events, with tenant-scoped repos/routers and per-tenant purge/export services.
 - **Key provisioning**: `scripts/manage_api_keys` supports tenant list plus key create/revoke per environment; tenant rows themselves are lazy-bootstrapped on first authenticated request.
-- **Single-site SaaS path**: owned by the E16 SaaS Foundation epic (planning; not started) and `roadmap-saas-operations.md` — self-serve signup → tenant → key → metered Free/Pro/Business tiers, vendor auth (WorkOS/Clerk), billing (Polar).
+- **Single-site SaaS path**: owned by the E16 SaaS Foundation epic (planning; not started) and `roadmap-saas-operations.md` — self-serve signup → tenant → key → metered Free/Pro/Business tiers, vendor auth (WorkOS/Clerk), billing (Stripe).
 - **Not present**: any plugin license/activation layer; any org/account-above-tenant hierarchy; any WordPress Multisite support.
 
 ## Promotion criteria (when to un-park)

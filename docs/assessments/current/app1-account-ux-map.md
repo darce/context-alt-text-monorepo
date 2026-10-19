@@ -1,6 +1,8 @@
 # APP-1 account UX map — inventory and ASCII screens
 
-Date: 2026-09-22. Status: COMPLETED docs/map contract — OBSERVED-UI B0 account chrome plus PLANNED-UI B1 browser journeys in the same SSOT map. Coordinator decisions record the B0 browser fix and N1 backend fix as landed; no F0 repair prerequisite remains. Clerk production, Polar sandbox, and WordPress live evidence remain unavailable; this is an offline inventory and contract, not an acceptance claim. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Detailed B1 contracts and ownership live in [`app1-browser-journey-slices-20260922.md`](app1-browser-journey-slices-20260922.md). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
+Date: 2026-09-22. Status: COMPLETED docs/map contract — OBSERVED-UI B0 account chrome plus PLANNED-UI B1 browser journeys in the same SSOT map. Coordinator decisions record the B0 browser fix and N1 backend fix as landed; no F0 repair prerequisite remains. Clerk production, Stripe sandbox, and WordPress live evidence remain unavailable; this is an offline inventory and contract, not an acceptance claim. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Detailed B1 contracts and ownership live in [`app1-browser-journey-slices-20260922.md`](app1-browser-journey-slices-20260922.md). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
 
 Canon (stable IDs, latest, never pin): [heuristics-canon](https://github.com/darce/heuristics-canon) `REF-15`, `CARD-06`, `CARD-15`, `DOM-03`. Also `NAV-08`, `NAV-07`, `RLSE-04`, `FORM-09`, `CARD-12`, `CARD-16`.
 
@@ -8,7 +10,7 @@ Canon (stable IDs, latest, never pin): [heuristics-canon](https://github.com/dar
 
 Author the account screen contract before browser code (`CARD-06`). Visible **Sign in**, **Create account**, **User**, and **Sign out**. Unavailable configuration is a designed screen with those controls disabled or absent. Clerk authenticates a person. Tenant UUID and API keys stay existing backend authority. No fake tenant claims (`DOM-03`). Wrap Clerk so a later identity swap is an adapter change (`REF-15`, `CARD-16`). Sign-out is cheap and reversible at session scope; key revoke is not this surface (`CARD-15`).
 
-Account screens and flows below are **OBSERVED-UI** in `apps/app-portal`. Production Clerk and the Polar sandbox remain unprovisioned; this document does not claim live-provider evidence. The same JSON map now extends into **PLANNED-UI** claim, keys, usage, WordPress guidance, and billing journeys using current backend contracts; no B1 source implementation is included in this docs lane.
+Account screens and flows below are **OBSERVED-UI** in `apps/app-portal`. Production Clerk and the Stripe sandbox remain unprovisioned; this document does not claim live-provider evidence. The same JSON map now extends into **PLANNED-UI** claim, keys, usage, WordPress guidance, and billing journeys using current backend contracts; no B1 source implementation is included in this docs lane.
 
 ## B0 browser-fix invariants before B1
 
@@ -263,11 +265,11 @@ No high finding blocks this planning extension. The JSON keeps every B0 screen/a
 - Env in browser: `VITE_CLERK_PUBLISHABLE_KEY`, optional `VITE_CLERK_FAPI`, public `VITE_PORTAL_ENABLED`.
 - Routed `<SignIn />` / `<SignUp />` plus `ClerkProvider` / `UserButton` / `useAuth`.
 - Test doubles live only under `src/__tests__/`. Production has no auth bypass.
-- Production Clerk and Polar sandbox provisioning remain outside this lane. K/U and C/B use injected typed clients; I1 owns authenticated transport and shell wiring after both branches land.
+- Production Clerk and Stripe sandbox provisioning remain outside this lane. K/U and C/B use injected typed clients; I1 owns authenticated transport and shell wiring after both branches land.
 
 ## Remaining limitations
 
-- No live Clerk, Polar, or WordPress evidence. CSP file is an artifact, not a deployed header.
+- No live Clerk, Stripe, or WordPress evidence. CSP file is an artifact, not a deployed header.
 - B1 claim, key, usage, WordPress guidance, and billing screens are mapped as PLANNED-UI only; no source implementation is claimed here.
 - Backend `portal_auth` / `PortalIdentityService` were not edited.
 

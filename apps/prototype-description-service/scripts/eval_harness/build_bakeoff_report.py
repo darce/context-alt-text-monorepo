@@ -39,8 +39,33 @@ import math
 import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+try:
+    from .manifest import (
+        IncompleteSubjects,
+        LegacySubjects,
+        SubjectEvidenceError,
+        SubjectObservation,
+        SubjectRole,
+        SupportedEmpty,
+        ValidatedSubjectDocument,
+        validate_subject_document,
+    )
+except ImportError:  # invoked by file path rather than as a module
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from scripts.eval_harness.manifest import (
+        IncompleteSubjects,
+        LegacySubjects,
+        SubjectEvidenceError,
+        SubjectObservation,
+        SubjectRole,
+        SupportedEmpty,
+        ValidatedSubjectDocument,
+        validate_subject_document,
+    )
 
 try:
     from ._pathtext import _printable_path
@@ -77,10 +102,19 @@ _MANDATORY_LABEL_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _METRIC_BACKING_FIELDS = ("reference_facts", "spatial_facts", "face_boxes")
 
 
-def _load_manifest(path: str) -> dict[int, dict[str, Any]]:
+def _load_manifest(
+    path: str,
+    *,
+    role: SubjectRole | None = None,
+    subject_documents: list[ValidatedSubjectDocument] | None = None,
+) -> dict[int, dict[str, Any]]:
     raw = json.loads(Path(path).read_text())
     if not isinstance(raw, Mapping):
         raise ValueError(f"manifest {path} must contain a JSON object")
+    if role is not None:
+        document = validate_subject_document(raw, role=role)
+        if subject_documents is not None:
+            subject_documents.append(document)
     entries = raw.get("entries", raw.get("items", []))
     if not isinstance(entries, list):
         raise ValueError(f"manifest {path} entries must be a JSON array")
@@ -148,11 +182,7 @@ def _index_run(path: str) -> dict[int, dict[str, Any]]:
 
 
 def _finite_number(value: Any) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-    )
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
 def _nonnegative_int(value: Any) -> bool:
@@ -166,9 +196,7 @@ def render_delta_banner(delta: Mapping[str, Any] | None) -> str:
     if delta.get("refused"):
         reason = html.escape(str(delta.get("reason") or "refusing Δ across straddled stamps"))
         invariant = html.escape(str(delta.get("invariant") or "delta_refuses_straddled_stamps"))
-        return (
-            f'<p class="err">Δ REFUSED ({invariant}): {reason}</p>'
-        )
+        return f'<p class="err">Δ REFUSED ({invariant}): {reason}</p>'
     power = delta.get("power") if isinstance(delta.get("power"), Mapping) else {}
     headline = html.escape(str(power.get("headline") or ""))
     metrics = delta.get("metrics") if isinstance(delta.get("metrics"), Mapping) else {}
@@ -280,7 +308,9 @@ def _pick_varied(manifest: dict[int, dict], runs: dict[str, dict[int, dict]], n:
     return pick[:n]
 
 
-def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, hourly_rate: float | None = None) -> str:
+def _card_html(
+    mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, hourly_rate: float | None = None
+) -> str:
     fname = html.escape(Path(entry.get("path", "")).name)
     idents = entry.get("present_identities", [])
     chips = (
@@ -316,13 +346,15 @@ def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, 
             lat_v = s.get("latency_s")
             lat = f"{lat_v:.2f}s" if _finite_number(lat_v) else "—"
             # Deterministic per-image cost = flat instance rate x inference seconds.
-            cost = (f' · ${hourly_rate * lat_v / 3600:.5f}/exposure'
-                    if hourly_rate is not None and _finite_number(lat_v) else "")
+            cost = (
+                f" · ${hourly_rate * lat_v / 3600:.5f}/exposure"
+                if hourly_rate is not None and _finite_number(lat_v)
+                else ""
+            )
             calls_v = s.get("model_calls")
             calls = str(calls_v) if _nonnegative_int(calls_v) else "not captured"
             perf = (
-                f'<span class="perf">{lat}{cost} · {calls} call(s)'
-                f'{html.escape(_tokens_label(s.get("tokens")))}</span>'
+                f'<span class="perf">{lat}{cost} · {calls} call(s){html.escape(_tokens_label(s.get("tokens")))}</span>'
             )
         cls = "model warn" if NON_COMPARABLE_BADGE in label else "model"
         blocks.append(
@@ -575,11 +607,8 @@ def _load_record_info(path: str) -> dict[str, Any]:
         "exposures": len(items),
         "calls": sum(calls) if all(_nonnegative_int(value) for value in calls) else None,
         "calls_complete": all(_nonnegative_int(value) for value in calls),
-        "errors": sum(
-            1 for item in items if isinstance(item, Mapping) and item.get("error")
-        ),
-        "monitoring": isinstance(raw.get("timing"), Mapping)
-        and isinstance(raw.get("gpu"), Mapping),
+        "errors": sum(1 for item in items if isinstance(item, Mapping) and item.get("error")),
+        "monitoring": isinstance(raw.get("timing"), Mapping) and isinstance(raw.get("gpu"), Mapping),
     }
 
 
@@ -702,15 +731,11 @@ def _corpus_readiness_reasons(manifest: Mapping[int, Mapping[str, Any]]) -> list
     total = len(manifest)
     reasons: list[str] = []
     if total < _MIN_GOLDEN_ENTRIES:
-        reasons.append(
-            f"Golden-100 data unavailable: manifest contains {total} entries"
-        )
+        reasons.append(f"Golden-100 data unavailable: manifest contains {total} entries")
 
     for field, aliases in _MANDATORY_LABEL_FIELDS:
         populated_ids = [
-            media_id
-            for media_id, entry in manifest.items()
-            if _is_populated(_entry_value(entry, field, aliases))
+            media_id for media_id, entry in manifest.items() if _is_populated(_entry_value(entry, field, aliases))
         ]
         if len(populated_ids) != total:
             missing = sorted(set(manifest) - set(populated_ids))
@@ -719,21 +744,15 @@ def _corpus_readiness_reasons(manifest: Mapping[int, Mapping[str, Any]]) -> list
                 f"populated (missing media_ids {', '.join(str(mid) for mid in missing[:8])})"
             )
         counts = Counter(
-            label
-            for entry in manifest.values()
-            for label in _label_values(_entry_value(entry, field, aliases))
+            label for entry in manifest.values() for label in _label_values(_entry_value(entry, field, aliases))
         )
         under = sorted(label for label, count in counts.items() if count < _MIN_STRATUM_CELL)
         if under:
             detail = ", ".join(f"{label}={counts[label]}" for label in under[:8])
-            reasons.append(
-                f"{field} strata below minimum cell size {_MIN_STRATUM_CELL}: {detail}"
-            )
+            reasons.append(f"{field} strata below minimum cell size {_MIN_STRATUM_CELL}: {detail}")
 
     for field in _METRIC_BACKING_FIELDS:
-        populated = sum(
-            1 for entry in manifest.values() if _is_populated(entry.get(field))
-        )
+        populated = sum(1 for entry in manifest.values() if _is_populated(entry.get(field)))
         if populated < _MIN_METRIC_BACKING_ENTRIES:
             reasons.append(
                 f"{field} metric backing unavailable: {populated}/{total} entries populated "
@@ -742,9 +761,74 @@ def _corpus_readiness_reasons(manifest: Mapping[int, Mapping[str, Any]]) -> list
     return reasons
 
 
+@dataclass(frozen=True)
+class SubjectComparison:
+    result: Literal["disjoint", "overlap", "incomparable"]
+    code: Literal[
+        "legacy_disjoint",
+        "legacy_overlap",
+        "supported_empty",
+        "missing_subject_evidence",
+        "partial_subject_evidence",
+        "unknown_subject_evidence",
+        "identity_authority_unresolved",
+    ]
+
+
+def compare_subjects(left: SubjectObservation, right: SubjectObservation) -> SubjectComparison:
+    """No structured person identity can establish disjointness in v1."""
+    for operand in (left, right):
+        if isinstance(operand, IncompleteSubjects):
+            return SubjectComparison("incomparable", operand.reason)
+    if isinstance(left, SupportedEmpty) or isinstance(right, SupportedEmpty):
+        return SubjectComparison("disjoint", "supported_empty")
+    if isinstance(left, LegacySubjects) and isinstance(right, LegacySubjects):
+        if left.labels & right.labels:
+            return SubjectComparison("overlap", "legacy_overlap")
+        return SubjectComparison("disjoint", "legacy_disjoint")
+    return SubjectComparison("incomparable", "identity_authority_unresolved")
+
+
+def _subject_location(document: ValidatedSubjectDocument, ordinal: int) -> str:
+    role = document.role
+    return role.kind + (f" {role.selection_index}" if role.selection_index else "") + f" entry {ordinal}"
+
+
+def _subject_comparison_reasons(documents: Sequence[ValidatedSubjectDocument]) -> list[str]:
+    reasons: list[str] = []
+    for document in documents:
+        for ordinal, observation in enumerate(document.observations, 1):
+            if isinstance(observation, IncompleteSubjects):
+                reasons.append(
+                    f"subject comparison incomparable: {observation.reason} ({_subject_location(document, ordinal)})"
+                )
+    if not documents:
+        return reasons
+    reported, *selections = documents
+    for selection in selections:
+        overlap: set[str] = set()
+        for left_index, left in enumerate(reported.observations, 1):
+            for right_index, right in enumerate(selection.observations, 1):
+                comparison = compare_subjects(left, right)
+                if comparison.result == "overlap":
+                    assert isinstance(left, LegacySubjects) and isinstance(right, LegacySubjects)
+                    overlap.update(left.labels & right.labels)
+                elif comparison.code == "identity_authority_unresolved":
+                    reasons.append(
+                        "subject comparison incomparable: identity_authority_unresolved "
+                        f"({_subject_location(reported, left_index)}; {_subject_location(selection, right_index)})"
+                    )
+        if overlap:
+            reasons.append(
+                f"selection manifest {selection.role.selection_index!r} overlaps reported subject values: {sorted(overlap)[:8]}"
+            )
+    return reasons
+
+
 def _selection_disjointness_reasons(
     reported: Mapping[int, Mapping[str, Any]],
     selections: Mapping[str, Mapping[int, Mapping[str, Any]]],
+    subject_documents: Sequence[ValidatedSubjectDocument] | None = None,
 ) -> list[str]:
     """Require an auditable selection/calibration frame before a bake-off pass."""
     if not selections:
@@ -770,14 +854,15 @@ def _selection_disjointness_reasons(
             "selection disjointness unavailable: reported manifest lacks a non-empty sha256 "
             f"for {len(reported) - len(reported_sha)} entr{'y' if len(reported) - len(reported_sha) == 1 else 'ies'}"
         )
-    if any(not _entry_subjects(entry) for entry in reported.values()):
-        reasons.append(
-            "selection disjointness unavailable: reported manifest lacks explicit subject evidence "
-            "for one or more entries"
+    if subject_documents is None:
+        subject_documents = [
+            validate_subject_document({"entries": list(reported.values())}, role=SubjectRole("reported"))
+        ]
+        subject_documents.extend(
+            validate_subject_document({"entries": list(selection.values())}, role=SubjectRole("selection", index))
+            for index, selection in enumerate(selections.values(), 1)
         )
-    reported_subjects = {
-        subject for entry in reported.values() for subject in _entry_subjects(entry)
-    }
+    reasons.extend(_subject_comparison_reasons(subject_documents))
 
     for label, selection in selections.items():
         prefix = f"selection manifest {label!r}"
@@ -794,8 +879,6 @@ def _selection_disjointness_reasons(
             reasons.append(
                 f"{prefix} lacks a non-empty sha256 for {missing_sha} entr{'y' if missing_sha == 1 else 'ies'}"
             )
-        if any(not _entry_subjects(entry) for entry in selection.values()):
-            reasons.append(f"{prefix} lacks explicit subject evidence for one or more entries")
         media_overlap = sorted(set(selection) & reported_media)
         sha_overlap = sorted(selection_sha & reported_sha)
         path_overlap = sorted(
@@ -806,24 +889,12 @@ def _selection_disjointness_reasons(
             }
             & reported_paths
         )
-        subject_overlap = sorted(
-            {
-                subject
-                for entry in selection.values()
-                for subject in _entry_subjects(entry)
-            }
-            & reported_subjects
-        )
         if media_overlap:
             reasons.append(f"{prefix} overlaps reported media_id values: {media_overlap[:8]}")
         if sha_overlap:
             reasons.append(f"{prefix} overlaps reported sha256 values: {sha_overlap[:4]}")
         if path_overlap:
             reasons.append(f"{prefix} overlaps reported paths: {path_overlap[:4]}")
-        if subject_overlap:
-            reasons.append(
-                f"{prefix} overlaps reported subject values: {subject_overlap[:8]}"
-            )
     return reasons
 
 
@@ -839,6 +910,7 @@ def _gate_evaluation(
     score_ok: Mapping[str, str],
     foreign: Mapping[str, str] | None = None,
     selection_manifests: Mapping[str, Mapping[int, Mapping[str, Any]]] | None = None,
+    subject_documents: Sequence[ValidatedSubjectDocument] | None = None,
 ) -> dict[str, Any]:
     """Evaluate the sealed bake-off readiness contract without inventing data."""
     reasons: list[str] = []
@@ -847,7 +919,7 @@ def _gate_evaluation(
     data_reasons = _corpus_readiness_reasons(manifest)
     reasons.extend(data_reasons)
     axes["data"] = "pass" if not data_reasons else "not_ready"
-    selection_reasons = _selection_disjointness_reasons(manifest, selection_manifests or {})
+    selection_reasons = _selection_disjointness_reasons(manifest, selection_manifests or {}, subject_documents)
     reasons.extend(selection_reasons)
     axes["selection"] = "pass" if not selection_reasons else "not_ready"
 
@@ -858,9 +930,7 @@ def _gate_evaluation(
     ]
     serving_ids = [candidate_id for candidate_id in expected_candidates if candidate_id in serving_failures]
     unexpected_serving = sorted(set(serving_failures) - set(expected_candidates))
-    missing_incumbents = [
-        incumbent_id for incumbent_id in expected_incumbents if incumbent_id not in records
-    ]
+    missing_incumbents = [incumbent_id for incumbent_id in expected_incumbents if incumbent_id not in records]
     missing_baselines = [label for label in required_baselines if label not in baselines]
     errored = [label for label, info in (*records.items(), *baselines.items()) if info["errors"]]
     foreign = foreign or {}
@@ -871,9 +941,7 @@ def _gate_evaluation(
     }
     foreign_required = sorted(set(foreign) & required_labels)
     required_records = [
-        (label, records[label])
-        for label in (*expected_candidates, *expected_incumbents)
-        if label in records
+        (label, records[label]) for label in (*expected_candidates, *expected_incumbents) if label in records
     ] + [(label, baselines[label]) for label in required_baselines if label in baselines]
     incomplete_media: list[str] = []
     manifest_ids = set(manifest)
@@ -908,21 +976,23 @@ def _gate_evaluation(
     if incomplete_media:
         reasons.append("incomplete media-id multiset: " + "; ".join(sorted(incomplete_media)))
     if foreign_required:
-        reasons.append(
-            "foreign run records cannot satisfy bakeoff gate: " + ", ".join(foreign_required)
-        )
+        reasons.append("foreign run records cannot satisfy bakeoff gate: " + ", ".join(foreign_required))
     if errored:
         reasons.append("run records contain item errors: " + ", ".join(sorted(errored)))
-    axes["model"] = "pass" if not (
-        missing_roster_contract
-        or missing_candidates
-        or serving_ids
-        or missing_incumbents
-        or missing_baselines
-        or incomplete_media
-        or foreign_required
-        or errored
-    ) else "not_ready"
+    axes["model"] = (
+        "pass"
+        if not (
+            missing_roster_contract
+            or missing_candidates
+            or serving_ids
+            or missing_incumbents
+            or missing_baselines
+            or incomplete_media
+            or foreign_required
+            or errored
+        )
+        else "not_ready"
+    )
 
     missing_score = [
         candidate_id
@@ -933,24 +1003,26 @@ def _gate_evaluation(
     ]
     if missing_score:
         reasons.append("missing successful score markers: " + ", ".join(sorted(missing_score)))
-    axes["infra"] = "pass" if not (
-        missing_roster_contract
-        or serving_ids
-        or unexpected_serving
-        or missing_candidates
-        or missing_incumbents
-        or incomplete_media
-        or foreign_required
-        or errored
-        or missing_score
-    ) else "not_ready"
+    axes["infra"] = (
+        "pass"
+        if not (
+            missing_roster_contract
+            or serving_ids
+            or unexpected_serving
+            or missing_candidates
+            or missing_incumbents
+            or incomplete_media
+            or foreign_required
+            or errored
+            or missing_score
+        )
+        else "not_ready"
+    )
 
-    monitor_labels = [
-        candidate_id for candidate_id in expected_candidates if candidate_id in records
-    ] + [incumbent_id for incumbent_id in expected_incumbents if incumbent_id in records]
-    missing_monitoring = [
-        label for label in monitor_labels if not records[label]["monitoring"]
+    monitor_labels = [candidate_id for candidate_id in expected_candidates if candidate_id in records] + [
+        incumbent_id for incumbent_id in expected_incumbents if incumbent_id in records
     ]
+    missing_monitoring = [label for label in monitor_labels if not records[label]["monitoring"]]
     if missing_monitoring:
         reasons.append("missing timing/gpu monitoring mappings: " + ", ".join(sorted(missing_monitoring)))
     if (
@@ -1011,35 +1083,57 @@ def build_parser() -> argparse.ArgumentParser:
         "--run", action="append", default=[], metavar="LABEL=PATH", help="repeatable; model label = run-record path"
     )
     ap.add_argument(
-        "--baseline-run", action="append", default=[], metavar="LABEL=PATH",
+        "--baseline-run",
+        action="append",
+        default=[],
+        metavar="LABEL=PATH",
         help="repeatable; one of the required interpretable baseline arms = run-record path",
     )
     ap.add_argument(
-        "--serving-gate-failed", action="append", default=[], metavar="ID=PATH",
+        "--serving-gate-failed",
+        action="append",
+        default=[],
+        metavar="ID=PATH",
         help="repeatable; candidate id = machine-readable serving-gate-failed record",
     )
     ap.add_argument(
-        "--expected-candidate", action="append", default=[], metavar="ID",
+        "--expected-candidate",
+        action="append",
+        default=[],
+        metavar="ID",
         help="repeatable; sealed competing candidate id required by --bakeoff-gate",
     )
     ap.add_argument(
-        "--expected-incumbent", action="append", default=[], metavar="ID",
+        "--expected-incumbent",
+        action="append",
+        default=[],
+        metavar="ID",
         help="repeatable; incumbent id required by --bakeoff-gate",
     )
     ap.add_argument(
-        "--required-baseline", action="append", default=[], metavar="LABEL",
+        "--required-baseline",
+        action="append",
+        default=[],
+        metavar="LABEL",
         help="repeatable; assert/document one of the four baseline arms required by --bakeoff-gate",
     )
     ap.add_argument(
-        "--score-ok", action="append", default=[], metavar="ID=PATH",
+        "--score-ok",
+        action="append",
+        default=[],
+        metavar="ID=PATH",
         help="repeatable; marker written only after a candidate score succeeds",
     )
     ap.add_argument(
-        "--bakeoff-gate", action="store_true",
+        "--bakeoff-gate",
+        action="store_true",
         help="render and enforce the sealed roster/data/selection/infra/monitoring readiness gate",
     )
     ap.add_argument(
-        "--selection-manifest", action="append", default=[], metavar="PATH",
+        "--selection-manifest",
+        action="append",
+        default=[],
+        metavar="PATH",
         help="repeatable; model/prompt/threshold selection corpus that must be disjoint from --manifest",
     )
     ap.add_argument("--images-dir")
@@ -1049,22 +1143,34 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--embed-images", action="store_true")
     ap.add_argument("--thumb-px", type=int, default=_THUMB_DEFAULT)
     ap.add_argument("--title", default="Bake-off report")
-    ap.add_argument("--cost-total", type=float, default=None,
-                    help="total run cost in USD; pair with --cost-denominator")
     ap.add_argument(
-        "--cost-denominator", choices=("exposure", "call"), default=None,
+        "--cost-total", type=float, default=None, help="total run cost in USD; pair with --cost-denominator"
+    )
+    ap.add_argument(
+        "--cost-denominator",
+        choices=("exposure", "call"),
+        default=None,
         help="denominator for --cost-total: per model/image exposure or measured model call",
     )
-    ap.add_argument("--hourly-rate", type=float, default=None,
-                    help="instance $/hr; renders deterministic per-image cost = rate x inference seconds")
+    ap.add_argument(
+        "--hourly-rate",
+        type=float,
+        default=None,
+        help="instance $/hr; renders deterministic per-image cost = rate x inference seconds",
+    )
     ap.add_argument(
         "--delta-json",
         default=None,
         help="optional scored baseline_delta JSON object; refused Δ is rendered in place of numbers",
     )
-    ap.add_argument("--allow-foreign-run", action="append", default=[], metavar="LABEL",
-                    help="repeatable; consent to render LABEL even though it ran against a different "
-                         "manifest. The column is badged non-comparable instead of passing as a control.")
+    ap.add_argument(
+        "--allow-foreign-run",
+        action="append",
+        default=[],
+        metavar="LABEL",
+        help="repeatable; consent to render LABEL even though it ran against a different "
+        "manifest. The column is badged non-comparable instead of passing as a control.",
+    )
     return ap
 
 
@@ -1089,9 +1195,7 @@ def main(argv: list[str] | None = None) -> int:
         required_baselines = tuple(dict.fromkeys((*requested_baselines, *_REQUIRED_BASELINE_LABELS)))
         unknown_baselines = set(required_baselines) - set(_REQUIRED_BASELINE_LABELS)
         if unknown_baselines:
-            raise ValueError(
-                "unknown --required-baseline label(s): " + ", ".join(sorted(unknown_baselines))
-            )
+            raise ValueError("unknown --required-baseline label(s): " + ", ".join(sorted(unknown_baselines)))
         run_specs = _parse_label_path(args.run, option="--run")
         baseline_specs = _parse_label_path(
             args.baseline_run,
@@ -1106,8 +1210,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(args.selection_manifest) != len(set(args.selection_manifest)):
             raise ValueError("duplicate --selection-manifest path")
         serving_failures = {
-            candidate_id: _load_serving_gate_failure(path, candidate_id)
-            for candidate_id, path in serving_specs.items()
+            candidate_id: _load_serving_gate_failure(path, candidate_id) for candidate_id, path in serving_specs.items()
         }
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         ap.error(str(exc))
@@ -1121,13 +1224,15 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_NOT_COMPARABLE
 
     try:
-        manifest = _load_manifest(args.manifest)
+        subject_documents: list[ValidatedSubjectDocument] = []
+        manifest = _load_manifest(args.manifest, role=SubjectRole("reported"), subject_documents=subject_documents)
         selection_manifests = {
-            path: _load_manifest(path) for path in args.selection_manifest
+            str(index): _load_manifest(path, role=SubjectRole("selection", index), subject_documents=subject_documents)
+            for index, path in enumerate(args.selection_manifest, 1)
         }
         run_info = {label: _load_record_info(path) for label, path in run_specs.items()}
         baseline_info = {label: _load_record_info(path) for label, path in baseline_specs.items()}
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError, SubjectEvidenceError) as exc:
         print(f"error: unable to load bake-off input: {exc}", file=sys.stderr)
         return EXIT_NOT_COMPARABLE
     if not run_info and not baseline_info and not serving_failures and not args.bakeoff_gate:
@@ -1155,8 +1260,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         return EXIT_NOT_COMPARABLE
     if foreign:
-        badged = {(f"{label}{NON_COMPARABLE_BADGE} ({foreign[label]})" if label in foreign else label): cells
-                  for label, cells in runs.items()}
+        badged = {
+            (f"{label}{NON_COMPARABLE_BADGE} ({foreign[label]})" if label in foreign else label): cells
+            for label, cells in runs.items()
+        }
         if len(badged) != len(runs):
             print("error: badged run labels collide; rename the --run labels", file=sys.stderr)
             return EXIT_NOT_COMPARABLE
@@ -1176,6 +1283,7 @@ def main(argv: list[str] | None = None) -> int:
             score_ok=score_specs,
             foreign=foreign,
             selection_manifests=selection_manifests,
+            subject_documents=subject_documents,
         )
     else:
         evaluation = None
@@ -1204,7 +1312,9 @@ def main(argv: list[str] | None = None) -> int:
     durable_stage_costs = _format_durable_stage_costs(provenances)
     if durable_stage_costs:
         subtitle += f" · durable stage costs: {durable_stage_costs}"
-    doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate)
+    doc = build(
+        manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate
+    )
     if evaluation is not None:
         doc = doc.replace("<main>", "<main>" + _gate_html(evaluation, serving_failures), 1)
     if args.delta_json:

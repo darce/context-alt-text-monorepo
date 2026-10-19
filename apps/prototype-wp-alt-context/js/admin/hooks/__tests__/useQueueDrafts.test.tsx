@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,12 +16,14 @@ import type {
   DescribeRunItemsResponse,
 } from '../../api/describeApi';
 import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
+import { queryKeys } from '../../api/queryKeys';
 
 vi.mock('../../api/describeApi', async () => {
   const actual = await vi.importActual<typeof import('../../api/describeApi')>('../../api/describeApi');
   return {
     ...actual,
     fetchDescribeRunItems: vi.fn(),
+    fetchDescribeRuns: vi.fn(),
     fetchDescriptionHistory: vi.fn(),
     applyDescribeRunDrafts: vi.fn(),
     correctDescriptionHistoryItem: vi.fn(),
@@ -63,20 +65,111 @@ const historyItem = (overrides: Partial<DescriptionHistoryItem> = {}): Descripti
   ...overrides,
 });
 
-const historyResponse = (
-  items: DescriptionHistoryItem[],
-  total = items.length,
-): DescriptionHistoryResponse => ({
+const historyResponse = (items: DescriptionHistoryItem[], total = items.length): DescriptionHistoryResponse => ({
   total,
   items,
 });
 
 describe('useQueueDrafts', () => {
+  it('refreshes existing proposals after curation sync drains without submitting or applying a run', async () => {
+    client.setQueryData(queryKeys.sync.health(), {
+      outbox: { state: 'ok', pending: 1 },
+      last_pull: { at: 'before', ok: true },
+    });
+    vi.mocked(describeApi.fetchDescribeRuns).mockResolvedValue({
+      items: [{ run_id: 'run-abc', created_at: 200, media_ids: [71] }],
+      total: 1,
+      next_offset: null,
+    });
+    fetchRunItemsMock.mockResolvedValue(runResponse([runItem({ alt_text_draft: 'A woman waves.' })]));
+    const { result } = renderHook(() => useQueueDrafts([71]), { wrapper });
+    await waitFor(() => expect(result.current.draftsByMediaId[71]?.draftText).toBe('A woman waves.'));
+    fetchRunItemsMock.mockResolvedValue(runResponse([runItem({ alt_text_draft: 'Ada waves.' })]));
+    act(() => {
+      client.setQueryData(queryKeys.sync.health(), {
+        outbox: { state: 'ok', pending: 0 },
+        last_pull: { at: 'after', ok: true },
+      });
+    });
+    await waitFor(() => expect(result.current.draftsByMediaId[71]?.draftText).toBe('Ada waves.'));
+    expect(applyRunMock).not.toHaveBeenCalled();
+    expect(correctMock).not.toHaveBeenCalled();
+  });
+
+  it('loads older pages explicitly and keeps an old selected run distinct from the latest', async () => {
+    vi.mocked(describeApi.fetchDescribeRuns).mockImplementation((_ids, offset) =>
+      Promise.resolve({
+        items: [
+          { run_id: offset === 0 ? 'new-run' : 'old-run', created_at: offset === 0 ? 200 : 100, media_ids: [71] },
+        ],
+        total: 2,
+        next_offset: offset === 0 ? 1 : null,
+      }),
+    );
+    fetchRunItemsMock.mockImplementation((id) =>
+      Promise.resolve({ run_id: id, items: [runItem({ alt_text_draft: id + ' draft' })] }),
+    );
+    const { result } = renderHook(() => useQueueDrafts([71], 'old-run'), { wrapper });
+    await waitFor(() => expect(result.current.draftsByMediaId[71]?.runId).toBe('old-run'));
+    expect(result.current.hasOlderDescriptions).toBe(true);
+    result.current.loadOlderDescriptions();
+    await waitFor(() => expect(result.current.hasOlderDescriptions).toBe(false));
+    expect(result.current.historyByMediaId[71].map((draft) => draft.runId)).toEqual(['new-run', 'old-run']);
+    expect(result.current.draftsByMediaId[71]?.runId).toBe('old-run');
+    expect(correctMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps available drafts while reporting a failed historical run read', async () => {
+    vi.mocked(describeApi.fetchDescribeRuns).mockResolvedValue({
+      items: [
+        { run_id: 'new-run', created_at: 200, media_ids: [71] },
+        { run_id: 'lost-run', created_at: 100, media_ids: [71] },
+      ],
+      total: 2,
+      next_offset: null,
+    });
+    fetchHistoryMock.mockResolvedValue(historyResponse([]));
+    fetchRunItemsMock.mockImplementation((id) =>
+      id === 'lost-run' ? Promise.reject(new Error('unavailable')) : Promise.resolve(runResponse([runItem()])),
+    );
+    const { result } = renderHook(() => useQueueDrafts([71]), { wrapper });
+    await waitFor(() => expect(result.current.historyPartial).toBe(true));
+    expect(result.current.draftsByMediaId[71]?.draftText).toBe('A flower.');
+    expect(result.current.isError).toBe(false);
+  });
+
+  it('discovers unapplied drafts on ordinary rows and keeps previous run versions', async () => {
+    vi.mocked(describeApi.fetchDescribeRuns).mockResolvedValue({
+      items: [
+        { run_id: 'new-run', created_at: 200, media_ids: [71] },
+        { run_id: 'old-run', created_at: 100, media_ids: [71] },
+      ],
+      total: 2,
+      next_offset: null,
+    });
+    fetchHistoryMock.mockResolvedValue(historyResponse([]));
+    fetchRunItemsMock.mockImplementation((id) =>
+      Promise.resolve({
+        run_id: id,
+        items: [runItem({ alt_text_draft: id === 'new-run' ? 'New draft.' : 'Earlier draft.' })],
+      }),
+    );
+    const { result } = renderHook(() => useQueueDrafts([71]), { wrapper });
+    await waitFor(() => expect(result.current.draftsByMediaId[71]?.draftText).toBe('New draft.'));
+    expect(result.current.historyByMediaId[71].map((draft) => draft.draftText)).toEqual([
+      'New draft.',
+      'Earlier draft.',
+    ]);
+    expect(applyRunMock).not.toHaveBeenCalled();
+    expect(correctMock).not.toHaveBeenCalled();
+  });
+
   let client: QueryClient;
   let wrapper: ReturnType<typeof createQueryWrapper>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(describeApi.fetchDescribeRuns).mockResolvedValue({ items: [], total: 0, next_offset: null });
     client = buildTestQueryClient();
     wrapper = createQueryWrapper(client);
   });
@@ -230,16 +323,10 @@ describe('useQueueDrafts', () => {
   it('finds a wanted draft on page 2 and calls offsets 0 then 50', async () => {
     fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
       if (offset === 0) {
-        return historyResponse(
-          [historyItem({ media_id: 1, generated_alt_text: 'Filler.' })],
-          100,
-        );
+        return historyResponse([historyItem({ media_id: 1, generated_alt_text: 'Filler.' })], 100);
       }
       if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
-        return historyResponse(
-          [historyItem({ media_id: 71, generated_alt_text: 'A flower.' })],
-          100,
-        );
+        return historyResponse([historyItem({ media_id: 71, generated_alt_text: 'A flower.' })], 100);
       }
       throw new Error(`unexpected offset ${offset}`);
     });
@@ -266,16 +353,10 @@ describe('useQueueDrafts', () => {
   it('stops paging once every wanted id has a usable draft', async () => {
     fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
       if (offset === 0) {
-        return historyResponse(
-          [historyItem({ media_id: 71, generated_alt_text: 'A flower.' })],
-          200,
-        );
+        return historyResponse([historyItem({ media_id: 71, generated_alt_text: 'A flower.' })], 200);
       }
       if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
-        return historyResponse(
-          [historyItem({ media_id: 70, generated_alt_text: 'A bridge.' })],
-          200,
-        );
+        return historyResponse([historyItem({ media_id: 70, generated_alt_text: 'A bridge.' })], 200);
       }
       throw new Error(`unexpected offset ${offset}`);
     });
@@ -295,16 +376,10 @@ describe('useQueueDrafts', () => {
   it('stops paging once offset reaches total', async () => {
     fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
       if (offset === 0) {
-        return historyResponse(
-          [historyItem({ media_id: 1, generated_alt_text: 'Filler.' })],
-          75,
-        );
+        return historyResponse([historyItem({ media_id: 1, generated_alt_text: 'Filler.' })], 75);
       }
       if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
-        return historyResponse(
-          [historyItem({ media_id: 2, generated_alt_text: 'More filler.' })],
-          75,
-        );
+        return historyResponse([historyItem({ media_id: 2, generated_alt_text: 'More filler.' })], 75);
       }
       throw new Error(`unexpected offset ${offset}`);
     });
@@ -323,10 +398,7 @@ describe('useQueueDrafts', () => {
   it('stops paging when a page returns zero items', async () => {
     fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
       if (offset === 0) {
-        return historyResponse(
-          [historyItem({ media_id: 1, generated_alt_text: 'Filler.' })],
-          500,
-        );
+        return historyResponse([historyItem({ media_id: 1, generated_alt_text: 'Filler.' })], 500);
       }
       if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
         return historyResponse([], 500);
@@ -348,10 +420,7 @@ describe('useQueueDrafts', () => {
   it('stops at the page cap and sets historyTruncated when ids remain uncovered', async () => {
     const total = QUEUE_DRAFTS_HISTORY_MAX_PAGES * QUEUE_DRAFTS_HISTORY_PAGE_SIZE + 50;
     fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) =>
-      historyResponse(
-        [historyItem({ media_id: 1, generated_alt_text: `Filler at ${offset}.` })],
-        total,
-      ),
+      historyResponse([historyItem({ media_id: 1, generated_alt_text: `Filler at ${offset}.` })], total),
     );
 
     const { result } = renderHook(() => useQueueDrafts([71]), {
@@ -368,10 +437,7 @@ describe('useQueueDrafts', () => {
   it('keeps the newest usable draft when the same id appears on a later page', async () => {
     fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
       if (offset === 0) {
-        return historyResponse(
-          [historyItem({ media_id: 71, generated_alt_text: 'Newest flower.' })],
-          100,
-        );
+        return historyResponse([historyItem({ media_id: 71, generated_alt_text: 'Newest flower.' })], 100);
       }
       if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
         return historyResponse(
@@ -411,10 +477,10 @@ describe('useQueueDrafts', () => {
       );
     });
 
-    const { result, rerender } = renderHook(
-      ({ mediaIds }: { mediaIds: number[] }) => useQueueDrafts(mediaIds),
-      { wrapper, initialProps: { mediaIds: [71] } },
-    );
+    const { result, rerender } = renderHook(({ mediaIds }: { mediaIds: number[] }) => useQueueDrafts(mediaIds), {
+      wrapper,
+      initialProps: { mediaIds: [71] },
+    });
 
     await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
     expect(fetchHistoryMock).toHaveBeenCalledTimes(1);

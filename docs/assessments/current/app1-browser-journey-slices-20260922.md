@@ -1,9 +1,11 @@
 # APP-1 browser journey slices — source-backed planning contract
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 Date: 2026-09-22. Status: COMPLETED journey-slices contract and map handoff.
 B0 account chrome and the N1 backend contract fix are landed and remain the
 observed/source-backed foundation. The journeys below are PLANNED-UI contracts
-for later browser work. Clerk production and the Polar sandbox are not
+for later browser work. Clerk production and the Stripe sandbox are not
 provisioned, and no provider login, secret, or environment value was read for
 this packet.
 
@@ -584,7 +586,7 @@ contract decision before browser work.
 | Claim | Fake verified claims plus backend contract/unit/transaction tests can check headers, statuses, replay, rollback, and non-enumerating errors. | Real Clerk-issued verified JWT against the provisioned environment and a real invitation lifecycle; no live claim is asserted here. |
 | Keys/secret | Fake fetch tests can assert metadata-only reads, raw-key one-time rendering, copy/close/error focus, idempotency replay, expiry, rotation grace, revoke warning, and no storage/log/analytics. | Real WordPress plugin Test Connection with a short-lived key, expiry/revocation/rotation, plugin/network failure copy, and evidence that the secret is not echoed or retained. |
 | Usage | Fake JSON can cover null/authoritative/pending/expired/cap/503 shapes; backend protocol smoke can cover response contracts. | PostgreSQL/admission/worker evidence for actual usage freshness, reservations, period/grace transitions, and outage/recovery. |
-| Billing | Payments-off fake provider can cover disabled copy, configured `plan_code`, idempotency, return-path validation, pending/ambiguous/recovery, manage mapping errors, and redirect-no-grant. | Polar sandbox provisioning, configured public catalog, real hosted checkout/manage, webhook/reconciliation, expired/canceled/new-attempt, and return-before-webhook evidence. No live charge/canary is claimed. |
+| Billing | Payments-off fake provider can cover disabled copy, configured `plan_code`, idempotency, return-path validation, pending/ambiguous/recovery, manage mapping errors, and redirect-no-grant. | Stripe sandbox provisioning, configured public catalog, real hosted checkout/manage, webhook/reconciliation, expired/canceled/new-attempt, and return-before-webhook evidence. No live charge/canary is claimed. |
 | UX map | JSON parse, ID/reference checks, diff review, and the coordinator's recorded WorkBay critique. | Coordinator reruns the final map validation/critique after this commit; no live UX or vendor acceptance is claimed. |
 
 No live acceptance claim is made. The required scoped command is a protocol
@@ -607,7 +609,7 @@ acceptance evidence.
 
 - No TSX, CSS, API client, backend, WordPress, provider, or environment-file
   edits.
-- No Clerk or Polar login/provisioning, secret reads, live checkout, live
+- No Clerk or Stripe login/provisioning, secret reads, live checkout, live
   WordPress test, release, or deployment.
 - No client-computed entitlement, fabricated price/catalog, tenant selector,
   secret storage/logging/analytics, or redirect-based grant.

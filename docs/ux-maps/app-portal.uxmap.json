@@ -263,7 +263,7 @@
       "id": "portal-claim",
       "kind": "screen",
       "title": "Onboarding › Claim invitation",
-      "purpose": "PLANNED-UI verified-identity claim. A signed-in Clerk person with a verified, non-empty email may enter one invitation_token to POST /portal/onboarding/claim before a tenant exists. The final single-use mutation stays behind a preview/confirmation; the browser never selects tenant_id, stores the raw token, or calls Polar. First success is 201 with replayed false; the same bound identity may receive 200 replayed true. Backend keeps unknown, expired, or email-mismatched invitations non-enumerating as 403 not_admitted. Serves claim-tenant-access (DOM-03, HAI-01).",
+      "purpose": "PLANNED-UI verified-identity claim. A signed-in Clerk person with a verified, non-empty email may enter one invitation_token to POST /portal/onboarding/claim before a tenant exists. The final single-use mutation stays behind a preview/confirmation; the browser never selects tenant_id, stores the raw token, or calls Stripe. First success is 201 with replayed false; the same bound identity may receive 200 replayed true. Backend keeps unknown, expired, or email-mismatched invitations non-enumerating as 403 not_admitted. Serves claim-tenant-access (DOM-03, HAI-01).",
       "route": "/claim",
       "job_entry": true,
       "deep_link": true,
@@ -975,7 +975,7 @@
         },
         {
           "screen_id": "portal-account",
-          "branch_label": "201 replayed=false or 200 replayed=true: backend tenant UUID may now be read; no Polar call"
+          "branch_label": "201 replayed=false or 200 replayed=true: backend tenant UUID may now be read; no Stripe call"
         },
         {
           "screen_id": "portal-claim",
@@ -1138,8 +1138,8 @@
     "Do not put API-key hashes or raw secrets in the browser outside the one-time in-memory issue dialog; list/read responses are metadata only and revoke remains a destructive backend mutation.",
     "Do not compute entitlement, remaining usage, plan price, or paid state in the client. Display nullable usage and authoritative status/data_source from backend responses.",
     "Do not grant paid access from a billing redirect, invent a catalog item, or retry an ambiguous checkout as a new attempt.",
-    "Do not claim WordPress Test Connection, production Clerk, Polar sandbox, or provider webhook evidence from offline doubles.",
-    "Do not claim live Clerk, Polar, or Caddy CSP policy from this offline SPA slice.",
+    "Do not claim WordPress Test Connection, production Clerk, Stripe sandbox, or provider webhook evidence from offline doubles.",
+    "Do not claim live Clerk, Stripe, or Caddy CSP policy from this offline SPA slice.",
     "Do not replace local API-key recognition when sign-in is down; this SPA failure is portal-only (CARD-16, REF-15).",
     "Do not run CLI init, accountless setup, login, provisioning, or credential-file access for this offline slice. Use manual @clerk/react integration with offline mocks; do not hardcode a rescued app ID as proof of the production application.",
     "Do not add a second uxmap file: B1 extends app-portal.uxmap.json and preserves every existing B0 id."

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { resetMirror, triggerSync, type SyncTriggerResponse } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
+import { invalidateDescriptionDrafts } from '../utils/invalidateDescriptionDrafts';
 
 /**
  * Trigger sync from explicit user actions.
@@ -22,6 +23,7 @@ export const useSyncTrigger = (isStale: boolean, autoTrigger = false) => {
     mutationFn: () => triggerSync(),
     onSuccess: (data) => {
       if (data.synced) {
+        invalidateDescriptionDrafts(queryClient);
         // Sync succeeded — refresh queries.
         void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.sync.all });

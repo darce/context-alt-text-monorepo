@@ -29,6 +29,7 @@ export interface QueueDraftCellProps {
   /** Synchronous exclusive claim; false means no correction may start. */
   onCommitStart?: () => boolean;
   onCommitEnd?: () => void;
+  onReviewStateChange?: (busy: boolean) => void;
 }
 
 const APPLY_ERROR_FALLBACK = __('Could not save the alt text. Please try again.', 'alt-context');
@@ -59,6 +60,7 @@ export const QueueDraftCell = ({
   peerCommitPending = false,
   onCommitStart,
   onCommitEnd,
+  onReviewStateChange,
 }: QueueDraftCellProps): React.JSX.Element | null => {
   const [isEditing, setIsEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(draftText);
@@ -148,6 +150,13 @@ export const QueueDraftCell = ({
       }
     }
   }, [isPending, isEditing, error]);
+
+  const reviewStateCallback = useRef(onReviewStateChange);
+  reviewStateCallback.current = onReviewStateChange;
+  useEffect(() => {
+    reviewStateCallback.current?.(isEditing || isPending);
+    return () => reviewStateCallback.current?.(false);
+  }, [isEditing, isPending]);
 
   if (dismissed) {
     return null;

@@ -121,6 +121,22 @@ class AnalyzeMediaServiceTest extends TestCase
                                     "Content-Disposition: form-data; name=\"idempotency_key\"\r\n\r\n" . $key . "\r\n",
                                     $call['args']['body']
                                 );
+                                $contentType = $call['args']['headers']['Content-Type'];
+                                $this->assertStringStartsWith('multipart/form-data; boundary=', $contentType);
+                                $boundary = substr($contentType, strlen('multipart/form-data; boundary='));
+                                $envelopes = [];
+                                foreach (explode('--' . $boundary, $call['args']['body']) as $part) {
+                                    $sections = explode("\r\n\r\n", $part, 2);
+                                    if (count($sections) === 2 && trim($sections[0]) === 'Content-Disposition: form-data; name="request"') {
+                                        $envelopes[] = json_decode(substr($sections[1], 0, -2), true, 512, JSON_THROW_ON_ERROR);
+                                    }
+                                }
+                                $this->assertCount(1, $envelopes, 'The serialized multipart body must contain one request JSON envelope.');
+                                $this->assertSame(
+                                    $key,
+                                    $envelopes[0]['idempotency_key'] ?? null,
+                                    'The request JSON envelope must preserve the exact originator key.'
+                                );
                             }
                         }
                     }

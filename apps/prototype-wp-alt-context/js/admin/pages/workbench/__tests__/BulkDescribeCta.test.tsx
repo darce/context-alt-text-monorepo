@@ -26,9 +26,6 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-vi.mock('../BulkDescribeReviewLink', () => ({
-  BulkDescribeReviewLink: () => null,
-}));
 
 // WBUX6-W4-H-01: these fixtures were partial object literals widened with
 // `as DescribeRunResponse`, which silently absorbs every field the contract

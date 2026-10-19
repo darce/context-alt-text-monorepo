@@ -836,6 +836,23 @@ async def _apply_naming_preview(
     if outcome.draft_is_final:
         return outcome
 
+    if enabled and image_bytes:
+        from scene.application.description_naming_projection import freeze_naming_base
+
+        try:
+            base = freeze_naming_base(
+                caption=outcome.alt_text_draft or "", phrase_boxes=outcome.phrase_boxes or (), image_bytes=image_bytes
+            )
+        except Exception:  # noqa: BLE001 - replay capture must not fail a successful description
+            logger.exception("could not preserve naming base media_id=%s", media_id)
+            base = None
+        if base is not None:
+            provenance = dict(outcome.provenance or {})
+            if provenance.get("image_hash", base["image_hash"]) == base["image_hash"]:
+                provenance["image_hash"] = base["image_hash"]
+                provenance["naming_base"] = base
+                outcome = replace(outcome, provenance=provenance)
+
     def with_naming_payload(payload: dict) -> DescribeItemOutcome:
         merged = dict(outcome.provenance or {})
         merged["naming"] = payload

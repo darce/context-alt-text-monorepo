@@ -38,7 +38,6 @@ class AdminPageAutoloadTest extends TestCase
         'AltContext\\Admin\\WorkbenchPage',
         'AltContext\\Admin\\RosterPage',
         'AltContext\\Admin\\SettingsPage',
-        'AltContext\\Admin\\DescriptionHistoryPage',
         'AltContext\\Admin\\RetentionPage',
         'AltContext\\Admin\\Menu',
         'AltContext\\Admin\\Admin',
@@ -65,7 +64,6 @@ class AdminPageAutoloadTest extends TestCase
         'src/admin/class-workbench-page.php',
         'src/admin/class-roster-page.php',
         'src/admin/class-settings-page.php',
-        'src/admin/class-description-history-page.php',
         'src/admin/class-retention-page.php',
         'src/admin/class-menu.php',
     ];

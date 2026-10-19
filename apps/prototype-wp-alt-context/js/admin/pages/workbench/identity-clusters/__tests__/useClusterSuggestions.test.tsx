@@ -78,7 +78,7 @@ describe('selectClusterSuggestions', () => {
     expect(options[1]).toMatchObject({ label: 'Alice', group: NAMING_GROUP_ALL_LABELS, source: 'person' });
   });
 
-  it('dedupes cluster-vs-cluster only (All Labels cluster suppressed by Suggested)', () => {
+  it('retains distinct same-name cluster IDs without canonical binding proof', () => {
     const options = selectClusterSuggestions({
       identityProjection: [
         {
@@ -92,7 +92,7 @@ describe('selectClusterSuggestions', () => {
       labelInput: '',
     });
 
-    expect(options).toHaveLength(1);
+    expect(options).toHaveLength(2);
     expect(options[0]?.value).toBe(namingOptionValue('cluster', 'c1'));
   });
 
@@ -178,7 +178,7 @@ describe('selectClusterSuggestions', () => {
 
   it('BR-17: empty-label filter + section-2 search filter/dedupe with non-zero clusters', () => {
     // Predicted first failure: empty/whitespace identity labels appear; All Labels includes
-    // search miss (Bob) or duplicate Alice cluster not suppressed by Suggested.
+    // search miss (Bob); a distinct Alice cluster stays available without binding proof.
     const options = selectClusterSuggestions({
       identityProjection: [
         {
@@ -237,12 +237,13 @@ describe('selectClusterSuggestions', () => {
     expect(options.map((option) => ({ label: option.label, group: option.group, source: option.source }))).toEqual([
       { label: 'Alice', group: NAMING_GROUP_SUGGESTED, source: 'cluster' },
       { label: 'Alicia', group: NAMING_GROUP_SUGGESTED, source: 'cluster' },
+      { label: 'Alice', group: NAMING_GROUP_ALL_LABELS, source: 'cluster' },
       { label: 'Albert', group: NAMING_GROUP_ALL_LABELS, source: 'cluster' },
       { label: 'Alana', group: NAMING_GROUP_ALL_LABELS, source: 'person' },
     ]);
     expect(options.some((option) => option.label === 'Bob')).toBe(false);
     expect(options.some((option) => option.value === namingOptionValue('cluster', 'c-empty'))).toBe(false);
-    expect(options.some((option) => option.value === namingOptionValue('cluster', 'c3'))).toBe(false);
+    expect(options.some((option) => option.value === namingOptionValue('cluster', 'c3'))).toBe(true);
   });
 });
 

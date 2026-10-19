@@ -117,6 +117,11 @@ export const MediaSelectionTableBody = ({
     isLoading: draftsLoading,
     isError: draftsIsError,
     historyTruncated,
+    historyByMediaId = {},
+    hasOlderDescriptions = false,
+    isLoadingOlder = false,
+    loadOlderDescriptions,
+    historyPartial = false,
   } = useQueueDrafts(mediaIds, draftRunId);
   const filterByDrafts = hasDraftFilter || Boolean(draftRunId);
   const retryDraftLookup = useCallback(() => {
@@ -189,6 +194,23 @@ export const MediaSelectionTableBody = ({
     const hasStatusFilter = statusFilter !== 'all';
 
     if (items.length > 0 && filterByDrafts) {
+      if (hasOlderDescriptions) {
+        return (
+          <tr>
+            <td colSpan={4}>
+              <p role="status">
+                {__('No drafts in the loaded runs. Older descriptions are available.', 'alt-context')}
+              </p>
+              <button type="button" className="button" onClick={loadOlderDescriptions} disabled={isLoadingOlder}>
+                {isLoadingOlder
+                  ? __('Loading older descriptions…', 'alt-context')
+                  : __('Load older descriptions', 'alt-context')}
+              </button>
+            </td>
+          </tr>
+        );
+      }
+
       if (historyTruncated) {
         return draftTruncationNotice;
       }
@@ -274,6 +296,29 @@ export const MediaSelectionTableBody = ({
 
   return (
     <>
+      {!filterByDrafts && (draftsIsError || historyPartial) ? (
+        <tr>
+          <td colSpan={4}>
+            <p role="status">
+              {__('Some descriptions could not be loaded. Saved alt text is still available.', 'alt-context')}
+            </p>
+            <button type="button" className="button" onClick={retryDraftLookup}>
+              {__('Retry descriptions', 'alt-context')}
+            </button>
+          </td>
+        </tr>
+      ) : null}
+      {hasOlderDescriptions ? (
+        <tr>
+          <td colSpan={4}>
+            <button type="button" className="button" onClick={loadOlderDescriptions} disabled={isLoadingOlder}>
+              {isLoadingOlder
+                ? __('Loading older descriptions…', 'alt-context')
+                : __('Load older descriptions', 'alt-context')}
+            </button>
+          </td>
+        </tr>
+      ) : null}
       {filterByDrafts && historyTruncated ? draftTruncationNotice : null}
       {visibleItems.map((item, index) => (
         <MediaSelectionRow
@@ -287,6 +332,7 @@ export const MediaSelectionTableBody = ({
           identitiesLoading={identitiesLoading}
           onRetryIdentities={onRetryIdentities}
           draft={draftsByMediaId[item.id]}
+          historyVersions={historyByMediaId[item.id]}
           queueCommitPending={commitOwners.get(item.id) === 'queue'}
           beginQueueCommit={beginCommit}
           endQueueCommit={endCommit}
@@ -306,6 +352,7 @@ interface MediaSelectionRowProps {
   identitiesLoading?: boolean;
   onRetryIdentities?: () => void;
   draft?: QueueDraft;
+  historyVersions?: QueueDraft[];
   queueCommitPending: boolean;
   beginQueueCommit: (mediaId: number, owner: RowCommitOwner) => boolean;
   endQueueCommit: (mediaId: number, owner: RowCommitOwner) => void;
@@ -326,10 +373,19 @@ const MediaSelectionRow = ({
   identitiesLoading,
   onRetryIdentities,
   draft,
+  historyVersions = [],
   queueCommitPending,
   beginQueueCommit,
   endQueueCommit,
 }: MediaSelectionRowProps): React.JSX.Element => {
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [frozenDraft, setFrozenDraft] = useState<QueueDraft | null>(null);
+  const versions = historyVersions.length > 0 ? historyVersions : draft ? [draft] : [];
+  const versionKey = (version: QueueDraft): string => JSON.stringify([version.source, version.runId]);
+  const selectedDraft =
+    frozenDraft ?? versions.find((version) => versionKey(version) === selectedVersion) ?? draft ?? versions[0];
+  const versionSelectId = `acx-description-version-${item.id}`;
   const thumbDimensions = item.thumbnailDimensions;
   const detailReady = [item.mimeType, item.updatedAt, item.dimensions].some((value) => value != null && value !== '');
 
@@ -437,6 +493,7 @@ const MediaSelectionRow = ({
           {polite.message}
         </div>
         <MediaAltInlineEditor
+          hasDescriptionDraft={selectedDraft != null}
           mediaId={item.id}
           altText={item.altText ?? null}
           title={item.title}
@@ -447,6 +504,60 @@ const MediaSelectionRow = ({
           onCommitStart={editorCommitStart}
           onCommitEnd={editorCommitEnd}
         />
+        {versions.length > 0 ? (
+          <div className="acx-media-selection__description-history">
+            <label htmlFor={versionSelectId}>{__('Description version', 'alt-context')}</label>{' '}
+            <select
+              id={versionSelectId}
+              value={selectedDraft ? versionKey(selectedDraft) : ''}
+              disabled={reviewBusy || commitOwner !== null}
+              onChange={(event) => setSelectedVersion(event.target.value)}
+            >
+              {(frozenDraft && !versions.some((version) => versionKey(version) === versionKey(frozenDraft))
+                ? [frozenDraft, ...versions]
+                : versions
+              ).map((version, index) => (
+                <option key={versionKey(version)} value={versionKey(version)}>
+                  {version.createdAt
+                    ? `${new Date(version.createdAt * 1000).toLocaleString()} · ${version.runId?.slice(0, 8) ?? ''}`
+                    : version.runId
+                      ? sprintf(__('Run %s', 'alt-context'), version.runId.slice(0, 8))
+                      : __('Saved description history', 'alt-context')}
+                  {index === 0 ? ` · ${__('Latest', 'alt-context')}` : ''}
+                </option>
+              ))}
+            </select>
+            {selectedDraft?.namingRefreshUnavailable ? (
+              <p role="status">
+                {__(
+                  'Names could not be refreshed for this description version. Check the people before approving it.',
+                  'alt-context',
+                )}
+              </p>
+            ) : null}
+            {selectedDraft ? (
+              <QueueDraftCell
+                key={versionKey(selectedDraft)}
+                mediaId={item.id}
+                draftText={selectedDraft.draftText}
+                title={item.title}
+                committedAlt={item.altText ?? null}
+                committedIsDecorative={item.isDecorative === true}
+                draftIdentity={versionKey(selectedDraft)}
+                peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
+                onCommitStart={queueCommitStart}
+                onCommitEnd={queueCommitEnd}
+                onReviewStateChange={(busy) => {
+                  setReviewBusy(busy);
+                  setFrozenDraft(busy ? selectedDraft : null);
+                  if (busy) {
+                    setSelectedVersion(versionKey(selectedDraft));
+                  }
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null}
         <MediaAltSuggest
           mediaId={item.id}
           committedAlt={item.altText ?? null}
@@ -458,19 +569,6 @@ const MediaSelectionRow = ({
           onCommitStart={suggestCommitStart}
           onCommitEnd={suggestCommitEnd}
         />
-        {draft ? (
-          <QueueDraftCell
-            mediaId={item.id}
-            draftText={draft.draftText}
-            title={item.title}
-            committedAlt={item.altText ?? null}
-            committedIsDecorative={item.isDecorative === true}
-            draftIdentity={JSON.stringify([draft.source, draft.runId])}
-            peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
-            onCommitStart={queueCommitStart}
-            onCommitEnd={queueCommitEnd}
-          />
-        ) : null}
         {/* detail-meta is metadata loading, not an operator result — not a live region. */}
         <div className="acx-media-selection__detail-meta">
           {detailReady ? (

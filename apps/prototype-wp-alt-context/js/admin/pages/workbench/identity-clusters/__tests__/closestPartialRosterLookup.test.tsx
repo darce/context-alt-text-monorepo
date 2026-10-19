@@ -144,7 +144,7 @@ describe.each<Path>(['candidate merge', 'legacy selector'])('closest partial loo
     await user.type(input, 'Zoe');
     await waitFor(() => expect(row(names[5])).toBeVisible());
     expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-label'))).toEqual(
-      [names[0], names[1], names[2], names[5]].map((name) => `Confirm match with ${name} (Person)`),
+      [names[0], names[1], names[2], names[5]].map((name) => `Confirm match with ${name}`),
     );
     expect(row(names[0])).toHaveTextContent('Strong match');
     expect(row(names[1])).toHaveTextContent('Possible match');

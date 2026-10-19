@@ -33,10 +33,6 @@ vi.mock('../pages/SettingsPage', () => ({
   SettingsPage: () => <div>Settings</div>,
 }));
 
-vi.mock('../pages/DescriptionHistoryPage', () => ({
-  DescriptionHistoryPage: () => <div>Description History</div>,
-}));
-
 vi.mock('../pages/guided/GuidedPrototypePage', () => ({
   GuidedPrototypePage: () => <div>Guided Prototype</div>,
 }));

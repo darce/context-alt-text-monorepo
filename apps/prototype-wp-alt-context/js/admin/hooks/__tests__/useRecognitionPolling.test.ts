@@ -16,14 +16,14 @@ import { derivePipelinePhase } from '../jobStateMachineUtils';
 // ---------------------------------------------------------------------------
 
 describe('recognition polling interval', () => {
-  it('returns 1500 when status is running', () => {
+  it('uses the bounded fallback cadence when status is running', () => {
     const data = { status: 'running' } as JobStatusResponse;
-    expect(getJobRefetchInterval(data)).toBe(1500);
+    expect(getJobRefetchInterval(data)).toBe(5000);
   });
 
-  it('returns 1500 when status is pending', () => {
+  it('uses the bounded fallback cadence when status is pending', () => {
     const data = { status: 'pending' } as JobStatusResponse;
-    expect(getJobRefetchInterval(data)).toBe(1500);
+    expect(getJobRefetchInterval(data)).toBe(5000);
   });
 
   it('returns false when status is completed with no awaiting_projection phase', () => {
@@ -34,12 +34,12 @@ describe('recognition polling interval', () => {
     expect(getJobRefetchInterval(data)).toBe(false);
   });
 
-  it('returns 1500 when status is completed but phase is awaiting_projection', () => {
+  it('continues bounded polling while awaiting projection', () => {
     const data = {
       status: 'completed',
       progress: { phase: 'awaiting_projection' },
     } as unknown as JobStatusResponse;
-    expect(getJobRefetchInterval(data)).toBe(1500);
+    expect(getJobRefetchInterval(data)).toBe(5000);
   });
 
   it('returns false when status is completed and progress is undefined', () => {
@@ -51,14 +51,14 @@ describe('recognition polling interval', () => {
     expect(getJobRefetchInterval(undefined)).toBe(false);
   });
 
-  it('returns 1500 when status is failed but phase is awaiting_projection', () => {
+  it('continues bounded polling when failed but still awaiting projection', () => {
     // Edge: job reached completed state mid-projection then re-queued;
     // polling must continue if phase indicates work is in progress.
     const data = {
       status: 'failed',
       progress: { phase: 'awaiting_projection' },
     } as unknown as JobStatusResponse;
-    expect(getJobRefetchInterval(data)).toBe(1500);
+    expect(getJobRefetchInterval(data)).toBe(5000);
   });
 
   it('returns false when status is completed with phase complete and projection_acknowledged_at set', () => {
@@ -76,7 +76,7 @@ describe('recognition polling interval', () => {
       status: 'completed',
       progress: { phase: 'awaiting_projection' },
     } as unknown as JobStatusResponse;
-    expect(getJobRefetchInterval(firstPoll)).toBe(1500);
+    expect(getJobRefetchInterval(firstPoll)).toBe(5000);
 
     const secondPoll = {
       status: 'completed',

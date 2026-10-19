@@ -4,8 +4,8 @@ Use this guide when you want another private Daniel-owned repository to consume 
 
 ## Prerequisites
 
-- macOS or Linux with `git`, `python3`, and `uv`
-- Access to the private `darce/*` GitHub repositories over SSH
+- macOS or Linux with `git`, Python 3.12 or newer, and `uv`
+- Access to the public `darce/workbay` GitHub repository
 - A clean consumer repository root where the overlay should live
 
 ## Install
@@ -13,7 +13,7 @@ Use this guide when you want another private Daniel-owned repository to consume 
 Install the `workbay` front-door tool from the pinned git ref (no PyPI), then materialize the overlay into the current repo. Bundle every package surface with `--with` so the single `uv tool` install resolves the whole stack from one ref:
 
 ```bash
-REF=workbay-v0.3.8
+REF=workbay-v0.3.64
 R="git+https://github.com/darce/workbay.git@$REF"
 uv tool install --no-sources \
   --with "$R#subdirectory=packages/workbay-protocol" \
@@ -26,8 +26,10 @@ uv tool install --no-sources \
 workbay install --target . --remote-ref "$REF"
 ```
 
-`workbay` lands on `PATH` via `uv tool`, so invoke it directly — do not shell out to `./.venv/bin/workbay-bootstrap`. The install runs in package mode: it materializes the overlay from package data (no `.workbay/remote/` clone, no symlinks), writes `.workbay-bootstrap.json`, registers the two MCP servers via the `mcp_launch.py` shim, and wires `core.hooksPath`.
-Keep the overlay ref pinned to the reviewed workbay tag (`workbay-v0.3.8`) until a newer release set is explicitly promoted.
+`workbay` lands on `PATH` via `uv tool`, so invoke it directly. The install runs in package mode: it materializes the overlay from package data, writes `.workbay-bootstrap.json`, registers the two MCP servers through the shipped `mcp_launch.py` launcher, and wires `core.hooksPath`.
+Keep the overlay ref pinned to the reviewed workbay tag (`workbay-v0.3.64`, also released as `v0.1.72`) until a newer release set is explicitly promoted.
+
+When the consumer has a `.venv`, lifecycle checks require matching WorkBay runtime packages there too. Install the same tagged package sources with `uv pip install --no-sources --python .venv/bin/python`; the install ledger's `consumer_venv_closure_skew` step supplies the complete command when needed. Replace old package installations and managed files for a clean install; use the shipped adapters without compatibility commands or local patches.
 
 After install, run one sanity check from the consumer root:
 
@@ -63,7 +65,7 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Re-run the pinned `uv tool install` to upgrade the front-door tool and every bundled package surface, then `workbay update` to re-materialize the overlay:
 
 ```bash
-REF=workbay-v0.3.8
+REF=workbay-v0.3.64
 R="git+https://github.com/darce/workbay.git@$REF"
 uv tool install --no-sources \
   --with "$R#subdirectory=packages/workbay-protocol" \
@@ -73,12 +75,12 @@ uv tool install --no-sources \
   --with "$R#subdirectory=packages/workbay-system" \
   --from "$R#subdirectory=packages/workbay" \
   workbay
-workbay update --target . --remote-ref "$REF"
+workbay update --target .
 ```
 
-Keep both the install ref and the overlay `--remote-ref` pinned to the same reviewed release set. When a newer release set is approved, bump `REF` and the `--remote-ref` together.
+Keep the CLI and overlay on the same reviewed release set. When a newer release set is approved, bump `REF`, reinstall the CLI, and run `workbay update`.
 
-`workbay update --target . --remote-ref "$REF"` re-materializes the overlay from the requested ref's package data and refreshes `.workbay-bootstrap.json` with the new pinned ref.
+`workbay update --target .` re-materializes the installed package data and refreshes `.workbay-bootstrap.json` with its recorded source pin. Package mode rejects `update --remote-ref`; that flag belongs to clone-backed installs.
 
 ## Doctor and Repair
 
@@ -120,7 +122,7 @@ and `Makefile.d/` ignored here; fixes to reusable workflow behavior belong in
 the downstream workbay/agentic-protocol source and should flow back through a
 pinned `workbay update`. The tracked files in this repo should stay
 limited to the install ledger, client config pins, docs/tests that lock those
-pins, and the small Makefile shim needed to invoke the shared fragments.
+pins, and the Makefile includes that load the shared fragments.
 
 You can verify the wiring directly:
 
@@ -150,7 +152,7 @@ The controlling key is `orchestrator.daemons.enabled`. When disabled, daemon sta
 
 ## Plugin Overrides
 
-Consumers that locally patch plugin-distributed components (skills, prompts) keep those patches under a plugin overrides tree, by convention `workbay-overrides/<plugin>/` (this repo: `workbay-overrides/workbay-system`). Each plugin directory carries:
+This repository uses the unmodified upstream plugin and has no plugin overrides. Consumers that choose to patch plugin-distributed components (skills, prompts) keep those patches under a plugin overrides tree, by convention `workbay-overrides/<plugin>/`, for example `workbay-overrides/workbay-system`. Each plugin directory carries:
 
 - `overrides.yaml` — which components are overridden and in what mode.
 - `overrides.lock.json` — provenance ledger: `base_remote_sha` plus, per component, the `base_path` of the materialized upstream copy and its `upstream_digest`.
@@ -158,7 +160,7 @@ Consumers that locally patch plugin-distributed components (skills, prompts) kee
 
 Digest convention: `upstream_digest` is the whole-file sha256 of the materialized upstream base copy (`SKILL.base.md`), not of the generated base surface under `.workbay/generated/` — the generator injects harness-specific sections (e.g. Global Instructions), so its hash legitimately differs. `make check-overrides-digest` (wired into `make check-all`) validates every lock entry against the materialized base copy, so digest drift fails CI instead of surfacing on the next manual bootstrap update.
 
-The `.workbay-bootstrap.json` manifest names this tree via the optional `plugin_overrides_path` field. The field is the APD-07 durable-recipe-overrides hook used by current package-mode installs, so keep the ledger path and this section in sync when the overrides tree moves.
+When overrides are installed, `.workbay-bootstrap.json` names the tree via the optional `plugin_overrides_path` field. The field is the APD-07 durable-recipe-overrides hook used by current package-mode installs. A clean upstream install omits it.
 
 ## Troubleshooting
 

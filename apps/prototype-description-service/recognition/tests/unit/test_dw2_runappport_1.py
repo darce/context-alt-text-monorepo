@@ -188,7 +188,7 @@ def test_real_app1_manifest_loads_with_pending_additional_evidence() -> None:
     repository_root = next(
         parent for parent in Path(__file__).resolve().parents if (parent / "docs" / "scopes").is_dir()
     )
-    manifest = runner.load_manifest(repository_root / "docs" / "scopes" / "app-altcontext-beta-clerk-polar-evals.json")
+    manifest = runner.load_manifest(repository_root / "docs" / "scopes" / "app-altcontext-beta-clerk-stripe-evals.json")
 
     pending_case_ids = {
         case.case_id for case in manifest.cases if case.additional_evidence_required and case.artifact is None

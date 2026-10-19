@@ -11,6 +11,7 @@ ENVS=('dev','dev-fir','prod','staging')
 PIN='54f7bd837f20c24529ce3e1ea53e91a405b16234c62092890c22b507c149a2d9'
 LOAD_PIN='0d08441a76a5f9f5c38ac32c3b4dd7956de07af3255fb31748bef36b5da26521'
 MAX=1048576
+SCRIPTS=frozenset(('owner-window.py','owner-custody.py','observe.py','capacity-read.sh','guest-read.sh','root-flow.sh','final-stop.sh'))
 
 def check(condition,message):
  if not condition: raise RuntimeError(message)
@@ -81,17 +82,20 @@ def load_writer(writer_bytes,load_bytes):
  name='benchmark_owned_pinned_writer'; m=types.ModuleType(name); sys.modules[name]=m
  exec(compile(writer_bytes,'pinned-gpu_intent.py','exec'),m.__dict__); return m
 
-def lock_path(path,deadline,group=None):
+def lock_path(path,deadline,group=None,existing=False):
  p=P(path)
- try:
-  fd=os.open(p,os.O_RDONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o660)
-  # Match native persistent-fence provisioning despite a private umask. Only
-  # a newly/exclusively created fence is initialized; never chown/chmod an
-  # existing or uncertain resource. Production group is native acxapi10001.
-  if group is not None: os.fchown(fd,-1,group)
-  os.fchmod(fd,0o660)
- except FileExistsError:
-  fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+ if existing:
+  fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+ else:
+  try:
+   fd=os.open(p,os.O_RDONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o660)
+   # Match native persistent-fence provisioning despite a private umask. Only
+   # a newly/exclusively created fence is initialized; never chown/chmod an
+   # existing or uncertain resource. Production group is native acxapi10001.
+   if group is not None: os.fchown(fd,-1,group)
+   os.fchmod(fd,0o660)
+  except FileExistsError:
+   fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
  try:
   s=os.fstat(fd); check(stat.S_ISREG(s.st_mode) and s.st_nlink==1,'unsafe persistent fence')
   while True:
@@ -139,9 +143,10 @@ def view(paths,mode):
  return dict(authority=a,publications=pubs,loads=loads,deferred=bounded_json(paths.store/'deferred-stop.json',optional=True))
 
 def known_candidates(wfd):
+ checkpoint_ready(wfd)
  ops=subdir(wfd,'ops'); result={}
  try:
-  names=os.listdir(ops); check(len(names)<=32,'operation budget exhausted')
+  names=bounded_names(ops,32,'operation budget exhausted')
   for name in names:
    check(str(uuid.UUID(name))==name,'unexpected operation directory')
    f=subdir(ops,name)
@@ -151,6 +156,79 @@ def known_candidates(wfd):
    finally: os.close(f)
  finally: os.close(ops)
  return result
+
+def bounded_names(fd,limit,message):
+ names=[]
+ with os.scandir(fd) as entries:
+  for entry in entries:
+   check(len(names)<limit,message); names.append(entry.name)
+ return sorted(names)
+
+def identity(s):
+ return dict(dev=s.st_dev,ino=s.st_ino,uid=s.st_uid,gid=s.st_gid,mode=stat.S_IMODE(s.st_mode))
+
+def proof_file(fd,name,mode=0o400,uid=None,durable=False):
+ """Hash through one no-follow descriptor and verify its still-named identity."""
+ check('/' not in name and name not in ('.','..'),'simple proof basename required')
+ uid=os.geteuid() if uid is None else uid
+ f=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=fd)
+ try:
+  s=os.fstat(f)
+  check(stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid==uid and stat.S_IMODE(s.st_mode)==mode and s.st_size<=MAX,'unsafe proof file: '+name)
+  raw=b''
+  while len(raw)<=MAX:
+   chunk=os.read(f,min(65536,MAX+1-len(raw)))
+   if not chunk: break
+   raw+=chunk
+  check(len(raw)==s.st_size and len(raw)<=MAX,'proof size changed: '+name)
+  after=os.fstat(f); named=os.stat(name,dir_fd=fd,follow_symlinks=False)
+  def stable(q): return (q.st_dev,q.st_ino,q.st_uid,q.st_gid,q.st_mode,q.st_nlink,q.st_size,q.st_mtime_ns,q.st_ctime_ns)
+  check(stable(s)==stable(after)==stable(named),'proof identity changed: '+name)
+  if durable: os.fsync(f)
+  return raw,dict(identity(s),size=len(raw),sha256=hashlib.sha256(raw).hexdigest())
+ finally: os.close(f)
+
+def validate_procedure(wfd,window,procedure):
+ """Only a protected, exact old-stage receipt can bridge a procedure mismatch.
+
+ No receipt path/flag is accepted from a caller. The window's sealed procedure
+ remains authoritative; old code is hashed, never imported or edited.
+ """
+ afd=directory(procedure,0)
+ try:
+  try: raw,_=proof_file(afd,'procedure-predecessor.json',uid=0)
+  except FileNotFoundError:
+   check(window['procedure']==str(P(procedure)),'window/procedure mismatch'); return
+  check(window['procedure']!=str(P(procedure)),'extraneous procedure predecessor proof')
+  receipt=json.loads(raw)
+  fields={'schema','window_id','window_path','procedure','manifest_sha256','owner_window_sha256','owner_custody_sha256'}
+  check(type(receipt) is dict and set(receipt)==fields and receipt['schema']=='acx-owner-procedure-predecessor/v1','bad procedure predecessor schema')
+  check((receipt['window_id'],receipt['window_path'],receipt['procedure'])==(window['id'],window['path'],window['procedure']),'procedure predecessor binding mismatch')
+  current=json.loads(proof_file(wfd,'window.json',uid=0)[0])
+  check(current==window,'bound current window changed')
+  old=directory(window['procedure'],0)
+  try:
+   check(set(bounded_names(old,8,'extraneous predecessor stage file'))==SCRIPTS|{'approved-scripts.json'},'predecessor stage inventory')
+   manifest,mp=proof_file(old,'approved-scripts.json',uid=0); pins=json.loads(manifest)
+   check(type(pins) is dict and set(pins)==SCRIPTS and mp['sha256']==receipt['manifest_sha256'],'predecessor manifest mismatch')
+   for name in sorted(SCRIPTS):
+    _,p=proof_file(old,name,uid=0)
+    check(p['sha256']==pins[name],'predecessor script hash mismatch')
+    if name in ('owner-window.py','owner-custody.py'):
+     field='owner_window_sha256' if name=='owner-window.py' else 'owner_custody_sha256'
+     check(p['sha256']==receipt[field],'predecessor helper hash mismatch')
+   check(identity(os.fstat(old))==identity(os.stat(window['procedure'],follow_symlinks=False)),'predecessor stage identity changed')
+  finally: os.close(old)
+ finally: os.close(afd)
+
+def checkpoint_ready(wfd):
+ try: fd=subdir(wfd,'checkpoints')
+ except FileNotFoundError: return
+ try:
+  try: os.stat('pending.json',dir_fd=fd,follow_symlinks=False)
+  except FileNotFoundError: return
+  raise RuntimeError('checkpoint pending; explicit exact-window checkpoint recovery required')
+ finally: os.close(fd)
 
 def require_idle_load(q,now):
  """Validate current producer evidence before START/STOP; AUTO never reads it.
@@ -356,3 +434,195 @@ def reconcile(wfd,paths):
  _,op,candidate=max(proven)
  status,v=native_job(lambda:view(paths,'auto'),5); check(status==0 and v is not None,'reconciliation read unknown')
  guard(v,candidate,known,candidate['requested_by'],'auto'); return op
+
+def dead_native(record):
+ """A receipt is not a liveness oracle: compare real boot/PID/start identity."""
+ pid=record['pid']; start=record['start']; boot=record['boot']
+ check(type(pid) is int and pid>0 and type(start) is str and start.isdecimal() and type(boot) is str and str(uuid.UUID(boot))==boot,'invalid native process identity')
+ if boot!=P('/proc/sys/kernel/random/boot_id').read_text().strip(): return
+ try: current=P('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[19]
+ except FileNotFoundError: return
+ check(current!=start,'live guardian/writer; retain custody')
+
+def operation_snapshot(fd,op,window):
+ """Validate every original byte before archiving; never repair an operation."""
+ allowed={'intent.json','client-launch.json','guardian.json','guardian.log','preflight.json','candidate.json','writer-started.json','writer-stopped.json','publication.json','result.json'}
+ names=set(bounded_names(fd,len(allowed)+1,'operation file budget exhausted'))
+ check('unknown.json' not in names,'UNKNOWN operation; no checkpoint retry')
+ check(names<=allowed and {'intent.json','guardian.json','result.json'}<=names,'pending or unexpected operation inventory')
+ files={}; values={}
+ for name in sorted(names):
+  raw,files[name]=proof_file(fd,name,mode=0o600 if name=='guardian.log' else 0o400,durable=True)
+  if name!='guardian.log': values[name]=json.loads(raw)
+ plan=values['intent.json']; result=values['result.json']
+ check(plan['id']==op and plan['window']==window['id'] and plan['action'] in ('start','stop','auto'),'foreign operation plan')
+ previous=plan['previous']
+ check(previous is None or (type(previous) is str and str(uuid.UUID(previous))==previous),'invalid operation predecessor')
+ check(result['operation']==op and result['window']==window['id'] and result['outcome'] in ('published','not-published','refused'),'pending/UNKNOWN operation result')
+ dead_native(values['guardian.json'])
+ if 'client-launch.json' in values:
+  launch=values['client-launch.json']
+  check(launch['operation']==op and launch['window']==window['id'] and launch['guardian_pid']==values['guardian.json']['pid'],'client/guardian identity conflict')
+ if 'writer-started.json' in values:
+  started=values['writer-started.json']; dead_native(started)
+  check(started['operation']==op and started['window']==window['id'],'foreign writer identity')
+  check('writer-stopped.json' in values,'unreaped writer')
+  stopped=values['writer-stopped.json']
+  check(stopped['native_reaped'] is True and type(stopped['wait_status']) is int and type(stopped['native_publish_completed']) is bool,'unproven writer reap')
+  check(result['writer_wait_status']==stopped['wait_status'],'writer wait status conflict')
+ else: check('writer-stopped.json' not in values,'writer stop lacks original identity')
+ candidate=values.get('candidate.json')
+ if candidate is not None:
+  check(candidate['requested_by']=='ubuntu:QWEN-OWNER-ADMISSION:capacity-only:'+window['id'] and candidate['action']==plan['action'] and type(candidate['sequence']) is int and candidate['sequence']>0 and str(uuid.UUID(candidate['nonce']))==candidate['nonce'],'foreign/invalid candidate')
+ if result['outcome']=='published':
+  check(candidate is not None and {'preflight.json','writer-started.json','writer-stopped.json','publication.json'}<=names,'incomplete publication proof')
+  check(values['publication.json']==candidate and values['writer-stopped.json']['native_publish_completed'] is True,'publication proof conflict')
+ else:
+  check('publication.json' not in values,'nonpublication has publication proof')
+  if result['outcome']=='not-published': check(candidate is not None and {'preflight.json','writer-started.json','writer-stopped.json'}<=names,'incomplete nonpublication proof')
+  else: check('writer-started.json' not in values,'refused operation has writer effects')
+ os.fsync(fd)
+ return dict(directory=identity(os.fstat(fd)),files=files,candidate=candidate,outcome=result['outcome'])
+
+def checkpoint_selection(records,v,window):
+ known={op:r['candidate'] for op,r in records.items() if r['candidate'] is not None}
+ proven=[(r['candidate']['sequence'],op) for op,r in records.items() if r['outcome']=='published']
+ check(len({p['nonce'] for p in known.values()})==len(known) and len({p['sequence'] for p in known.values()})==len(known),'conflicting candidate history')
+ previous=max(proven)[1] if proven else None
+ actor='ubuntu:QWEN-OWNER-ADMISSION:capacity-only:'+window['id']
+ guard(v,None if previous is None else known[previous],known,actor,'auto')
+ retained=set()
+ for p in v['publications'].values():
+  matches=[op for op,q in known.items() if q==p and records[op]['outcome']=='published']
+  check(len(matches)==1,'persisted candidate lacks complete publication proof'); retained.add(matches[0])
+ if previous is not None: retained.add(previous)
+ if v['deferred'] is not None:
+  d=v['deferred']
+  matches=[op for op,p in known.items() if p['nonce']==d['nonce'] and p['sequence']==d['sequence'] and p['action']=='stop' and records[op]['outcome']=='published']
+  check(len(matches)==1,'deferred candidate lacks complete proof'); retained.add(matches[0])
+ return previous,sorted(retained)
+
+def checkpoint_view(paths):
+ """Fixed topology, held no-follow ancestry and bounded actual resource proof.
+
+ This is read-only. Publication/authority acceptance still uses guard(), with
+ the same native payloads; no checkpoint receipt substitutes for source state.
+ """
+ owners={os.geteuid(),paths.writer_uid}; groups={os.getegid(),paths.writer_gid}; system_uid=os.stat('/').st_uid; proofs={}; missing=object()
+ def open_dir(path):
+  p=P(path); check(p.is_absolute() and '..' not in p.parts,'canonical resource path required')
+  fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+  try:
+   for part in p.parts[1:]:
+    nxt=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+    os.close(fd); fd=nxt; s=os.fstat(fd)
+    sticky=s.st_uid==system_uid and stat.S_IMODE(s.st_mode)==0o1777
+    check(s.st_uid in owners|{system_uid} and (sticky or (not s.st_mode&0o002 and (not s.st_mode&0o020 or s.st_gid in groups))),'unsafe current resource directory')
+   return fd
+  except BaseException: os.close(fd); raise
+ def read(path,optional=False):
+  fd=open_dir(P(path).parent)
+  try:
+   try: s=os.stat(P(path).name,dir_fd=fd,follow_symlinks=False)
+   except FileNotFoundError:
+    if optional: return missing
+    raise
+   mode=stat.S_IMODE(s.st_mode)
+   check(s.st_uid in owners and mode in (0o400,0o600,0o640,0o644,0o660) and (not mode&0o020 or s.st_gid in groups),'unsafe current resource file')
+   raw,proof=proof_file(fd,P(path).name,mode=mode,uid=s.st_uid)
+   proofs[str(path)]=proof; return json.loads(raw)
+  finally: os.close(fd)
+ a=read(paths.store/'intent-authority.json'); pubs={}
+ for base in (paths.runtime,paths.store/'intents'):
+  try: fd=open_dir(base)
+  except FileNotFoundError:
+   check(base==paths.store/'intents','missing current runtime'); continue
+  try:
+   names=bounded_names(fd,len(ENVS),'unexpected publication environment inventory')
+   check(set(names)<=set(ENVS),'foreign publication environment')
+  finally: os.close(fd)
+  for env in names:
+   path=base/env/'gpu-intent.json'; p=read(path,optional=True)
+   if p is not missing: pubs[str(path)]=p
+ deferred=read(paths.store/'deferred-stop.json',optional=True)
+ v=dict(authority=a,publications=pubs,loads=[],deferred=None if deferred is missing else deferred)
+ return v,proofs
+
+def checkpoint(wfd,paths,window):
+ """Explicit bounded recovery only; ordinary known_candidates remains capped32.
+
+ Manifest precedes any rename. A pending transaction blocks ordinary effects.
+ Re-entry verifies the entire split inventory and actual state before finishing
+ the SAME transaction. No authority, intent, load or service bytes are written.
+ """
+ fds=[]; ops=None; cfd=None; tfd=None; archive=None
+ try:
+  # Revalidate the caller's held window, including its still-named identity.
+  named,w=validate_window(window['path'],window['id'])
+  try: check(w==window and identity(os.fstat(named))==identity(os.fstat(wfd)),'checkpoint window identity changed')
+  finally: os.close(named)
+  window_raw,window_proof=proof_file(wfd,'window.json')
+  deadline=time.monotonic()+15
+  for p in [P(window['path'])/'window.lock']+paths.fences('auto'):
+   s=os.stat(p,follow_symlinks=False)
+   check(stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid in (os.geteuid(),paths.writer_uid) and s.st_gid in (os.getegid(),paths.writer_gid) and stat.S_IMODE(s.st_mode)==0o660,'unsafe/missing checkpoint fence')
+   fds.append(lock_path(p,deadline,paths.writer_gid,existing=True))
+   check(identity(os.fstat(fds[-1]))==identity(s),'checkpoint fence identity changed')
+  ops=subdir(wfd,'ops'); active=bounded_names(ops,33,'checkpoint operation budget exhausted (>33)')
+  for op in active: check(str(uuid.UUID(op))==op,'unexpected operation directory')
+  try: cfd=subdir(wfd,'checkpoints')
+  except FileNotFoundError: pass
+  pending=None
+  if cfd is not None:
+   try: pending=json.loads(proof_file(cfd,'pending.json')[0])
+   except FileNotFoundError: pass
+  if pending is None:
+   records={}
+   for op in active:
+    fd=subdir(ops,op)
+    try: records[op]=operation_snapshot(fd,op,window)
+    finally: os.close(fd)
+   before,resources=checkpoint_view(paths); previous,retained=checkpoint_selection(records,before,window)
+   moved=sorted(set(records)-set(retained))
+   check(moved and len(retained)<32,'checkpoint has no safe budget to reclaim')
+   # All refusal controls run before creating checkpoint custody or moving ops.
+   tx=str(uuid.uuid4())
+   manifest=dict(schema='acx-owner-window-checkpoint/v1',id=tx,window_id=window['id'],window_path=window['path'],window=identity(os.fstat(wfd)),window_file=window_proof,previous=previous,retained=retained,archived=moved,operations=records,state=before,resources=resources)
+   check(len(json.dumps(manifest).encode())<MAX//2,'checkpoint manifest budget')
+   if cfd is None: cfd=subdir(wfd,'checkpoints',create=True)
+   tfd=subdir(cfd,tx,create=True); archive=subdir(tfd,'ops',create=True)
+   seal(tfd,'manifest.json',manifest)
+   _,mp=proof_file(tfd,'manifest.json')
+   seal(cfd,'pending.json',dict(id=tx,manifest_sha256=mp['sha256']))
+  else:
+   check(type(pending) is dict and set(pending)=={'id','manifest_sha256'} and str(uuid.UUID(pending['id']))==pending['id'],'invalid pending checkpoint')
+   tx=pending['id']; tfd=subdir(cfd,tx); archive=subdir(tfd,'ops')
+   raw,mp=proof_file(tfd,'manifest.json'); check(mp['sha256']==pending['manifest_sha256'],'checkpoint manifest hash mismatch'); manifest=json.loads(raw)
+   check(manifest['schema']=='acx-owner-window-checkpoint/v1' and manifest['id']==tx and manifest['window_id']==window['id'] and manifest['window_path']==window['path'] and manifest['window']==identity(os.fstat(wfd)) and manifest['window_file']==window_proof,'checkpoint identity mismatch')
+  records=manifest['operations']; retained=manifest['retained']; moved=manifest['archived']; previous=manifest['previous']
+  check(len(records)<=33 and set(retained).isdisjoint(moved) and set(retained)|set(moved)==set(records),'checkpoint partition conflict')
+  archived=bounded_names(archive,33,'checkpoint archive budget exhausted')
+  check(set(active).isdisjoint(archived) and set(active)|set(archived)==set(records) and set(retained)<=set(active) and set(archived)<=set(moved),'ambiguous checkpoint directory inventory')
+  for op,expected in records.items():
+   fd=subdir(ops if op in active else archive,op)
+   try: check(operation_snapshot(fd,op,window)==expected,'checkpoint original bytes/identity changed')
+   finally: os.close(fd)
+  actual,resources=checkpoint_view(paths)
+  check(actual==manifest['state'] and resources==manifest['resources'],'checkpoint current state changed; no retry')
+  check(checkpoint_selection(records,actual,window)==(previous,retained),'checkpoint predecessor changed')
+  # Recovery always verifies every byte/location first, then resumes only the
+  # manifest's original moves. Rename retains directory/file inode identities.
+  for op in moved:
+   if op in active:
+    os.rename(op,op,src_dir_fd=ops,dst_dir_fd=archive)
+    os.fsync(archive); os.fsync(ops)
+  receipt=dict(schema='acx-owner-window-checkpoint-receipt/v1',checkpoint_id=tx,window_id=window['id'],window_path=window['path'],previous=previous,retained=retained,archived=moved,manifest_sha256=mp['sha256'],durable=True)
+  try: old_receipt=json.loads(proof_file(tfd,'complete.json')[0]); check(old_receipt==receipt,'checkpoint completion conflict')
+  except FileNotFoundError: seal(tfd,'complete.json',receipt)
+  os.fsync(archive); os.fsync(ops); os.fsync(tfd); os.fsync(cfd); os.fsync(wfd)
+  os.unlink('pending.json',dir_fd=cfd); os.fsync(cfd)
+  return receipt
+ finally:
+  for fd in (archive,tfd,cfd,ops):
+   if fd is not None: os.close(fd)
+  unlock(fds)

@@ -22,9 +22,9 @@ import { _resetCooldownForTests, openCooldown } from '../../../utils/recognition
 import { ActivityStatusStrip } from '../ActivityStatusStrip';
 import { MediaSelection } from '../MediaSelection';
 
-const { selection } = vi.hoisted(() => {
+const { selection, tableBodySpy } = vi.hoisted(() => {
   const selection: Record<string, boolean> = { '11': true };
-  return { selection };
+  return { selection, tableBodySpy: vi.fn() };
 });
 
 vi.mock('@wordpress/i18n', () => ({
@@ -53,7 +53,12 @@ vi.mock('../../../api/gpuApi', async (importOriginal) => ({
   fetchGpuStatus: vi.fn(() => Promise.resolve({ gpu_state: { state: 'ready' }, snapshot_fresh: true })),
 }));
 vi.mock('../../../hooks/useSyncOffline', () => ({ useSyncOffline: () => false }));
-vi.mock('../MediaSelectionTableBody', () => ({ MediaSelectionTableBody: () => null }));
+vi.mock('../MediaSelectionTableBody', () => ({
+  MediaSelectionTableBody: (props: unknown) => {
+    tableBodySpy(props);
+    return null;
+  },
+}));
 vi.mock('../WorkbenchNavContext', () => ({ useWorkbenchNav: () => ({ setAdvancedOpen: vi.fn() }) }));
 vi.mock('../JobPipelineContext', () => ({
   useJobPipeline: () => ({
@@ -170,6 +175,23 @@ describe('MediaSelection accepted-run polling recovery', () => {
     sessionStorage.clear();
     resetConfigCache();
     vi.restoreAllMocks();
+  });
+
+  it('opens completed run drafts in the media queue without submitting a second run', async () => {
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Describe 1 selected' }));
+    await waitFor(() => expect(getDescribeRunContext()?.id).toBe('run-A'));
+    poll.mockResolvedValue(
+      run({ status: DESCRIBE_RUN_STATUS.COMPLETED, phase: DESCRIBE_RUN_PHASE.COMPLETE, completed: 1 }),
+    );
+    await readRun();
+    await waitFor(() =>
+      expect(tableBodySpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ draftRunId: 'run-A', hasDraftFilter: true }),
+      ),
+    );
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
   });
 
   it.each(['first read', 'later poll'] as const)(
@@ -317,7 +339,9 @@ describe('MediaSelection accepted-run polling recovery', () => {
 
   it.each(['first read', 'later poll'] as const)('holds overlapping selections after a lost %s', async (failureAt) => {
     const keys = vi.spyOn(describeIdempotencyKey, 'createDescribeIdempotencyKey');
-    if (failureAt === 'first read') poll.mockRejectedValue(new Error('lost run status'));
+    if (failureAt === 'first read') {
+      poll.mockRejectedValue(new Error('lost run status'));
+    }
     const mounted = mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Describe 1 selected' }));
     await waitFor(() => expect(getDescribeRunContext()?.id).toBe('run-A'));
@@ -329,8 +353,15 @@ describe('MediaSelection accepted-run polling recovery', () => {
     await screen.findByRole('button', { name: 'Retry' });
     for (const ids of [[11, 12], [12, 11], [11]]) {
       Object.keys(selection).forEach((key) => delete selection[key]);
-      ids.forEach((id) => { selection[String(id)] = true; });
-      mounted.rerender(<QueryClientProvider client={client}><ActivityStatusStrip /><MediaSelection /></QueryClientProvider>);
+      ids.forEach((id) => {
+        selection[String(id)] = true;
+      });
+      mounted.rerender(
+        <QueryClientProvider client={client}>
+          <ActivityStatusStrip />
+          <MediaSelection />
+        </QueryClientProvider>,
+      );
       const button = screen.getByRole('button', { name: `Describe ${ids.length} selected` });
       expect(button).toBeDisabled();
       fireEvent.click(button);
@@ -344,10 +375,18 @@ describe('MediaSelection accepted-run polling recovery', () => {
     let mounted = mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Describe 1 selected' }));
     await screen.findByRole('button', { name: 'Retry' });
-    for (const [id, runId] of [[12, 'run-B'], [13, 'run-C']] as const) {
+    for (const [id, runId] of [
+      [12, 'run-B'],
+      [13, 'run-C'],
+    ] as const) {
       Object.keys(selection).forEach((key) => delete selection[key]);
       selection[String(id)] = true;
-      mounted.rerender(<QueryClientProvider client={client}><ActivityStatusStrip /><MediaSelection /></QueryClientProvider>);
+      mounted.rerender(
+        <QueryClientProvider client={client}>
+          <ActivityStatusStrip />
+          <MediaSelection />
+        </QueryClientProvider>,
+      );
       const button = screen.getByRole('button', { name: 'Describe 1 selected' });
       expect(button).toBeEnabled();
       submit.mockResolvedValue(run({ run_id: runId }));
@@ -368,9 +407,11 @@ describe('MediaSelection accepted-run polling recovery', () => {
     expect(pendingTerminalRuns().map(({ id }) => id)).toEqual(['run-A', 'run-B']);
     const recoveryA = within(await screen.findByRole('region', { name: 'Describe run run-A' }));
     const recoveryB = within(await screen.findByRole('region', { name: 'Describe run run-B' }));
-    poll.mockImplementation((runId) => runId === 'run-B'
-      ? Promise.resolve(run({ run_id: runId, cancel_requested: true }))
-      : Promise.reject(new Error('lost run status')));
+    poll.mockImplementation((runId) =>
+      runId === 'run-B'
+        ? Promise.resolve(run({ run_id: runId, cancel_requested: true }))
+        : Promise.reject(new Error('lost run status')),
+    );
     fireEvent.click(recoveryB.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(recoveryB.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument());
     expect(poll.mock.calls.at(-1)?.[0]).toBe('run-B');
@@ -381,10 +422,16 @@ describe('MediaSelection accepted-run polling recovery', () => {
     await waitFor(() => expect(recoveryA.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Describe 2 selected' })).toBeDisabled();
     for (const runId of ['run-B', 'run-A']) {
-      poll.mockImplementation((id) => id === runId
-        ? Promise.resolve(run({ run_id: id, status: DESCRIBE_RUN_STATUS.COMPLETED, phase: DESCRIBE_RUN_PHASE.COMPLETE }))
-        : Promise.reject(new Error('lost run status')));
-      await act(async () => { await client.refetchQueries({ queryKey: ['bulkDescribeRun', runId], exact: true }); });
+      poll.mockImplementation((id) =>
+        id === runId
+          ? Promise.resolve(
+              run({ run_id: id, status: DESCRIBE_RUN_STATUS.COMPLETED, phase: DESCRIBE_RUN_PHASE.COMPLETE }),
+            )
+          : Promise.reject(new Error('lost run status')),
+      );
+      await act(async () => {
+        await client.refetchQueries({ queryKey: ['bulkDescribeRun', runId], exact: true });
+      });
       await waitFor(() => expect(pendingTerminalRuns().some(({ id }) => id === runId)).toBe(false));
     }
     await waitFor(() => expect(screen.getByRole('button', { name: 'Describe 2 selected' })).toBeEnabled());
@@ -392,7 +439,12 @@ describe('MediaSelection accepted-run polling recovery', () => {
     delete selection['11'];
     delete selection['12'];
     selection['13'] = true;
-    mounted.rerender(<QueryClientProvider client={client}><ActivityStatusStrip /><MediaSelection /></QueryClientProvider>);
+    mounted.rerender(
+      <QueryClientProvider client={client}>
+        <ActivityStatusStrip />
+        <MediaSelection />
+      </QueryClientProvider>,
+    );
     expect(screen.getByRole('button', { name: 'Describe 1 selected' })).toBeDisabled();
     expect(submit).toHaveBeenCalledTimes(3);
   });

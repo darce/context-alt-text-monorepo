@@ -1,14 +1,24 @@
 # Same-window checkpoint source handoff
 
-Source only. Native Root qualification and the coordinator's one independent
-SolXHIGH gate remain pending. No live window, old sealed procedure, installed
+Source-only LOUD18504 typed-role correction on exact joined source
+`875f80651f23d119185b205af4f6000bf150656b` (controller source `9def5c1` plus
+the C3 private metadata fixtures). The remaining shared-role defect admitted
+API writer10001 as an authority-lock/state owner. The unchanged checkpoint
+suite reproduced it before this correction: 12 methods, one failed
+`authority-fence-owner` subtest and seven later FileNotFoundError cascades,
+42.282 seconds, exit1. The accepted checkpoint had already archived operations;
+the later errors were consequences, not independent parser or fixture defects.
+Native Root C3 qualification and the final exact-source independent gate for
+these corrected bytes remain pending. No live window, old sealed procedure, installed
 controller, authority, publication, load, service, model or provider was changed.
 Canonical source origin is `45ab1fc4e1716cbffd32b80802831b83f0ce94d2`, recorded
 in `context/source-origin.json`; the native export deliberately strips history.
 Baseline source receipts, evidence pins and `root_fixture_plan.py` are historical
 inputs and remain unchanged. Their old stage digests do not qualify this source.
 The regenerated seven-script manifest SHA256 is
-`20877883ec65bf7ff992510946db5d36955849d9dfd15ac0e3715b2825d577c9`.
+`7e38e54ccae1e470da7576faf75872b7a4e2febd94de07f5304c141af2d7e8d5`.
+Failed stage `20877883...` remains immutable external evidence; it is not a
+qualification or adoption target for these bytes.
 
 The supplied native evidence identifies the 33rd terminal refused operation
 (`a3711ad0`), full external history custody (`61347fe1`), and latest proven
@@ -18,10 +28,134 @@ actual current persisted predecessor using original native receipts and guards.
 Never substitute a new window, reset authority, delete operations, raise the
 ordinary cap, manufacture ACK/source proof, or modify the original sealed stage.
 
-## Fixed fifth-environment correction (HIGH19197)
+## Controller-role correction and complete supplied metadata readiness
+
+The prior fixture used Root-owned controller state. Actual native controller
+state belongs to ubuntu1001, including its mode0600 lifecycle fence. The old
+checkpoint required every fence to be mode0660 and admitted only the current
+owner/API writer for ancestors and state files. Fixing only the first fence
+would still refuse at the controller-owned authority fence or state ancestry.
+
+`Paths(..., writer_uid=None, writer_gid=None, now=None, *, controller_uid=None,
+controller_gid=None)` preserves every existing positional argument through
+`now`. The two new library-only keyword fields default independently to the
+constructing EUID/EGID. Each must be a real integer in `[0, 2**32-1)`; booleans,
+strings, floats, negative and reserved IDs refuse. Fixed Production construction
+passes `controller_uid=1001, controller_gid=1001`; writer10001 is unchanged.
+There is no public role flag, UID adoption argument or configuration lookup.
+
+`_resource_roles(paths, kind)` separates controller state from runtime
+publications. Controller resources accept only the declared controller pair
+(Production `1001:1001`, default private fixtures EUID:EGID). Runtime resources
+retain custodian, custodian/API-group and API writer pairs (Production `0:0`,
+`0:10001`, `10001:10001`). The runtime writer is never added to controller
+roles. Authority JSON, deferred STOP and durable intent publications therefore
+refuse writer10001 ownership, including the existing authority-state-owner
+control. Mixed pairs such as `1001:10001` also refuse for controller state.
+
+Durable ancestry admits custodian/controller and filesystem-root pairs before
+the store; the store itself requires controller0700. Its descendants require
+the controller pair at 0700 or 0755, preserving private fixtures and native
+intents/prod0755 while refusing store0770. Runtime ancestry keeps its runtime
+pairs. Traversal retains held no-follow descriptors and refuses world write
+except the existing filesystem-root sticky1777 case. State file modes remain
+exactly 0400/0600/0640/0644/0660. Regular type, one link,
+1 MiB bound, still-named identity and SHA256 checks remain; the metadata checked
+before reading must also match the identity of the file actually proved.
+
+Fence policy is specific to the fixed role: the window requires its current
+custodian pair and 0660 (Production `0:0`); lifecycle accepts only the declared
+controller at 0600 or 0660, plus existing custodian-owned 0660 creation forms;
+authority requires the declared controller or an existing custodian-created
+pair at 0660, so writer10001:10001 refuses; runtime intent fences
+accept custodian, custodian/API-group or API writer pairs at 0660. Every fence
+must be regular, single-link and zero bytes. Unknown fence paths refuse. Existing
+fences are opened read-only without creation, chmod or chown. Held/named fence
+identities and the one 15-second deadline are preserved. Private default-EUID
+fixtures use their actual owner pair rather than pretending to be native Root.
+
+Every supplied actual metadata entry was checked against that policy. This
+matrix is source readiness, using pure/substituted metadata controls; it is
+not a fresh observation of any native path or native Root qualification.
+
+| Resource | Supplied UID:GID / mode | Policy readiness |
+| --- | --- | --- |
+| Original window `window.lock` | 0:0 / 0660 | Window custodian, admitted |
+| `/var/lib/acx-gpu/lifecycle.lock` | 1001:1001 / 0600 | Declared controller lifecycle, admitted |
+| `/var/lib/acx-gpu/.intent-authority.json.lock` | 1001:1001 / 0660 | Declared controller authority, admitted |
+| `/run/acx-write/dev/gpu-intent.json.lock` | 0:10001 / 0660 | Root/API-group intent fence, admitted |
+| `/run/acx-write/dev-fir/gpu-intent.json.lock` | 0:10001 / 0660 | Root/API-group intent fence, admitted |
+| `/run/acx-write/prod/gpu-intent.json.lock` | 0:10001 / 0660 | Root/API-group intent fence, admitted |
+| `/run/acx-write/staging/gpu-intent.json.lock` | 0:10001 / 0660 | Root/API-group intent fence, admitted |
+| `/run/acx-write/dev-auraface/gpu-intent.json.lock` | 0:10001 / 0660 | Root/API-group intent fence, admitted |
+| `/var/lib/acx-gpu` directory | 1001:1001 / 0700 | Declared controller ancestor, admitted |
+| `/var/lib/acx-gpu/intents` directory | 1001:1001 / 0755 | Declared controller ancestor, admitted |
+| `/var/lib/acx-gpu/intents/prod` directory | 1001:1001 / 0755 | Declared controller ancestor, admitted |
+| `/var/lib/acx-gpu/intent-authority.json` | 1001:1001 / 0660 | Declared controller state, admitted |
+| `/var/lib/acx-gpu/intents/prod/gpu-intent.json` | 1001:1001 / 0660 | Declared controller durable state, admitted |
+| `/run/acx-write/prod/gpu-intent.json` | 10001:10001 / 0660 | API publication state, admitted |
+| `/var/lib/acx-gpu/deferred-stop.json` | Absent | Existing optional absence, admitted |
+
+All eight supplied fences additionally have the required regular/single-link/
+zero-byte metadata. No supplied UID/GID/mode entry remains unexplained. Remaining
+unknown here: runtime ancestor metadata was not supplied, native held identities/
+state-file link counts and hashes were not reobserved, and final joined C3/gate
+results are pending. The unchanged current-state, original publication-proof and
+UNKNOWN checks must establish those facts natively; this source cannot certify
+them from supplied ownership alone.
+
+LOUD18504 verification on these corrected bytes, actual EUID/GID1002:1002:
+
+- `timeout 55s python3 -B .../test_window_checkpoint.py`: unchanged 12 methods
+  passed in 44.303 seconds, exit0. The controller refusal matrix now completes,
+  including authority-fence-owner10001:10001, authority-state-owner10001:10001
+  and store0770, with unchanged damaged metadata, custody and state.
+- `timeout 55s python3 -B .../test_resume_start.py`: unchanged 8 methods
+  passed in 1.465 seconds, exit0.
+- Both helpers parse; the seven-script manifest was regenerated from actual
+  bytes. `git diff --check` passed. Source changes are confined to
+  `_resource_roles`, `_checkpoint_fence` and `checkpoint_view`; Production
+  controller1001 construction, all tests and fixture drivers remain unchanged.
+
+These are UNIT_ONLY results with the existing explicit stat-role substitution
+on private inodes. No privileged fixture, network, dependency/model operation,
+live path metadata change, authority reset, new window, cap increase or sealed
+stage edit was performed. Parent must run actual Root C3 and the final exact
+source XHIGH gate; these unit passes are not Root Green.
+
+Historical `9def5c1` source controls, executed as actual UID1002 with
+`timeout 55s` (these results do not qualify the current joined source):
+
+- `python3 -B .../test_window_checkpoint.py`: 9 methods passed, 37.384 seconds.
+- `python3 -B .../test_resume_start.py`: 7 methods passed, 1.353 seconds.
+- `python3 -B /tmp/a3_controller_role_checks.py .../owner-resume-start-r4`:
+  7 private methods passed, 6.614 seconds. This temporary, uncommitted control
+  file has SHA256 `9a04de69be130b1f38f66240dafe02e1bc165d448efabd293391e40fcfdf709d`.
+  It covers typed/default/positional construction, fixed Production kwargs,
+  all supplied fence and state rows using explicit metadata substitution,
+  wrong owner/group/mode/link/type/size/path refusals, state identity changes,
+  and mutation-free fence/state refusal before checkpoint directory creation.
+  A real current-EUID/controller lifecycle0600 fixture archives 33 operations
+  with original bytes/inodes and current publications preserved. In-memory
+  uniform0660 and omitted-controller-role defects make passing controls refuse.
+- Both helpers parse. AST comparison to base `23a603a` confirms every other
+  custody definition/constant is identical, and all CLI code apart from its
+  fixed `Paths` construction is identical. All seven manifest entries were
+  regenerated from actual script bytes.
+
+No controller, fixture driver, selected limits or fixed 180-second Root proof
+deadline was edited. Root C3 must consume these exact named kwargs and reproduce
+all supplied roles in new proven-private overlays. Its controller emulator
+executes as Root; kernel UID1001 metadata provisioning does not qualify actual
+controller1001 credential execution. No native Root Green is claimed from
+these UID1002 units. Keep the original window, 33 bound, current predecessor and all
+prior archive proofs. A new protected stage must bind the ORIGINAL old stage
+and window through the unchanged predecessor receipt contract below.
+
+## Fixed fifth-environment correction (HIGH19197, preserved)
 
 `owner-custody.py` now uses exactly
-`ENVS=('dev','dev-fir','prod','staging','dev-auraface')`; Paths is unchanged.
+`ENVS=('dev','dev-fir','prod','staging','dev-auraface')`; fence order is unchanged.
 Checkpoint fences all five intent producers and accepts these five environment
 directories even when the fifth intent is absent. START/STOP additionally fence
 and require all five current loads. Four-load inventories, a missing fifth load,
@@ -29,11 +163,13 @@ and nonzero/stale fifth-load evidence refuse. Foreign environment checks remain;
 the directory bound is five, the ordinary operation cap stays 32, and checkpoint
 alone remains bounded at 33. AUTO/checkpoint still do not read loads.
 
-Before checkpoint, the Root coordinator must provision exactly the missing
+Historical prerequisite (coordinator now reports completed with peer ACK):
+before checkpoint, the Root coordinator had to provision exactly the missing
 `/run/acx-write/dev-auraface/gpu-intent.json.lock` as ordinary fixed-topology
 setup from its Root0700 stage: exclusive creation (`O_EXCL`), no-follow open,
 UID0/GID10001, mode0660. Preserve every existing persistent fence. The archive
-function still requires existing fences and does not provision this file.
+function still requires existing fences and does not provision this file. Do
+not repeat provisioning or alter an existing fence to fit fixture assumptions.
 No authority, publication, load or service configuration change is authorized.
 Use a new stage containing the exact seven script pins plus the protected old
 procedure receipt. The sealed `991aa72e...` four-environment stage is immutable
@@ -106,8 +242,8 @@ sequence, load and first-use guards are unchanged.
 
 Current authority, runtime/durable publications and deferred STOP are read from
 the fixed topology with bounded inventory, held no-follow ancestry and file
-owner/mode/link/hash/identity checks. Root/controller and configured writer
-ownership/groups are accepted; no foreign environment or world-writable source
+owner/mode/link/hash/identity checks. Only the paired roles described above
+are accepted; no foreign environment or world-writable source
 is adopted. The unchanged `guard(..., 'auto')` validates actual state. Every
 persisted publication must have complete original published operation proof.
 The highest proven published operation must still be persisted. Every current
@@ -144,7 +280,7 @@ transaction directory, but no operation has moved. A crash after durable
 completion/removing pending may lose stdout; retained operations and sealed
 completion evidence remain valid. Do not automatically retry a timed-out CLI.
 
-## Qualification boundary
+## Historical qualification boundary (prior fifth-environment source)
 
 All executed controls here were author-owned temporary fixtures or explicit
 dependency-substituted unit controls. No sudo, actual writer, namespace setup,

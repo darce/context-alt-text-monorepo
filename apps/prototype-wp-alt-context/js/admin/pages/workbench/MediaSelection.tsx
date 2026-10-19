@@ -2,15 +2,7 @@ import { ChangeEvent, useEffect, useRef, useState, useSyncExternalStore } from '
 import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
-import {
-  AlertTriangle,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  Clock,
-  Loader2,
-  XCircle,
-} from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
@@ -19,6 +11,7 @@ import { queryKeys } from '../../api/queryKeys';
 import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { useJobPipeline } from './JobPipelineContext';
+import { descriptionWaitPresentation } from './gpuStatePresentation';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
@@ -45,6 +38,7 @@ import {
 } from '../../api/describeApi';
 import { APP_LINK_PARAMS, parseRunParam, serializeRunParam } from '../../navigation/appLinks';
 import { isCooldownSignal } from '../../utils/retryPolicy';
+import { WARMING_OBSERVATION_STATUS } from '../../utils/warmingDeadline';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
@@ -102,16 +96,19 @@ const PendingDescribeRecovery = ({ runId }: { runId: string }): React.JSX.Elemen
   const [cancelOpen, setCancelOpen] = useState(false);
   return (
     <section aria-label={sprintf(__('Describe run %s', 'alt-context'), runId)}>
-      <p role="status">
-        {sprintf(__('Describe run %s is awaiting its final status.', 'alt-context'), runId)}
-      </p>
+      <p role="status">{sprintf(__('Describe run %s is awaiting its final status.', 'alt-context'), runId)}</p>
       {actions.onRetry !== null ? (
         <button type="button" className="button" onClick={actions.onRetry}>
           {__('Retry', 'alt-context')}
         </button>
       ) : null}
       {actions.onCancel !== null ? (
-        <button type="button" className="button button-link" disabled={isCancelling} onClick={() => setCancelOpen(true)}>
+        <button
+          type="button"
+          className="button button-link"
+          disabled={isCancelling}
+          onClick={() => setCancelOpen(true)}
+        >
           {__('Cancel run', 'alt-context')}
         </button>
       ) : null}
@@ -319,6 +316,40 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
     (hasDescribeActivity || terminalDescribeRunId !== null) &&
     (activeDescribeRunId === null || dismissedRunId !== terminalDescribeRunId);
 
+  // The default queue reads description history, which excludes unapplied run
+  // drafts. Open the accepted run's existing draft view once it finishes, so
+  // results actually arrive without another scan, submit, or alt-text write.
+  const surfacedDraftRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !describeProgress.isTerminal ||
+      !terminalDescribeRunId ||
+      (describeProgress.run?.completed ?? 0) === 0 ||
+      surfacedDraftRunRef.current === terminalDescribeRunId ||
+      dismissedRunId === terminalDescribeRunId ||
+      (draftRunId !== null && draftRunId !== terminalDescribeRunId)
+    ) {
+      return;
+    }
+    surfacedDraftRunRef.current = terminalDescribeRunId;
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.set(QUEUE_HAS_DRAFT_PARAM, QUEUE_HAS_DRAFT_VALUE);
+        next.set(APP_LINK_PARAMS.run, terminalDescribeRunId);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [
+    describeProgress.isTerminal,
+    describeProgress.run?.completed,
+    terminalDescribeRunId,
+    dismissedRunId,
+    draftRunId,
+    setSearchParams,
+  ]);
+
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
   const detailStatusMessage = detailQuery.isLoading
@@ -380,7 +411,9 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
               onToggleRow={onToggleRow}
               selection={selection}
               identitiesDataSource={deriveIdentitiesPresentationSource(identityQuery.isError, identityQuery.data)}
-              identitiesLoading={identityQuery.isLoading || (identityQuery.isPlaceholderData && identityQuery.isFetching)}
+              identitiesLoading={
+                identityQuery.isLoading || (identityQuery.isPlaceholderData && identityQuery.isFetching)
+              }
               onRetryIdentities={() => void identityQuery.refetch()}
               searchQuery={searchQuery}
               statusFilter={statusFilter}
@@ -468,7 +501,9 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
           />
           {pendingRunIds
             .filter((runId) => runId !== (activeDescribeRunId ?? pendingRunIds[0]))
-            .map((runId) => <PendingDescribeRecovery key={runId} runId={runId} />)}
+            .map((runId) => (
+              <PendingDescribeRecovery key={runId} runId={runId} />
+            ))}
           {bulkDescribe.unreadableMediaIds.length > 0 ? (
             <div className="acx-media-selection__unreadable-media" role="status">
               <p>
@@ -960,29 +995,17 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
 
 const formatTimingSeconds = (ms: number): string => String(ms / 1000);
 
-const formatWarmingGpuLabel = (): string => __('Warming GPU (first run only)…', 'alt-context');
-
 /**
  * Wire-only terminal summary. `server_elapsed_ms` is evidence-only and is never
  * rendered as "described in" (R-02). Always at least the count line.
  */
-const formatTerminalTimingAnnouncement = (
-  completed: number,
-  failed: number,
-  timing: DescribeRunTiming,
-): string => {
-  const segments: string[] = [
-    sprintf(__('%1$d described, %2$d failed', 'alt-context'), completed, failed),
-  ];
+const formatTerminalTimingAnnouncement = (completed: number, failed: number, timing: DescribeRunTiming): string => {
+  const segments: string[] = [sprintf(__('%1$d described, %2$d failed', 'alt-context'), completed, failed)];
   if (timing.ramp_up_ms !== null) {
-    segments.push(
-      sprintf(__('Waited for service %s s', 'alt-context'), formatTimingSeconds(timing.ramp_up_ms)),
-    );
+    segments.push(sprintf(__('Waited for service %s s', 'alt-context'), formatTimingSeconds(timing.ramp_up_ms)));
   }
   if (timing.startup_ms !== null) {
-    segments.push(
-      sprintf(__('Started in %s s', 'alt-context'), formatTimingSeconds(timing.startup_ms)),
-    );
+    segments.push(sprintf(__('Started in %s s', 'alt-context'), formatTimingSeconds(timing.startup_ms)));
   }
   if (timing.queue_ms !== null) {
     segments.push(sprintf(__('Queue %s s', 'alt-context'), formatTimingSeconds(timing.queue_ms)));
@@ -1091,20 +1114,27 @@ export const BulkDescribeProgress = ({
       </button>
     ) : null;
 
-  if (isWarming) {
+  if (!isTerminal && (isWarming || run.phase === DESCRIBE_RUN_PHASE.WARMING)) {
+    const wait = descriptionWaitPresentation(progress.warmingObservation);
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
           <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-          {formatWarmingGpuLabel()}
+          {wait.headline}
         </span>
+        <span>{wait.detail}</span>
+        {progress.warmingObservation?.status !== WARMING_OBSERVATION_STATUS.WAITING ? (
+          <button type="button" className="button button-link" onClick={onRetry}>
+            {__('Check status', 'alt-context')}
+          </button>
+        ) : null}
         {cancelControl}
         {waitingNotice}
       </div>
     );
   }
 
-  if (run.phase === DESCRIBE_RUN_PHASE.QUEUED) {
+  if (!isTerminal && run.phase === DESCRIBE_RUN_PHASE.QUEUED) {
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--pending">
@@ -1117,22 +1147,9 @@ export const BulkDescribeProgress = ({
     );
   }
 
-  if (run.phase === DESCRIBE_RUN_PHASE.WARMING) {
-    return (
-      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
-        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
-          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
-          {formatWarmingGpuLabel()}
-        </span>
-        {cancelControl}
-        {waitingNotice}
-      </div>
-    );
-  }
-
   const processed = run.completed + run.failed + run.skipped;
 
-  if (run.phase === DESCRIBE_RUN_PHASE.DESCRIBING) {
+  if (!isTerminal && run.phase === DESCRIBE_RUN_PHASE.DESCRIBING) {
     const describingLabel = sprintf(__('Describing… %1$d/%2$d', 'alt-context'), processed, run.total);
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
@@ -1158,7 +1175,7 @@ export const BulkDescribeProgress = ({
     );
   }
 
-  if (run.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
+  if (isTerminal && (status === DESCRIBE_RUN_STATUS.COMPLETED || status === DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS)) {
     const draftsReady = sprintf(
       _n('✔ %1$d draft ready to review', '✔ %1$d drafts ready to review', run.completed, 'alt-context'),
       run.completed,
@@ -1177,9 +1194,7 @@ export const BulkDescribeProgress = ({
           <CheckCircle2 aria-hidden="true" size={16} />
           {visualCopy}
         </span>
-        {measuredAnnouncement !== null ? (
-          <span className="screen-reader-text">{measuredAnnouncement}</span>
-        ) : null}
+        {measuredAnnouncement !== null ? <span className="screen-reader-text">{measuredAnnouncement}</span> : null}
         <a className="button button-secondary" href={workbenchDraftQueueHref(run.run_id)}>
           {__('Review drafts', 'alt-context')}
         </a>

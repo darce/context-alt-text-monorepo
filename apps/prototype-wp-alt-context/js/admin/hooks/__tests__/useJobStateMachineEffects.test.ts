@@ -113,6 +113,31 @@ describe('useJobStateMachineEffects', () => {
     expect(cluster).not.toHaveBeenCalled();
   });
 
+  it.each([undefined, { type: 'scan', status: 'completed' }])(
+    'refreshes a terminal batch without operator clustering when the selected job is %j',
+    (scanStatus) => {
+      const options = buildBaseOptions();
+      const invalidateQueries = vi.fn();
+      renderHook(() =>
+        useJobStateMachineEffects({
+          ...options,
+          queryClient: { invalidateQueries } as never,
+          scanStatus: scanStatus as typeof options.scanStatus | undefined,
+          batchRunStatus: buildTerminalBatchRunStatus(),
+          activeJobs: [{ id: 'job-1', type: 'scan', startedAt: Date.now(), totalItems: 14 }],
+          latestClusterJob: null,
+          currentPhase: 'scanning',
+          isWaitingForScanCompletion: true,
+        }),
+      );
+
+      expect(options.setIsWaitingForScanCompletion).toHaveBeenCalledWith(false);
+      expect(options.removeJob).toHaveBeenCalledWith('job-1');
+      expect(options.cluster).not.toHaveBeenCalled();
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.all });
+    },
+  );
+
   it('fires the identity/cluster/suggestion refresh when a scan completes with errors (BND-1)', async () => {
     // completed_with_errors is a terminal partial-success the description-service emits; the
     // consumer must refresh findings exactly as it does for a clean 'completed' scan. Before the

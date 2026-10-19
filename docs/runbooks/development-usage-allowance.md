@@ -85,15 +85,25 @@ an existing beta entitlement; it configures plan grants/transitions.
 ## Description runtime is a separate prerequisite
 
 An accepted run does not prove generation succeeded. Inspect its item results.
-The r fixture's dev-auraface API and worker currently omit
-`ACX_DESCRIPTION_ADAPTER`, so they select `florence_small`; the deployed image
-lacks that profile's `torch` and `transformers` dependencies. Raising credits
-does not repair this model configuration. The maintained GPU-backed profile is
+Initially the r fixture's dev-auraface API and worker omitted
+`ACX_DESCRIPTION_ADAPTER`, selecting `florence_small`; the deployed image
+lacked that profile's `torch` and `transformers` dependencies. Raising credits
+did not repair this model configuration. The maintained GPU-backed profile is
 `gpu_qwen30b`; enabling it requires the target's API and worker configuration,
-server-side endpoint credentials, snapshots and demand-driven lifecycle wiring.
+the endpoint's current authentication mode, snapshots and demand-driven lifecycle wiring.
 Follow [the separate description smoke procedure](tenant-onboarding-smoke-test.md)
 and [GPU environment deployment](gpu-demo-env-flip.md). A successful face scan
 or HTTP 202 is insufficient evidence of working descriptions.
+
+On October 19, both dev-auraface services were configured with `gpu_qwen30b`,
+the shared private endpoint, winner routing, and concurrency one. Both mount
+`/run/acx` read-only for lifecycle snapshots. The GPU owner's finite test window
+confirmed WordPress run `90a469e1-cbc9-4c16-80d2-382863f7ba73` completed with
+one final GPU draft and zero errors; attachment alt text was preserved. This
+proves execution, not caption quality. Further description runs must respect
+the bake-off owner's exclusive GPU windows. Cold-start registration of
+`dev-auraface` remains a separate shared lifecycle change; client configuration
+alone does not establish automatic wake-up for that deployment.
 
 ## Automatic development seeding
 

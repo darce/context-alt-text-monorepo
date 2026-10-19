@@ -193,6 +193,32 @@
   }
 }
 
+.acx-activity-status-strip {
+  flex-wrap: wrap;
+
+  &__status {
+    flex: 1 1 16rem;
+    min-width: 0;
+  }
+
+  &__wait-detail {
+    display: block;
+    margin-top: var(--acx-space-4);
+  }
+
+  &__run-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    min-width: 0;
+  }
+
+  &__headline svg {
+    flex-shrink: 0;
+  }
+}
+
 .acx-sync-status {
   display: flex;
   align-items: center;

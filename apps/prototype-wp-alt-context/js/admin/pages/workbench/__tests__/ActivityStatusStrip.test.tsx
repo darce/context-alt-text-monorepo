@@ -74,6 +74,36 @@ const hookResult = (overrides: Partial<UseActivityStatusResult> = {}): UseActivi
 });
 
 describe('ActivityStatusStrip', () => {
+  it.each([
+    ['unknown', 'Description service status unavailable'],
+    ['overdue', 'Description service is taking longer than expected'],
+  ] as const)(
+    'explains %s startup evidence and checks status without promising warm-up',
+    (observationStatus, headline) => {
+      const onRetry = vi.fn();
+      useActivityStatusMock.mockReturnValue(
+        hookResult({
+          status: idleStatus({
+            kind: ACTIVITY_KIND.WARMING,
+            runId: 'run-1',
+            warmingObservation: {
+              status: observationStatus,
+              evidence: 'unknown',
+              firstObservedAt: 1,
+              deadlineAt: 2,
+            },
+          }),
+          actions: { onRetry, onCancel: null, reviewDraftsHref: null, backToRunHref: '#/workbench' },
+        }),
+      );
+      render(<ActivityStatusStrip />);
+      expect(screen.getByRole('status')).toHaveTextContent(headline);
+      expect(screen.queryByText(/first run only/)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
+      expect(onRetry).toHaveBeenCalledOnce();
+    },
+  );
+
   it('announces in a polite status region and marks the strip as mounted', () => {
     useActivityStatusMock.mockReturnValue(
       hookResult({
@@ -91,7 +121,7 @@ describe('ActivityStatusStrip', () => {
 
     const region = screen.getByRole('status');
     expect(region).toHaveAttribute('aria-live', 'polite');
-    expect(screen.getByText('Warming GPU (first run only)…')).toBeTruthy();
+    expect(screen.getByText('Description service status unavailable')).toBeTruthy();
     expect(screen.getByText('~3m 0s remaining')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Cancel run' })).toBeEnabled();
     expect(screen.getByRole('link', { name: 'Back to run' })).toHaveAttribute('href', '#/workbench');
@@ -224,9 +254,7 @@ describe('ActivityStatusStrip cancel confirm (dialog only for cancel)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel run' }));
     const heading = await screen.findByRole('heading', { name: 'Cancel this run?' });
     const dialog =
-      heading.closest('[role="dialog"]') ??
-      heading.closest('.acx-dialog__content') ??
-      heading.parentElement;
+      heading.closest('[role="dialog"]') ?? heading.closest('.acx-dialog__content') ?? heading.parentElement;
     if (!(dialog instanceof HTMLElement)) {
       throw new Error('expected cancel confirm container');
     }

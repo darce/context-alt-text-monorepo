@@ -8,6 +8,30 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { GPU_STATE, type GpuState } from '../../api/describeApi';
+import { WARMING_OBSERVATION_STATUS, type WarmingObservation } from '../../utils/warmingDeadline';
+
+/** Run-scoped wait copy: an unavailable observation is not proof of warm-up. */
+export const descriptionWaitPresentation = (observation?: WarmingObservation): { headline: string; detail: string } => {
+  if (observation?.status === WARMING_OBSERVATION_STATUS.OVERDUE) {
+    return {
+      headline: __('Description service is taking longer than expected', 'alt-context'),
+      detail: __('This description run is still waiting. Check its status or cancel the run.', 'alt-context'),
+    };
+  }
+  if (observation?.status === WARMING_OBSERVATION_STATUS.WAITING) {
+    return {
+      headline: __('Waiting for description service…', 'alt-context'),
+      detail: __(
+        'Remaining descriptions are waiting for the service. Results will be available as drafts.',
+        'alt-context',
+      ),
+    };
+  }
+  return {
+    headline: __('Description service status unavailable', 'alt-context'),
+    detail: __('Startup could not be confirmed. Check the run status or cancel this description run.', 'alt-context'),
+  };
+};
 
 export const GPU_STATE_ICON = {
   HELP: 'circle-help',
@@ -57,10 +81,7 @@ export const GPU_STATE_VOCABULARY = {
   readyToast: __('GPU ready — review results for compute tiers', 'alt-context'),
   degradedToast: __('GPU unavailable — CPU drafts kept', 'alt-context'),
   doneToast: (draftCount: number): string =>
-    sprintf(
-      _n('%d draft ready to review', '%d drafts ready to review', draftCount, 'alt-context'),
-      draftCount,
-    ),
+    sprintf(_n('%d draft ready to review', '%d drafts ready to review', draftCount, 'alt-context'), draftCount),
   failedToastWarmupTimeout: __('GPU warm-up timed out. Retry to continue.', 'alt-context'),
   failedToastDescribePoll: __('Lost connection to the describe run.', 'alt-context'),
   failedToastGpuUnavailable: __('Description Service status unavailable', 'alt-context'),
@@ -68,8 +89,7 @@ export const GPU_STATE_VOCABULARY = {
   failedToastScanFailed: __('People identification failed.', 'alt-context'),
   failedToastFailed: __('Describe run failed.', 'alt-context'),
   failedToastGeneric: __('Run failed', 'alt-context'),
-  failedToastWithReason: (reason: string): string =>
-    sprintf(__('Run failed (%s)', 'alt-context'), reason),
+  failedToastWithReason: (reason: string): string => sprintf(__('Run failed (%s)', 'alt-context'), reason),
   backToRun: __('Back to run', 'alt-context'),
   backToRunAltText: __('Return to the active describe run', 'alt-context'),
   reviewResults: __('Review results', 'alt-context'),

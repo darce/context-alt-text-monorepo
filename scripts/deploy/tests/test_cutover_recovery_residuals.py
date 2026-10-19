@@ -92,6 +92,13 @@ def _run_extracted(
         command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
+# Unit orchestration boundary: real edge ownership is exercised in test_aura_edge_fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+# Isolate the sticky resource protocol from the independently tested edge fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_begin() {{ return 0; }}
+recognition_edge_finish() {{ return 0; }}
+recognition_edge_command() {{ ACX_RECOGNITION_OWNERSHIP_CHECK=: ssh "$1"; }}
 export PATH="{bin_dir}:$PATH"
 ACX_DEPLOY_BACKUP_ROOT="{tmp_path}"
 ACX_CUTOVER_ENV=dev
@@ -192,6 +199,13 @@ def _run_persisted_replay(tmp_path: Path, *, abort_succeeds: bool = False) -> su
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
+# Unit orchestration boundary: real edge ownership is exercised in test_aura_edge_fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+# Isolate the sticky resource protocol from the independently tested edge fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_begin() {{ return 0; }}
+recognition_edge_finish() {{ return 0; }}
+recognition_edge_command() {{ ACX_RECOGNITION_OWNERSHIP_CHECK=: ssh "$1"; }}
 export PATH="{bin_dir}:$PATH"
 ACX_DEPLOY_BACKUP_ROOT="{tmp_path}"
 ACX_CUTOVER_ENV=dev
@@ -262,6 +276,8 @@ def _run_partial_rollback(
     command = f'''
 source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
+# Unit orchestration boundary: real edge ownership is exercised in test_aura_edge_fence.
+recognition_edge_assert_if_active() {{ return 0; }}
 REMOTE_BUILD=0
 CONFIRM=PROMOTE
 ACX_BOOT_SMOKE=0
@@ -348,6 +364,11 @@ def test_sticky_same_value_new_owner_refuses_old_compensation(tmp_path: Path) ->
     sudo.chmod(0o755)
     command = f'''
 source "{SCRIPT}"
+# Isolate the sticky resource protocol from the independently tested edge fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_begin() {{ return 0; }}
+recognition_edge_finish() {{ return 0; }}
+recognition_edge_command() {{ ACX_RECOGNITION_OWNERSHIP_CHECK=: ssh "$1"; }}
 export PATH="{bin_dir}:$PATH"
 env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
 run_with_deadline() {{ shift 2; "$@"; }}
@@ -380,6 +401,11 @@ def _sticky_shell(tmp_path: Path, command: str) -> str:
     sudo.chmod(0o755)
     return f'''
 source "{SCRIPT}"
+# Isolate the sticky resource protocol from the independently tested edge fence.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_begin() {{ return 0; }}
+recognition_edge_finish() {{ return 0; }}
+recognition_edge_command() {{ ACX_RECOGNITION_OWNERSHIP_CHECK=: ssh "$1"; }}
 export PATH="{bin_dir}:$PATH"
 env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
 ssh() {{ bash -c "${{@: -1}}"; }}

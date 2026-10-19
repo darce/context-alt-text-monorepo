@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { onlineManager } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache } from '../../../../api/config';
@@ -50,8 +51,9 @@ const deferredResponse = () => {
   const promise = new Promise<Response>((resolve) => { finish = resolve; });
   return { promise, resolve: (body: unknown, status = 200) => finish(json(body, status)) };
 };
-type Route = 'closest' | 'roster' | 'batch' | 'clusters' | 'health';
-interface RequestRecord { route: Route; method: string; url: URL }
+type Route = 'closest' | 'roster' | 'batch' | 'clusters' | 'health' | 'commit';
+interface RequestRecord { route: Route; method: string; url: URL; body?: unknown }
+let allowCommit: boolean;
 let client: ReturnType<typeof buildTestQueryClient>;
 let requests: RequestRecord[];
 let unexpected: string[];
@@ -69,6 +71,7 @@ const assertReadOnly = () => {
 };
 
 beforeEach(() => {
+  allowCommit = false;
   requests = [];
   unexpected = [];
   client = buildTestQueryClient();
@@ -84,6 +87,7 @@ beforeEach(() => {
     },
   });
   responses = {
+    commit: () => Promise.reject(new Error('No write expected')),
     closest: () => Promise.resolve(json(candidateBody)),
     roster: () => Promise.resolve(json(roster)),
     batch: () => Promise.resolve(json(emptyBatch)),
@@ -97,6 +101,7 @@ beforeEach(() => {
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
     let route: Route;
     if (url.pathname === `/wp-json/acx/v1/recognition/clusters/${CLUSTER_ID}/roster-candidates`) route = 'closest';
+    else if (url.pathname === `/wp-json/acx/v1/roster/clusters/${CLUSTER_ID}/commit`) route = 'commit';
     else if (url.pathname === '/wp-json/acx/v1/roster/entries') route = 'roster';
     else if (url.pathname === '/wp-json/acx/v1/recognition/identities/suggestions') route = 'batch';
     else if (url.pathname === '/wp-json/acx/v1/recognition/clusters') route = 'clusters';
@@ -105,8 +110,11 @@ beforeEach(() => {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error(`Unexpected fixture route: ${method} ${url.pathname}`));
     }
-    requests.push({ route, method, url });
-    if (method !== 'GET') {
+    if (init?.body != null && typeof init.body !== 'string') {
+      throw new Error('Fixture request body must be a JSON string');
+    }
+    requests.push({ route, method, url, body: init?.body ? JSON.parse(init.body) : undefined });
+    if (method !== 'GET' && !(allowCommit && route === 'commit' && method === 'POST')) {
       unexpected.push(`${method} ${url.pathname}`);
       return Promise.reject(new Error('Display and retry must be read-only'));
     }
@@ -117,8 +125,10 @@ beforeEach(() => {
 afterEach(async () => {
   cleanup();
   await client.cancelQueries();
-  assertReadOnly();
+  if (!allowCommit) assertReadOnly();
+  else expect(requests.filter(({ method }) => method !== 'GET').every(({ route, method }) => route === 'commit' && method === 'POST')).toBe(true);
   client.clear();
+  onlineManager.setOnline(true);
   vi.unstubAllGlobals();
   resetConfigCache();
   expect(unexpected, 'all requests use explicit fixture routes').toEqual([]);
@@ -335,5 +345,121 @@ describe('F3 optional closest-read budget through the real hook and legacy edito
     }));
     expect(count('closest')).toBe(0);
     assertReadOnly();
+  });
+});
+
+
+describe('U1-01 identity-batch advisory loading', () => {
+  it('permits actual typing and Save before advisory completion, preserving focus and draft', async () => {
+    const pending = hold('batch');
+    mountEditor();
+    await waitFor(() => expect(client.getQueryState(queryKeys.roster.entries())?.status).toBe('success'));
+    await waitFor(() => expect(count('batch')).toBe(1));
+    expect(input(), 'U1-01 advisory batch pending must permit typing').toBeEnabled();
+    await userEvent.setup().type(input(), 'Zoe');
+    expect(input()).toHaveValue('Zoe');
+    expect(input()).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled();
+    act(() => { pending.resolve(emptyBatch); });
+    await waitFor(() => expect(closestState()?.status).toBe('success'));
+    expect(input()).toHaveValue('Zoe');
+    expect(input()).toHaveFocus();
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+});
+
+
+describe('U1-01 mandatory data and actual write guards', () => {
+  it('Save during advisory wait sends the stable roster id and locks during the deferred HTTP write', async () => {
+    allowCommit = true;
+    hold('batch');
+    const write = hold('commit');
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    mountEditor();
+    await waitFor(() => expect(input()).toBeEnabled());
+    const user = userEvent.setup();
+    await user.type(input(), 'Pat Nguyen');
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(count('commit')).toBe(1));
+    expect(requests.find(({ route }) => route === 'commit')?.body).toEqual({
+      roster_entry_id: 9, new_entry_name: null,
+    });
+    expect(client.getQueryCache().findAll().some((query) => query.queryKey.includes('identity-batch') && query.state.fetchStatus === 'fetching')).toBe(true);
+    expect(input()).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Saving/ })).toBeDisabled();
+    await user.type(input(), 'changed{Enter}');
+    await user.click(screen.getByRole('button', { name: /Saving/ }));
+    expect(input()).toHaveValue('Pat Nguyen');
+    expect(count('commit')).toBe(1);
+    act(() => { write.resolve({ cluster_id: CLUSTER_ID, person_id: 9, person_uuid: 'person-9', person_name: 'Pat Nguyen', updated_at: '2026-10-18T00:00:00Z' }); });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.roster.entries() }));
+    expect(await screen.findByRole('button', { name: 'Saved!' })).toBeDisabled();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.roster.entries() });
+  });
+
+  it('roster failure blocks create, and Retry waits for a successful empty roster', async () => {
+    responses.roster = () => Promise.resolve(json({ code: 'unavailable' }, 503));
+    mountEditor();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Unable to load people. Retry before naming someone new.');
+    expect(input()).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(count('commit')).toBe(0);
+    const retry = hold('roster');
+    await userEvent.setup().click(within(alert).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(count('roster')).toBe(2));
+    expect(input()).toBeDisabled();
+    act(() => { retry.resolve([]); });
+    await waitFor(() => expect(input()).toBeEnabled());
+    await userEvent.setup().type(input(), 'Zoe');
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled();
+    expect(count('commit')).toBe(0);
+  });
+
+  it('advisory failure remains separate from successful roster readiness', async () => {
+    responses.batch = () => Promise.resolve(json({ code: 'unavailable' }, 503));
+    mountEditor();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load name suggestions.');
+    expect(input()).toBeEnabled();
+    await userEvent.setup().type(input(), 'Zoe');
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled();
+  });
+
+  it('cached successful roster stays ready during refetch; cached roster error fails closed', async () => {
+    client.setQueryData(queryKeys.roster.entries(), roster);
+    const pending = hold('roster');
+    const { result, rerender } = mountHook();
+    await waitFor(() => expect(count('roster')).toBe(1));
+    expect(result.current.namingReady).toBe(true);
+    act(() => { pending.resolve({ code: 'unavailable' }, 503); });
+    await waitFor(() => expect(result.current.rosterError).toBe(true));
+    expect(result.current.namingReady).toBe(false);
+    rerender({ labelInput: '', enabled: false });
+    expect(result.current.namingReady).toBe(false);
+  });
+});
+
+
+describe('U1-01 real query availability', () => {
+  it('paused roster is not ready even though isLoading is false', async () => {
+    onlineManager.setOnline(false);
+    const { result } = mountHook();
+    await waitFor(() => expect(client.getQueryState(queryKeys.roster.entries())?.fetchStatus).toBe('paused'));
+    expect(client.getQueryState(queryKeys.roster.entries())?.status).toBe('pending');
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.namingReady).toBe(false);
+  });
+
+  it('disabled advisory queries without an identity do not prevent naming after roster success', async () => {
+    const { result, rerender } = renderHook(({ enabled }) => useClusterSuggestions({
+      identityId: undefined, editableClusterId: CLUSTER_ID, enabled,
+    }), { initialProps: { enabled: false }, wrapper: createQueryWrapper(client) });
+    await waitFor(() => expect(client.getQueryState(queryKeys.roster.entries())?.status).toBe('success'));
+    expect(result.current.namingReady).toBe(false);
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.namingReady).toBe(true));
+    expect(count('batch')).toBe(0);
+    expect(count('closest')).toBe(0);
   });
 });

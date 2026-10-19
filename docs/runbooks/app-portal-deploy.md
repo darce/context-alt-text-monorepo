@@ -12,13 +12,15 @@ Bounded artifacts:
 - `infra/oci/app/env.example` — deploy input names only
 - `scripts/deploy/app-portal.sh` — dry-run by default; `--apply` on the VM
 
-Canon: [GRPH-09] keep this vhost off the shared Caddyfile so demo/API owners
-do not collide; exact `path /portal /portal/*` (not `/portal*`) so `/portalfoo`
-is not proxied; [GRPH-31] render the overlay to the chosen `APP_WWW`;
-[RES-02] fail closed on missing builds, failed `caddy validate`, and any
-promote/reload/health failure with rollback; [RES-01]/[RES-05] no remote-shell
-retries, and reject `/`, symlink components, and paths outside
-`APP_APPROVED_ROOTS` before any write.
+Canon v0.26.2: the shared lock serializes portal and recognition publication:
+[GRPH-09 — Colour the conflict graph](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-09)
+(*Graph Theory with Applications*, ch. 8). Snapshot, journal, restore and recovery
+are rehearsed before publication:
+[RLSE-08 — Rollback written before ship](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#rlse-08)
+(*Continuous Delivery*, ch. 10 and ch. 12). The exact source, prior P baseline and
+bounded test receipts travel in the author report:
+[GRPH-14 — Record provenance as a walkable lineage graph](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/graph-theory.md#grph-14)
+(*Building Knowledge Graphs*, ch. 8; *Mental Models*, ch. 8).
 
 ## What the vhost exposes
 
@@ -302,11 +304,14 @@ overrides.
    admin endpoint up to 10 times (one-second request timeout and one-second
    pauses) before reload. Exhaustion fails activation into rollback; if rollback
    also fails, the journal is retained for retry.
-8. Defaults to reloading Caddy in the composed service with
-   `docker compose -f "$CADDY_COMPOSE"` and adds `-f "$OVERLAY_DEST"` when the
-   overlay exists, then runs `exec -T caddy caddy reload --config
-   /etc/caddy/Caddyfile --adapter caddyfile`. First-deploy rollback uses only
-   the base compose file. `APP_RELOAD_CMD` is the explicit override.
+8. Selects the effective generation with `edge_compose_args "$CADDY_COMPOSE"
+   "$OVERLAY_DEST"`, then uses `EDGE_COMPOSE_ARGV` for recreation, readiness
+   probes and reload. Absent staging/prod Aura networks are omitted by the
+   helper; the installed overlay participates whenever present. Reload runs
+   `exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`.
+   `APP_RELOAD_CMD` is the explicit override. The reviewed helper is atomically
+   packaged at `${APP_ROOT}/shared-edge.sh` before clearing the journal, so
+   later manual recovery does not require a checkout or retained `/tmp` files.
 9. Verifies the promoted Caddyfile, frontend, and overlay, then runs the
    required `APP_HEALTH_CMD` against the live frontend and production API.
 10. Any failure at write/move/copy/compose/reload/health restores all three
@@ -340,14 +345,27 @@ failure during activation restores the rollback artifacts and prevents the
 ## After apply (verify edge + API configuration)
 
 `--apply` applies the **rendered** static mount (not the repo template) to the
-existing Caddy compose configuration before health checking. After a successful
-apply, confirm the mount is present:
+existing Caddy compose configuration before health checking. The commands below
+load the helper packaged by that apply at `${APP_ROOT}/shared-edge.sh`.
+For an older apply, use the four-file recovery transport below and export
+`APP_SHARED_EDGE_LIB=/tmp/app-portal-recovery.shared-edge.sh` first. No VM
+checkout is required. After a successful apply, confirm the mount is present:
 
 ```bash
-cd /opt/acx-backend
-docker compose -f docker-compose.caddy.yml \
-  -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-  sh -c 'test -s /srv/app-portal/index.html && test -d /srv/app-portal/assets'
+(
+  set -euo pipefail
+  cd /opt/acx-backend
+  helper="${APP_SHARED_EDGE_LIB:-/opt/acx-backend/app/shared-edge.sh}"
+  if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+    echo 'STOP: reviewed shared-edge helper missing or unsafe' >&2
+    exit 1
+  fi
+  source "$helper"
+  trap 'edge_compose_cleanup' EXIT
+  edge_compose_args docker-compose.caddy.yml /opt/acx-backend/app/docker-compose.app.yml
+  edge_bounded_run docker compose "${EDGE_COMPOSE_ARGV[@]}" exec -T caddy \
+    sh -c 'test -s /srv/app-portal/index.html && test -d /srv/app-portal/assets'
+)
 ```
 
 The mount exposes the chosen `APP_WWW` (default `/opt/acx-backend/app/www`) at
@@ -359,9 +377,21 @@ Confirm Caddy's mounted Caddyfile matches the host configuration (same check
 as `sync-demo.sh`). Both hashes must match before declaring the apply verified:
 
 ```bash
-sha256sum /opt/acx-backend/Caddyfile
-docker compose -f docker-compose.caddy.yml exec -T caddy \
-  sha256sum /etc/caddy/Caddyfile
+(
+  set -euo pipefail
+  cd /opt/acx-backend
+  helper="${APP_SHARED_EDGE_LIB:-/opt/acx-backend/app/shared-edge.sh}"
+  if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+    echo 'STOP: reviewed shared-edge helper missing or unsafe' >&2
+    exit 1
+  fi
+  source "$helper"
+  trap 'edge_compose_cleanup' EXIT
+  edge_compose_args docker-compose.caddy.yml /opt/acx-backend/app/docker-compose.app.yml
+  sha256sum /opt/acx-backend/Caddyfile
+  edge_bounded_run docker compose "${EDGE_COMPOSE_ARGV[@]}" exec -T caddy \
+    sha256sum /etc/caddy/Caddyfile
+)
 ```
 
 If the hashes differ, recreate Caddy to refresh its bind mount, wait for its
@@ -370,13 +400,48 @@ admin endpoint with the deployment script's bounded probe, then reload:
 ```bash
 (
   set -euo pipefail
-  docker compose -f docker-compose.caddy.yml \
-    -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
+  cd /opt/acx-backend
+  helper="${APP_SHARED_EDGE_LIB:-/opt/acx-backend/app/shared-edge.sh}"
+  if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+    echo 'STOP: reviewed shared-edge helper missing or unsafe; refusing fix-forward' >&2
+    exit 1
+  fi
+  source "$helper"
+  # Refuse symlinked ancestors before opening the persistent lock.
+  parent=/opt/acx-backend/app
+  while [ "$parent" != / ]; do
+    if [ ! -d "$parent" ] || [ -L "$parent" ]; then
+      echo 'STOP: live parent missing or unsafe; refusing fix-forward' >&2
+      exit 1
+    fi
+    parent="$(dirname -- "$parent")"
+  done
+  # Hold the same persistent inode through selection, recreation and reload.
+  lock=/opt/acx-backend/app/activation.journal.lock
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    echo 'STOP: deployment lock path unsafe; refusing fix-forward' >&2
+    exit 1
+  fi
+  exec 9>>"$lock"
+  flock -w "${APP_DEPLOY_LOCK_WAIT:-30}" 9
+  if [ -e /opt/acx-backend/app/activation.journal ] || [ -L /opt/acx-backend/app/activation.journal ]; then
+    echo 'STOP: activation journal present; recover interrupted activation before fix-forward' >&2
+    exit 1
+  fi
+  trap 'edge_compose_cleanup' EXIT
+  edge_compose_args docker-compose.caddy.yml /opt/acx-backend/app/docker-compose.app.yml
+  compose=(docker compose "${EDGE_COMPOSE_ARGV[@]}")
+  if [ "${#EDGE_COMPOSE_ARGV[@]}" -eq 4 ] && [ "${EDGE_COMPOSE_ARGV[1]}" = docker-compose.caddy.yml ]; then
+    # Unmarked legacy base with an overlay: exactly the helper-selected files.
+    edge_bounded_run docker compose -f docker-compose.caddy.yml \
+      -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy 9>&-
+  else
+    edge_bounded_run "${compose[@]}" up -d --force-recreate --no-deps caddy 9>&-
+  fi
   ready=0
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if docker compose -f docker-compose.caddy.yml \
-      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-      wget -q -T 1 -O /dev/null http://127.0.0.1:2019/config/; then
+    if edge_bounded_run "${compose[@]}" exec -T caddy \
+      wget -q -T 1 -O /dev/null http://127.0.0.1:2019/config/ 9>&-; then
       ready=1
       break
     fi
@@ -388,18 +453,22 @@ admin endpoint with the deployment script's bounded probe, then reload:
     echo 'STOP: Caddy admin endpoint not ready after 10 attempts; refusing reload/verification; follow frontend back-out' >&2
     exit 1
   fi
-  docker compose -f docker-compose.caddy.yml \
-    -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+  edge_bounded_run "${compose[@]}" exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
   sha256sum /opt/acx-backend/Caddyfile
-  docker compose -f docker-compose.caddy.yml exec -T caddy \
-    sha256sum /etc/caddy/Caddyfile
-  /usr/local/bin/app-portal-health-check
+  edge_bounded_run "${compose[@]}" exec -T caddy sha256sum /etc/caddy/Caddyfile 9>&-
+  edge_bounded_run /usr/local/bin/app-portal-health-check 9>&-
 )
 ```
 
+The selected Compose generation is retained through recreation, readiness,
+reload, and container hash verification. This includes an installed legacy
+overlay's `name:` project selection; using the base alone for any stage can
+address a different project. The host hash still reads the host Caddyfile, while
+the container hash reads `/etc/caddy/Caddyfile` in that same selected project.
 The subshell stops on recreation/reload failure or readiness exhaustion, before
-hash/health verification. The probe uses container-local BusyBox `wget`, a
+hash/health verification, and on either hash command's failure before health.
+The probe uses container-local BusyBox `wget`, a
 one-second request timeout, and at most nine one-second pauses between ten
 attempts. On exhaustion, follow frontend back-out. Recheck both hashes and
 health after recovery. If the hashes still differ or
@@ -425,6 +494,77 @@ ship the git `Caddyfile` wholesale to `/opt/acx-backend/Caddyfile`. That would
 drop this vhost. Re-run `scripts/deploy/app-portal.sh --apply` after those
 promotes until a later shared-Caddyfile owner absorbs the snippet (not this
 lane; [GRPH-09]).
+
+**Protected hosts.** `app-portal.sh` refuses to claim any host that another stack
+owns, using `EDGE_PROTECTED_HOSTS` from `scripts/deploy/lib/shared-edge.sh`:
+`api.altcontext.com`, `staging.api.altcontext.com`, `dev.api.altcontext.com`,
+`fir.dev.api.altcontext.com`, `demo.altcontext.com`, `129-213-40-111.sslip.io`,
+`dl.darce.xyz`, and the three AuraFace hosts `auraface.dev.altcontext.com`,
+`auraface.staging.api.altcontext.com`, and `auraface.api.altcontext.com`.
+A managed portal block that names any of these hosts is refused as malformed.
+
+**Shared deploy lock.** Apply takes `${APP_ROOT}/activation.journal.lock`, the same
+inode the shared edge uses. The wait is `APP_DEPLOY_LOCK_WAIT` seconds (default
+30; integers 0 through 3600). A busy lock refuses with no mutation. A short holder
+process keeps the flock, and the script releases it on every exit path. The holder
+also exits if the apply shell dies, so a crashed apply does not block later deploys
+for longer than the owner's exit. Never truncate, unlink, or replace the lock file.
+Recognition-side convergence adopts the same lock in its own change; this runbook
+does not claim that behavior until that change lands.
+
+The holder cap is 7200 seconds. The complete apply/recovery transaction gets
+7080 seconds, with a watchdog that also exits on owner death. Before each
+operation, the next operation's deadline plus kill grace must fit both the
+transaction budget and the ownership expiry. Each filesystem mutation is
+fenced, including journal transitions, snapshots, promotion, restoration,
+cleanup and sync. Validation and health calls are checked again on return.
+A dead, expired, unknown or insufficient hold exits 5 immediately and retains
+any existing journal and staged files; it never attempts an unfenced rollback.
+The next apply acquires its own hold, validates the pending journal's paths and
+recovers it before checking for a replacement frontend build.
+
+**Frozen D/P helper ABI (2026-10-17).** Source the reviewed helper; it changes
+neither shell options nor caller traps. It requires Bash, coreutils/flock,
+Python 3 for managed-block parsing, and Docker Compose/jq for resolved models.
+
+```bash
+handle=$(edge_lock_acquire "$APP_ROOT/activation.journal.lock" "$wait_seconds" "$hold_max_seconds" "$owner_pid_or_0")
+edge_lock_check "$handle" "$remaining_operation_budget"
+edge_effective_caddyfile "$repository_base" "$live_caddyfile" # stdout only
+edge_compose_args "$base_compose" "$installed_portal_overlay" # EDGE_COMPOSE_ARGV array
+edge_required_networks "$base_compose" "$installed_portal_overlay" # stdout: actual names
+# Caller checks ownership before each mutation, including recovery/back-out.
+edge_lock_release "$handle" "$cleanup_deadline"
+```
+
+The last two acquire arguments, the check budget and the release deadline are
+optional. Capture the handle explicitly; the acquire is not an in-shell lock
+side effect. Owner 0 permits separate remote calls to use the same handle. Keep
+the persistent lock inode; do not delete or replace it. D ships the helper and
+owns recognition callsites and back-out separately.
+
+**Effective Compose generation.** The marked repository Caddy Compose base
+opts into generation selection. The helper resolves the base plus the installed
+portal overlay using the real `docker compose config --format json` producer,
+then reads `docker network ls`. Only absent staging/prod Aura memberships are
+omitted. Generic, FIR and dev Aura memberships stay external and unchanged;
+no stores or networks are started or created. An unreadable inventory refuses.
+The resulting private JSON model preserves resolved network names, bind paths,
+volumes and project identity. Every Compose operation must use
+`"${EDGE_COMPOSE_ARGV[@]}"`; raw base-only `up` still requires every listed
+network. The array may select a generated model rather than the original file
+pair. Selection remains stable in that shell until base/overlay bytes change.
+Call `edge_compose_cleanup` after the last use to remove that shell's private
+model; it changes no traps. App-portal does this on owned exit. Independent D
+callers can use the frozen functions without changing their signatures.
+
+The managed-block parser handles Unicode whitespace, schemes, ports, multiple
+addresses, quotes and token-initial comments. It counts structural brace tokens,
+not braces inside comments or strings, and refuses imports, environment
+expansions, unquoted escapes/heredocs and other syntax whose ownership it cannot prove.
+Accepted managed-block bytes, including an END marker without a newline, are
+preserved. Caddy validation remains required before publication. The lexical
+reference is the [Caddy v2 lexer](https://github.com/caddyserver/caddy/blob/v2.10.2/caddyconfig/caddyfile/lexer.go).
 
 ## Rollback
 
@@ -466,14 +606,19 @@ backend portal is disabled.
 A retained `/opt/acx-backend/app/activation.journal` blocks manual back-out.
 Recovery must use the same reviewed deploy script and input paths as the
 interrupted apply. If those files exist only on the operator workstation, copy
-these three reviewed files from that release to the VM first (the `acx-backend`
+these four reviewed files from that release to the VM first (the `acx-backend`
 SSH alias is the same existing VM used for deployment; no VM checkout is assumed):
 
 ```bash
 scp scripts/deploy/app-portal.sh acx-backend:/tmp/app-portal-recovery.sh
+scp scripts/deploy/lib/shared-edge.sh acx-backend:/tmp/app-portal-recovery.shared-edge.sh
 scp infra/oci/app/Caddyfile.app acx-backend:/tmp/app-portal-recovery.Caddyfile.app
 scp infra/oci/app/docker-compose.app.yml acx-backend:/tmp/app-portal-recovery.overlay.yml
 ```
+
+The standalone script needs the shared-edge helper. It is not found beside
+`/tmp/app-portal-recovery.sh`, so the recovery invocation names it with
+`APP_SHARED_EDGE_LIB`. Recovery refuses if that file is missing or is a symlink.
 
 In an operator shell on the VM, with the same filesystem and Docker permissions
 as the original apply, run this exact recovery invocation. These are the default
@@ -491,6 +636,7 @@ env -u FRONTEND_DIST \
   APP_UPSTREAM=prod-api:8000 \
   APP_SNIPPET=/tmp/app-portal-recovery.Caddyfile.app \
   APP_OVERLAY=/tmp/app-portal-recovery.overlay.yml \
+  APP_SHARED_EDGE_LIB=/tmp/app-portal-recovery.shared-edge.sh \
   APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check \
   bash /tmp/app-portal-recovery.sh --apply
 ```
@@ -532,8 +678,23 @@ manual back-out target with copies of the still-live successful frontend.
 Failed restore retains the journal and all snapshot/absence-marker inputs for
 retry; use [interrupted activation recovery](#recover-an-interrupted-frontend-activation)
 before attempting manual back-out. The manual block holds the same bounded
-`activation.journal.lock` as deploy and refuses any journal, including a dangling
-symlink, before selecting snapshots or mutating live/rollback state.
+`activation.journal.lock` as deploy and refuses any retained journal, including a
+dangling symlink, before selecting snapshots or mutating live/rollback state.
+Candidate Compose resolution and network selection finish before any journal,
+rollback-set, or live write. A pure preflight refusal needs no recovery.
+After admission, the block publishes a durable version-2 journal and a separate
+copy of the selected target set before the first live write. The original
+successful sets remain intact. If snapshot copying fails, the native
+`snapshotting` recovery cleans only the partial copy; rerun manual back-out.
+If any live write, recreation, readiness probe, or reload fails, leave the
+journal in place and use the exact interrupted activation recovery invocation
+above with `FRONTEND_DIST` unset. Its native recovery finishes restoring this
+back-out target and removes only the duplicate set; the expected missing-build
+refusal then proves no replacement apply started. Verify the restored state
+before retrying manual back-out. Do not delete or bypass the journal.
+Overlay replacement is staged, synced, and renamed in the same directory, so an
+interrupted copy cannot leave malformed live YAML blocking native recovery.
+Its temporary file uses the native journal cleanup prefix.
 On the VM, manual restore selects only
 `Caddyfile.<digits>` names and sorts by the numeric filename suffix, never mtime
 (`cp -a` preserves the live file's older mtime). It prints the chosen timestamp
@@ -544,7 +705,11 @@ The snapshot's `index.html` must be a non-empty regular file, not a symlink.
 The live overlay must be a regular file or absent, never a symlink; its parent
 must be an existing directory, not a symlink, even when the overlay is absent.
 The commands below use the default paths; substitute the same paths used at
-apply if they were overridden. Restore the Caddyfile back **in place**,
+apply if they were overridden. Successful apply packages its reviewed helper at
+`${APP_ROOT}/shared-edge.sh`. For an older apply without that package, copy the
+four reviewed recovery artifacts above and set
+`APP_SHARED_EDGE_LIB=/tmp/app-portal-recovery.shared-edge.sh` in this shell.
+Both manual back-out and fix-forward refuse a missing or symlinked helper. Restore the Caddyfile back **in place**,
 preserving its bind-mounted inode, and www/overlay from that same timestamp.
 The executable branches below restore each snapshot or remove the newly added
 artifact only when its absence marker is validated. They support a full snapshot,
@@ -553,6 +718,7 @@ first deployment with both artifacts absent, and either mixed prior state:
 ```bash
 (
   set -euo pipefail
+  umask 077
   # Reject symlinked parents for every source and destination before any mutation.
   parent=/opt/acx-backend/app/rollback
   while [ "$parent" != / ]; do
@@ -658,29 +824,102 @@ first deployment with both artifacts absent, and either mixed prior state:
     echo 'STOP: live frontend must be a directory or absent without symlinks; refusing restore' >&2
     exit 1
   fi
+  helper="${APP_SHARED_EDGE_LIB:-/opt/acx-backend/app/shared-edge.sh}"
+  if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+    echo 'STOP: reviewed shared-edge helper missing or unsafe; refusing restore' >&2
+    exit 1
+  fi
+  source "$helper"
+  trap 'edge_compose_cleanup' EXIT
+  # Admit the rollback inputs, never the current live overlay. Keep this
+  # generation (or the unchanged legacy snapshot argv) through the last reload.
+  cd /opt/acx-backend
+  edge_compose_args docker-compose.caddy.yml "$overlay_snapshot"
+  compose=(docker compose "${EDGE_COMPOSE_ARGV[@]}")
+  candidate_bind="$(edge_bounded_run "${compose[@]}" config --format json 9>&- | \
+    jq -er '[.services.caddy.volumes[]? | select(.target == "/etc/caddy/Caddyfile")] |
+      if length == 1 and .[0].type == "bind" then .[0].source | select(type == "string")
+      else error("expected one Caddyfile bind mount") end')"
+  if [ "$candidate_bind" != /opt/acx-backend/Caddyfile ]; then
+    echo 'STOP: candidate Caddyfile bind source differs from live path; refusing restore' >&2
+    exit 1
+  fi
+
+  # The actual app-portal.sh v2 recovery reader consumes this separate target
+  # set. Never point it at the original successful set: recovery deletes its
+  # own set after reload. Intent precedes even partial snapshot copies.
+  rollback=/opt/acx-backend/app/rollback
+  journal=/opt/acx-backend/app/activation.journal
+  resume_ts="$(date +%s)"
+  while :; do
+    collision=0
+    for prefix in Caddyfile www docker-compose.app.yml absent-www absent-overlay; do
+      if [ -e "$rollback/$prefix.$resume_ts" ] || [ -L "$rollback/$prefix.$resume_ts" ]; then
+        collision=1
+      fi
+    done
+    [ "$collision" -eq 1 ] || break
+    resume_ts=$((resume_ts + 1))
+  done
+  resume_caddy="$rollback/Caddyfile.$resume_ts"
+  resume_www="$rollback/www.$resume_ts"
+  resume_overlay="$rollback/docker-compose.app.yml.$resume_ts"
+  journal_tmp="$(mktemp "$journal.new.XXXXXXXX")"
+  overlay_stage=""
+  trap 'edge_compose_cleanup; rm -f -- "$journal_tmp"; if [ -n "$overlay_stage" ]; then rm -f -- "$overlay_stage"; fi' EXIT
+  backout_journal() {
+    printf 'version=2\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\ncaddy_compose=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
+      "$1" /opt/acx-backend/Caddyfile /opt/acx-backend/app/www \
+      /opt/acx-backend/app/docker-compose.app.yml /opt/acx-backend/docker-compose.caddy.yml \
+      "$resume_caddy" "$resume_www" "$resume_overlay" >"$journal_tmp"
+    edge_bounded_run sync "$journal_tmp"
+    edge_bounded_run mv -f -- "$journal_tmp" "$journal"
+    edge_bounded_run sync /opt/acx-backend/app
+  }
+  backout_journal snapshotting
+  cp -a -- "$snapshot" "$resume_caddy"
+  if [ "$restore_www" -eq 1 ]; then
+    cp -a -- "$www_snapshot" "$resume_www"
+  else
+    cp -- "$www_absent" "$rollback/absent-www.$resume_ts"
+    resume_www=-
+  fi
+  if [ "$restore_overlay" -eq 1 ]; then
+    cp -a -- "$overlay_snapshot" "$resume_overlay"
+  else
+    cp -- "$overlay_absent" "$rollback/absent-overlay.$resume_ts"
+    resume_overlay=-
+  fi
+  # Flush snapshot data and directory entries before publishing prepared.
+  edge_bounded_run sync -f "$rollback"
+  backout_journal prepared
   cp -- "$snapshot" /opt/acx-backend/Caddyfile
+  edge_bounded_run sync /opt/acx-backend/Caddyfile
+  backout_journal caddy_promoted
   rm -rf -- /opt/acx-backend/app/www
   if [ "$restore_www" -eq 1 ]; then
     cp -a -- "$www_snapshot" /opt/acx-backend/app/www
   fi
+  edge_bounded_run sync -f /opt/acx-backend/app
+  backout_journal www_promoted
   if [ "$restore_overlay" -eq 1 ]; then
-    cp -- "$overlay_snapshot" /opt/acx-backend/app/docker-compose.app.yml
+    # Native recovery validates the installed overlay before restoration. A
+    # partial copy must never put malformed YAML on that admission path.
+    overlay_stage="$(mktemp "$journal.new.overlay.XXXXXXXX")"
+    cp -- "$overlay_snapshot" "$overlay_stage"
+    edge_bounded_run sync "$overlay_stage"
+    edge_bounded_run mv -f -- "$overlay_stage" /opt/acx-backend/app/docker-compose.app.yml
+    overlay_stage=""
   else
     rm -f -- /opt/acx-backend/app/docker-compose.app.yml
   fi
-  cd /opt/acx-backend
-  compose=(docker compose -f docker-compose.caddy.yml)
-  if [ "$restore_overlay" -eq 1 ]; then
-    compose+=(-f /opt/acx-backend/app/docker-compose.app.yml)
-    docker compose -f docker-compose.caddy.yml \
-      -f /opt/acx-backend/app/docker-compose.app.yml up -d --force-recreate --no-deps caddy
-  else
-    docker compose -f docker-compose.caddy.yml up -d --force-recreate --no-deps caddy
-  fi
+  edge_bounded_run sync -f /opt/acx-backend/app
+  backout_journal overlay_promoted
+  edge_bounded_run "${compose[@]}" up -d --force-recreate --no-deps caddy 9>&-
   ready=0
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if "${compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
-      http://127.0.0.1:2019/config/; then
+    if edge_bounded_run "${compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
+      http://127.0.0.1:2019/config/ 9>&-; then
       ready=1
       break
     fi
@@ -692,31 +931,40 @@ first deployment with both artifacts absent, and either mixed prior state:
     echo 'STOP: Caddy admin endpoint not ready after 10 attempts; restored files retained; refusing reload; investigate Caddy startup before retry' >&2
     exit 1
   fi
-  if [ "$restore_overlay" -eq 1 ]; then
-    docker compose -f docker-compose.caddy.yml \
-      -f /opt/acx-backend/app/docker-compose.app.yml exec -T caddy \
-      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-  else
-    docker compose -f docker-compose.caddy.yml exec -T caddy \
-      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-  fi
+  edge_bounded_run "${compose[@]}" exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
+  # Durable completion precedes cleanup; the native restored phase can retry
+  # a partial cleanup without reading already removed target copies.
+  backout_journal restored
+  for prefix in Caddyfile www docker-compose.app.yml absent-www absent-overlay; do
+    rm -rf -- "$rollback/$prefix.$resume_ts"
+  done
+  edge_bounded_run sync "$rollback"
+  rm -f -- "$journal"
+  edge_bounded_run sync /opt/acx-backend/app
 )
 ```
 
 The block reapplies the prior compose overlay and reloads Caddy only after every
-guard, the full restore, and bounded admin readiness polling succeed. With a prior
-overlay, it uses both compose files for recreation, probing, and reload. As in
-fix-forward, it attempts the container-local admin probe up to ten times with a
-one-second request timeout and at most nine one-second pauses. Exhaustion prints
-STOP and leaves the restored files in place without reloading Caddy; investigate
-Caddy startup before retrying, and do not declare recovery verified.
+guard, the full restore, and bounded admin readiness polling succeed. The
+candidate snapshot overlay participates in one selected generation used for
+recreation, probing, and reload, including a legacy overlay's `name:` project.
+Snapshot input paths remain available after live overlay restoration. A marked
+base uses its private resolved generation; missing staging/prod Aura networks
+never cause sibling stacks or networks to be created. The block attempts the
+container-local admin probe up to ten times with a one-second request timeout
+and at most nine one-second pauses. Exhaustion prints STOP and retains the
+journal and target copies without reloading. A successful reload durably records
+`restored`, syncs duplicate-set cleanup, then clears the journal last. Any
+interruption during that cleanup resumes through the native `restored` phase.
 
 If there was no prior overlay (first deployment), automatic rollback uses its
 activation journal's recorded absence. Manual rollback uses the durable validated
 absence markers even after a successful apply has cleared that journal. With both
 markers it removes the newly installed overlay and frontend directory after all
 guards pass, restores the Caddyfile in place, and uses the base compose file alone
-for recreation, the same bounded readiness probe, and reload in the block above.
+as input to the helper for recreation, the same bounded readiness probe, and
+reload in the block above. Optional network selection still applies.
 
 Failed validation never replaces the live files, so rollback is only needed
 after activation has started.
@@ -725,4 +973,4 @@ after activation has started.
 
 - Live deploy from this sandbox, production remote-shell from the worker
 - Clerk Dashboard changes, billing-provider catalog setup, or new OCI VM
-- Editing `apps/prototype-description-service/Caddyfile` or `docker-compose.caddy.yml`
+- Recognition deploy callsites and live publication; P only supplies the helper ABI and Compose generation contract

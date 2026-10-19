@@ -2,7 +2,7 @@
  * Shared naming-option builder for both labeling surfaces.
  *
  * Union of roster persons ∪ human-labeled clusters with namespaced values,
- * person-preferred case-insensitive dedupe, and a pre-dedupe collision set
+ * canonical person-ID dedupe and a pre-dedupe collision set
  * for the pre-save duplicate guard.
  */
 
@@ -30,13 +30,27 @@ export interface NamingOption {
 export interface RosterNamingEntry {
   readonly id: number | string;
   readonly name: string;
+  readonly person_uuid?: string;
 }
 
 export interface ClusterNamingEntry {
   readonly id: string;
   readonly label: string;
   readonly identity_count?: number;
+  readonly person_uuid?: string | null;
 }
+
+/** Existing local roster identity, resolved through binding data rather than a name. */
+export interface CanonicalRosterPerson {
+  readonly rosterEntryId: number;
+  readonly name: string;
+}
+
+export const canonicalPersonOption = (person: CanonicalRosterPerson): NamingOption => ({
+  value: namingOptionValue('person', person.rosterEntryId),
+  label: person.name,
+  source: 'person',
+});
 
 export interface BuildNamingOptionsParams {
   readonly rosterEntries: readonly RosterNamingEntry[];
@@ -51,6 +65,8 @@ export interface BuildNamingOptionsParams {
 
 export interface BuildNamingOptionsResult {
   readonly options: readonly NamingOption[];
+  /** Binding proof from all supplied rows, independent of text filters and display caps. */
+  readonly canonicalPeopleByClusterId: ReadonlyMap<string, CanonicalRosterPerson>;
   /** Pre-dedupe universe keyed by lowercased label (for the duplicate guard). */
   readonly collisionsByLabel: ReadonlyMap<string, readonly NamingOption[]>;
 }
@@ -162,12 +178,50 @@ const rankFilteredOptions = (
   return [...exact, ...prefix, ...substring];
 };
 
+const canonicalPeopleByClusterId = (
+  roster: readonly RosterNamingEntry[],
+  clusters: readonly ClusterNamingEntry[],
+): ReadonlyMap<string, CanonicalRosterPerson> => {
+  const byUuid = new Map<string, CanonicalRosterPerson>();
+  const byCluster = new Map<string, CanonicalRosterPerson>();
+  for (const entry of roster) {
+    // Only local roster IDs are numeric. Backend UUIDs are joined as opaque strings.
+    if (!/^[1-9]\d*$/.test(String(entry.id))) {
+      continue;
+    }
+    const rosterEntryId = Number(entry.id);
+    const name = entry.name.trim();
+    if (!Number.isSafeInteger(rosterEntryId) || !name) {
+      continue;
+    }
+    const person = { rosterEntryId, name };
+    if (entry.person_uuid) {
+      byUuid.set(entry.person_uuid, person);
+    }
+  }
+  // Roster clusters are a same-name aggregate, not authoritative person bindings.
+  // Only the cluster's explicit person UUID can select a local roster entry.
+  for (const cluster of clusters) {
+    if (cluster.person_uuid === undefined) {
+      continue;
+    }
+    const person = cluster.person_uuid ? byUuid.get(cluster.person_uuid) : undefined;
+    // An explicit unresolved/unmapped binding cannot borrow another person's label.
+    if (person) {
+      byCluster.set(cluster.id, person);
+    } else {
+      byCluster.delete(cluster.id);
+    }
+  }
+  return byCluster;
+};
+
 /**
  * Build the union naming options for both labeling surfaces.
  *
  * - Cluster candidates apply isHumanLabeledTarget so auto `cluster-*` labels never appear (BR-17).
  * - collisionsByLabel registers every truthy cluster label (BR-42 raw equality), including machine shapes.
- * - Persons listed before clusters; case-insensitive dedupe prefers the person entry.
+ * - Choices dedupe by ID; a bound cluster uses its mapped roster person.
  * - Filter-before-slice: case-insensitive substring filter, then rank exact /
  *   prefix / remaining substring (stable within each tier), then truncate.
  */
@@ -180,6 +234,7 @@ export const buildNamingOptions = ({
 }: BuildNamingOptionsParams): BuildNamingOptionsResult => {
   const filterLower = filter.toLowerCase().trim();
   const collisions = new Map<string, NamingOption[]>();
+  const canonicalPeople = canonicalPeopleByClusterId(rosterEntries, labelMatches);
 
   const addCollision = (option: NamingOption): void => {
     const key = option.label.toLowerCase();
@@ -229,30 +284,21 @@ export const buildNamingOptions = ({
     if (!isHumanLabeledTarget(label)) {
       continue;
     }
-    if (matchesFilter(label, filterLower)) {
-      clusterCandidates.push(option);
+    const person = canonicalPeople.get(cluster.id);
+    const choice = person ? canonicalPersonOption(person) : option;
+    if (matchesFilter(choice.label, filterLower)) {
+      clusterCandidates.push(choice);
     }
   }
 
-  // Person-preferred case-insensitive dedupe; persons first.
+  // Names are nonunique. Collapse a Person/Group pair only through binding proof.
   const seen = new Set<string>();
   const deduped: NamingOption[] = [];
-
-  for (const option of personCandidates) {
-    const key = option.label.toLowerCase();
-    if (seen.has(key)) {
+  for (const option of [...personCandidates, ...clusterCandidates]) {
+    if (seen.has(option.value)) {
       continue;
     }
-    seen.add(key);
-    deduped.push(option);
-  }
-
-  for (const option of clusterCandidates) {
-    const key = option.label.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
+    seen.add(option.value);
     deduped.push(option);
   }
 
@@ -261,6 +307,7 @@ export const buildNamingOptions = ({
 
   return {
     options,
+    canonicalPeopleByClusterId: canonicalPeople,
     collisionsByLabel: collisions,
   };
 };

@@ -1,0 +1,141 @@
+{
+  "status": "SOURCE_IMPLEMENTED_ROOT_PENDING",
+  "source_sha": "dacf2bef9431a59f80245acb4f1a6f4b70c14acc",
+  "finding": "OWNER-ROOT-FIXTURE-G2-01/MCP19189",
+  "native_review": 1542,
+  "canon_checkpoint": 18413,
+  "actual_uid": 1002,
+  "interpreter": "/usr/bin/python3 3.12.3",
+  "root_qualification": "PENDING",
+  "live_use_approval": false,
+  "test_first": {
+    "r5_driver_sha256": "16c730f143fe5fc3c06527bce02ff2edbff97adf2a53c8cfa287b6189286f2ec",
+    "r5_coordinator_sha256": "f790afcd533f7ce2233f94fe2e2400e516c4ca2ebb0efe2aad1273b19921749e",
+    "initial_test_sha256": "671b4216a3c129a7123a9cfff01728272457c95d421fff8be12ad50bbea40572",
+    "red_exit_code": 1,
+    "red_output": "test_unit_ordinary_and_mixed_preparation (__main__.OrdinaryPreparationTests.test_unit_ordinary_and_mixed_preparation) ... \n  test_unit_ordinary_and_mixed_preparation (__main__.OrdinaryPreparationTests.test_unit_ordinary_and_mixed_preparation) (layout='ordinary-on-root') ... ERROR\n  test_unit_ordinary_and_mixed_preparation (__main__.OrdinaryPreparationTests.test_unit_ordinary_and_mixed_preparation) (layout='mixed-five-targets') ... ERROR\n\n======================================================================\nERROR: test_unit_ordinary_and_mixed_preparation (__main__.OrdinaryPreparationTests.test_unit_ordinary_and_mixed_preparation) (layout='ordinary-on-root')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py\", line 395, in test_unit_ordinary_and_mixed_preparation\n    coordinator.main()\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/root_resume_fixture_coordinator.py\", line 171, in main\n    return h.namespace_child(fixture, scripts, ids, raw)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py\", line 381, in <lambda>\n    h.namespace_child = lambda args, scripts, ids, raw: h.fixture(\n                                                        ^^^^^^^^^^\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/root_resume_fixture_coordinator.py\", line 87, in receipted_fixture\n    with d.held_inventory() as before:\n  File \"/usr/lib/python3.12/contextlib.py\", line 137, in __enter__\n    return next(self.gen)\n           ^^^^^^^^^^^^^^\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py\", line 108, in held_inventory\n    require(len(matching) == 1 and matching[0]['target'] == target,\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py\", line 54, in require\n    raise RuntimeError(reason)\nRuntimeError: visible descriptor mount mismatch: /var/lib\n\n======================================================================\nERROR: test_unit_ordinary_and_mixed_preparation (__main__.OrdinaryPreparationTests.test_unit_ordinary_and_mixed_preparation) (layout='mixed-five-targets')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py\", line 395, in test_unit_ordinary_and_mixed_preparation\n    coordinator.main()\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/root_resume_fixture_coordinator.py\", line 171, in main\n    return h.namespace_child(fixture, scripts, ids, raw)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py\", line 381, in <lambda>\n    h.namespace_child = lambda args, scripts, ids, raw: h.fixture(\n                                                        ^^^^^^^^^^\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/root_resume_fixture_coordinator.py\", line 87, in receipted_fixture\n    with d.held_inventory() as before:\n  File \"/usr/lib/python3.12/contextlib.py\", line 137, in __enter__\n    return next(self.gen)\n           ^^^^^^^^^^^^^^\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py\", line 108, in held_inventory\n    require(len(matching) == 1 and matching[0]['target'] == target,\n  File \"/home/gate/workbay-sandbox/feature-bakerounds-20261017-raw-auth-ini-3255682b/.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py\", line 54, in require\n    raise RuntimeError(reason)\nRuntimeError: visible descriptor mount mismatch: /var/lib\n\n----------------------------------------------------------------------\nRan 1 test in 0.010s\n\nFAILED (errors=2)\n",
+    "green_exit_code": 0,
+    "green_output": "test_existing_entry_refusals (__main__.CausalDriverTests.test_existing_entry_refusals) ... ok\ntest_inherited_backing_rejected (__main__.CausalDriverTests.test_inherited_backing_rejected) ... ok\ntest_valid_fresh_stacked_overlay (__main__.CausalDriverTests.test_valid_fresh_stacked_overlay) ... ok\ntest_original_fixture_bracket_and_receipt_sealing (__main__.CoordinatorPreparationTests.test_original_fixture_bracket_and_receipt_sealing) ... ok\ntest_actual_uid_refusal_boundary (__main__.DescriptorBoundaryTests.test_actual_uid_refusal_boundary) ... ok\ntest_covered_descriptor_rejected (__main__.DescriptorBoundaryTests.test_covered_descriptor_rejected) ... ok\ntest_held_descriptor_green (__main__.DescriptorBoundaryTests.test_held_descriptor_green) ... ok\ntest_propagation_refusal (__main__.DescriptorBoundaryTests.test_propagation_refusal) ... ok\ntest_wrong_descriptor_device (__main__.DescriptorBoundaryTests.test_wrong_descriptor_device) ... ok\ntest_wrong_descriptor_mount_id (__main__.DescriptorBoundaryTests.test_wrong_descriptor_mount_id) ... ok\ntest_wrong_descriptor_target (__main__.DescriptorBoundaryTests.test_wrong_descriptor_target) ... ok\ntest_unit_ordinary_and_mixed_preparation (__main__.OrdinaryPreparationTests.test_unit_ordinary_and_mixed_preparation) ... ok\ntest_incomplete_targets (__main__.ReceiptTests.test_incomplete_targets) ... ok\ntest_inherited_even_with_new_mount_id (__main__.ReceiptTests.test_inherited_even_with_new_mount_id) ... ok\ntest_namespace_mismatch (__main__.ReceiptTests.test_namespace_mismatch) ... ok\ntest_non_pid1_parent (__main__.ReceiptTests.test_non_pid1_parent) ... ok\ntest_non_tmpfs_or_subdirectory (__main__.ReceiptTests.test_non_tmpfs_or_subdirectory) ... ok\ntest_other_native_child (__main__.ReceiptTests.test_other_native_child) ... ok\ntest_parent_namespace_reused (__main__.ReceiptTests.test_parent_namespace_reused) ... ok\ntest_receipt_row_mismatch (__main__.ReceiptTests.test_receipt_row_mismatch) ... ok\ntest_stacked_green (__main__.ReceiptTests.test_stacked_green) ... ok\ntest_stale_creator (__main__.ReceiptTests.test_stale_creator) ... ok\ntest_stale_mount_id (__main__.ReceiptTests.test_stale_mount_id) ... ok\ntest_visible_descriptor_mismatch (__main__.ReceiptTests.test_visible_descriptor_mismatch) ... ok\ntest_missing_any_seal (__main__.SealedReceiptBoundaryTests.test_missing_any_seal) ... ok\ntest_missing_fd (__main__.SealedReceiptBoundaryTests.test_missing_fd) ... ok\ntest_protected_receipt_metadata (__main__.SealedReceiptBoundaryTests.test_protected_receipt_metadata) ... ok\ntest_sealed_receipt_green (__main__.SealedReceiptBoundaryTests.test_sealed_receipt_green) ... ok\ntest_wrong_creator_held_fd (__main__.SealedReceiptBoundaryTests.test_wrong_creator_held_fd) ... ok\n\n----------------------------------------------------------------------\nRan 29 tests in 0.291s\n\nOK\n",
+    "final_test_count": 29,
+    "existing_test_count": 28,
+    "new_test_count": 1,
+    "new_test_subcases": [
+      "ordinary-on-root: /var/lib,/var/log,/opt on /",
+      "mixed-five-targets: all five targets; /run already mounted; /var/lib,/var/log,/opt on /"
+    ],
+    "new_regression_identical_red_to_green": true
+  },
+  "contract": {
+    "before": "Only coordinator's pre-fixture capture passes before_fixture=True. Real visible directory descriptors may identify the exact target mount or an ancestor containing mount. FD mount ID must identify exactly one row, with directory type and matching fstat device; actual inode is recorded. All mount_rows entries are retained and all directory FDs stay held across the whole original fixture call.",
+    "after_current": "Default held_inventory() still requires exact target mountpoints, matching real descriptor mount IDs/devices/inodes. Unchanged fresh_overlays requires visible tmpfs roots '/', same namespace and receipt rows; current targets must equal sealed after targets.",
+    "freshness": "Every after mount ID AND backing device must be absent from the complete before mount inventory, including non-target mounts. Namespace-only new IDs/inherited devices remain rejected; covered lower rows remain accepted.",
+    "custody": "Same-namespace Root PID1 identity/starttime, no other children, retained FDs, sealed root0400 memfd metadata/all seals/creator-held inode, direct sole child and current descriptor binding remain byte-identical.",
+    "original_flow": "Complete pinned FLOW-R2 remains byte-identical, imported whole; captured original fixture()/flow() and namespace_child() are still called whole. No extracted prefix or replacement writer.",
+    "uncertainty": "Native PID1/guardians/handles retained on uncertainty; no kill/teardown/auto-retry or timeout-as-closure."
+  },
+  "substituted_boundaries": {
+    "new_regression": [
+      "UNIT: actual mountinfo rows parsed without private-propagation refusal; no propagation changed",
+      "UID/EUID/PID and creator identity/starttime",
+      "entry/source custody, umask and complete harness namespace entry",
+      "privileged original-fixture body replaced by entry sentinel; stops before receipt creation, mounts or subprocesses",
+      "post-fixture fresh overlay data synthetic solely for freshness assertions"
+    ],
+    "real_new_regression": [
+      "directory opens with O_NOFOLLOW path traversal, closes and held FDs",
+      "/proc/self/fdinfo mount IDs and os.fstat directory/device/inode metadata",
+      "complete read-only /proc/self/mountinfo rows and actual namespace links"
+    ],
+    "existing_tests": "Prior UID/proc/open/receipt/custody/memfd/full-harness substitutions remain explicitly labeled in their classes; the existing mock preparation now accepts and asserts before_fixture=True only before the fixture."
+  },
+  "tests": [
+    {
+      "command": "timeout 30s /usr/bin/python3 -B .task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py OrdinaryPreparationTests -v",
+      "exit_code": 1,
+      "summary": "TEST FIRST on unchanged R5 driver/coordinator: one new UNIT test, two subtest errors (ordinary-on-root and mixed-five-targets), both visible descriptor mount mismatch: /var/lib before the original-fixture sentinel."
+    },
+    {
+      "command": "timeout 30s /usr/bin/python3 -B .task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py -v",
+      "exit_code": 0,
+      "summary": "GREEN: all 28 existing tests plus one focused UNIT regression (29 total). Real pre-fixture descriptors reach the fixture sentinel once in both layouts; default after/current remains strict. Synthetic fresh covered overlays accepted; backing from a non-target row in the complete before inventory rejected."
+    },
+    {
+      "command": "timeout 10s /usr/bin/python3 -B .task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py --plan",
+      "exit_code": 0,
+      "summary": "PLAN_ONLY_ROOT_PENDING; documents containing-mount before capture and exact-target after/current capture."
+    },
+    {
+      "command": "timeout 15s /usr/bin/python3 -B /tmp/owner-root-fixture-r6-closure.py",
+      "exit_code": 0,
+      "summary": "17 landed files, both seven-script manifests, five context pins and complete FLOW-R2 unchanged; freshness/receipt/custody/continuation code byte-identical. Only coordinator before call changed. Pins match; all 28 prior tests preserved with the existing preparation mock adapted to assert the before flag. Reproducible script retained in evidence/root-fixture-r6.json."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "No whitespace errors in the seven owned changes."
+    }
+  ],
+  "closure": {
+    "actual_uid": 1002,
+    "sandbox_base": "52c13f9a3da4a6504ccc7afb423d63ba4dc3eb18",
+    "unchanged_landed_count": 17,
+    "unchanged_landed_sha256": {
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/approved-scripts.json": "991aa72e923562bec93659190e87f9d223514da3073b424df5d36a60f1e77406",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/approved-scripts.json": "70831dc4247ebd31b34094f915aadf36534116ff0aaa26339ad3abdaccbfef26",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/owner-custody.py": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/owner-window.py": "a2bbcccbc02e61a081e58d0de1a793d7b90ee0c2bb2ee15c9ea9722f47a8fc0c",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/baseline-source/root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/owner-custody.py": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/owner-window.py": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_resume_start.py": "d4acb4713c998db0f0ce538a10aba15511998419c8f9125c5b480d12255c8b00"
+    },
+    "original_flow_sha256": "369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062",
+    "complete_original_flow_import_and_call_unchanged": true,
+    "freshness_receipt_custody_and_continuation_byte_identical": true,
+    "coordinator_only_before_call_changed": true,
+    "existing_test_count_preserved": 28,
+    "new_regression_unchanged_since_red": true,
+    "script_manifest_sha256": {
+      "baseline_manifest_sha256": "70831dc4247ebd31b34094f915aadf36534116ff0aaa26339ad3abdaccbfef26",
+      "candidate_manifest_sha256": "991aa72e923562bec93659190e87f9d223514da3073b424df5d36a60f1e77406"
+    },
+    "supplied_context_sha256": {
+      "root-red.json": "9601d929c32ab93da53ecbfb1dbbbccea3f923fbfc91c0fbd6fbb9f75e521b14",
+      "readonly-other-guards.json": "ae91f12b79d9d31e373d9be19d02a49f5801f5321baaf7a5863d9ba4c18adf40",
+      "semantic.json": "fda3b830a6d1a0cf2eda8f568cfaa6988cc8e7c82efbfa0b3a110cb09a45a198",
+      "canon-rows.md": "37c55a245b5620306e6060dfc8535ee689e943490aca8eb1781d24f14535f8ff",
+      "OWNER-FLOW-CONTROLS-R2.py": "369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062"
+    },
+    "owned_sha256": {
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/root_fixture_plan.py": "2cb2e528325b8c79df268ad5cb48f3fb5dae35fbd48a52bf19e50314e10f84fe",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/test_root_fixture_isolation.py": "292e89d9fb7a6ecd5648468110e8aa60a5e897b990bad597f16344b507171790",
+      ".task-state/bakeoff-rounds-20261017/root_resume_fixture_coordinator.py": "02f83198381e421c12e20fa5d6670753cb2ad1852ddf21908dffc0e97ec47c95",
+      ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/pins.json": "dfab5ce453de702d6350122d166842a8448419a8a064ede58dff8d27858e1e2c"
+    }
+  },
+  "closure_script": "import ast\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport subprocess\n\nroot = Path('.task-state/bakeoff-rounds-20261017')\nq = root / 'qualifications/owner-resume-start-r4'\nbase = '52c13f9a3da4a6504ccc7afb423d63ba4dc3eb18'\ndigest = lambda raw: hashlib.sha256(raw).hexdigest()\nold = lambda p: subprocess.check_output(['git', 'show', base + ':' + str(p)])\nassert os.getuid() == os.geteuid() == 1002\nallowed = [q/'root_fixture_plan.py', q/'test_root_fixture_isolation.py',\n           q/'evidence/pins.json', q/'evidence/root-fixture-r6.json',\n           root/'root_resume_fixture_coordinator.py',\n           root/'outputs/OWNER-ROOT-FIXTURE-R6.json', root/'outputs/OWNER-ROOT-FIXTURE-R6.md']\nchanged = subprocess.check_output(['git', 'diff', '--name-only', base]).decode().splitlines()\nassert set(changed) <= {str(p) for p in allowed}\nhistorical = json.loads((q/'evidence/root-fixture-r5.json').read_text())['closure']\nlanded = json.loads((root/'resume-context/owner-root-fixture-r5/parser-landed.json').read_text())['paths']\nassert len(landed) == 17\nlanded_hashes = {}\nfor name in landed:\n    raw = Path(name).read_bytes()\n    assert raw == old(name)\n    landed_hashes[name] = digest(raw)\nassert landed_hashes == historical['unchanged_landed_sha256']\npins = json.loads((q/'evidence/pins.json').read_text())\nprevious_pins = json.loads(old(q/'evidence/pins.json'))\nupdated = {'root_plan_sha256': q/'root_fixture_plan.py',\n           'root_fixture_test_sha256': q/'test_root_fixture_isolation.py',\n           'root_coordinator_sha256': root/'root_resume_fixture_coordinator.py'}\nassert {k:v for k,v in pins.items() if k not in updated} == {\n    k:v for k,v in previous_pins.items() if k not in updated}\nfor kind, directory, key in [('baseline', q/'evidence/baseline-source', 'baseline_manifest_sha256'),\n                             ('candidate', q, 'candidate_manifest_sha256')]:\n    manifest = directory/'approved-scripts.json'\n    assert digest(manifest.read_bytes()) == pins[key]\n    assert json.loads(manifest.read_text()) == pins[kind]\n    assert len(pins[kind]) == 7\n    assert all(digest((directory/name).read_bytes()) == pin for name,pin in pins[kind].items())\nfor name, pin in pins['supplied_context_sha256'].items():\n    assert digest((root/'resume-context/resume-start-r4'/name).read_bytes()) == pin\nflow = root/'resume-context/resume-start-r4/OWNER-FLOW-CONTROLS-R2.py'\nassert flow.read_bytes() == old(flow)\nassert digest(flow.read_bytes()) == '369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062'\ndriver = (q/'root_fixture_plan.py').read_text()\nprevious_driver = old(q/'root_fixture_plan.py').decode()\nassert previous_driver[previous_driver.index('def fresh_overlays('):] == driver[driver.index('def fresh_overlays('):]\ncoordinator = (root/'root_resume_fixture_coordinator.py').read_text()\nprevious_coordinator = old(root/'root_resume_fixture_coordinator.py').decode()\nassert previous_coordinator.replace('with d.held_inventory() as before:',\n    'with d.held_inventory(before_fixture=True) as before:') == coordinator\ntest = (q/'test_root_fixture_isolation.py').read_text()\nprevious_test = old(q/'test_root_fixture_isolation.py').decode()\nold_tree, new_tree = ast.parse(previous_test), ast.parse(test)\nnew_classes = {c.name:c for c in new_tree.body if isinstance(c, ast.ClassDef)}\nold_count = 0\nfor cls in old_tree.body:\n    if not isinstance(cls, ast.ClassDef):\n        continue\n    old_count += sum(isinstance(n, ast.FunctionDef) and n.name.startswith('test_') for n in cls.body)\n    original = ast.get_source_segment(previous_test, cls)\n    current = ast.get_source_segment(test, new_classes[cls.name])\n    if cls.name == 'CoordinatorPreparationTests':\n        original = original.replace('def inventory():', 'def inventory(*, before_fixture=False):').replace(\n            \"                label = 'before' if not events else 'after'\\n\",\n            \"                label = 'before' if not events else 'after'\\n                self.assertEqual(before_fixture, label == 'before')\\n\")\n    assert original == current, cls.name\nassert old_count == 28\ntest_first = test.replace('def inventory(*, before_fixture=False):', 'def inventory():').replace(\n    \"                self.assertEqual(before_fixture, label == 'before')\\n\", '')\nassert digest(test_first.encode()) == '671b4216a3c129a7123a9cfff01728272457c95d421fff8be12ad50bbea40572'\nfor key,path in updated.items():\n    ast.parse(path.read_text())\n    assert digest(path.read_bytes()) == pins[key]\nprint(json.dumps(dict(\n    actual_uid=os.getuid(), sandbox_base=base, unchanged_landed_count=17,\n    unchanged_landed_sha256=landed_hashes, original_flow_sha256=digest(flow.read_bytes()),\n    complete_original_flow_import_and_call_unchanged=True,\n    freshness_receipt_custody_and_continuation_byte_identical=True,\n    coordinator_only_before_call_changed=True, existing_test_count_preserved=old_count,\n    new_regression_unchanged_since_red=True,\n    script_manifest_sha256={k:pins[k] for k in ('baseline_manifest_sha256','candidate_manifest_sha256')},\n    supplied_context_sha256=pins['supplied_context_sha256'],\n    owned_sha256={str(p):digest(p.read_bytes()) for p in [*updated.values(),q/'evidence/pins.json']}\n), indent=2))\n",
+  "historical_context_sha256": {
+    ".task-state/bakeoff-rounds-20261017/reviews/OWNER-ROOT-FIXTURE-G2.md": "8ee1a43301efa514792dc8175bfb9883d4a715038a4e4ec79f8cca9e27e1a881",
+    ".task-state/bakeoff-rounds-20261017/reviews/OWNER-ROOT-FIXTURE-G2.json": "abb442d61326a3edf43a5ca39c1d9aaf1683cfe5e148e25f42c62567eab23445",
+    ".task-state/bakeoff-rounds-20261017/outputs/OWNER-ROOT-FIXTURE-R5.json": "c2c3f563e4c0b6053f156972667268c2eab49cedb9978a10759a8c5e74c950cd",
+    ".task-state/bakeoff-rounds-20261017/outputs/OWNER-ROOT-FIXTURE-R5.md": "4341095bea1dd3d6cc7aacab3d58460ef9b4ae3c10a1c3c10f35f1994c08caa2",
+    ".task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4/evidence/root-fixture-r5.json": "4d931957df2da32e2a9f43008a812efbecca25af76f9ba4720bbe0d0d98904f4",
+    ".task-state/bakeoff-rounds-20261017/resume-context/owner-root-fixture-g2/previous-root-fixture-plan.py": "af04894dd77f287ad44d44d51affcce3c07b0c039764cc20a691a5d9a68c1be5",
+    ".task-state/bakeoff-rounds-20261017/resume-context/owner-root-fixture-g2/previous-root-coordinator.py": "449f80a90f8b2b1e62c38758debe5f2eefdb09a118734c237063f1d97b1f34fd",
+    ".task-state/bakeoff-rounds-20261017/resume-context/owner-root-fixture-g2/codemap-index.json": "c41002bcafc0c525be2eff63d9aff2cca2642d5ddaa60d49d57199806a31f039",
+    ".task-state/bakeoff-rounds-20261017/resume-context/owner-root-fixture-r6/OWNER-ROOT-FIXTURE-R6.semantic.json": "c9195776a524d3c27fc9c7b22b466ff4df27989e590c77e60a9b50b534042724",
+    ".task-state/bakeoff-rounds-20261017/resume-context/owner-root-fixture-r6/matched-canon-v0.26.2.md": "b1cb56a45d06def88685246a5e6030e320aeb4f86952540e517dc9c9cf133009"
+  },
+  "historical_context": "G1 REVISE1540, G2 REVISE1542, exact G2 reproduction, R5 reports/evidence and previous complete drivers/coordinators remain read-only. G2 counterexample records original_fixture_calls=0. Earlier row-count rejection and inherited-tmpfs acceptance remain in prior-driver evidence and existing causal tests.",
+  "prior_art": "Supplied VERIFIED gte-base ONNX reinjection read without rerunning embeddings; no degrade. TEST-15/DBG-11 applied by adding the escaped preparation test before editing source and eliminating its causal refusal. GRPH-32/34 data remain complete before/after inventories and deterministic receipt orchestration. Frozen R5 codemap retained as context; no new graph/model dispatch.",
+  "execution_boundary": "Source and safe stdlib UNIT tests only at UID1002. No privileged --run, mount/unshare, live/obsolete Root stage, service/GPU/cloud/network/package/environment changes, credentials/media or foreign cleanup. No Root/native comparison results. No model/profile attestation or resource change."
+}

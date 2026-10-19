@@ -374,6 +374,10 @@
     },
     {
       "method": "POST",
+      "path": "/scene/describe/run/{param_0}/items/preview"
+    },
+    {
+      "method": "POST",
       "path": "/scene/gpu/intent"
     },
     {

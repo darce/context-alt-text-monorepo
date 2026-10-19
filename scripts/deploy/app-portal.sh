@@ -44,10 +44,22 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
+# Shared edge helper: deploy lock, protected hosts, and compose argv. It ships beside
+# this script (scripts/deploy/lib/). The standalone recovery copy names it explicitly
+# through APP_SHARED_EDGE_LIB. A missing or unsafe helper refuses; it never runs
+# without the shared lock or the protected-host list.
+APP_SHARED_EDGE_LIB="${APP_SHARED_EDGE_LIB:-${SCRIPT_DIR}/lib/shared-edge.sh}"
+if [ -L "$APP_SHARED_EDGE_LIB" ] || [ ! -f "$APP_SHARED_EDGE_LIB" ]; then
+  echo "ERROR: shared-edge helper is missing or unsafe: ${APP_SHARED_EDGE_LIB}" >&2
+  exit 2
+fi
+# shellcheck source=lib/shared-edge.sh
+. "$APP_SHARED_EDGE_LIB"
+
 APPLY=0
 FORCE_DRY=0
 
-PROTECTED_HOSTS="api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com fir.dev.api.altcontext.com demo.altcontext.com 129-213-40-111.sslip.io dl.darce.xyz"
+PROTECTED_HOSTS="$EDGE_PROTECTED_HOSTS"
 DEFAULT_APPROVED_ROOT="/opt/acx-backend"
 DEFAULT_FRONTEND_ROOT="/srv/app-portal"
 
@@ -72,7 +84,10 @@ Environment:
   APP_SNIPPET          vhost snippet (default infra/oci/app/Caddyfile.app)
   APP_OVERLAY          compose overlay (default infra/oci/app/docker-compose.app.yml)
   APP_APPROVED_ROOTS   colon-separated host dest roots (default /opt/acx-backend)
-  APP_DEPLOY_LOCK_WAIT seconds to wait for another deploy (default 30)
+  APP_DEPLOY_LOCK_WAIT seconds to wait for another deploy (default 30; 0-3600)
+  EDGE_OP_DEADLINE     seconds each Docker/Caddy/health call may run (default 120; 1-600);
+                       the deploy lock must cover each call or the run refuses
+  APP_SHARED_EDGE_LIB  shared-edge helper (default scripts/deploy/lib/shared-edge.sh)
   APP_RELOAD_CMD       optional absolute executable run after host promote
   APP_HEALTH_CMD       required for --apply: absolute executable checking live
                        frontend and portal upstream after reload (nonzero on failure)
@@ -96,7 +111,7 @@ while [ $# -gt 0 ]; do
       APPLY=0
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -163,7 +178,7 @@ path_is_same_or_inside() {
   local _path="$1"
   local _parent="$2"
   case "$_path" in
-    "$_parent"|"$_parent"/*) return 0 ;;
+    "$_parent" | "$_parent"/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -313,7 +328,9 @@ is_safe_upstream() {
 }
 
 is_protected_hostname() {
-  _value="$1"
+  # Caddy matches hosts case-insensitively and a trailing root dot names the same host.
+  _value="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  _value="${_value%.}"
   for _h in $PROTECTED_HOSTS; do
     if [ "$_value" = "$_h" ]; then
       return 0
@@ -361,7 +378,7 @@ if [ "$APP_WWW" = "$APP_ROOT" ]; then
   refuse "APP_WWW must not equal APP_ROOT"
 fi
 case "$APP_WWW" in
-  "$APP_ROOT"/rollback|"$APP_ROOT"/rollback/*|"$APP_ROOT"/staging|"$APP_ROOT"/staging/*)
+  "$APP_ROOT"/rollback | "$APP_ROOT"/rollback/* | "$APP_ROOT"/staging | "$APP_ROOT"/staging/*)
     refuse "APP_WWW collides with staging/rollback paths"
     ;;
 esac
@@ -380,7 +397,12 @@ OVERLAY_DEST="${APP_ROOT}/docker-compose.app.yml"
 ROLLBACK_DIR="${APP_ROOT}/rollback"
 ACTIVATION_JOURNAL="${APP_ROOT}/activation.journal"
 DEPLOY_LOCK="${ACTIVATION_JOURNAL}.lock"
-for _reserved_path in "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK" "$OVERLAY_DEST"; do
+SHARED_EDGE_DEST="${APP_ROOT}/shared-edge.sh"
+guard_dest_path SHARED_EDGE_DEST "$SHARED_EDGE_DEST" file
+if paths_overlap "$CADDYFILE" "$SHARED_EDGE_DEST"; then
+  refuse "CADDYFILE collides with installed shared-edge helper"
+fi
+for _reserved_path in "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK" "$OVERLAY_DEST" "$SHARED_EDGE_DEST"; do
   if paths_overlap "$APP_WWW" "$_reserved_path"; then
     refuse "APP_WWW collides with activation paths"
   fi
@@ -395,7 +417,7 @@ if path_is_same_or_inside "$APP_ROOT" "${APP_WWW}.prev"; then
   refuse "APP_WWW.prev collides with activation paths"
 fi
 case "$CADDYFILE" in
-  "$APP_WWW"|"$APP_WWW"/*) refuse "CADDYFILE is inside APP_WWW" ;;
+  "$APP_WWW" | "$APP_WWW"/*) refuse "CADDYFILE is inside APP_WWW" ;;
 esac
 guard_source_path APP_SNIPPET "$APP_SNIPPET" file
 guard_source_path APP_OVERLAY "$APP_OVERLAY" file
@@ -404,7 +426,7 @@ guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" path
 # Guards above require absolute paths without dot or symlink components, so
 # these normalized paths identify the actual filesystem destinations.
 for _activation_path in "$STAGING_DIR" "$ROLLBACK_DIR" "$APP_WWW" "${APP_WWW}.prev" \
-  "$CADDYFILE" "$OVERLAY_DEST" "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK"; do
+  "$CADDYFILE" "$OVERLAY_DEST" "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK" "$SHARED_EDGE_DEST"; do
   if paths_overlap "$CADDY_COMPOSE" "$_activation_path"; then
     refuse "CADDY_COMPOSE collides with activation paths"
   fi
@@ -427,7 +449,7 @@ assert_rm_safe() {
   assert_not_filesystem_root "$_name" "$_value"
   assert_under_approved_roots "$_name" "$_value"
   case "$_value" in
-    "$APP_ROOT"/rollback|"$APP_ROOT"/rollback/*)
+    "$APP_ROOT"/rollback | "$APP_ROOT"/rollback/*)
       refuse "${_name} refuses to mutate rollback paths"
       ;;
   esac
@@ -969,15 +991,15 @@ resolve_frontend_asset_reference() {
 
   case "$_reference" in
     /assets/*) _normalized="${_reference#/}" ;;
-    ./*|../*) _normalized="${_module_path%/*}/${_reference}" ;;
+    ./* | ../*) _normalized="${_module_path%/*}/${_reference}" ;;
     *) return 1 ;;
   esac
 
   local -a _raw_parts=()
-  IFS='/' read -r -a _raw_parts <<< "$_normalized"
+  IFS='/' read -r -a _raw_parts <<<"$_normalized"
   for _part in "${_raw_parts[@]}"; do
     case "$_part" in
-      ''|.) ;;
+      '' | .) ;;
       ..)
         [ "$_count" -gt 0 ] || return 1
         _count=$((_count - 1))
@@ -990,7 +1012,7 @@ resolve_frontend_asset_reference() {
   done
 
   _normalized=""
-  for (( _part = 0; _part < _count; _part++ )); do
+  for ((_part = 0; _part < _count; _part++)); do
     if [ -n "$_normalized" ]; then _normalized="${_normalized}/"; fi
     _normalized="${_normalized}${_path_parts[$_part]}"
   done
@@ -1053,7 +1075,7 @@ validate_frontend() {
   while IFS= read -r _asset_ref; do
     [ -n "$_asset_ref" ] || continue
     case "$_asset_ref" in
-      *"/../"*|*"/./"*|*/..|*/.)
+      *"/../"* | *"/./"* | */.. | */.)
         echo "ERROR: FRONTEND_DIST index.html has an unsafe asset reference: ${_asset_ref}" >&2
         return 1
         ;;
@@ -1067,7 +1089,7 @@ validate_frontend() {
       echo "ERROR: FRONTEND_DIST index.html references empty asset: ${_asset_ref}" >&2
       return 1
     fi
-  done <<< "$_asset_refs"
+  done <<<"$_asset_refs"
 
   if ! _module_files="$(find "${_frontend_dir}/assets" -type f \( -name '*.js' -o -name '*.mjs' \) -print)"; then
     echo "ERROR: could not inspect FRONTEND_DIST for JavaScript modules: ${_frontend_dir}/assets" >&2
@@ -1083,9 +1105,9 @@ validate_frontend() {
       return 1
     fi
     case "$_module_path" in
-      *.js|*.mjs) _pending_module_files+=("$_module_path") ;;
+      *.js | *.mjs) _pending_module_files+=("$_module_path") ;;
     esac
-  done <<< "$_module_refs"
+  done <<<"$_module_refs"
 
   while [ "${#_pending_module_files[@]}" -gt 0 ]; do
     _module_file="${_pending_module_files[0]}"
@@ -1108,7 +1130,7 @@ validate_frontend() {
     while IFS= read -r _module_ref; do
       [ -n "$_module_ref" ] || continue
       case "$_module_ref" in
-        ./*|../*|/assets/*) ;;
+        ./* | ../* | /assets/*) ;;
         *) continue ;;
       esac
       if ! _module_path="$(resolve_frontend_asset_reference "$_frontend_dir" "${_module_file#"$_frontend_dir"/}" "$_module_ref")"; then
@@ -1120,7 +1142,7 @@ validate_frontend() {
         return 1
       fi
       case "$_module_path" in
-        *.js|*.mjs)
+        *.js | *.mjs)
           _add_module=1
           for _dependency in "${_reachable_module_files[@]}" "${_pending_module_files[@]}"; do
             if [ "$_dependency" = "$_module_path" ]; then
@@ -1133,7 +1155,7 @@ validate_frontend() {
           fi
           ;;
       esac
-    done <<< "$_module_refs"
+    done <<<"$_module_refs"
   done
 
   while IFS= read -r _module_file; do
@@ -1145,7 +1167,7 @@ validate_frontend() {
     while IFS= read -r _module_ref; do
       [ -n "$_module_ref" ] || continue
       case "$_module_ref" in
-        ./*|../*|/assets/*) ;;
+        ./* | ../* | /assets/*) ;;
         *) continue ;;
       esac
       if ! _dependency="$(resolve_frontend_asset_reference "$_frontend_dir" "${_module_file#"$_frontend_dir"/}" "$_module_ref")"; then
@@ -1156,16 +1178,48 @@ validate_frontend() {
         echo "ERROR: FRONTEND_DIST has a missing module dependency ${_module_ref} imported from ${_module_file}" >&2
         return 1
       fi
-    done <<< "$_module_refs"
-  done <<< "$_module_files"
+    done <<<"$_module_refs"
+  done <<<"$_module_files"
 
   if ! printf '%s\n' "${_reachable_module_files[@]}" | python3 "${REPO_ROOT}/apps/prototype-description-service/scripts/configure_clerk_production.py" --root "${APP_PORTAL_ENV_ROOT:-${REPO_ROOT}/config/env}" --verify-assets; then
     return 1
   fi
 }
 
+# Watchers never write state or inherit a lock descriptor. read -t on the holder
+# FIFO is a bounded builtin wait; owner death stops the watcher too. KILL at the
+# cap cannot enter rollback with an expired hold, even inside a blocked sync.
+portal_watchdog() {
+  local _owner="$1" _cap="$2" _handle="$3" _start=$SECONDS
+  trap - EXIT ERR
+  trap 'exit 0' TERM
+  trap '' HUP INT
+  exec 7<>"$_handle/hold" || exit 1
+  while _edge_pid_alive "$_owner"; do
+    read -r -t 1 -u 7 _ || :
+    if [ $((SECONDS - _start)) -ge "$_cap" ]; then
+      kill -KILL "$_owner" 2>/dev/null || :
+      exit 0
+    fi
+  done
+}
+
+portal_inline_op() {
+  local _inline_rc=0 _watch _owner=$BASHPID
+  portal_fence
+  # Inherited diagnostic hooks execute in this shell: their signal/crash and
+  # path-swap controls keep the same semantics. Bound their wait too.
+  portal_watchdog "$_owner" "$EDGE_OP_DEADLINE" "$EDGE_LOCK_HANDLE" </dev/null >/dev/null 2>&1 &
+  _watch=$!
+  "$@" || _inline_rc=$?
+  kill -TERM "$_watch" 2>/dev/null || :
+  wait "$_watch" 2>/dev/null || :
+  portal_fence
+  return "$_inline_rc"
+}
+
 sync_path() {
-  sync -f "$1"
+  portal_inline_op sync -f "$1"
 }
 
 atomic_copy_file() {
@@ -1193,7 +1247,8 @@ copy_file_in_place() {
   if ! sync_path "$_source"; then
     return 1
   fi
-  if ! cat "$_source" > "$_dest"; then
+  portal_fence
+  if ! edge_bounded_run cat "$_source" >"$_dest"; then
     return 1
   fi
   sync_path "$_dest"
@@ -1205,11 +1260,12 @@ write_activation_journal() {
   _phase="$1"
   _tmp="${ACTIVATION_JOURNAL}.new.$$"
   guard_dest_path _tmp "$_tmp" file
+  portal_fence
   if ! (
     umask 077
     printf 'version=2\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\ncaddy_compose=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
       "$_phase" "$CADDYFILE" "$APP_WWW" "$OVERLAY_DEST" "$CADDY_COMPOSE" \
-      "$ROLLBACK_CADDY" "$ROLLBACK_WWW" "$ROLLBACK_OVERLAY" > "$_tmp"
+      "$ROLLBACK_CADDY" "$ROLLBACK_WWW" "$ROLLBACK_OVERLAY" >"$_tmp"
   ); then
     rm -f "$_tmp"
     return 1
@@ -1242,27 +1298,51 @@ load_activation_journal() {
     echo "ERROR: activation journal is not a regular file: ${ACTIVATION_JOURNAL}" >&2
     return 1
   fi
-  exec 3< "$ACTIVATION_JOURNAL" || return 1
+  exec 3<"$ACTIVATION_JOURNAL" || return 1
   IFS= read -r _journal_line <&3 && [ "$_journal_line" = "version=2" ] || {
     exec 3<&-
     echo "ERROR: unsupported activation journal: ${ACTIVATION_JOURNAL}" >&2
     return 1
   }
-  read_journal_field phase || { exec 3<&-; return 1; }
+  read_journal_field phase || {
+    exec 3<&-
+    return 1
+  }
   JOURNAL_PHASE="$JOURNAL_VALUE"
-  read_journal_field caddyfile || { exec 3<&-; return 1; }
+  read_journal_field caddyfile || {
+    exec 3<&-
+    return 1
+  }
   JOURNAL_CADDYFILE="$JOURNAL_VALUE"
-  read_journal_field app_www || { exec 3<&-; return 1; }
+  read_journal_field app_www || {
+    exec 3<&-
+    return 1
+  }
   JOURNAL_WWW="$JOURNAL_VALUE"
-  read_journal_field overlay || { exec 3<&-; return 1; }
+  read_journal_field overlay || {
+    exec 3<&-
+    return 1
+  }
   JOURNAL_OVERLAY="$JOURNAL_VALUE"
-  read_journal_field caddy_compose || { exec 3<&-; return 1; }
+  read_journal_field caddy_compose || {
+    exec 3<&-
+    return 1
+  }
   JOURNAL_CADDY_COMPOSE="$JOURNAL_VALUE"
-  read_journal_field rollback_caddy || { exec 3<&-; return 1; }
+  read_journal_field rollback_caddy || {
+    exec 3<&-
+    return 1
+  }
   ROLLBACK_CADDY="$JOURNAL_VALUE"
-  read_journal_field rollback_www || { exec 3<&-; return 1; }
+  read_journal_field rollback_www || {
+    exec 3<&-
+    return 1
+  }
   ROLLBACK_WWW="$JOURNAL_VALUE"
-  read_journal_field rollback_overlay || { exec 3<&-; return 1; }
+  read_journal_field rollback_overlay || {
+    exec 3<&-
+    return 1
+  }
   ROLLBACK_OVERLAY="$JOURNAL_VALUE"
   if IFS= read -r _journal_line <&3 || [ -n "$_journal_line" ]; then
     exec 3<&-
@@ -1272,8 +1352,11 @@ load_activation_journal() {
   exec 3<&-
 
   case "$JOURNAL_PHASE" in
-    snapshotting|prepared|caddy_promoted|www_promoted|overlay_promoted|restored) ;;
-    *) echo "ERROR: invalid activation journal phase: ${JOURNAL_PHASE}" >&2; return 1 ;;
+    snapshotting | prepared | caddy_promoted | www_promoted | overlay_promoted | restored) ;;
+    *)
+      echo "ERROR: invalid activation journal phase: ${JOURNAL_PHASE}" >&2
+      return 1
+      ;;
   esac
   if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ] || [ "$JOURNAL_CADDY_COMPOSE" != "$CADDY_COMPOSE" ]; then
     echo "ERROR: activation journal paths do not match this deploy configuration" >&2
@@ -1281,7 +1364,10 @@ load_activation_journal() {
   fi
   _journal_stamp="${ROLLBACK_CADDY##*.}"
   case "$_journal_stamp" in
-    ''|*[!0-9]*) echo "ERROR: invalid Caddy snapshot path in activation journal" >&2; return 1 ;;
+    '' | *[!0-9]*)
+      echo "ERROR: invalid Caddy snapshot path in activation journal" >&2
+      return 1
+      ;;
   esac
   if [ "$ROLLBACK_CADDY" != "${ROLLBACK_DIR}/Caddyfile.${_journal_stamp}" ]; then
     echo "ERROR: invalid Caddy snapshot path in activation journal" >&2
@@ -1513,10 +1599,10 @@ strip_app_vhost() {
 
 render_snippet() {
   sed -e "s|__APP_HOSTNAME__|${APP_HOSTNAME}|g" \
-      -e "s|^app.altcontext.com {|${APP_HOSTNAME} {|" \
-      -e "s|__APP_UPSTREAM__|${APP_UPSTREAM}|g" \
-      -e "s|__APP_FRONTEND_ROOT__|${APP_FRONTEND_ROOT}|g" \
-      "$APP_SNIPPET"
+    -e "s|^app.altcontext.com {|${APP_HOSTNAME} {|" \
+    -e "s|__APP_UPSTREAM__|${APP_UPSTREAM}|g" \
+    -e "s|__APP_FRONTEND_ROOT__|${APP_FRONTEND_ROOT}|g" \
+    "$APP_SNIPPET"
 }
 
 render_overlay() {
@@ -1526,14 +1612,115 @@ render_overlay() {
   sed -e "s|__APP_WWW__|${APP_WWW}|g" "$APP_OVERLAY"
 }
 
+# A transaction gets at most hold-cap minus 120 seconds. Check both the wall
+# clock and monotonic shell elapsed time; clock rollback cannot extend the budget.
+# Refusal exits immediately even in conditional callers: cleanup/rollback must
+# never run on an unknown hold. Existing journal and staging are left for retry.
+portal_fence() {
+  local _budget="${1:-$((EDGE_OP_DEADLINE + EDGE_OP_KILL_GRACE))}" _now _elapsed
+  [ -n "${EDGE_LOCK_HANDLE:-}" ] || {
+    echo "ERROR: shared edge lock is missing; journal retained" >&2
+    exit 5
+  }
+  if ! edge_lock_check "$EDGE_LOCK_HANDLE" "$_budget"; then
+    echo "ERROR: shared edge lock ownership lost; journal retained; no rollback attempted" >&2
+    exit 5
+  fi
+  _now="$EDGE_LOCK_CHECK_NOW"
+  _elapsed=$((SECONDS - PORTAL_TRANSACTION_START_SECONDS))
+  if [ $((_now + _budget)) -ge "$PORTAL_TRANSACTION_END" ] ||
+    [ $((_elapsed + _budget)) -ge "$PORTAL_TRANSACTION_BUDGET" ]; then
+    echo "ERROR: shared edge lock transaction budget exhausted; journal retained; no rollback attempted" >&2
+    exit 5
+  fi
+}
+
+# Fence before AND after every operation. In particular a successful validator or
+# a failed health probe may have outlived/killed the holder. Never continue to a
+# write, including error cleanup, until ownership has been proved again.
+protected_op() {
+  local _rc=0
+  portal_fence
+  edge_bounded_run "$@" || _rc=$?
+  portal_fence
+  if [ "$_rc" -eq 124 ] || [ "$_rc" -eq 137 ]; then
+    echo "ERROR: protected operation exceeded the ${EDGE_OP_DEADLINE}s deadline: ${1##*/}" >&2
+  fi
+  return "$_rc"
+}
+
+# Fenced filesystem primitives for this standalone script. Keep the journal's
+# existing checked rename and cleanup ordering visible at its callsites. Preserve
+# already-loaded diagnostic functions rather than hiding their fault controls.
+# Their definitions are code the invoking shell has already loaded via BASH_ENV.
+if _portal_rm_definition="$(declare -f rm)"; then
+  eval "${_portal_rm_definition/#rm /_portal_inherited_rm }"
+fi
+if _portal_cp_definition="$(declare -f cp)"; then
+  eval "${_portal_cp_definition/#cp /_portal_inherited_cp }"
+fi
+if _portal_mv_definition="$(declare -f mv)"; then
+  eval "${_portal_mv_definition/#mv /_portal_inherited_mv }"
+fi
+unset _portal_rm_definition _portal_mv_definition _portal_cp_definition
+
+rm() {
+  if declare -F _portal_inherited_rm >/dev/null; then
+    portal_inline_op _portal_inherited_rm "$@"
+  else
+    # env resolves the external tool inside timeout, bypassing this function.
+    protected_op env rm "$@"
+  fi
+}
+
+cp() {
+  if declare -F _portal_inherited_cp >/dev/null; then
+    portal_inline_op _portal_inherited_cp "$@"
+  else
+    protected_op env cp "$@"
+  fi
+}
+
+mv() {
+  if declare -F _portal_inherited_mv >/dev/null; then
+    portal_inline_op _portal_inherited_mv "$@"
+  else
+    protected_op env mv "$@"
+  fi
+}
+
+# EXIT handler. Releases the shared edge lock on every exit path. A failed release turns
+# a successful run into a failure: an expired or unknown hold was not proven serialized.
+portal_release_edge_lock() {
+  local _exit_rc="$1" _release_rc=0
+  if [ -n "${PORTAL_TRANSACTION_WATCHDOG:-}" ]; then
+    kill -TERM "$PORTAL_TRANSACTION_WATCHDOG" 2>/dev/null || :
+    wait "$PORTAL_TRANSACTION_WATCHDOG" 2>/dev/null || :
+  fi
+  if [ -n "${EDGE_LOCK_HANDLE:-}" ]; then
+    if edge_lock_check "$EDGE_LOCK_HANDLE" 0 >/dev/null 2>&1; then
+      edge_compose_cleanup || _release_rc=$?
+    fi
+    edge_lock_release "$EDGE_LOCK_HANDLE" >/dev/null || _release_rc=$?
+    EDGE_LOCK_HANDLE=""
+    if [ "$_release_rc" -ne 0 ]; then
+      echo "ERROR: shared edge lock release failed (rc=${_release_rc}); protected work was not proven serialized" >&2
+      if [ "$_exit_rc" -eq 0 ]; then
+        _exit_rc=1
+      fi
+    fi
+  fi
+  exit "$_exit_rc"
+}
+
 validate_staged_caddy() {
   _staged="$1"
   if command -v caddy >/dev/null 2>&1; then
-    caddy validate --config "$_staged" --adapter caddyfile
+    protected_op caddy validate --config "$_staged" --adapter caddyfile
     return $?
   fi
   if command -v docker >/dev/null 2>&1; then
-    docker run --rm \
+    protected_op docker run --rm \
       -v "${_staged}:/etc/caddy/Caddyfile:ro" \
       caddy:2-alpine \
       caddy validate --config /etc/caddy/Caddyfile
@@ -1544,23 +1731,20 @@ validate_staged_caddy() {
 
 reload_caddy() {
   if [ -n "$APP_RELOAD_CMD" ]; then
-    "$APP_RELOAD_CMD" 9>&-
+    protected_op "$APP_RELOAD_CMD" 9>&-
     return $?
   fi
-  if [ -f "$OVERLAY_DEST" ]; then
-    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" exec -T caddy \
-      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
-  else
-    docker compose -f "$CADDY_COMPOSE" exec -T caddy \
-      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
-  fi
+  # Installed overlay only; the shared helper refuses an unresolved template.
+  edge_compose_args "$CADDY_COMPOSE" "$OVERLAY_DEST" || return 1
+  protected_op docker compose "${EDGE_COMPOSE_ARGV[@]}" exec -T caddy \
+    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 9>&-
 }
 
 verify_caddyfile_binding() {
   local _source
   # Compose resolves relative bind sources. Parse its model, never raw YAML.
   # The same mount must survive base-only rollback and every selected overlay.
-  if ! _source=$(docker compose -f "$CADDY_COMPOSE" "$@" config --format json 9>&- |
+  if ! _source=$(protected_op docker compose -f "$CADDY_COMPOSE" "$@" config --format json 9>&- |
     jq -er '[.services.caddy.volumes[]? | select(.target == "/etc/caddy/Caddyfile")] |
       if length == 1 and .[0].type == "bind" then .[0].source | select(type == "string")
       else error("expected one Caddyfile bind mount") end'); then
@@ -1573,24 +1757,19 @@ verify_caddyfile_binding() {
 apply_caddy_compose() {
   # A bind mount pins the directory inode; unchanged Compose configuration
   # cannot detect the www swap. Recreate only Caddy after every replacement.
-  if [ -f "$OVERLAY_DEST" ]; then
-    docker compose -f "$CADDY_COMPOSE" -f "$OVERLAY_DEST" up -d --force-recreate --no-deps caddy || return 1
-  else
-    docker compose -f "$CADDY_COMPOSE" up -d --force-recreate --no-deps caddy || return 1
-  fi
+  edge_compose_args "$CADDY_COMPOSE" "$OVERLAY_DEST" || return 1
+  protected_op docker compose "${EDGE_COMPOSE_ARGV[@]}" up -d --force-recreate --no-deps caddy || return 1
   wait_for_caddy_admin
 }
 
 wait_for_caddy_admin() {
   local _attempt
-  local -a _compose=(docker compose -f "$CADDY_COMPOSE")
-  if [ -f "$OVERLAY_DEST" ]; then
-    _compose+=(-f "$OVERLAY_DEST")
-  fi
+  edge_compose_args "$CADDY_COMPOSE" "$OVERLAY_DEST" || return 1
+  local -a _compose=(docker compose "${EDGE_COMPOSE_ARGV[@]}")
   # Compose returns before Caddy is ready. BusyBox wget ships in caddy:2-alpine;
   # probe inside the service because its admin port is not published on the host.
   for _attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if "${_compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
+    if protected_op "${_compose[@]}" exec -T caddy wget -q -T 1 -O /dev/null \
       http://127.0.0.1:2019/config/ 9>&-; then
       return 0
     fi
@@ -1617,7 +1796,7 @@ run_health() {
     echo "ERROR: APP_HEALTH_CMD is required to check the live frontend and portal upstream" >&2
     return 1
   fi
-  APP_HOSTNAME="$APP_HOSTNAME" "$APP_HEALTH_CMD" 9>&-
+  protected_op env APP_HOSTNAME="$APP_HOSTNAME" "$APP_HEALTH_CMD" 9>&-
 }
 
 reclaim_rollback_snapshots() {
@@ -1641,7 +1820,7 @@ reclaim_rollback_snapshots() {
         _stamp="${_snapshot_name#docker-compose.app.yml.}"
         [ -f "$_snapshot" ] && [ ! -L "$_snapshot" ] || continue
         ;;
-      absent-www.*|absent-overlay.*)
+      absent-www.* | absent-overlay.*)
         _stamp="${_snapshot_name#*.}"
         [ -f "$_snapshot" ] && [ ! -L "$_snapshot" ] || continue
         ;;
@@ -1649,7 +1828,7 @@ reclaim_rollback_snapshots() {
         continue
         ;;
     esac
-    case "$_stamp" in ''|*[!0-9]*) continue ;; esac
+    case "$_stamp" in '' | *[!0-9]*) continue ;; esac
     [ "$_stamp" != "$ts" ] || continue
     guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
     rm -rf -- "$_snapshot" || return 1
@@ -1662,19 +1841,33 @@ if [ "$APPLY" -eq 1 ]; then
   guard_source_path CADDY_COMPOSE "$CADDY_COMPOSE" file
   APP_DEPLOY_LOCK_WAIT="${APP_DEPLOY_LOCK_WAIT:-30}"
   case "$APP_DEPLOY_LOCK_WAIT" in
-    ''|*[!0-9]*) refuse "APP_DEPLOY_LOCK_WAIT must be a non-negative integer" ;;
+    '' | *[!0-9]*) refuse "APP_DEPLOY_LOCK_WAIT must be a non-negative integer" ;;
   esac
-  mkdir -p "$APP_ROOT"
-  if ! command -v flock >/dev/null 2>&1; then
-    refuse "flock is required for deploy lock ${DEPLOY_LOCK}"
+  if [ "$APP_DEPLOY_LOCK_WAIT" -gt "$EDGE_LOCK_MAX_WAIT" ]; then
+    refuse "APP_DEPLOY_LOCK_WAIT must be at most ${EDGE_LOCK_MAX_WAIT} seconds"
   fi
-  if ! exec 9>>"$DEPLOY_LOCK"; then
-    refuse "could not open deployment lock ${DEPLOY_LOCK}"
-  fi
-  if ! flock -w "$APP_DEPLOY_LOCK_WAIT" 9; then
-    exec 9>&-
-    refuse "could not acquire deployment lock ${DEPLOY_LOCK} within ${APP_DEPLOY_LOCK_WAIT}s"
-  fi
+  _edge_op_deadline_ok "$EDGE_OP_DEADLINE" ||
+    refuse "EDGE_OP_DEADLINE must be an integer 1..${EDGE_OP_MAX_DEADLINE} seconds (got: ${EDGE_OP_DEADLINE})"
+  command -v timeout >/dev/null 2>&1 || refuse "timeout (coreutils) is required to bound protected operations"
+  edge_bounded_run mkdir -p "$APP_ROOT"
+  # The same inode and bounded wait as recognition's shared edge lock. A short
+  # holder keeps the flock; the EXIT trap below releases it on every exit path.
+  # Passing $$ lets the holder exit at once if this shell dies without releasing.
+  # The hold cap is only a backstop here, so it covers the longest possible apply.
+  _edge_lock_rc=0
+  EDGE_LOCK_HANDLE="$(edge_lock_acquire "$DEPLOY_LOCK" "$APP_DEPLOY_LOCK_WAIT" "$EDGE_LOCK_MAX_HOLD" "$$")" || _edge_lock_rc=$?
+  case "$_edge_lock_rc" in
+    0) ;;
+    75) refuse "could not acquire deployment lock ${DEPLOY_LOCK} within ${APP_DEPLOY_LOCK_WAIT}s" ;;
+    *) refuse "could not open deployment lock ${DEPLOY_LOCK}" ;;
+  esac
+  PORTAL_TRANSACTION_START_SECONDS=$SECONDS
+  PORTAL_TRANSACTION_BUDGET=$((EDGE_LOCK_MAX_HOLD - 120))
+  PORTAL_TRANSACTION_END=$(($(date +%s) + PORTAL_TRANSACTION_BUDGET))
+  trap 'portal_release_edge_lock "$?"' EXIT
+  portal_watchdog "$$" "$PORTAL_TRANSACTION_BUDGET" "$EDGE_LOCK_HANDLE" </dev/null >/dev/null 2>&1 &
+  PORTAL_TRANSACTION_WATCHDOG=$!
+  portal_fence
   # No staging, journal recovery, or live changes before the binding gate.
   # Preserve journal path validation before contacting a different project.
   if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
@@ -1684,7 +1877,7 @@ if [ "$APPLY" -eq 1 ]; then
     guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
   fi
   command -v docker >/dev/null 2>&1 || refuse "docker compose is required to apply the Caddy overlay and reload Caddy"
-  docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
+  protected_op docker compose version >/dev/null 2>&1 || refuse "docker compose is unavailable; cannot apply the Caddy overlay or reload Caddy"
   command -v jq >/dev/null 2>&1 || refuse "jq is required to verify the Caddyfile bind source"
   verify_caddyfile_binding
   if [ -f "$OVERLAY_DEST" ]; then
@@ -1741,7 +1934,7 @@ fi
 STAGED_CADDY="${STAGING_DIR}/Caddyfile"
 STAGED_WWW="${STAGING_DIR}/www"
 STAGED_OVERLAY="${STAGING_DIR}/docker-compose.app.yml"
-mkdir -p "$APP_ROOT" "$STAGING_DIR"
+protected_op mkdir -p "$APP_ROOT" "$STAGING_DIR"
 
 # Redirection would follow a stale symlink and could truncate the live config
 # before strip_app_vhost reads it. Unlink stale symlinks, and refuse a hardlink
@@ -1762,6 +1955,7 @@ elif [ -e "$STAGED_CADDY" ]; then
   fi
 fi
 
+portal_fence
 if ! (
   umask 077
   set -o noclobber
@@ -1770,7 +1964,7 @@ if ! (
     printf '\n'
     render_snippet
     printf '\n'
-  } > "$STAGED_CADDY"
+  } >"$STAGED_CADDY"
 ); then
   rm -f -- "$STAGED_CADDY"
   refuse "cannot create private staged Caddy file: ${STAGED_CADDY}"
@@ -1794,17 +1988,18 @@ elif [ -e "$STAGED_OVERLAY" ]; then
     refuse "cannot remove stale staged overlay file: ${STAGED_OVERLAY}"
   fi
 fi
+portal_fence
 if ! (
   umask 077
   set -o noclobber
-  render_overlay > "$STAGED_OVERLAY"
+  render_overlay >"$STAGED_OVERLAY"
 ); then
   rm -f -- "$STAGED_OVERLAY"
   refuse "cannot create private staged overlay file: ${STAGED_OVERLAY}"
 fi
 
 rm -rf "$STAGED_WWW"
-mkdir -p "$STAGED_WWW"
+protected_op mkdir -p "$STAGED_WWW"
 guard_source_path FRONTEND_DIST "$FRONTEND_DIST" dir
 cp -a "${FRONTEND_DIST}/." "$STAGED_WWW/"
 
@@ -1823,8 +2018,9 @@ if ! validate_staged_caddy "$STAGED_CADDY"; then
   exit 4
 fi
 
+portal_fence
 guard_dest_path ROLLBACK_DIR "$ROLLBACK_DIR" dir
-mkdir -p "$ROLLBACK_DIR"
+protected_op mkdir -p "$ROLLBACK_DIR"
 ts="$(date +%s)"
 # Separate snapshots even for deployments in the same second (or clock rollback).
 while :; do
@@ -1845,6 +2041,7 @@ ROLLBACK_WWW="${ROLLBACK_DIR}/www.${ts}"
 ROLLBACK_OVERLAY="${ROLLBACK_DIR}/docker-compose.app.yml.${ts}"
 activation_fail() {
   echo "ERROR: ${1:-activation step failed}" >&2
+  portal_fence
   trap - ERR
   # Let one recovery finish coherently instead of reentering it on another
   # disconnect or interrupt. SIGKILL/power loss still resumes from the journal.
@@ -1869,14 +2066,22 @@ if [ -d "$APP_WWW" ]; then
 else
   ROLLBACK_WWW="-"
   # Keep explicit absence evidence after successful activation clears the journal.
-  (umask 077; printf 'app-portal-absent-www-v1\n' > "${ROLLBACK_DIR}/absent-www.${ts}")
+  (
+    portal_fence
+    umask 077
+    printf 'app-portal-absent-www-v1\n' >"${ROLLBACK_DIR}/absent-www.${ts}"
+  )
   sync_path "${ROLLBACK_DIR}/absent-www.${ts}"
 fi
 if [ -f "$OVERLAY_DEST" ]; then
   cp -a "$OVERLAY_DEST" "$ROLLBACK_OVERLAY"
 else
   ROLLBACK_OVERLAY="-"
-  (umask 077; printf 'app-portal-absent-overlay-v1\n' > "${ROLLBACK_DIR}/absent-overlay.${ts}")
+  (
+    portal_fence
+    umask 077
+    printf 'app-portal-absent-overlay-v1\n' >"${ROLLBACK_DIR}/absent-overlay.${ts}"
+  )
   sync_path "${ROLLBACK_DIR}/absent-overlay.${ts}"
 fi
 sync_path "$ROLLBACK_DIR"
@@ -1912,6 +2117,14 @@ if ! reload_caddy; then
 fi
 if ! run_health; then
   activation_fail "health check failed after reload"
+fi
+
+# Keep the reviewed helper available for manual recovery without a VM checkout
+# or the original /tmp transport artifacts. Publish it atomically while the
+# activation journal and shared ownership fence still protect this apply.
+guard_dest_path SHARED_EDGE_DEST "$SHARED_EDGE_DEST" file
+if ! atomic_copy_file "$APP_SHARED_EDGE_LIB" "$SHARED_EDGE_DEST"; then
+  activation_fail "could not package the shared-edge recovery helper"
 fi
 
 clear_activation_journal

@@ -102,9 +102,6 @@ vi.mock('../../../hooks/useSyncOffline', () => ({
   useSyncOffline: () => false,
 }));
 
-vi.mock('../BulkDescribeReviewLink', () => ({
-  BulkDescribeReviewLink: () => null,
-}));
 
 const idleProgress = {
   status: null,

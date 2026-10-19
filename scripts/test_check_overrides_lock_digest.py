@@ -202,8 +202,7 @@ def test_no_lock_files_is_ok(tmp_path: Path) -> None:
     assert check_overrides_locks(tmp_path) == []
 
 
-def test_repo_overrides_lock_is_consistent() -> None:
-    """The committed workbay-overrides tree must satisfy its own digests."""
+def test_repo_overrides_locks_are_consistent_when_present() -> None:
+    """Any consumer overrides must satisfy their own digests."""
     overrides_root = REPO_ROOT / "workbay-overrides"
-    assert overrides_root.is_dir()
     assert check_overrides_locks(overrides_root) == []

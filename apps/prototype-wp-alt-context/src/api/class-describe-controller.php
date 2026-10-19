@@ -282,6 +282,21 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				),
 			)
 		);
+		// Local accepted-run directory: no inference and no upstream request.
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs',
+			array(
+				'methods' => 'GET',
+				'callback' => array( $this, 'list_describe_runs_for_media' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args' => array(
+					'media_ids' => array( 'type' => 'array', 'required' => true, 'items' => array( 'type' => 'integer' ) ),
+					'limit' => array( 'type' => 'integer', 'default' => 5, 'minimum' => 1, 'maximum' => 10 ),
+					'offset' => array( 'type' => 'integer', 'default' => 0, 'minimum' => 0 ),
+				),
+			)
+		);
 
 		register_rest_route(
 			'acx/v1',
@@ -493,6 +508,43 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 
 		return max( 1, $max );
 	}
+	/** List locally accepted runs for visible attachments, newest first. Never prunes authorization on read. */
+	public function list_describe_runs_for_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$raw_ids = $request->get_param( 'media_ids' );
+		if ( ! is_array( $raw_ids ) || array() === $raw_ids || count( $raw_ids ) > 100 ) {
+			return new WP_Error( 'invalid_media_ids', 'Provide between 1 and 100 attachment IDs.', array( 'status' => 400 ) );
+		}
+		$wanted = array();
+		foreach ( $raw_ids as $raw_id ) {
+			$id = $this->parse_strict_positive_int( $raw_id );
+			if ( null === $id ) {
+				return new WP_Error( 'invalid_media_ids', 'Attachment IDs must be positive integers.', array( 'status' => 400 ) );
+			}
+			$wanted[] = $id;
+		}
+		$index = get_option( self::RUN_MEDIA_IDS_INDEX_OPTION, array() );
+		$index = is_array( $index ) ? $index : array();
+		arsort( $index, SORT_NUMERIC );
+		$items = array();
+		foreach ( $index as $run_id => $created_at ) {
+			if ( ! is_string( $run_id ) || ! preg_match( '/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/D', $run_id ) || ! is_numeric( $created_at ) ) {
+				continue;
+			}
+			$members = $this->load_run_media_ids( $run_id );
+			$media_ids = array_values( array_intersect( $wanted, $members ?? array() ) );
+			if ( array() !== $media_ids ) {
+				$items[] = array( 'run_id' => $run_id, 'created_at' => (int) $created_at, 'media_ids' => $media_ids );
+			}
+		}
+		$limit = min( 10, max( 1, (int) ( $request->get_param( 'limit' ) ?? 5 ) ) );
+		$offset = max( 0, (int) ( $request->get_param( 'offset' ) ?? 0 ) );
+		$total = count( $items );
+		return new WP_REST_Response( array(
+			'items' => array_slice( $items, $offset, $limit ),
+			'total' => $total,
+			'next_offset' => $offset + $limit < $total ? $offset + $limit : null,
+		), 200 );
+	}
 
 	public function get_describe_run_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$run_id = $this->normalize_run_id( $request );
@@ -545,10 +597,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
 		}
 
+		$images = $this->describe_run_image_evidence( $run_id );
 		$response = $this->proxy_recognition_request(
-			'GET',
-			sprintf( '/scene/describe/run/%s/items', $run_id ),
-			array(),
+			array() === $images ? 'GET' : 'POST',
+			sprintf( array() === $images ? '/scene/describe/run/%s/items' : '/scene/describe/run/%s/items/preview', $run_id ),
+			array() === $images ? array() : array( 'images' => $images ),
 			array( 'tenant_id' => $this->get_tenant_id() ),
 			'post_scan_read'
 		);
@@ -619,6 +672,30 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		}
 
 		return $response;
+	}
+
+	/** Hash and dimensions come from the exact same bounded original-file read. */
+	private function describe_run_image_evidence( string $run_id ): array {
+		$images = array();
+		$total  = 0;
+		$budget = $this->describe_run_max_body_bytes();
+		foreach ( array_slice( $this->load_run_media_ids( $run_id ) ?? array(), 0, 100 ) as $media_id ) {
+			$part = $this->load_media_file_part( $media_id, $budget, $total );
+			if ( is_wp_error( $part ) ) {
+				continue;
+			}
+			$total += strlen( $part['content'] );
+			$dims   = @getimagesizefromstring( $part['content'] );
+			if ( is_array( $dims ) && $dims[0] > 0 && $dims[1] > 0 ) {
+				$images[] = array(
+					'media_id'   => $media_id,
+					'image_hash' => hash( 'sha256', $part['content'] ),
+					'width'      => (int) $dims[0],
+					'height'     => (int) $dims[1],
+				);
+			}
+		}
+		return $images;
 	}
 
 	/**

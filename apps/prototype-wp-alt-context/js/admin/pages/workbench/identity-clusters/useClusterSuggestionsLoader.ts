@@ -67,7 +67,11 @@ export interface ClusterSuggestionsLoaderResult {
   labelMatches?: ClusterSummary[];
   /** Whether suggestion / roster queries are loading */
   isLoading: boolean;
-  /** Roster query failed — consumers degrade to cluster-only options */
+  /** Successful roster prerequisite, independent of advisory reads. Supplied by this loader; optional for legacy adapters. */
+  namingReady?: boolean;
+  /** Retry the mandatory roster read, independently of advisory reads. */
+  retryRoster?: () => void;
+  /** Roster query failed — naming must wait for a successful Retry. */
   rosterError: boolean;
   /**
    * Find cluster ID by label (case-insensitive); remote search only; BR-17 gated.
@@ -237,6 +241,24 @@ export const useClusterSuggestionsLoader = ({
     staleTime: 30000,
   });
 
+  const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError, status: rosterStatus, refetch: refetchRoster } = useRosterEntries();
+
+  const { options: namingOptions, collisionsByLabel, canonicalPeopleByClusterId } = React.useMemo(() => {
+    // A11Y-24: roster error/empty degrade to cluster-only options.
+    const roster = rosterError ? [] : rosterEntries;
+    const labeledClusters = isAtRestMode ? (atRestLabeledClusters?.clusters ?? []) : (labelMatches ?? atRestLabeledClusters?.clusters ?? []);
+    // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
+    const namedMatches = labeledClusters.filter(
+      (c): c is ClusterSummary & { label: string } => typeof c.label === 'string' && c.label !== '',
+    );
+    return buildNamingOptions({
+      rosterEntries: roster,
+      labelMatches: namedMatches,
+      filter: debouncedValue,
+      excludeClusterId: editableClusterId,
+    });
+  }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId, isAtRestMode]);
+
   // Canonical cluster name: a current label replaces the cached batch label only when the same
   // cluster ID is labelled now. The join is by cluster ID, never by display name.
   const currentLabelByClusterId = React.useMemo((): ReadonlyMap<string, string> => {
@@ -258,8 +280,11 @@ export const useClusterSuggestionsLoader = ({
       const currentLabel = currentLabelByClusterId.get(row.cluster_id);
       return currentLabel ? { ...row, label: currentLabel } : row;
     });
-    return projectIdentityWindow(identityId, rows);
-  }, [identityId, identityBatch, currentLabelByClusterId]);
+    return projectIdentityWindow(identityId, rows).map((projected) => {
+      const canonicalPerson = canonicalPeopleByClusterId.get(projected.clusterId);
+      return canonicalPerson ? { ...projected, canonicalPerson } : projected;
+    });
+  }, [identityId, identityBatch, currentLabelByClusterId, canonicalPeopleByClusterId]);
 
   // Closest roster people for an unnamed card (c82 FIR). Lazy: only when expanded, the editable
   // cluster is valid, the identity batch has resolved, and no eligible pending row exists.
@@ -279,30 +304,12 @@ export const useClusterSuggestionsLoader = ({
     staleTime: 30000,
   });
 
-  const { data: rosterEntries = [], isLoading: rosterLoading, isError: rosterError } = useRosterEntries();
-
   const rosterCandidateOptions = React.useMemo(
     () => canQueryRosterCandidates
       ? buildRosterCandidateOptions(rosterCandidatesResponse?.candidates ?? [], rosterEntries)
       : [],
     [canQueryRosterCandidates, rosterCandidatesResponse, rosterEntries],
   );
-
-  const { options: namingOptions, collisionsByLabel } = React.useMemo(() => {
-    // A11Y-24: roster error/empty degrade to cluster-only options.
-    const roster = rosterError ? [] : rosterEntries;
-    const labeledClusters = isAtRestMode ? (atRestLabeledClusters?.clusters ?? []) : (labelMatches ?? atRestLabeledClusters?.clusters ?? []);
-    // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
-    const namedMatches = labeledClusters.filter(
-      (c): c is ClusterSummary & { label: string } => typeof c.label === 'string' && c.label !== '',
-    );
-    return buildNamingOptions({
-      rosterEntries: roster,
-      labelMatches: namedMatches,
-      filter: debouncedValue,
-      excludeClusterId: editableClusterId,
-    });
-  }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId, isAtRestMode]);
 
   const findClusterByLabel = React.useCallback(
     async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> =>
@@ -330,6 +337,9 @@ export const useClusterSuggestionsLoader = ({
       labelMatchesLoading ||
       atRestLabeledLoading ||
       (enabled && rosterLoading),
+    namingReady: enabled && rosterStatus === 'success',
+    // Roster HTTP does not consume query cancellation; share the pending read.
+    retryRoster: () => { void refetchRoster({ cancelRefetch: false }); },
     rosterError,
     rosterCandidateOptions,
     isError: (canQuerySuggestions && suggestionsError) || (canQueryRosterCandidates && rosterCandidatesError),

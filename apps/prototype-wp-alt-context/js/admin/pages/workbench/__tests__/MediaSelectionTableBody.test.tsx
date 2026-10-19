@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerConfig, resetConfigCache } from '../../../api/config';
 import type { WorkbenchMediaItem } from '../../../hooks/useWorkbenchMedia';
 import { MediaSelectionTableBody } from '../MediaSelectionTableBody';
+import type { QueueDraft } from '../../../hooks/useQueueDrafts';
+import { correctDescriptionHistoryItem } from '../../../api/describeApi';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -27,9 +29,7 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 vi.mock('../../../api/describeApi', async () => {
-  const actual = await vi.importActual<typeof import('../../../api/describeApi')>(
-    '../../../api/describeApi',
-  );
+  const actual = await vi.importActual<typeof import('../../../api/describeApi')>('../../../api/describeApi');
   return {
     ...actual,
     correctDescriptionHistoryItem: vi.fn(),
@@ -49,6 +49,7 @@ const { queueDrafts } = vi.hoisted(() => ({
         source: string;
       }
     >,
+    historyByMediaId: {} as Record<number, QueueDraft[]>,
     isLoading: false,
     isError: false,
     error: null as Error | null,
@@ -64,6 +65,7 @@ vi.mock('../../../hooks/useQueueDrafts', () => ({
   QUEUE_DRAFTS_HISTORY_QUERY_KEY: ['description-history'],
   useQueueDrafts: () => ({
     draftsByMediaId: queueDrafts.draftsByMediaId,
+    historyByMediaId: queueDrafts.historyByMediaId,
     isLoading: queueDrafts.isLoading,
     isError: queueDrafts.isError,
     error: queueDrafts.error,
@@ -99,12 +101,12 @@ const renderBody = (
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const content = (rows: WorkbenchMediaItem[]) => (
     <QueryClientProvider client={client}>
       <table>
         <tbody>
           <MediaSelectionTableBody
-            items={items}
+            items={rows}
             isLoading={false}
             detailIsLoading={false}
             onToggleRow={() => undefined}
@@ -114,18 +116,66 @@ const renderBody = (
           />
         </tbody>
       </table>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(content(items));
+  return { ...view, rerenderItems: (rows: WorkbenchMediaItem[]) => view.rerender(content(rows)) };
 };
 
 describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-04]', () => {
   afterEach(() => {
     resetConfigCache();
     queueDrafts.draftsByMediaId = {};
+    queueDrafts.historyByMediaId = {};
     queueDrafts.isLoading = false;
     queueDrafts.isError = false;
     queueDrafts.error = null;
     queueDrafts.historyTruncated = false;
+  });
+
+  it('previews a previous run beside the image and only saves after explicit approval', async () => {
+    const user = userEvent.setup();
+    const newest: QueueDraft = {
+      mediaId: 42,
+      draftText: 'Newest flower description.',
+      existingAlt: false,
+      runId: 'new-run',
+      source: 'describe_run',
+      createdAt: 200,
+    };
+    const previous: QueueDraft = {
+      ...newest,
+      draftText: 'Earlier flower description.',
+      runId: 'old-run',
+      createdAt: 100,
+    };
+    queueDrafts.draftsByMediaId[42] = newest;
+    queueDrafts.historyByMediaId[42] = [newest, previous];
+    const correction = vi.mocked(correctDescriptionHistoryItem);
+    correction.mockClear();
+    correction.mockResolvedValue({
+      media_id: 42,
+      title: 'Flower',
+      mime_type: 'image/jpeg',
+      current_alt_text: previous.draftText,
+      generated_alt_text: '',
+      provenance: null,
+      human_edit: null,
+      run_status: null,
+      is_decorative: false,
+    });
+    renderBody([makeItem({ title: 'Flower', altText: null })]);
+    const versions = screen.getByRole('combobox', { name: 'Description version' });
+    expect(screen.getByText(newest.draftText)).toBeInTheDocument();
+    await user.selectOptions(versions, JSON.stringify([previous.source, previous.runId]));
+    expect(screen.getByText(previous.draftText)).toBeInTheDocument();
+    expect(correction).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Edit draft for Flower' }));
+    expect(screen.getByRole('textbox', { name: 'Edit draft alt text' })).toHaveValue(previous.draftText);
+    expect(versions).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Cancel edit' }));
+    await user.click(screen.getByRole('button', { name: 'Accept draft for Flower' }));
+    expect(correction).toHaveBeenCalledWith(42, previous.draftText);
   });
 
   it('does not offer search recovery when the library is empty without a search [DUX-W2D6C-RV-02]', () => {
@@ -135,6 +185,30 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
     expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'empty');
     expect(screen.queryByTestId('acx-empty-state-live-region')).not.toBeInTheDocument();
+  });
+
+  it('keeps the selected older run when current identity weaving refreshes its text', async () => {
+    const user = userEvent.setup();
+    const newest: QueueDraft = {
+      mediaId: 42,
+      draftText: 'Latest description.',
+      existingAlt: false,
+      runId: 'new-run',
+      source: 'describe_run',
+    };
+    const previous: QueueDraft = { ...newest, runId: 'old-run', draftText: 'A woman waves.' };
+    queueDrafts.draftsByMediaId[42] = newest;
+    queueDrafts.historyByMediaId[42] = [newest, previous];
+    const items = [makeItem()];
+    const view = renderBody(items);
+    const versions = screen.getByRole('combobox', { name: 'Description version' });
+    await user.selectOptions(versions, screen.getByRole('option', { name: 'Run old-run' }));
+    expect(screen.getByText(previous.draftText)).toBeInTheDocument();
+
+    queueDrafts.historyByMediaId[42] = [newest, { ...previous, draftText: 'Ada waves.' }];
+    view.rerenderItems(items);
+    expect(screen.getByText('Ada waves.')).toBeInTheDocument();
+    expect(screen.queryByText(newest.draftText)).not.toBeInTheDocument();
   });
 
   it('shows loading faces in a row while identities are loading', () => {
@@ -246,9 +320,7 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
   });
 
   it('renders empty alt for isDecorative rows so screen readers skip the image', () => {
-    const { container } = renderBody([
-      makeItem({ isDecorative: true, altText: null, status: 'complete' }),
-    ]);
+    const { container } = renderBody([makeItem({ isDecorative: true, altText: null, status: 'complete' })]);
 
     // alt="" removes the image from the a11y tree — query the DOM node directly.
     const img = container.querySelector('img');
@@ -347,13 +419,9 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     // MediaAltInlineEditor takes `title` optionally, so the component-level test
     // passes even when the row forgets to wire it. Pin the call site: without
     // this, every row in an AT element list reads a bare "Edit alt text".
-    renderBody([
-      makeItem({ id: 7, title: 'Harbour at dusk', altText: null, status: 'missing' }),
-    ]);
+    renderBody([makeItem({ id: 7, title: 'Harbour at dusk', altText: null, status: 'missing' })]);
 
-    expect(
-      screen.getByRole('button', { name: 'Edit alt text for Harbour at dusk' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit alt text for Harbour at dusk' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit alt text' })).toBeNull();
   });
 });
@@ -390,9 +458,7 @@ describe('MediaSelectionTableBody — draft filter lookup honesty [GPUFLOW-3-U-R
       onClearDraftFilters: vi.fn(),
     });
 
-    expect(
-      screen.getByText('Only recent drafts were checked. Older drafts may not be listed.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Only recent drafts were checked. Older drafts may not be listed.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show all media' })).toBeInTheDocument();
     expect(screen.queryByText('No media items match the current filters.')).not.toBeInTheDocument();
     expect(screen.queryByText('Harbour at dusk')).not.toBeInTheDocument();
@@ -415,9 +481,7 @@ describe('MediaSelectionTableBody — draft filter lookup honesty [GPUFLOW-3-U-R
       onClearDraftFilters: vi.fn(),
     });
 
-    expect(
-      screen.getByText('Only recent drafts were checked. Older drafts may not be listed.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Only recent drafts were checked. Older drafts may not be listed.')).toBeInTheDocument();
     expect(screen.getByText('Harbour at dusk')).toBeInTheDocument();
   });
 });

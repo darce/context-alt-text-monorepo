@@ -130,6 +130,44 @@ unsuppressable), and a minimum face-detection confidence (0.8).
 
 GPUFLOW-1 operation errors use the typed nested detail envelope below. Other errors retain their existing transport shapes, including FastAPI validation detail; they are outside the typed operation schema.
 
+## Saved-run identity proposals
+
+The E19-4a matcher uses the saved generic phrase's character span and normalized
+region box to associate a confirmed face with the phrase it names. Initial
+description and later curation reuse that matcher and the deterministic prose
+realizers. A cluster label is eligible only under the naming policy above.
+
+`GET /scene/describe/run/{run_id}/items` projects current names over a stored
+`provenance.naming_base` when available. Version 1 retains the original generic
+caption, phrase spans/boxes, image hash and dimensions before initial naming.
+The projection changes response text and naming provenance; it does not change
+the stored generation, result generation number, applied alt text or human edits.
+
+For older generations, WordPress may call
+`POST /scene/describe/run/{run_id}/items/preview` with JSON
+`{ "images": [{ "media_id": 71, "image_hash": "<sha256>", "width": 100, "height": 100 }] }`.
+This is an authenticated CPU read, with the same tenant/write-access gate as
+the items route. It never starts inference, publishes GPU demand or consumes
+usage credits. The body permits at most 100 distinct media IDs, all belonging
+to the tenant's run. WordPress hashes and measures the same bounded original
+file read. The service accepts only the generation's exact cache key, empty
+generation context, matching image hash and matching original caption; it
+never substitutes a newer media-level caption.
+
+Item `provenance.naming_refresh.status` is `current` when recomputed, or
+`unavailable` with reason `original_base_unavailable` or
+`recognition_unavailable`. An unavailable projection retains the historical
+draft and is flagged for operator review. Recognition-disabled runs retain
+their original behavior. Unnamed detected faces participate in ambiguity
+checks; consent rejection and unbinding yield the generic base.
+
+Workbench invalidates these derived proposals after label changes and shared
+sync completion. It adds no poller, preserves a draft while the operator is
+editing it, and still requires explicit approval to write alt text. This read
+projection implements the saved-proposal part of
+[ADR-018](../../adrs/ADR-018-post-curation-identity-weaving.md); its broader
+revision-fenced apply and durable event contracts remain proposed.
+
 ## Backend async route — `POST /scene/describe/async`
 
 The MVP async surface enqueues a single image, immediately schedules a

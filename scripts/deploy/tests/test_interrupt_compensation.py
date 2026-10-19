@@ -10,6 +10,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
 
 
@@ -19,6 +21,9 @@ def _run_driver(tmp_path: Path, statements: str, **extra_env: str) -> subprocess
     command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Isolate compensation decisions/payloads; real ownership is tested with P helper.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 preflight_env_manifest() {{ return 0; }}
@@ -49,8 +54,25 @@ def _run_real_driver(tmp_path: Path, statements: str) -> subprocess.CompletedPro
     command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Isolate compensation decisions/payloads; real ownership is tested with P helper.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+# Keep real restore orchestration; model only its external admission RPC.
+# Native admission/ownership/generation is exercised in test_aura_d5_restore_admission.py.
+FIXTURE_ADMISSION_RC=0
+recognition_edge_remote() {{
+  printf 'recognition_edge_remote' >>"$RECORDS"
+  printf ' %q' "$@" >>"$RECORDS"
+  printf '\\n' >>"$RECORDS"
+  if [[ $# != 3 || ${{1:-}} != admit-runtime || ${{2:-}} != dev ||
+        ( ${{3:-}} != current-only && ${{3:-}} != '' ) ]]; then
+    printf 'unmodeled compensation admission call\\n' >&2
+    return 97
+  fi
+  return "$FIXTURE_ADMISSION_RC"
+}}
 deploy_env_lease() {{ return 0; }}
 cleanup_remote_build_generation_on_exit() {{ record cleanup_remote_build_generation_on_exit "$@"; }}
 _purge_deploy_ocir_docker_config() {{ record _purge_deploy_ocir_docker_config "$@"; }}
@@ -87,6 +109,9 @@ def _run_lease_driver(tmp_path: Path, statements: str) -> subprocess.CompletedPr
     command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
+# Isolate compensation decisions/payloads; real ownership is tested with P helper.
+recognition_edge_assert_if_active() {{ return 0; }}
+recognition_edge_command() {{ run_with_deadline 5 "owned command" ssh "$1"; }}
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
 preflight_env_manifest() {{ return 0; }}
@@ -120,84 +145,102 @@ def _function_body(name: str) -> str:
     return match.group(1)
 
 
-def _topology_restore_fixture(tmp_path: Path, *, pending: bool = False) -> dict[str, Path]:
+def _topology_restore_fixture(tmp_path: Path, *, pending: bool = False) -> dict:
     backup_root = tmp_path / "backups"
     current = backup_root / "dev" / "current-transaction"
     previous = backup_root / "dev" / "previous-transaction"
-    current.mkdir(parents=True)
-    if pending:
-        (current / "topology.pending").touch()
-    previous.mkdir(parents=True)
-    (previous / "topology.ready").touch()
-    (backup_root / "dev" / "latest").write_text(f"{previous}\n", encoding="utf-8")
-    (previous / "docker-compose.env.yml").write_text("previous compose\n", encoding="utf-8")
-    (previous / "acx-dev.service").write_text("previous unit\n", encoding="utf-8")
-    (previous / "edge").mkdir()
-    (previous / "edge" / "Caddyfile.pre-cutover").write_text("reverse_proxy dev-api:8000\n", encoding="utf-8")
-    (backup_root / "dev" / "edge-cutover.current").write_text(
-        f"{previous}/edge/Caddyfile.pre-cutover\n", encoding="utf-8"
-    )
-
-    remote_dir = tmp_path / "remote" / "dev"
-    remote_dir.mkdir(parents=True)
+    edge_dir = tmp_path / "opt" / "acx-backend"
+    (edge_dir / "app").mkdir(parents=True)
+    (edge_dir / "docker-compose.caddy.yml").write_text("services: {}\n", encoding="utf-8")
+    remote_dir = edge_dir / "dev"
+    (remote_dir / "db/docker-prod-init").mkdir(parents=True)
     live_compose = remote_dir / "docker-compose.env.yml"
-    live_compose.write_text("current compose\n", encoding="utf-8")
+    live_compose.write_text("previous compose\n", encoding="utf-8")
+    (remote_dir / "db/docker-prod-init/001-extensions.sql").write_text("previous sql\n", encoding="utf-8")
     systemd_dir = tmp_path / "systemd"
     systemd_dir.mkdir()
-    (systemd_dir / "acx-dev.service").write_text("current unit\n", encoding="utf-8")
-    edge_dir = tmp_path / "opt" / "acx-backend"
-    edge_dir.mkdir(parents=True)
+    (systemd_dir / "acx-dev.service").write_text("previous unit\n", encoding="utf-8")
     live_caddyfile = edge_dir / "Caddyfile"
-    live_caddyfile.write_text("reverse_proxy dev-api-next:8000\n", encoding="utf-8")
+    live_caddyfile.write_text("reverse_proxy dev-api:8000\n", encoding="utf-8")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "ssh").write_text(
-        "#!/usr/bin/env bash\n"
-        "last=\n"
-        'for arg in "$@"; do last=$arg; done\n'
-        "if [[ $last == 'bash -s' ]]; then cat >\"$CAPTURED_PAYLOAD\"; "
-        'else printf \'%s\\n\' "$last" >"$CAPTURED_PAYLOAD"; fi\n',
+        '''#!/usr/bin/env python3
+import json, os, shlex, subprocess, sys
+from pathlib import Path
+args = sys.argv[1:]
+expected = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ConnectionAttempts=1",
+            "-l", "fixture", "--", "fixture.invalid"]
+if args[:-1] != expected:
+    raise SystemExit("unexpected SSH transport")
+prefix = "sudo timeout -k 5 20 bash -s -- "
+if not args[-1].startswith(prefix):
+    raise SystemExit("unexpected remote command")
+action = args[-1][len(prefix):].split()[0]
+program = sys.stdin.read()
+def mapped(text):
+    return text.replace("/opt/acx-backend", os.environ["FAKE_OPT"]).replace(
+        "/etc/systemd/system", os.environ["FAKE_SYSTEMD"])
+if action in ("restore-topology", "restore"):
+    command = shlex.split(args[-1])
+    Path(os.environ["CAPTURED_PAYLOAD"]).write_text(program)
+    Path(os.environ["CAPTURED_ARGV"]).write_text(json.dumps(command[8:]))
+    raise SystemExit(0)
+if action not in ("acquire", "check", "snapshot", "command", "finish"):
+    raise SystemExit("unexpected recognition edge action")
+result = subprocess.run(["bash", "-c", mapped(args[-1])], input=mapped(program),
+                        text=True, timeout=27)
+raise SystemExit(result.returncode)
+''',
         encoding="utf-8",
     )
     (bin_dir / "sudo").write_text(
-        "#!/usr/bin/env bash\n"
-        "args=()\n"
-        'for arg in "$@"; do\n'
-        '  case "$arg" in\n'
-        '    /etc/systemd/system/*) args+=("$FAKE_SYSTEMD/${arg#/etc/systemd/system/}") ;;\n'
-        '    /opt/acx-backend/*) args+=("$FAKE_OPT/${arg#/opt/acx-backend/}") ;;\n'
-        '    *) args+=("$arg") ;;\n'
-        "  esac\n"
-        "done\n"
-        "if [[ ${args[0]:-} == systemctl ]]; then exit 0; fi\n"
-        'exec "${args[@]}"\n',
+        '#!/bin/sh\nexec "$@"\n',
         encoding="utf-8",
     )
     (bin_dir / "docker").write_text(
-        "#!/usr/bin/env bash\n"
-        "if [[ \"$*\" == *'ps -q caddy'* ]]; then printf 'cid\\n'; "
-        "elif [[ \"$1 $2\" == 'inspect -f' ]]; then "
-        'printf \'{"acx-prod-net":{},"acx-staging-net":{},"acx-dev-net":{},\''
-        '\'"acx-dev-fir-net":{},"acx-demo-net":{}}\\n\'; fi\n',
+        '''#!/usr/bin/env python3
+import json, sys
+if sys.argv[1] != "compose" or sys.argv[-3:] != ["config", "--format", "json"]:
+    raise SystemExit("unexpected Docker action")
+print(json.dumps({"services": {"caddy": {"networks": {"dev": None}}},
+                  "networks": {"dev": {"name": "acx-dev-net"}}}))
+''',
         encoding="utf-8",
     )
-    bash_env = tmp_path / "bash-env"
-    bash_env.write_text(
-        'cd() { if [[ ${1:-} == /opt/acx-backend ]]; then builtin cd "$FAKE_OPT"; else builtin cd "$@"; fi; }\n',
+    (bin_dir / "systemctl").write_text(
+        '#!/bin/sh\n[ "$*" = daemon-reload ] || exit 98\nprintf "%s\\n" "$*" >>"$UNIT_RECORD"\n',
         encoding="utf-8",
     )
-    (bin_dir / "ssh").chmod(0o755)
-    (bin_dir / "sudo").chmod(0o755)
-    (bin_dir / "docker").chmod(0o755)
+    for executable in bin_dir.iterdir():
+        executable.chmod(0o755)
     payload = tmp_path / "restore.payload"
+    arguments = tmp_path / "restore.argv.json"
     driver = f"""
+set -euo pipefail
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
-run_with_deadline() {{ shift 2; "$@"; }}
-env_to_remote_dir() {{ printf '%s\\n' "$FAKE_REMOTE_DIR"; }}
 ACX_DEPLOY_BACKUP_ROOT="$BACKUP_ROOT"
+ACX_DEPLOY_TRANSACTION_ID=previous-transaction
+# Build complete topology, bootstrap, edge and generation evidence natively.
+prepare_runtime_topology_backups dev 1
+recognition_edge_finish
+printf 'current compose\\n' >"$FAKE_REMOTE_DIR/docker-compose.env.yml"
+printf 'current unit\\n' >"$FAKE_SYSTEMD/acx-dev.service"
+printf 'current sql\\n' >"$FAKE_REMOTE_DIR/db/docker-prod-init/001-extensions.sql"
+if [[ "${{RESTORE_STRICT:-1}}" == 1 ]]; then
+  printf 'reverse_proxy dev-api-next:8000\\n' >"$FAKE_OPT/Caddyfile"
+fi
 ACX_DEPLOY_TRANSACTION_ID=current-transaction
+recognition_edge_begin dev
+if [[ "$PENDING_SNAPSHOT" == 1 ]]; then
+  prepare_runtime_topology_backups dev 0
+  # Interrupt a real snapshot at its readiness boundary.
+  rm -- "$BACKUP_ROOT/dev/current-transaction/topology.ready"
+  touch -- "$BACKUP_ROOT/dev/current-transaction/topology.pending"
+  printf '%s\\n' "$BACKUP_ROOT/dev/previous-transaction" >"$BACKUP_ROOT/dev/latest"
+fi
 if [[ "${{RESTORE_STRICT:-1}}" == 1 ]]; then
   "$RESTORE_FUNCTION" dev current-only
 else
@@ -209,14 +252,27 @@ fi
         {
             "BACKUP_ROOT": str(backup_root),
             "CAPTURED_PAYLOAD": str(payload),
+            "CAPTURED_ARGV": str(arguments),
             "FAKE_REMOTE_DIR": str(remote_dir),
             "FAKE_SYSTEMD": str(systemd_dir),
             "FAKE_OPT": str(edge_dir),
-            "BASH_ENV": str(bash_env),
-            "PATH": f"{bin_dir}:{env.get('PATH', '')}",
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "TMPDIR": str(tmp_path),
+            "EDGE_LOCK_STATE_ROOT": str(tmp_path),
+            "OCI_USER": "fixture",
+            "OCI_HOST": "fixture.invalid",
+            "APP_ROOT": "/opt/acx-backend/app",
+            "ACX_REMOTE_COMMAND_TIMEOUT": "20",
+            "ACX_EDGE_HANDLE": "",
+            "ACX_EDGE_ENV": "",
+            "PENDING_SNAPSHOT": str(int(pending)),
+            "UNIT_RECORD": str(tmp_path / "systemctl.log"),
             "RESTORE_FUNCTION": "restore_topology_backups",
+            "RESTORE_STRICT": "1",
         }
     )
+    env.pop("AURA_EDGE_TEST_HELPER", None)
+    env.pop("BASH_ENV", None)
     return {
         "backup_root": backup_root,
         "current": current,
@@ -227,32 +283,72 @@ fi
         "systemd_dir": systemd_dir,
         "bin_dir": bin_dir,
         "payload": payload,
-        "driver": Path(driver),
+        "arguments": arguments,
+        "driver": driver,
         "environment": env,
+    }
+
+
+def _restore_state(fixture: dict) -> dict:
+    return {
+        str(path): (path.stat().st_ino, path.stat().st_mtime_ns, path.stat().st_ctime_ns, path.read_bytes())
+        for root in (fixture["backup_root"], fixture["live_caddyfile"].parent, fixture["systemd_dir"])
+        for path in root.rglob("*") if path.is_file()
     }
 
 
 def _capture_and_run_restore(
     tmp_path: Path, *, function: str, strict: bool, pending: bool = False
-) -> tuple[subprocess.CompletedProcess[str], subprocess.CompletedProcess[str], dict[str, Path]]:
+) -> tuple[subprocess.CompletedProcess[str], subprocess.CompletedProcess[str], dict]:
     fixture = _topology_restore_fixture(tmp_path, pending=pending)
     env = fixture["environment"].copy()
     env["RESTORE_FUNCTION"] = function
     if not strict:
         env["RESTORE_STRICT"] = "0"
-    env["PATH"] = f"{fixture['bin_dir']}:{env.get('PATH', '')}"
-    driver = str(fixture["driver"])
-    capture = subprocess.run(["bash", "-c", driver], text=True, capture_output=True, check=False, env=env)
-    assert fixture["payload"].exists(), capture.stdout + capture.stderr
-    execute = subprocess.run(
-        ["bash", str(fixture["payload"])],
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-        cwd=tmp_path,
-    )
+    try:
+        capture = subprocess.run(
+            ["bash", "-c", fixture["driver"]], text=True, capture_output=True, check=False, env=env, timeout=55
+        )
+        assert capture.returncode == 0, capture.stdout + capture.stderr
+        program = subprocess.run(
+            ["bash", "-c", f"source {shlex.quote(str(SCRIPT))}; recognition_edge_program"],
+            text=True, capture_output=True, check=True, env=env, timeout=5,
+        ).stdout
+        # Command substitution strips trailing newlines; the transport adds one.
+        assert fixture["payload"].read_text() == program.rstrip("\n") + "\n"
+        argv = json.loads(fixture["arguments"].read_text())
+        assert argv[:2] == ["restore-topology" if function == "restore_topology_backups" else "restore",
+                            "/opt/acx-backend/app"]
+        assert argv[3:] == ["20", "dev", "current-transaction", str(fixture["backup_root"]),
+                            "current-only" if strict else ""]
+        assert Path(argv[2]).is_dir(), "native ownership handle must exist"
+        def mapped(text: str) -> str:
+            return text.replace("/opt/acx-backend", env["FAKE_OPT"]).replace(
+                "/etc/systemd/system", env["FAKE_SYSTEMD"]
+            )
+        executable = tmp_path / "restore.mapped.payload"
+        executable.write_text(mapped(fixture["payload"].read_text()), encoding="utf-8")
+        fixture["before_state"] = _restore_state(fixture)
+        execute = subprocess.run(
+            ["bash", str(executable), *(mapped(arg) for arg in argv)],
+            text=True, capture_output=True, check=False, env=env, cwd=tmp_path, timeout=27,
+        )
+        fixture["after_state"] = _restore_state(fixture)
+    finally:
+        for handle in tmp_path.glob("shared-edge-lock.*"):
+            cleanup = subprocess.run(
+                ["bash", "-c", 'source "$1"; edge_lock_release "$2" 2', "_",
+                 str(SCRIPT.parent / "lib/shared-edge.sh"), str(handle)],
+                env=env, text=True, capture_output=True, timeout=5,
+            )
+            assert cleanup.returncode == 0, cleanup.stdout + cleanup.stderr
     return capture, execute, fixture
+
+
+def _assert_no_restore_writes(fixture: dict) -> None:
+    # Includes live files, all snapshots/pointers, and the native owner journal.
+    assert fixture["after_state"] == fixture["before_state"]
+    assert not Path(fixture["environment"]["UNIT_RECORD"]).exists()
 
 
 def test_interrupt_after_repo_ship_restores_topology_and_repo(tmp_path: Path) -> None:
@@ -310,6 +406,70 @@ restore_runtime_topology dev
     assert "abort_cutover_candidate dev" in records
 
 
+@pytest.mark.parametrize("restore_mode", ["current-only", ""])
+@pytest.mark.parametrize("admission_rc", [0, 75], ids=["admitted", "refused"])
+def test_runtime_restore_admission_precedes_every_writer(
+    tmp_path: Path, restore_mode: str, admission_rc: int
+) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r"""
+recognition_edge_assert_if_active() { record ownership; }
+restore_topology_backups() { record restore_topology_backups "$@"; }
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+"""
+        + f"\nFIXTURE_ADMISSION_RC={admission_rc}\nrestore_runtime_topology dev {shlex.quote(restore_mode)}\n",
+    )
+    assert result.returncode == admission_rc, result.stdout + result.stderr
+    expected = ["ownership", f"recognition_edge_remote admit-runtime dev {shlex.quote(restore_mode)}"]
+    if admission_rc == 0:
+        suffix = f" {restore_mode}" if restore_mode else ""
+        expected += [f"restore_topology_backups dev{suffix}", f"restore_edge_backups dev{suffix}"]
+        if not restore_mode:
+            expected.append("abort_cutover_candidate dev")
+    assert result.records == expected  # type: ignore[attr-defined]
+
+
+def test_repo_shipped_admission_refusal_skips_topology_writers(tmp_path: Path) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r"""
+restore_topology_backups() { record restore_topology_backups "$@"; }
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+restore_prior_image_repo_env() { record restore_prior_image_repo_env "$@"; }
+FIXTURE_ADMISSION_RC=75
+ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130
+""",
+    )
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert result.records == [  # type: ignore[attr-defined]
+        "cleanup_remote_build_generation_on_exit",
+        "recognition_edge_remote admit-runtime dev current-only",
+        "restore_prior_image_repo_env",
+        "_purge_deploy_ocir_docker_config",
+        "_purge_deploy_snapshot",
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        "restore dev current-only",
+        "admit-runtime dev",
+        "admit-runtime dev current-only extra",
+        "admit-runtime staging current-only",
+        "admit-runtime dev unknown-mode",
+    ],
+)
+def test_compensation_admission_double_refuses_unmodeled_calls(tmp_path: Path, arguments: str) -> None:
+    result = _run_real_driver(tmp_path, f"recognition_edge_remote {arguments}\n")
+    assert result.returncode == 97, result.stdout + result.stderr
+    assert "unmodeled compensation admission call" in result.stderr
+    assert result.records == [f"recognition_edge_remote {arguments}"]  # type: ignore[attr-defined]
+
+
 def test_interrupt_during_canonical_restart_leaves_candidate_serving(tmp_path: Path) -> None:
     result = _run_real_driver(
         tmp_path,
@@ -351,7 +511,8 @@ def test_strict_restore_ignores_latest_pointer(tmp_path: Path) -> None:
     assert capture.returncode == 0, capture.stdout + capture.stderr
     assert execute.returncode == 0, execute.stdout + execute.stderr
     assert fixture["live_compose"].read_text(encoding="utf-8") == "current compose\n"
-    assert "no current-transaction topology snapshot; topology left untouched" in execute.stdout
+    assert execute.stdout == execute.stderr == ""
+    _assert_no_restore_writes(fixture)
 
 
 def test_strict_edge_restore_ignores_latest_and_cutover_pointer(tmp_path: Path) -> None:
@@ -359,7 +520,8 @@ def test_strict_edge_restore_ignores_latest_and_cutover_pointer(tmp_path: Path) 
     assert capture.returncode == 0, capture.stdout + capture.stderr
     assert execute.returncode == 0, execute.stdout + execute.stderr
     assert fixture["live_caddyfile"].read_text(encoding="utf-8") == "reverse_proxy dev-api-next:8000\n"
-    assert "no current-transaction topology snapshot; topology left untouched" in execute.stdout
+    assert execute.stdout == execute.stderr == ""
+    _assert_no_restore_writes(fixture)
 
 
 def test_non_strict_restore_still_uses_latest(tmp_path: Path) -> None:
@@ -367,6 +529,18 @@ def test_non_strict_restore_still_uses_latest(tmp_path: Path) -> None:
     assert capture.returncode == 0, capture.stdout + capture.stderr
     assert execute.returncode == 0, execute.stdout + execute.stderr
     assert fixture["live_compose"].read_text(encoding="utf-8") == "previous compose\n"
+    assert (fixture["systemd_dir"] / "acx-dev.service").read_text() == "previous unit\n"
+    bootstrap = fixture["remote_dir"] / "db/docker-prod-init/001-extensions.sql"
+    assert bootstrap.read_bytes() == b"previous sql\n"
+    restored = {str(fixture["live_compose"]), str(fixture["systemd_dir"] / "acx-dev.service"), str(bootstrap)}
+    before, after = fixture["before_state"], fixture["after_state"]
+    assert before.keys() == after.keys()
+    assert {path for path in before if before[path] != after[path]} == restored
+    for path in restored:
+        assert before[path][0] == after[path][0], "restore must preserve the live bind inode"
+        assert before[path][-1] != after[path][-1], "restore must actually replace current bytes"
+    assert Path(fixture["environment"]["UNIT_RECORD"]).read_text() == "daemon-reload\n"
+    assert execute.stdout == execute.stderr == ""
 
 
 def test_strict_restore_refuses_incomplete_current_snapshot(tmp_path: Path) -> None:
@@ -374,8 +548,10 @@ def test_strict_restore_refuses_incomplete_current_snapshot(tmp_path: Path) -> N
         tmp_path, function="restore_topology_backups", strict=True, pending=True
     )
     assert capture.returncode == 0, capture.stdout + capture.stderr
-    assert execute.returncode == 1
-    assert "topology snapshot is incomplete; refusing restore" in execute.stderr
+    assert execute.returncode == 2, execute.stdout + execute.stderr
+    assert execute.stderr == "topology restore admission refused: topology snapshot is incomplete\n"
+    assert execute.stdout == ""
+    _assert_no_restore_writes(fixture)
 
 
 def test_interrupt_after_tag_push_restores_env_tag(tmp_path: Path) -> None:

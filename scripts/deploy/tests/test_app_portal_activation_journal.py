@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from test_app_portal_deploy import (
     OVERLAY,
     _log,
@@ -214,7 +213,18 @@ def test_deploy_lock_refuses_concurrent_recovery_then_recovers(tmp_path: Path) -
     before_log = _log(tmp_path)
 
     with lock_path.open("a+b") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # The shared holder polls owner death. Settle that bounded transition
+        # before this fixture takes the lock; all contention/recovery assertions
+        # below still run against the same persistent inode and live state.
+        settle_deadline = time.monotonic() + 3
+        while True:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= settle_deadline:
+                    raise
+                time.sleep(0.05)
         started = time.monotonic()
         locked_run = _run(
             tmp_path,
@@ -264,10 +274,7 @@ def test_rollback_restores_overlay_mode_when_contents_match(tmp_path: Path) -> N
     health = tmp_path / "mode-only-health-failure.sh"
     _write_executable(
         health,
-        "#!/bin/sh\n"
-        f"cmp -s '{overlay}' '{expected}' || exit 3\n"
-        f"chmod 644 '{overlay}' || exit 4\n"
-        "exit 1\n",
+        f"#!/bin/sh\ncmp -s '{overlay}' '{expected}' || exit 3\nchmod 644 '{overlay}' || exit 4\nexit 1\n",
     )
 
     result = _run(
@@ -295,9 +302,7 @@ def test_rollback_restores_overlay_mode_when_contents_match(tmp_path: Path) -> N
         ("prev_root", "APP_WWW.prev collides with activation paths"),
     ],
 )
-def test_app_www_cannot_collide_with_activation_paths(
-    tmp_path: Path, alias: str, message: str
-) -> None:
+def test_app_www_cannot_collide_with_activation_paths(tmp_path: Path, alias: str, message: str) -> None:
     backend_root = tmp_path / "opt" / "acx-backend"
     app_root = backend_root / "app"
     app_www = {

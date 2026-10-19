@@ -43,14 +43,13 @@ for (const match of menuPhpSource.matchAll(ADD_SUBMENU_PAGE_CALL)) {
 // argument order changed), menuEntries silently empties and every assertion
 // below would vacuously pass. Pin the count so a parse regression is red.
 expect(menuEntries.length).toBeGreaterThan(0);
-expect(menuEntries).toHaveLength(5);
+expect(menuEntries).toHaveLength(4);
 
-/** Explicit slug -> routed React page file map. Adding a 6th submenu without extending this map fails red below, not silently. */
+/** Explicit slug -> routed React page file map. New submenus must extend this map. */
 const SLUG_TO_PAGE_FILE: Record<string, string> = {
   'alt-context-dashboard': '../DashboardPage.tsx',
   'alt-context-workbench': '../WorkbenchPage.tsx',
   'alt-context-roster': '../RosterPage.tsx',
-  'alt-context-description-history': '../DescriptionHistoryPage.tsx',
   'alt-context-settings': '../SettingsPage.tsx',
 };
 

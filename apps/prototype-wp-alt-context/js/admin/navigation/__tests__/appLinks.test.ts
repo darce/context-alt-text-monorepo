@@ -40,7 +40,7 @@ describe('appLinks builders', () => {
   it('toDashboard / toRetention / toDescriptionHistory emit bare routes', () => {
     expect(toDashboard()).toBe('#/dashboard');
     expect(toRetention()).toBe('#/retention');
-    expect(toDescriptionHistory()).toBe('#/description-history');
+    expect(toDescriptionHistory()).toBe('#/workbench');
   });
 
   it('toWorkbench emits empty workbench and typed option shapes', () => {
@@ -48,12 +48,8 @@ describe('appLinks builders', () => {
     expect(toWorkbench({ status: 'missing' })).toBe('#/workbench?status=missing');
     expect(toWorkbench({ tab: 'scan' })).toBe('#/workbench?tab=scan');
     expect(toWorkbench({ advanced: true })).toBe('#/workbench?advanced=open');
-    expect(toWorkbench({ advanced: APP_LINK_VALUES.advancedOpen })).toBe(
-      '#/workbench?advanced=open',
-    );
-    expect(toWorkbench({ tab: 'scan', panel: 'conflicts' })).toBe(
-      '#/workbench?tab=scan&panel=conflicts',
-    );
+    expect(toWorkbench({ advanced: APP_LINK_VALUES.advancedOpen })).toBe('#/workbench?advanced=open');
+    expect(toWorkbench({ tab: 'scan', panel: 'conflicts' })).toBe('#/workbench?tab=scan&panel=conflicts');
     expect(toWorkbench({ tab: 'scan', panel: 'review', cluster: 'cluster-42' })).toBe(
       '#/workbench?tab=scan&panel=review&cluster=cluster-42',
     );
@@ -96,10 +92,10 @@ describe('appLinks builders', () => {
   });
 
   it('toDescriptionHistoryRun round-trips run ids (including reserved chars)', () => {
-    expect(toDescriptionHistoryRun('run-42')).toBe('#/description-history?run=run-42');
+    expect(toDescriptionHistoryRun('run-42')).toBe('#/workbench?hasDraft=1&run=run-42');
     const encoded = toDescriptionHistoryRun('a b/c');
     const { path, params } = parseHref(encoded);
-    expect(path).toBe('/description-history');
+    expect(path).toBe('/workbench');
     expect(params.get(APP_LINK_PARAMS.run)).toBe('a b/c');
     expect(parseRunParam(params.get(APP_LINK_PARAMS.run))).toBe('a b/c');
   });
@@ -108,7 +104,7 @@ describe('appLinks builders', () => {
     // Empty/whitespace → omit run (list surface); parse of emitted href stays null.
     for (const emptyId of ['', '   ', '\t']) {
       const href = toDescriptionHistoryRun(emptyId);
-      expect(href).toBe('#/description-history');
+      expect(href).toBe('#/workbench?hasDraft=1');
       const { params } = parseHref(href);
       expect(params.get(APP_LINK_PARAMS.run)).toBeNull();
       expect(parseRunParam(params.get(APP_LINK_PARAMS.run))).toBeNull();
@@ -122,12 +118,8 @@ describe('appLinks builders', () => {
   });
 
   it('folded overlay helpers preserve pre-contract href shapes', () => {
-    expect(buildWorkbenchOverlayHref('scan', 'conflicts')).toBe(
-      '#/workbench?tab=scan&panel=conflicts',
-    );
-    expect(buildWorkbenchOverlayHref('scan', 'dead-letter')).toBe(
-      '#/workbench?tab=scan&panel=dead-letter',
-    );
+    expect(buildWorkbenchOverlayHref('scan', 'conflicts')).toBe('#/workbench?tab=scan&panel=conflicts');
+    expect(buildWorkbenchOverlayHref('scan', 'dead-letter')).toBe('#/workbench?tab=scan&panel=dead-letter');
     expect(SCAN_CONFLICTS_HREF).toBe('#/workbench?tab=scan&panel=conflicts');
     expect(SCAN_DEAD_LETTER_HREF).toBe('#/workbench?tab=scan&panel=dead-letter');
     expect(SCAN_CONFLICTS_HREF).toBe(toWorkbench({ tab: 'scan', panel: 'conflicts' }));
@@ -152,9 +144,6 @@ describe('appLinks codecs', () => {
     expect(serializeRunParam('run-9')).toBe('run-9');
     expect(parseRunParam(serializeRunParam('  x  '))).toBe('x');
   });
-
-
-
 
   it('builder + codec: run on history href parses back', () => {
     const { params } = parseHref(toDescriptionHistoryRun('batch-77'));
@@ -186,16 +175,12 @@ describe('appLinks codecs', () => {
 
   it('toWorkbench emits panes only for non-default collapsed states', () => {
     expect(toWorkbench({ panes: 'both' })).toBe('#/workbench');
-    expect(toWorkbench({ panes: 'control-collapsed' })).toBe(
-      '#/workbench?panes=control-collapsed',
-    );
+    expect(toWorkbench({ panes: 'control-collapsed' })).toBe('#/workbench?panes=control-collapsed');
     expect(toWorkbench({ tab: 'scan', panel: 'conflicts', panes: 'library-collapsed' })).toBe(
       '#/workbench?tab=scan&panel=conflicts&panes=library-collapsed',
     );
 
-    const { params } = parseHref(
-      toWorkbench({ panel: 'conflicts', panes: 'control-collapsed' }),
-    );
+    const { params } = parseHref(toWorkbench({ panel: 'conflicts', panes: 'control-collapsed' }));
     expect(params.get(APP_LINK_PARAMS.panel)).toBe('conflicts');
     expect(params.get(APP_LINK_PARAMS.panes)).toBe('control-collapsed');
     expect(parsePanes(params.get(APP_LINK_PARAMS.panes))).toBe('control-collapsed');

@@ -1,8 +1,10 @@
-# Decomposition — AP-3 (Clerk Auth) + AP-4 (Dashboard) + AP-5 (Polar Billing)
+# Decomposition — AP-3 (Clerk Auth) + AP-4 (Dashboard) + AP-5 (Stripe Billing)
 
-> **Current proposed execution owner (2026-09-19):** [APP-1 Plan 0001](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md), justified by the [launch recommendation](../assessments/current/app-portal-launch-recommendation-2026-09-19.md). The AP tables below are historical decomposition, not independently dispatchable alongside APP-1.
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
+> **Current proposed execution owner (2026-09-19):** [APP-1 Plan 0001](../plans/0001-app-altcontext-beta-clerk-stripe-task-plan.md), justified by the [launch recommendation](../assessments/current/app-portal-launch-recommendation-2026-09-19.md). The AP tables below are historical decomposition, not independently dispatchable alongside APP-1.
 >
-> Current mapping: AP-3 -> S1/S3 (supported Clerk browser SDK, invitation-bound transactional onboarding; no raw key minted in `user.created`); AP-4 -> S2/S3/S4 (existing local key service, small FastAPI portal, bounded usage); AP-5 -> S1/S5/S7 (one Polar adapter, sandbox lifecycle before beta, explicit opt-in live conversion). S4 cost/quota enforcement and S6 recovery/UX evidence precede beta admission. Do not wait for an unbuilt `acx_business` authority, add multiple paid tiers, or postpone caps until paid launch. Polar owns financial truth; AltContext owns tenant authorization/usage and projects billing state.
+> Current mapping: AP-3 -> S1/S3 (supported Clerk browser SDK, invitation-bound transactional onboarding; no raw key minted in `user.created`); AP-4 -> S2/S3/S4 (existing local key service, small FastAPI portal, bounded usage); AP-5 -> S1/S5/S7 (one Stripe adapter, sandbox lifecycle before beta, explicit opt-in live conversion). S4 cost/quota enforcement and S6 recovery/UX evidence precede beta admission. Do not wait for an unbuilt `acx_business` authority, add multiple paid tiers, or postpone caps until paid launch. Stripe owns financial truth; AltContext owns tenant authorization/usage and projects billing state.
 
 > The three **Epic** slices from the launch plan §14 that form the self-serve accounts + money path (Phases 1–2). Each is broken into **atomic** sub-slices with a self-contained end-state and a scoped `TEST_CMD`, ready to offload one at a time.
 > **Engineering heuristics v2** (stable IDs, cite in every slice): [current engineering lexicon](../../../heuristics-canon-research/lexicons/engineering.md). Business rules: [current business-marketing lexicon](../../../heuristics-canon-research/lexicons/business-marketing.md).
@@ -13,10 +15,10 @@
 
 ## Cross-cutting invariants (apply to every sub-slice below)
 
-- **Vendor is the system of record; you project, never dual-write** `[DATA-14]`. Clerk owns identity, Polar owns subscription truth; the business DB derives its copy from their webhook stream and references them by id `[DOM-04]`.
-- **Single writer owns `plan`/`tenant`** `[ARCH-02]` — the business API writes tenant/plan; Clerk/Polar only notify it.
+- **Vendor is the system of record; you project, never dual-write** `[DATA-14]`. Clerk owns identity, Stripe owns subscription truth; the business DB derives its copy from their webhook stream and references them by id `[DOM-04]`.
+- **Single writer owns `plan`/`tenant`** `[ARCH-02]` — the business API writes tenant/plan; Clerk/Stripe only notify it.
 - **Every inbound webhook: verify signature, then dedupe** `[SEC-01]` (validate at the trust boundary) + `[API-02]`/`[RES-01]` (idempotent — a lost response plus redelivery must not double-apply).
-- **Every outbound vendor call: bounded timeout + backoff + breaker** `[RES-02]`, `[API-08]`, `[RES-15]` — a hung Clerk/Polar call must not tie up a request thread.
+- **Every outbound vendor call: bounded timeout + backoff + breaker** `[RES-02]`, `[API-08]`, `[RES-15]` — a hung Clerk/Stripe call must not tie up a request thread.
 - **The UI/API shape is its own artifact** `[API-10]` — do not leak DB column names or vendor field names into dashboard responses.
 
 ---
@@ -38,16 +40,16 @@
 | **AP-4a** scaffold + auth gate | Dashboard app (SvelteKit/Next per launch-plan §6.1), Clerk-gated; unauthenticated routes redirect to login. | unauth → login redirect; authed → dashboard shell renders | `[SEC-01]` | AP-3a |
 | **AP-4b** API-key panel | View / create / rotate / revoke keys via the business API; raw key shown **once** on create, never re-fetchable. | each action round-trips; created key displayed once and not persisted in the client | `[SEC-01][API-10]`, `[SEC-06]` (never echo the raw key back into storage/logs) | AP-2c |
 | **AP-4c** usage chart | Usage view backed by a **bounded** query (date-ranged, `LIMIT`), rendered from a translated API shape. | usage renders; the backing query is bounded, not fetch-all | `[RES-05][API-10]` | AP-2d |
-| **AP-4d** install steps + upgrade | Copy-paste WP install snippet (API URL + key) on the same screen as the key (highest-drop onboarding step), plus a Polar upgrade/portal link. | snippet present next to the key; upgrade link resolves to Polar checkout/portal | biz `[PROD-01]` (activation) | AP-4b, AP-5a |
+| **AP-4d** install steps + upgrade | Copy-paste WP install snippet (API URL + key) on the same screen as the key (highest-drop onboarding step), plus a Stripe upgrade/portal link. | snippet present next to the key; upgrade link resolves to Stripe checkout/portal | biz `[PROD-01]` (activation) | AP-4b, AP-5a |
 
-## AP-5 — Polar billing (`subscription.*` → plan enforcement)
+## AP-5 — Stripe billing (`subscription.*` → plan enforcement)
 
 | Sub-slice | End-state | Scoped `TEST_CMD` / verify | Heuristics | Deps |
 |---|---|---|---|---|
-| **AP-5a** products + checkout | Polar products for Free/Pro/Business; a checkout-link generator keyed by `tenant_id`. | a checkout URL is produced for a plan and carries the tenant reference | `[DOM-04]` | AP-1a |
+| **AP-5a** products + checkout | Stripe products for Free/Pro/Business; a checkout-link generator keyed by `tenant_id`. | a checkout URL is produced for a plan and carries the tenant reference | `[DOM-04]` | AP-1a |
 | **AP-5b** `subscription.*` webhook | Signature-verified, idempotent receiver that **projects** subscription status (`active`/`canceled`/`past_due` + `current_period_end`) into the business DB. | `subscription.active` flips the tenant projection to `pro`; duplicate delivery applies once; bad signature rejected | `[SEC-01][API-02][RES-01][DATA-14]` | AP-1e, AP-3b (reuse pattern) |
 | **AP-5c** plan/quota enforcement | Recognition auth path reads the tenant's plan/quota (from the business DB projection) and enforces the rate tier + monthly cap. | free tenant over cap → deterministic 429/cap message; pro tenant gets the raised limit | `[ARCH-02][RES-05]`, biz `[BOOT-06]` (the cap is the conversion trigger) | AP-5b, AP-2e |
-| **AP-5d** audit + reconciliation | Every processed Polar event is recorded in `billing_events`; a reconcile job compares DB projection vs Polar as the source of truth and flags drift. | processed events all recorded; a deliberately dropped event is caught by reconcile | `[API-02][DATA-14]` | AP-5b |
+| **AP-5d** audit + reconciliation | Every processed Stripe event is recorded in `billing_events`; a reconcile job compares DB projection vs Stripe as the source of truth and flags drift. | processed events all recorded; a deliberately dropped event is caught by reconcile | `[API-02][DATA-14]` | AP-5b |
 
 ---
 

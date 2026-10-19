@@ -279,7 +279,7 @@ describe('SettingsPage routing autosave', () => {
     fireEvent.change(key, { target: { value: 'draft-A' } });
     fireEvent.blur(key);
     saveMutationPending = false;
-    await act(async () => { capturedSaveOptions?.onError?.(new Error('save failed')); });
+    await act(() => { capturedSaveOptions?.onError?.(new Error('save failed')); return Promise.resolve(); });
     expect(key).toHaveValue('draft-A');
     fireEvent.blur(key);
     expect(saveMutate).toHaveBeenNthCalledWith(2, { api_key: 'draft-A' });

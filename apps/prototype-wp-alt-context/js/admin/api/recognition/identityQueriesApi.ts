@@ -16,6 +16,10 @@ import {
 import { mapPendingMergeSuggestions, mapPendingSuggestions } from './identitySuggestionMappers';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
 
+// Allow WordPress dispatch/queue time around the bounded upstream UI read.
+// A two-second browser deadline races the proxy's own two-second timeout.
+const IDENTITY_QUERY_TIMEOUT_MS = 10_000;
+
 type PendingNameSuggestionPayload = Omit<PendingNameSuggestion, 'representatives'> & {
   representatives?: TopUnlabeledRepresentativePayload[] | null;
 };
@@ -64,7 +68,7 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
   const response = await fetchRequiredApi<MediaIdentitiesResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(IDENTITY_QUERY_TIMEOUT_MS),
   });
 
   if (
@@ -105,7 +109,7 @@ export const fetchIdentitiesSuggestions = async (
   return fetchRequiredApi<IdentityBatchSuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(IDENTITY_QUERY_TIMEOUT_MS),
   });
 };
 
@@ -118,7 +122,7 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
   const response = await fetchRequiredApi<PendingSuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(IDENTITY_QUERY_TIMEOUT_MS),
   });
 
   return mapPendingSuggestions(response);
@@ -136,7 +140,7 @@ export const fetchPendingMergeSuggestions = async (
   const response = await fetchRequiredApi<PendingMergeSuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(IDENTITY_QUERY_TIMEOUT_MS),
   });
 
   return mapPendingMergeSuggestions(response);
@@ -156,7 +160,7 @@ export const fetchPendingNameSuggestions = async (
   return fetchRequiredApi<PendingNameSuggestionsResponsePayload>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(IDENTITY_QUERY_TIMEOUT_MS),
   }).then((response) => {
     if (!Array.isArray(response.suggestions)) {
       throw new Error('Pending name suggestions response must include a suggestions array.');

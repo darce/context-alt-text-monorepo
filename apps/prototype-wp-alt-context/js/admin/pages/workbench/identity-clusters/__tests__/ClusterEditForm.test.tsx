@@ -3,6 +3,7 @@ import { act, render, screen, fireEvent, waitFor, within } from '@testing-librar
 import { describe, it, expect, vi } from 'vitest';
 import { ClusterEditForm } from '../ClusterEditForm';
 import { selectClusterSuggestions } from '../useClusterSuggestions';
+import { buildNamingOptions } from '../buildNamingOptions';
 
 const nameFacePropsRef = vi.hoisted(() => ({
   current: null as null | { ariaLabel?: string; visibleLabel?: string },
@@ -115,6 +116,39 @@ describe('ClusterEditForm', () => {
     expect(onSave).not.toHaveBeenCalled();
     expect(onPersonSelect).not.toHaveBeenCalled();
     expect(screen.getByRole('status')).toHaveTextContent('Multiple people match. Choose one.');
+  });
+
+  it('CURATION-PERSON-P1 keeps real producer IDs ambiguous until person 42 is chosen explicitly', () => {
+    const built = buildNamingOptions({
+      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 42, name: 'Alex Rivera' }],
+      labelMatches: [],
+      filter: 'Alex Rivera',
+    });
+    const options = selectClusterSuggestions({
+      namingOptions: built.options,
+      identityProjection: [{ clusterId: 'cluster-for-42', label: 'Alex Rivera', similarity: 0.8, identityCount: 2 }],
+      labelInput: 'Alex Rivera',
+    });
+    const onSave = vi.fn();
+    const onPersonSelect = vi.fn();
+    const onConfirmSuggestion = vi.fn();
+    render(<ClusterEditForm {...defaultProps} labelInput="Alex Rivera" options={options}
+      onSave={onSave} onPersonSelect={onPersonSelect} onConfirmSuggestion={onConfirmSuggestion} />);
+    const input = screen.getByRole('combobox');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onPersonSelect).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent('Multiple people match. Choose one.');
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+
+    openNamingList(input);
+    const rows = screen.getAllByRole('option');
+    expect(rows).toHaveLength(3);
+    fireEvent.click(rows[2]);
+    expect(onPersonSelect).toHaveBeenCalledExactlyOnceWith('Alex Rivera', 42);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
   });
 
   it('calls onCancel when Escape is pressed', () => {
@@ -316,8 +350,7 @@ describe('ClusterEditForm', () => {
     vi.useRealTimers();
   });
 
-  it('includes source in Suggested cluster accessible names (A11Y-04 / FIX-7)', () => {
-    // Predicted first failure: aria-label is bare "Person A" without Cluster source
+  it('names suggested choices using the person label', () => {
     render(
       <ClusterEditForm
         {...defaultProps}
@@ -327,7 +360,7 @@ describe('ClusterEditForm', () => {
     );
     openNamingList();
 
-    expect(screen.getByRole('option', { name: /Person A \(Group\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Confirm match with Person A/i })).toBeInTheDocument();
   });
 
   it('unwraps cluster: namespaced values on confirm', async () => {

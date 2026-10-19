@@ -12,7 +12,8 @@ import {
   resolveNameFaceInput,
   type NameFaceResolution,
 } from '../NameFaceControl';
-import { NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
+import { buildNamingOptions, NAMING_GROUP_SUGGESTED, namingOptionValue } from '../buildNamingOptions';
+import { selectClusterSuggestions } from '../useClusterSuggestions';
 import previewFixture from './fixtures/gpuflow-naming-preview.json';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -92,6 +93,127 @@ const TypedNameFace = ({
     />
   );
 };
+
+describe('curated person picker choices', () => {
+  it('CURATION-PERSON-P1 preserves the cluster callback through the real builder and selector', () => {
+    const built = buildNamingOptions({
+      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 42, name: 'Alex Rivera' }],
+      labelMatches: [],
+      filter: 'Alex',
+    });
+    const options = selectClusterSuggestions({
+      namingOptions: built.options,
+      identityProjection: [{
+        clusterId: 'cluster-for-42', label: 'Alex Rivera', similarity: 0.8,
+        identityCount: 2, suggestionId: 'suggestion-for-42', identityId: 'source-face',
+      }],
+      editableClusterId: 'edited-cluster',
+      labelInput: 'Alex',
+    });
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({ options, value: 'Alex', onOptionConfirm });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    fireEvent.click(screen.getAllByRole('option')[0]);
+
+    // Counterproof: the old producer leaves only person:41, which silently
+    // turns this choice of cluster-for-42 into an immediate binding to 41.
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onOptionConfirm).toHaveBeenCalledExactlyOnceWith(options[0]);
+    expect(options.map(option => option.value)).toEqual([
+      'cluster:cluster-for-42', 'person:41', 'person:42',
+    ]);
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    expect(screen.queryByText('Person')).not.toBeInTheDocument();
+    expect(screen.queryByText('Group')).not.toBeInTheDocument();
+    for (const row of screen.getAllByRole('option')) {
+      expect(row).toHaveAccessibleName('Confirm match with Alex Rivera');
+    }
+  });
+
+  it('CURATION-PERSON-P1 collapses repeated person IDs while preserving an unproved group', () => {
+    const built = buildNamingOptions({
+      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 41, name: 'Alex Rivera' }],
+      labelMatches: [],
+    });
+    const options = selectClusterSuggestions({
+      namingOptions: built.options,
+      identityProjection: [{ clusterId: 'mirrored', label: 'Alex Rivera', similarity: 0.8, identityCount: 2 }],
+    });
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({ options, value: 'Alex', onOptionConfirm });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole('option')[1]);
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 41, name: 'Alex Rivera' });
+    expect(onOptionConfirm).not.toHaveBeenCalled();
+  });
+
+  it('shows one canonical person for a mirrored suggestion and binds its stored ID', () => {
+    const built = buildNamingOptions({
+      rosterEntries: [{ id: 41, name: 'Kirstie McCarrel', person_uuid: 'backend-kirstie' }],
+      labelMatches: [{ id: 'synthetic', label: 'kirstie mccarrel', person_uuid: 'backend-kirstie' }],
+    });
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({
+      options: selectClusterSuggestions({ namingOptions: built.options }),
+      value: 'Kirst',
+      onOptionConfirm,
+      onRejectSuggestion: vi.fn(),
+    });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('listbox')).toHaveAccessibleName('People');
+    expect(screen.queryByText('Group')).not.toBeInTheDocument();
+    expect(screen.queryByText('Person')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reject/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'Confirm match with Kirstie McCarrel' }));
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({ kind: 'roster', rosterEntryId: 41, name: 'Kirstie McCarrel' });
+    expect(onOptionConfirm).not.toHaveBeenCalled();
+  });
+
+  it('never uses a separate roster resolution set as proof of a group binding', () => {
+    const rosterPerson = person(41, 'Kirstie McCarrel');
+    const others = [person(42, 'Ada'), person(43, 'Grace'), person(44, 'Alan'), person(45, 'Pat')];
+    const onOptionConfirm = vi.fn();
+    const { onCommit } = renderControl({
+      options: [
+        { value: 'cluster:first', label: 'Kirstie McCarrel', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
+        { value: 'cluster:second', label: 'Kirstie McCarrel', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
+        ...others,
+      ],
+      resolutionOptions: [rosterPerson, ...others],
+      onOptionConfirm,
+    });
+    const input = screen.getByRole('combobox');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(5);
+    expect(screen.getAllByRole('option', { name: 'Confirm match with Kirstie McCarrel' })).toHaveLength(2);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onOptionConfirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ value: 'cluster:first' }));
+  });
+
+  it('keeps distinct same-name person IDs as explicit choices and typed input ambiguous', () => {
+    const first = person(41, 'Alex Rivera');
+    const second = person(42, 'Alex Rivera');
+    const options: ComboboxOption[] = [
+      { value: 'cluster:ambiguous', label: 'Alex Rivera', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
+      first, first, second,
+    ];
+    expect(resolveNameFaceInput(options, 'Alex Rivera')).toEqual({
+      kind: 'ambiguous', name: 'Alex Rivera', matches: [first, second],
+    });
+    const { onCommit } = renderControl({ options, value: 'Alex Rivera' });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+    fireEvent.click(screen.getAllByRole('option')[2]);
+    expect(onCommit).toHaveBeenCalledWith({ kind: 'roster', rosterEntryId: 42, name: 'Alex Rivera' });
+    expect(resolveNameFaceInput([first, first], 'Alex Rivera')).toEqual({
+      kind: 'roster', rosterEntryId: 41, name: 'Alex Rivera',
+    });
+  });
+});
 
 describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
   it('ArrowDown twice then Enter confirms the second option', async () => {
@@ -351,8 +473,8 @@ describe('NameFaceControl distinct confirm names (UXW2-3-R1-15)', () => {
     });
 
     fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
-    expect(screen.getByRole('option', { name: 'Confirm match with Ada Lovelace (Person)' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Confirm match with Grace Hopper (Person)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Confirm match with Ada Lovelace' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Confirm match with Grace Hopper' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject Ada Lovelace' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject Grace Hopper' })).toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: 'Confirm match' })).toHaveLength(0);

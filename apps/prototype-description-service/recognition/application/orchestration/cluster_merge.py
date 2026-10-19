@@ -670,7 +670,7 @@ async def _lock_survivor_cluster(
             IdentityClusterModel.id == survivor_cluster_id,
         )
         .execution_options(populate_existing=True)
-        .with_for_update()
+        .with_for_update(of=IdentityClusterModel)
     )
 
 
@@ -690,7 +690,7 @@ async def _lock_merge_clusters(
         )
         .order_by(IdentityClusterModel.id)
         .execution_options(populate_existing=True)
-        .with_for_update()
+        .with_for_update(of=IdentityClusterModel)
     )
 
 

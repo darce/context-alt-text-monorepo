@@ -1,5 +1,7 @@
 # GTM Infra, Telemetry & Auth Consolidation Memo
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > **Status:** Decision memo (durable). **Authored:** 2026-07-13. **Task:** `MAINT-gtm-infra-telemetry-consolidation-20260713`.
 > **Purpose:** Answer the operator's infra/scaling, marketing-monorepo, telemetry-vendor, and auth-consolidation questions, heuristic-grounded, and record the resulting decisions. Companion to [`altcontext-productization-launch-plan.md`](altcontext-productization-launch-plan.md).
 > **Citations:** `[GTM-01]`/`[BOOT-07]` = [business-marketing lexicon](https://github.com/darce/heuristics-canon/blob/main/lexicons/business-marketing.md); `[RES-14]`/`[OPS-05]`/`[OBS-05]` = [engineering lexicon](https://github.com/darce/heuristics-canon/blob/main/lexicons/engineering.md). IDs verified present in canon 2026-07-13.
@@ -94,6 +96,6 @@ Telemetry implementation now sits on architecture **just decided here** *and* st
 ## Deferred / operator-blocked (unchanged priority order)
 
 1. **OB-\* telemetry impl** — needs PostHog + Sentry accounts + keys (operator); then env-gated code is offloadable. **This is the plan's own skipped Phase-0 gate** (a live public demo with zero telemetry is discarding moat-labels every day `[AIPX-03]`).
-2. **Concierge revenue** — Polar payment link + LS-1 target list (operator) turns code-complete AP-7 into the first paid-intent test `[GTM-01]`.
+2. **Concierge revenue** — Stripe payment link + LS-1 target list (operator) turns code-complete AP-7 into the first paid-intent test `[GTM-01]`.
 3. **A10 GPU quota** — operator OCI console; gates faces-at-scale self-serve (Q1).
 4. **AP-1..AP-5 self-serve + payments** — **defer until concierge validates pitch/price** `[STRAT-08 spike≠business; PROD-03 cheapest learning first]`.

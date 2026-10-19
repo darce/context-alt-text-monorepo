@@ -1,5 +1,7 @@
 # Scope: Secrets & Auth Consolidation
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > **Task:** `MAINT-secrets-consolidation-20260708` · branch `feature/maint-secrets-consolidation-20260708`
 > **Type:** Scope note (pre-assessment intake). Downstream: per-phase task plans.
 > **Date:** 2026-07-08
@@ -85,11 +87,11 @@ Heuristics: *be a pessimist → smallest shippable cut*; *branch-by-abstraction*
   - Clerk hosted sign-in; the backend verifies Clerk session JWTs against public JWKS (config only, `ACX_CLERK_*`; no backend Clerk secret [SECD-02 minimize the TCB]).
   - `/portal` (gated by `RECOGNITION_PORTAL_ENABLED`) mints/rotates/revokes in `api_keys`, the single key store; the plugin keeps its key in the WP option.
   - Break-glass issuers stay: prod `/admin` (tailnet), `make admin-oci-mint`, in-container `manage_api_keys`.
-  - Rotation overlap and emergency revoke follow the [APP-1 scope](app-altcontext-beta-clerk-polar-scope.md).
+  - Rotation overlap and emergency revoke follow the [APP-1 scope](app-altcontext-beta-clerk-stripe-scope.md).
   - Status: APP-1 in progress; router on main behind the flag; no app vhost yet.
 - **Plane B — machine secrets:**
   - Read only through `SecretProvider`; per-env Vault secrets with env-specific names and per-env OCID maps; env files hold config and OCID maps, never prod values.
-  - Rotation = new version + restart; any new provider-read secret (for Stripe direct, the future `STRIPE_*` secrets on AltContext's own Stripe account) is mapped before its feature flag turns on [CARD-07]; the legacy `POLAR_*` secrets are obsolete since 2026-09-30 and must not be provisioned; per-env DB passwords [PG-09].
+  - Rotation = new version + restart; any new provider-read secret (for Stripe direct, the future `STRIPE_*` secrets on AltContext's own Stripe account) is mapped before its feature flag turns on [CARD-07]; superseded billing secrets must not be provisioned; per-env DB passwords [PG-09].
 - **Plane C — operators and agents, verbs not secrets:**
   - Humans and agents act through Tailscale and make targets that run where the secret lives (`admin-oci-mint`, `provision-customer`, deploy targets), so no secret crosses the laptop/VM boundary [SEC-01][SEC-04 least-privilege agency].
   - Agents hold no prod root secrets; API tests use dedicated low-tier, expiring, revocable test-tenant keys; high-impact verbs (prod mint, rotation, Vault writes, DB reset) stay human-gated [SEC-05 human-in-the-loop][SECD-04 dual control].
@@ -162,7 +164,7 @@ Separate **two distinct auth concerns** — they have opposite answers:
 - You need **MFA, social / passwordless login, or SOC2-grade audit trails**.
 - **Multiple apps** (WP + dashboard + API) must share one identity + RBAC.
 
-**Trigger fired (2026-09):** customer dashboard (APP-1 `/portal`, app.altcontext.com). Clerk was chosen in the [E16-7](e16-7-tenant-selfserve-key-panel-scope.md) and [APP-1](app-altcontext-beta-clerk-polar-scope.md) scopes, superseding the OCI-IAM-first recommendation below for human identity. Machine and tenant keys stay homegrown (point 1).
+**Trigger fired (2026-09):** customer dashboard (APP-1 `/portal`, app.altcontext.com). Clerk was chosen in the [E16-7](e16-7-tenant-selfserve-key-panel-scope.md) and [APP-1](app-altcontext-beta-clerk-stripe-scope.md) scopes, superseding the OCI-IAM-first recommendation below for human identity. Machine and tenant keys stay homegrown (point 1).
 
 **Do NOT adopt one** while the only human surface is WP-admin for a few operators (WP's own auth suffices), or for machine/tenant keys.
 

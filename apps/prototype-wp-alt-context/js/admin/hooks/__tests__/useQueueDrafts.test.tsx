@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,6 +16,7 @@ import type {
   DescribeRunItemsResponse,
 } from '../../api/describeApi';
 import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
+import { queryKeys } from '../../api/queryKeys';
 
 vi.mock('../../api/describeApi', async () => {
   const actual = await vi.importActual<typeof import('../../api/describeApi')>('../../api/describeApi');
@@ -70,6 +71,31 @@ const historyResponse = (items: DescriptionHistoryItem[], total = items.length):
 });
 
 describe('useQueueDrafts', () => {
+  it('refreshes existing proposals after curation sync drains without submitting or applying a run', async () => {
+    client.setQueryData(queryKeys.sync.health(), {
+      outbox: { state: 'ok', pending: 1 },
+      last_pull: { at: 'before', ok: true },
+    });
+    vi.mocked(describeApi.fetchDescribeRuns).mockResolvedValue({
+      items: [{ run_id: 'run-abc', created_at: 200, media_ids: [71] }],
+      total: 1,
+      next_offset: null,
+    });
+    fetchRunItemsMock.mockResolvedValue(runResponse([runItem({ alt_text_draft: 'A woman waves.' })]));
+    const { result } = renderHook(() => useQueueDrafts([71]), { wrapper });
+    await waitFor(() => expect(result.current.draftsByMediaId[71]?.draftText).toBe('A woman waves.'));
+    fetchRunItemsMock.mockResolvedValue(runResponse([runItem({ alt_text_draft: 'Ada waves.' })]));
+    act(() => {
+      client.setQueryData(queryKeys.sync.health(), {
+        outbox: { state: 'ok', pending: 0 },
+        last_pull: { at: 'after', ok: true },
+      });
+    });
+    await waitFor(() => expect(result.current.draftsByMediaId[71]?.draftText).toBe('Ada waves.'));
+    expect(applyRunMock).not.toHaveBeenCalled();
+    expect(correctMock).not.toHaveBeenCalled();
+  });
+
   it('loads older pages explicitly and keeps an old selected run distinct from the latest', async () => {
     vi.mocked(describeApi.fetchDescribeRuns).mockImplementation((_ids, offset) =>
       Promise.resolve({

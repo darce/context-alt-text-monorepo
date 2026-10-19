@@ -597,10 +597,11 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 			return new WP_Error( 'missing_run_id', 'Run ID is required.', array( 'status' => 400 ) );
 		}
 
+		$images = $this->describe_run_image_evidence( $run_id );
 		$response = $this->proxy_recognition_request(
-			'GET',
-			sprintf( '/scene/describe/run/%s/items', $run_id ),
-			array(),
+			array() === $images ? 'GET' : 'POST',
+			sprintf( array() === $images ? '/scene/describe/run/%s/items' : '/scene/describe/run/%s/items/preview', $run_id ),
+			array() === $images ? array() : array( 'images' => $images ),
 			array( 'tenant_id' => $this->get_tenant_id() ),
 			'post_scan_read'
 		);
@@ -671,6 +672,30 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		}
 
 		return $response;
+	}
+
+	/** Hash and dimensions come from the exact same bounded original-file read. */
+	private function describe_run_image_evidence( string $run_id ): array {
+		$images = array();
+		$total  = 0;
+		$budget = $this->describe_run_max_body_bytes();
+		foreach ( array_slice( $this->load_run_media_ids( $run_id ) ?? array(), 0, 100 ) as $media_id ) {
+			$part = $this->load_media_file_part( $media_id, $budget, $total );
+			if ( is_wp_error( $part ) ) {
+				continue;
+			}
+			$total += strlen( $part['content'] );
+			$dims   = @getimagesizefromstring( $part['content'] );
+			if ( is_array( $dims ) && $dims[0] > 0 && $dims[1] > 0 ) {
+				$images[] = array(
+					'media_id'   => $media_id,
+					'image_hash' => hash( 'sha256', $part['content'] ),
+					'width'      => (int) $dims[0],
+					'height'     => (int) $dims[1],
+				);
+			}
+		}
+		return $images;
 	}
 
 	/**

@@ -9,6 +9,7 @@ dismissed-cluster and media scoping filters this merge layer requires.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +20,47 @@ from db.models.identity import (
     IdentityNameSuppression,
     MediaIdentity,
 )
-from scene.application.identity_merge.merge import ConfirmedFace, normalize_bbox
+from scene.application.identity_merge.merge import ConfirmedFace, NormalizedBox, normalize_bbox
+
+
+@dataclass(frozen=True)
+class DetectedFace:
+    identity_id: uuid.UUID
+    box: NormalizedBox
+
+
+async def load_detected_faces(session, *, tenant_id, media_id, image_width, image_height) -> list[DetectedFace]:
+    """Include unnamed and policy-ineligible faces as ambiguity blockers."""
+    rows = (
+        await session.execute(
+            select(
+                MediaIdentity.id,
+                MediaIdentity.bbox_x,
+                MediaIdentity.bbox_y,
+                MediaIdentity.bbox_width,
+                MediaIdentity.bbox_height,
+            ).where(
+                MediaIdentity.tenant_id == tenant_id,
+                MediaIdentity.media_id == media_id,
+                MediaIdentity.identity_type == "face",
+                MediaIdentity.disposed_at.is_(None),
+            )
+        )
+    ).all()
+    return [
+        DetectedFace(
+            row.id,
+            normalize_bbox(
+                x=row.bbox_x,
+                y=row.bbox_y,
+                width=row.bbox_width,
+                height=row.bbox_height,
+                image_width=image_width,
+                image_height=image_height,
+            ),
+        )
+        for row in rows
+    ]
 
 
 async def load_confirmed_faces(

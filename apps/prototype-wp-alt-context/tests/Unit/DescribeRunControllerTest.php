@@ -84,6 +84,34 @@ class DescribeRunControllerTest extends TestCase
         $request->set_body_params($body_params);
     }
 
+    public function testItemsReadProjectsCurrentNamesUsingOriginalImageEvidenceWithoutInference(): void
+    {
+        $run_id = '11111111-1111-1111-1111-111111111111';
+        $bytes = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aU4UAAAAASUVORK5CYII=');
+        $this->plantAttachment(101, $bytes, 'png');
+        $this->setOption('acx_describe_run_media_ids_' . $run_id, [
+            'tenant_id' => self::currentTenantId(),
+            'media_ids' => [101],
+            'created_at' => time(),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200],
+            'body' => json_encode(['run_id' => $run_id, 'items' => []]),
+        ]);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $run_id . '/items');
+        $request->set_param('run_id', $run_id);
+        $response = $this->controller->get_describe_run_items($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $call = $this->getHttpCalls()[0];
+        $this->assertStringContainsString('/items/preview', $call['url']);
+        $this->assertSame('POST', $call['method']);
+        $payload = json_decode($call['args']['body'], true);
+        $this->assertSame([[
+            'media_id' => 101, 'image_hash' => hash('sha256', $bytes), 'width' => 1, 'height' => 1,
+        ]], $payload['images']);
+        $this->assertArrayNotHasKey('image_101', $payload);
+    }
+
     private function plantAttachment(int $id, string $bytes, string $extension = 'jpg'): string
     {
         $path = $this->tempDir . "/{$id}.{$extension}";

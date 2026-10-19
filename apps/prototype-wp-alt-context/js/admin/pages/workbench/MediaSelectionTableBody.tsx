@@ -528,9 +528,17 @@ const MediaSelectionRow = ({
                 </option>
               ))}
             </select>
+            {selectedDraft?.namingRefreshUnavailable ? (
+              <p role="status">
+                {__(
+                  'Names could not be refreshed for this description version. Check the people before approving it.',
+                  'alt-context',
+                )}
+              </p>
+            ) : null}
             {selectedDraft ? (
               <QueueDraftCell
-                key={versionKey(selectedDraft)}
+                key={JSON.stringify([selectedDraft.source, selectedDraft.runId])}
                 mediaId={item.id}
                 draftText={selectedDraft.draftText}
                 title={item.title}

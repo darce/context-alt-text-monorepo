@@ -11,6 +11,7 @@ ENVS=('dev','dev-fir','prod','staging','dev-auraface')
 PIN='54f7bd837f20c24529ce3e1ea53e91a405b16234c62092890c22b507c149a2d9'
 LOAD_PIN='0d08441a76a5f9f5c38ac32c3b4dd7956de07af3255fb31748bef36b5da26521'
 MAX=1048576
+PUBLICATION_TTL_SECONDS=1800  # Prospective publications only; never renew old receipts.
 SCRIPTS=frozenset(('owner-window.py','owner-custody.py','observe.py','capacity-read.sh','guest-read.sh','root-flow.sh','final-stop.sh'))
 
 def check(condition,message):
@@ -366,7 +367,8 @@ def guardian(wfd,ofd,paths,writer,plan,window,hook=None):
   if hook: hook('compared',None)
   now=paths.now() if paths.now is not None else datetime.now(UTC); sequence=writer._allocate_sequence(paths.target,None)
   check(sequence==max([v['authority']['highest_sequence']]+[p['sequence'] for p in v['publications'].values()])+1,'sequence/authority mismatch; do not retry')
-  candidate=writer.OperatorIntent(schema_version=writer.INTENT_SCHEMA_VERSION,sequence=sequence,action=writer.IntentAction(plan['action']),requested_at=now,expires_at=now+timedelta(seconds=600),ttl_seconds=600,requested_by=actor,nonce=str(uuid.uuid4())).to_payload()
+  check(writer.MIN_INTENT_TTL_SECONDS<=PUBLICATION_TTL_SECONDS<=writer.MAX_INTENT_TTL_SECONDS,'fixed publication TTL outside native writer bounds')
+  candidate=writer.OperatorIntent(schema_version=writer.INTENT_SCHEMA_VERSION,sequence=sequence,action=writer.IntentAction(plan['action']),requested_at=now,expires_at=now+timedelta(seconds=PUBLICATION_TTL_SECONDS),ttl_seconds=PUBLICATION_TTL_SECONDS,requested_by=actor,nonce=str(uuid.uuid4())).to_payload()
   # Candidate is a native OperatorIntent payload, not a receipt or an issuer.
   # Its unique nonce and operation/window custody become immutable BEFORE effects.
   seal(ofd,'candidate.json',candidate)

@@ -1,3 +1,48 @@
+# Prospective publication TTL: next procedure only
+
+The next qualified procedure publishes START, STOP and AUTO with a fixed
+`PUBLICATION_TTL_SECONDS=1800`; requested-to-expiry delta is 1800 seconds.
+This source change is not deployment, qualification or live acceptance. Existing
+installed stages, windows, 600-second operation bodies and receipts remain
+immutable. Never relabel, reissue, renew or extend an existing publication.
+
+The exact pinned writer admits 60..7200 seconds; its dataclass constructor does
+not validate bounds and its public writer clamps them. The guardian now refuses
+before candidate sealing if this fixed TTL is outside the pinned writer bounds.
+Writer/load source pins and all window, owner, checkpoint and clock guards remain.
+The actual native running lease remains 3600 seconds with its original origin
+and nonce; a pending START is not an honoured lease. New model/client budgets
+must be declared before a future run. A fresh native fixture qualification and
+coordinator XHIGH gate are still required before adoption.
+
+The elapsed fixed publication deadline was the supplied R16B batch blocker;
+the parse error did not stop the client. No inference or live-state action was
+performed here. Scoped private tests exercise the real pinned constructor,
+guardian guard, forked atomic publication and reconciliation for all three
+actions with controlled requested time; they preserve a sealed historical
+600-second candidate and authority/origin bytes. A reduced native maximum
+refuses before candidate/publication. These are UNIT_ONLY controls, not native
+lease or Root qualification. The private authority origin is preservation
+sentinel data, not evidence that a START was honoured.
+
+Heuristics requested: v0.26.2 RES-02 (finite bounds), DBG-11 (causal contrast),
+GRPH-32 (true dependencies), GRPH-33 (receipt contracts). These IDs and glosses
+are supplied by the operator; canon text/digests could not be verified: the
+pinned Mac path is absent on this VM and bounded exact-tag raw fetch failed DNS.
+
+Remote verification on `acx-backend`, actual gate UID/GID1002, in the supplied
+workspace: `timeout 55s python3 -B .../test_window_ttl.py` passed 2 methods
+(including all three action subtests); `timeout 55s python3 -B
+.../test_resume_start.py` passed 8 methods. Initial checkpoint run at 55 seconds
+timed out (exit124) during the final method with no reported assertion failure;
+`timeout 120s python3 -B .../test_window_checkpoint.py` then passed all 12
+methods in 64.195 seconds (exit0). No dependency installs occurred.
+
+Current approved-scripts manifest SHA256: `45c86daf3bc312eea23ab1382965b56dcbc1c97dd1c82070decc6ee617d3c5ca`.
+Only the owner-custody.py entry changed. The following handoff describes prior
+role/checkpoint work and historical verification; its manifest receipts do not
+qualify this new source.
+
 # Same-window checkpoint source handoff
 
 Source-only LOUD18504 typed-role correction on exact joined source

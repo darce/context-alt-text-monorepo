@@ -13,10 +13,32 @@ from db.models.base_imports import _DB_SETTINGS, Base
 from db.models.identity import IdentityCluster, IdentityMember, MediaIdentity
 from db.models.tenant import Tenant
 from scene.application.identity_merge import load_confirmed_faces
+from scene.application.identity_merge.join import load_detected_faces
 
 MEDIA_ID = 7001
 IMAGE_W = 1000
 IMAGE_H = 500
+
+
+@pytest.mark.asyncio
+async def test_detected_face_blockers_include_unnamed_faces_and_stay_tenant_media_scoped(session, tenant):
+    unknown = _identity(tenant.id)
+    brand = _identity(tenant.id, bbox=(200, 50, 60, 80))
+    brand.identity_type = "brand"
+    disposed = _identity(tenant.id, bbox=(300, 50, 60, 80))
+    disposed.disposed_at = datetime.now(tz=UTC)
+    other_media = _identity(tenant.id, media_id=MEDIA_ID + 1)
+    foreign_tenant = Tenant(id=uuid.uuid4(), site_url="http://foreign.local")
+    session.add(foreign_tenant)
+    await session.flush()
+    foreign = _identity(foreign_tenant.id)
+    session.add_all([unknown, brand, disposed, other_media, foreign])
+    await session.flush()
+    detected = await load_detected_faces(
+        session, tenant_id=tenant.id, media_id=MEDIA_ID, image_width=IMAGE_W, image_height=IMAGE_H
+    )
+    assert [face.identity_id for face in detected] == [unknown.id]
+    assert detected[0].box.x == 0.1
 
 
 def _embedding() -> list[float]:

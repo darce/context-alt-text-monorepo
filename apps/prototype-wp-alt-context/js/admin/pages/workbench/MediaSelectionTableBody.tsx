@@ -382,8 +382,7 @@ const MediaSelectionRow = ({
   const [reviewBusy, setReviewBusy] = useState(false);
   const [frozenDraft, setFrozenDraft] = useState<QueueDraft | null>(null);
   const versions = historyVersions.length > 0 ? historyVersions : draft ? [draft] : [];
-  const versionKey = (version: QueueDraft): string =>
-    JSON.stringify([version.source, version.runId, version.draftText]);
+  const versionKey = (version: QueueDraft): string => JSON.stringify([version.source, version.runId]);
   const selectedDraft =
     frozenDraft ?? versions.find((version) => versionKey(version) === selectedVersion) ?? draft ?? versions[0];
   const versionSelectId = `acx-description-version-${item.id}`;
@@ -528,6 +527,14 @@ const MediaSelectionRow = ({
                 </option>
               ))}
             </select>
+            {selectedDraft?.namingRefreshUnavailable ? (
+              <p role="status">
+                {__(
+                  'Names could not be refreshed for this description version. Check the people before approving it.',
+                  'alt-context',
+                )}
+              </p>
+            ) : null}
             {selectedDraft ? (
               <QueueDraftCell
                 key={versionKey(selectedDraft)}
@@ -536,7 +543,7 @@ const MediaSelectionRow = ({
                 title={item.title}
                 committedAlt={item.altText ?? null}
                 committedIsDecorative={item.isDecorative === true}
-                draftIdentity={JSON.stringify([selectedDraft.source, selectedDraft.runId])}
+                draftIdentity={versionKey(selectedDraft)}
                 peerCommitPending={commitOwner !== null && commitOwner !== 'queue'}
                 onCommitStart={queueCommitStart}
                 onCommitEnd={queueCommitEnd}

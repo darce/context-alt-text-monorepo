@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -10,6 +10,9 @@ import {
 } from '../api/describeApi';
 import { decodeHtmlEntities } from '../utils/decodeHtmlEntities';
 import { describeRunItemsQueryKey } from './useDescribeRunApply';
+import { queryKeys } from '../api/queryKeys';
+import type { SyncHealthResponse } from '../api/recognition';
+import { invalidateDescriptionDrafts } from '../utils/invalidateDescriptionDrafts';
 
 export const QUEUE_DRAFT_SOURCE = {
   DESCRIBE_RUN: 'describe_run',
@@ -31,6 +34,7 @@ export interface QueueDraft {
   runId: string | null;
   source: QueueDraftSource;
   createdAt?: number;
+  namingRefreshUnavailable?: boolean;
 }
 
 export interface UseQueueDraftsResult {
@@ -73,6 +77,7 @@ const draftFromRunItem = (item: DescribeRunItem, runId: string): QueueDraft | nu
     existingAlt: item.existing_alt,
     runId,
     source: QUEUE_DRAFT_SOURCE.DESCRIBE_RUN,
+    ...(item.provenance?.naming_refresh?.status === 'unavailable' ? { namingRefreshUnavailable: true } : {}),
   };
 };
 
@@ -148,6 +153,32 @@ export const useQueueDrafts = (mediaIds: readonly number[], runId?: string | nul
   const wantedIds = useMemo(() => new Set(mediaIds.filter((id) => id > 0)), [mediaIds]);
   const sortedWantedIds = useMemo(() => sortedWantedMediaIds(wantedIds), [wantedIds]);
   const enabled = wantedIds.size > 0;
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    // Observe the existing sync-health owner; do not add another poller.
+    let previous = queryClient.getQueryData<SyncHealthResponse>(queryKeys.sync.health());
+    return queryClient.getQueryCache().subscribe((event) => {
+      const rawKey: unknown = event.query.queryKey;
+      const key: readonly unknown[] = Array.isArray(rawKey) ? (rawKey as readonly unknown[]) : [];
+      if (event.type !== 'updated' || key[0] !== 'sync' || key[1] !== 'health') {
+        return;
+      }
+      const current = queryClient.getQueryData<SyncHealthResponse>(queryKeys.sync.health());
+      const drained =
+        previous?.outbox?.state === 'ok' &&
+        previous.outbox.pending > 0 &&
+        current?.outbox?.state === 'ok' &&
+        current.outbox.pending === 0;
+      const pulled = current?.last_pull?.ok && current.last_pull.at && previous?.last_pull?.at !== current.last_pull.at;
+      previous = current;
+      if (drained || pulled) {
+        invalidateDescriptionDrafts(queryClient);
+      }
+    });
+  }, [enabled, queryClient]);
 
   const readRun = useCallback(
     (id: string) =>

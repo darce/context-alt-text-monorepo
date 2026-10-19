@@ -1075,7 +1075,11 @@ export interface DescribeRunItem {
   status: string;
   alt_text_draft: string | null;
   caption: string | null;
-  provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
+  provenance:
+    | ((DescriptionHistoryProvenance | VisualFactsResponse) & {
+        naming_refresh?: { status: 'current' | 'unavailable'; reason?: string };
+      })
+    | null;
   tier: DescribeResultTier | null;
   result_generation: number;
   existing_alt: boolean;

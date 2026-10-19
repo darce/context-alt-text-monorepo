@@ -1,10 +1,12 @@
 # APP-1 offline next-slices assessment — reconciliation R and browser B
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 Date: 2026-09-22 UTC. Status: context-gathering only; no source or product decision is made here.
 
 This assessment is against the checked-out source at `HEAD=f623b2e9` (the supplied
 `c6c080c7` is not resolvable in this history-stripped checkout). It covers only
-offline-executable work for R and B. Clerk/Polar credentials were not accessed;
+offline-executable work for R and B. Clerk/Stripe credentials were not accessed;
 no live browser, authentication, vendor, or paid acceptance is claimed.
 
 ## Decision summary
@@ -27,7 +29,7 @@ Both lanes have offline work that is not blocked solely by vendor accounts:
   CSP allowlist are frozen. The recovered UX inventory should be preserved and
   bounded-repaired, not redrawn.
 - Live rehearsal remains a separate prerequisite: production Clerk provisioning,
-  Polar sandbox account/catalog/webhook setup, DNS/SSL, and sanitized genuine
+  Stripe sandbox account/catalog/webhook setup, DNS/SSL, and sanitized genuine
   fixtures.
 
 ## Verified current source facts
@@ -37,9 +39,9 @@ Both lanes have offline work that is not blocked solely by vendor accounts:
 | Surface | Current fact | Consequence for remaining work |
 | --- | --- | --- |
 | Provider protocol | `recognition/domain/portal_contracts.py:194-279` currently defines `CheckoutSession`, `EnumerationPage`, and `BillingProvider.create_checkout_session(..., idempotency_key, attempt_id)`, `create_portal_session`, `retrieve_state`, `retrieve_checkout`, `enumerate_subscriptions(cursor, limit, request_timeout)`, `verify_webhook(raw_body, headers)`, and `parse_event`. | R must consume these signatures; it must not invent another vendor method or infer state from a redirect. |
-| Polar checkout/state | `recognition/infrastructure/billing/polar_provider.py:188-328` sends an attempt-owned idempotency key, scopes customer/subscription ids by environment, retrieves known state, retrieves one checkout, and calls the list endpoint. `_assert_environment_matches_base_url` at `:417-423` rejects sandbox/live host mismatch. | Durable checkout-attempt work is existing prior art, but ambiguous attempts still need a reconciliation consumer. |
-| Polar enumeration parser | `PolarBillingProvider.enumerate_subscriptions` at `:307-328` accepts a decimal page cursor, bounds `limit` to 1..100, sends `page`, `limit`, and optional `organization_id`, and returns `EnumerationPage`. `_enumeration_page_from_response` at `:858-888` requires `items` plus `pagination.max_page`, emits the next decimal cursor, and marks exhaustion. `_subscription_item_state` / `_tenant_id_from_enumeration` at `:891-942` discard malformed, seller-mismatched, or unparseable tenant identities. | Parser prior art exists, but silently dropping a bad remote item is not the required observable quarantine/audited-retry behavior. C/R must decide the typed quarantine result without accepting email or request context as a tenant. |
-| Webhook verifier | `PolarBillingProvider.verify_webhook(raw_body, headers)` at `:330-366` receives the full header map, bounds the body to 1 MiB, checks delivery id/timestamp/signature, and tries Standard Webhooks plus the legacy key form at `:470-520`. | This is implementation prior art and synthetic-test coverage, not genuine Polar sandbox evidence. Do not present it as live vendor acceptance. |
+| Stripe checkout/state | `historical BillingProvider adapter (receipt is not Stripe proof):188-328` sends an attempt-owned idempotency key, scopes customer/subscription ids by environment, retrieves known state, retrieves one checkout, and calls the list endpoint. `_assert_environment_matches_base_url` at `:417-423` rejects sandbox/live host mismatch. | Durable checkout-attempt work is existing prior art, but ambiguous attempts still need a reconciliation consumer. |
+| Historical adapter parser (not the Stripe cursor contract) | `BillingProvider.enumerate_subscriptions` at `:307-328` accepts a decimal page cursor, bounds `limit` to 1..100, sends `page`, `limit`, and optional `organization_id`, and returns `EnumerationPage`. `_enumeration_page_from_response` at `:858-888` requires `items` plus `pagination.max_page`, emits the next decimal cursor, and marks exhaustion. `_subscription_item_state` / `_tenant_id_from_enumeration` at `:891-942` discard malformed, seller-mismatched, or unparseable tenant identities. | Parser prior art exists, but silently dropping a bad remote item is not the required observable quarantine/audited-retry behavior. C/R must decide the typed quarantine result without accepting email or request context as a tenant. |
+| Webhook verifier | `BillingProvider.verify_webhook(raw_body, headers)` at `:330-366` receives the full header map, bounds the body to 1 MiB, checks delivery id/timestamp/signature, and tries Standard Webhooks plus the legacy key form at `:470-520`. | This is implementation prior art and synthetic-test coverage, not genuine Stripe sandbox evidence. Do not present it as live vendor acceptance. |
 | Worker seam | `scripts/billing_reconcile.py:161-205` has a repository protocol with only `list_pending_webhooks`, `get_projection`, `upsert_projection`, and `mark_webhook_processed`; `ReconcileConfig` at `:207-276` bounds provider timeout, retries, backoff, polling, and stall count. | The worker has no cursor or lease interface to call. C must publish that boundary before R can safely add remote enumeration. |
 | Known-event processing | `BillingReconciliationWorker.run` at `scripts/billing_reconcile.py:341-451` lists a bounded inbox batch. `_process_row` at `:453-611` checks a row, releases the DB transaction before provider I/O, retrieves known state, compares tenant/customer ids, upserts the projection, applies entitlement state, then marks the inbox row. `_context_and_projection` at `:717-775` derives tenant/customer/subscription ids from event payload/projection; `_retrieve_state` at `:789-815` calls only a known-state method. | This is a usable known-projection path, not remote-orphan recovery. `enumerate_subscriptions` is not called anywhere in the worker. |
 | Claim/lease behavior | `_claim_row` at `scripts/billing_reconcile.py:869-873` only checks `received`/`failed`; it does not acquire a durable lease. `_recheck_row` at `:817-867` compares status and attempt count, not an owner/fence. | Concurrent workers can inspect the same pending row; a durable owner token and stale-writer rejection are still required. |
@@ -56,7 +58,7 @@ Both lanes have offline work that is not blocked solely by vendor accounts:
 | Backend mount | `api/main.py:568-605` configures CORS and includes portal/webhook routers only when `RECOGNITION_PORTAL_ENABLED` is true. CORS allows configured origins, bearer/key/tenant/content/idempotency headers, and does not mount static browser assets. | The backend is not the browser app. B owns the SPA; H/U/D retain API, composition, and host ownership unless a later handoff says otherwise. |
 | Clerk verifier | `portal_auth.py:133-192` requires `ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUDIENCE`, and `ACX_CLERK_AUTHORIZED_PARTIES`. `:515-554` verifies issuer, `aud`, `azp`, expiry/clock skew, RS256, and optional email claims; `:681-689` requires `email_verified` and non-empty email for portal access. `:728-779` separates pre-tenant verified identity from tenant-bound principal. | Frozen browser behavior is Clerk person session → backend admission; a Clerk organization, email local-part, or browser-supplied tenant id is never a tenant authority. |
 | Frontend existence | No `apps/app-portal/**` files, `portal_ui.py`, browser package, static mount, or browser test exists in this checkout. | B is an implementation slice, not an integration/review of existing UI. |
-| CSP | The source has no portal CSP header/directive implementation. Plan 0001 only says that precise CSP and `frame-ancestors` evidence is required (`docs/plans/0001-app-altcontext-beta-clerk-polar-task-plan.md:181`); it does not freeze a directive allowlist. | Exact CSP is an unresolved contract prerequisite. Do not claim the candidate UX patch or host runbook is CSP-complete. |
+| CSP | The source has no portal CSP header/directive implementation. Plan 0001 only says that precise CSP and `frame-ancestors` evidence is required (`docs/plans/0001-app-altcontext-beta-clerk-stripe-task-plan.md:181`); it does not freeze a directive allowlist. | Exact CSP is an unresolved contract prerequisite. Do not claim the candidate UX patch or host runbook is CSP-complete. |
 
 ### Approved host and Clerk shape in current docs
 
@@ -65,8 +67,8 @@ The current operational docs establish the following offline planning boundary:
 - `docs/runbooks/app-portal-deploy.md:19-30` reserves `https://app.altcontext.com`;
   `/portal` and `/portal/*` reverse-proxy to `prod-api:8000`; `/` is a static SPA
   with history fallback; admin, internal, unrelated API, and webhook paths are
-  not exposed on this host. The Polar webhook remains on
-  `https://api.altcontext.com/billing/webhooks/polar` (`:105-109`).
+  not exposed on this host. The Stripe webhook remains on
+  `https://api.altcontext.com/billing/webhooks/stripe` (`:105-109`).
 - `docs/runbooks/clerk-production-auth.md:17-33` names `app.altcontext.com` as the
   primary application and `clerk.altcontext.com` as the Clerk FAPI custom host;
   `:41-67` requires distinct `aud` and `azp`, with authorized party exactly
@@ -86,7 +88,7 @@ browser ownership contract for this lane; the reserved surface is the static
 Relevant planning/source prior art is already present in:
 
 - `docs/specs/app-portal-account-billing-spec.md:331-427` — typed provider,
-  bounded Polar enumeration, opaque cursor, no network while holding a DB lock,
+  bounded Stripe enumeration, opaque cursor, no network while holding a DB lock,
   quarantine requirements, and the proposed cursor/lease shape. It is explicitly
   a proposed planning contract, not proof that the current source implements it.
 - `docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:136-158` — R
@@ -126,7 +128,7 @@ file is integrated by this context-only lane.
    browser tenant header may create a claim (`DOM-03`, `CARD-12`).
 2. The current `BillingProvider` signatures above are the handoff boundary. R
    consumes typed `BillingState`/`EnumerationPage`; it does not derive a tenant
-   from email or invent a Polar endpoint (`REF-15`, `CARD-06`).
+   from email or invent a Stripe endpoint (`REF-15`, `CARD-06`).
 3. Enumeration is bounded: provider page size 50 for this lane, at most 20 pages
    per `--once` run, opaque persisted cursor, per-item isolation, and no network
    I/O while a cursor row lock is held (`GRPH-09`, `GRPH-31`, `PERF-13`). A page
@@ -149,7 +151,7 @@ file is integrated by this context-only lane.
 - Provision Clerk production for `app.altcontext.com`, custom FAPI/DNS/SSL, the
   four backend auth settings, session-token `aud`/`email`/`email_verified`, and
   the exact authorized party. The runbook says credentials do not exist yet.
-- Provision a Polar sandbox organization/OAT, seller account, product catalog,
+- Provision Stripe test-mode credentials, endpoint secret, seller-account mapping, product/Price catalog,
   webhook secret, allowed origins, and sanitized genuine webhook fixtures. No
   live or sandbox credential is available to this worker.
 - Supply `APP_PUBLIC_ORIGIN`, `APP_ALLOWED_ORIGINS`, catalog mapping, seller
@@ -167,14 +169,14 @@ the paths are currently free of other coordinator assignments.
 
 | Group | Sole owned paths | Deliverable |
 | --- | --- | --- |
-| C0 — recovery contract/schema (dependency of R) | `recognition/domain/portal_contracts.py`; `recognition/infrastructure/billing/polar_provider.py`; `db/models/portal_billing.py`; `db/migrations/versions/001_identity_schema.py`; a new `recognition/infrastructure/repositories/billing_reconciliation_repository.py` | Freeze cursor key `(provider, environment, seller_account, kind)`, opaque cursor, lease owner/expiry/fence, progress timestamp, per-item quarantine/audit/retry shape, upgrade/RLS behavior, and the provider result semantics. Do not make R edit the existing shared billing repository or migration. |
+| C0 — recovery contract/schema (dependency of R) | `recognition/domain/portal_contracts.py`; `historical BillingProvider adapter (receipt is not Stripe proof)`; `db/models/portal_billing.py`; `db/migrations/versions/001_identity_schema.py`; a new `recognition/infrastructure/repositories/billing_reconciliation_repository.py` | Freeze cursor key `(provider, environment, seller_account, kind)`, opaque cursor, lease owner/expiry/fence, progress timestamp, per-item quarantine/audit/retry shape, upgrade/RLS behavior, and the provider result semantics. Do not make R edit the existing shared billing repository or migration. |
 | R1 — reconciliation processor | `apps/prototype-description-service/scripts/billing_reconcile.py`; if a separate operator command is needed, new `apps/prototype-description-service/scripts/billing_reconcile_retry.py` | Keep known-inbox recovery; add leased known-state, remote-subscription, and ambiguous-checkout loops; commit lease before network; bound pages/items/time; isolate/quarantine bad items; persist cursor only after progress; return non-zero on no progress; expose audited retry. |
 | B0 — browser app/mount | `apps/app-portal/**` (one owner for `package.json`, `src/main.*`, `src/App.*`, API client, auth adapter, features, tests, and styles) | Build the static SPA against current `/portal/*` routes, Clerk publishable env only, mocked provider/backend seams, explicit loading/unavailable/not-admitted/outage states, and accessible keyboard/mobile flows. Do not split `App.tsx`/`main.tsx` ownership. |
 | H/U/D — integration dependencies | Existing `recognition/interface_adapters/http/routers/portal.py`, `portal_auth.py`, `portal_composition.py`, `api/main.py`, host/Caddy/runbook paths, and scene/G3 paths remain with their current owners. | H/U/D publish stable response/CORS/flag/host/CSP contracts. B consumes them; B does not silently edit these shared paths. |
 
 R1 must not add cursor columns to `billing_repository.py` while C0 owns the
 shared schema/repository boundary. B0 must not edit `portal.py`, `portal_auth.py`,
-`api/main.py`, Caddy, or Clerk/Polar credentials. The candidate UX docs are
+`api/main.py`, Caddy, or Clerk/Stripe credentials. The candidate UX docs are
 preserved as evidence and are not regenerated by this lane.
 
 ## DAG: data dependencies versus path conflicts
@@ -246,7 +248,7 @@ receipt owned by the C0/G5 implementation group before claiming R complete.
 ### B acceptance
 
 - **B-01 build/secrets:** a local mocked build loads only
-  `VITE_CLERK_PUBLISHABLE_KEY`/`VITE_CLERK_FAPI`; no `CLERK_SECRET_KEY`, OAT,
+  `VITE_CLERK_PUBLISHABLE_KEY`/`VITE_CLERK_FAPI`; no `CLERK_SECRET_KEY`, Stripe secret key,
   webhook secret, raw API key, or invitation token appears in source, bundle,
   server-rendered HTML, local storage, logs, or analytics.
 - **B-02 unavailable/loading:** missing publishable key, disabled public portal
@@ -281,7 +283,7 @@ receipt owned by the C0/G5 implementation group before claiming R complete.
   mobile layout, and unavailable/error states are covered in the mocked browser
   suite.
 - **B-09 live gate (later V, not offline):** two tenants complete the real Clerk
-  browser flow against the deployed host, then sandbox Polar checkout/webhook and
+  browser flow against the deployed host, then sandbox Stripe checkout/webhook and
   WordPress first-caption flow with genuine sanitized fixtures. No live charge is
   permitted; mocked/offline results cannot satisfy this case.
 
@@ -307,6 +309,6 @@ Concrete blockers for completion, not for all offline implementation:
   and restart fencing land.
 - `apps/app-portal/**` and the precise CSP directive allowlist are absent. Host
   route/mount documentation is present; CSP acceptance remains unresolved.
-- Clerk production and Polar sandbox accounts/catalog/fixtures are unprovisioned.
+- Clerk production and Stripe sandbox accounts/catalog/fixtures are unprovisioned.
   This blocks live evidence only; it does not justify marking the offline R/B
   slices wholly blocked.

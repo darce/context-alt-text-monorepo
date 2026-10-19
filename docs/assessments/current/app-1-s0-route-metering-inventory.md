@@ -1,5 +1,9 @@
 # APP-1 S0 route and metering inventory
 
+> **Historical source census:** billing-provider rows are planned Stripe replacements, not observed Stripe implementation. Re-census the deployed branch before release.
+
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > **Source refresh — 2026-09-29.** This census follows the routers included by `create_app` at `apps/prototype-description-service/api/main.py:600-629`, the recognition aggregate at `apps/prototype-description-service/recognition/interface_adapters/http/router.py:26-44`, and FastAPI's generated documentation routes enabled by `api/main.py:564`. Portal and billing routes are conditional on `RECOGNITION_PORTAL_ENABLED`; admin routes are conditional on `security_settings.admin_enabled`. Each row is one mounted method/path and cites the handler definition line. This records source behavior only, not release acceptance.
 
 | Method | Path | Handler source | Auth applied | Tenant source | Current cost class / source disposition |
@@ -13,7 +17,7 @@
 | POST | `/admin/ui/keys` | `recognition/interface_adapters/http/routers/admin.py:528 console_mint_key()` | require_admin + require_same_origin | operator-selected path/body target | FREE-CONTROL — operator-only; one resource action per request |
 | POST | `/admin/ui/keys/{key_id}/revoke` | `recognition/interface_adapters/http/routers/admin.py:568 console_revoke_key()` | require_admin + require_same_origin | operator-selected path/body target | FREE-CONTROL — operator-only; one resource action per request |
 | POST | `/admin/ui/tenants` | `recognition/interface_adapters/http/routers/admin.py:502 console_create_tenant()` | require_admin + require_same_origin | operator-selected path/body target | FREE-CONTROL — operator-only; one resource action per request |
-| POST | `/billing/webhooks/polar` | `recognition/interface_adapters/http/routers/billing_webhooks.py:119 receive_polar_webhook()` | verified provider webhook signature | verified event; tenant resolved from provider identity | FREE-CONTROL — signature verification, 1 MiB body cap, and provider-event deduplication |
+| POST | `/billing/webhooks/stripe` | `recognition/interface_adapters/http/routers/billing_webhooks.py:119 selected webhook handler (planned Stripe replacement)` | verified provider webhook signature | verified event; tenant resolved from provider identity | FREE-CONTROL — signature verification, 1 MiB body cap, and provider-event deduplication |
 | GET | `/docs` | `api/main.py:564 FastAPI generated Swagger UI()` | none; generated route | none | READ |
 | HEAD | `/docs` | `api/main.py:564 FastAPI generated Swagger UI()` | none; generated route | none | READ |
 | GET | `/docs/oauth2-redirect` | `api/main.py:564 FastAPI generated OAuth redirect()` | none; generated route | none | READ |
@@ -110,7 +114,7 @@
 
 ## Census notes
 
-- API-key authentication is `require_auth` (`recognition/interface_adapters/http/deps/auth.py:302`); tenant-bound curation uses `get_authenticated_tenant_id` (`deps/tenant.py:15`), and normal recognition routers apply `enforce_rate_limit` (`deps/rate_limit.py:42`). Portal handlers bind `PortalPrincipal.tenant_id` from verified issuer/subject (`deps/portal_auth.py:761`); the claim route accepts verified identity claims and resolves its tenant through the invitation. The Polar webhook verifies the provider signature before tenant projection.
+- API-key authentication is `require_auth` (`recognition/interface_adapters/http/deps/auth.py:302`); tenant-bound curation uses `get_authenticated_tenant_id` (`deps/tenant.py:15`), and normal recognition routers apply `enforce_rate_limit` (`deps/rate_limit.py:42`). Portal handlers bind `PortalPrincipal.tenant_id` from verified issuer/subject (`deps/portal_auth.py:761`); the claim route accepts verified identity claims and resolves its tenant through the invitation. The Stripe webhook verifies the provider signature before tenant projection.
 - `METERED` rows are `/recognition/analyze`, `/recognition/analyze/multipart`, `/roster/curation/sync`, `/scene/describe/multipart`, `/scene/describe/async`, and `/scene/describe/run`. They use durable tenant/global usage admission before billable work; curation charges `len(operations)` units. `/roster/curation/sync` now takes its tenant only from authenticated API-key context (`curation_router.py:58-80`); the old caller-selected tenant/auth gap is fixed on the lane by `w6-curation-auth` (`59e4e6c74`).
 - `FREE-CONTROL` rows perform non-dispatch actions under the per-key/per-IP limit or a one-action tenant/operator boundary. Paid-only operator authorization is an eligibility check, not a per-request work cap; the clustering and orphan-recovery rows are therefore `GAP` because one invocation can still process tenant-wide work.
 - `READ` rows do not start billable dispatch. `GAP` rows identify a source-visible cost path with no durable usage admission and no per-run work/byte limit; each row states the uncapped impact. Do not treat auth, an operator status check, or a request-rate limit as a cost cap.

@@ -1,5 +1,7 @@
 # Decomposition — AP-1 (Business Schema) + AP-2 (Business API)
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > Both are **Epic** slices from the launch plan §14 — too large for one `/offload` pass (one end-state + one `TEST_CMD`). Below, each is broken into **atomic** sub-slices, each with a self-contained end-state and a scoped verification, ready to offload one at a time.
 > **Canon anchors:** `[DATA-14]` system-of-record, `[DOM-04]` reference-by-ID, `[ARCH-02]` single-writer, `[API-02]/[RES-01]` idempotent webhooks, `[API-10]` translate-at-boundary, `[ARCH-07]` ADR. Field ownership map = launch plan §6.3.
 > **Ordering:** AP-1 before AP-2. Within AP-2, 2a → (2b, 2c, 2d) → 2e → 2f.
@@ -12,7 +14,7 @@ Single business DB on the OCI VM; `tenant_id` (UUID) is the universal key. All e
 
 | Sub-slice | End-state | Scoped `TEST_CMD` / verify | Deps |
 |---|---|---|---|
-| **AP-1a** `tenants` | Table: `id uuid pk`, `plan text not null default 'free'`, `clerk_user_id text unique null`, `polar_customer_id text unique null`, `email citext`, `created_at/updated_at`. Migration up/down. | migration applies + reverts; insert/select round-trips; duplicate `clerk_user_id` rejected | — |
+| **AP-1a** `tenants` | Table: `id uuid pk`, `plan text not null default 'free'`, `clerk_user_id text unique null`, `stripe_customer_id text unique null`, `email citext`, `created_at/updated_at`. Migration up/down. | migration applies + reverts; insert/select round-trips; duplicate `clerk_user_id` rejected | — |
 | **AP-1b** `api_keys` | Table: `id uuid pk`, `tenant_id uuid fk→tenants`, `key_hash text unique`, `scope text`, `label text`, `created_at`, `rotated_at null`, `revoked_at null`. | FK enforced (orphan insert fails); lookup by `key_hash` returns tenant; revoke sets `revoked_at` | AP-1a |
 | **AP-1c** `usage_daily` | Table: PK `(tenant_id, day date)`, `count int not null default 0`. Upsert-increment helper. | 3 increments → count=3; cross-tenant isolation holds | AP-1a |
 | **AP-1d** `consent` | Table: `tenant_id fk`, `scope text` (e.g. `marketing_email`), `granted_at`, `revoked_at null`. | grant→revoke round-trip; current-consent query correct | AP-1a |
@@ -34,7 +36,7 @@ The **single authority** for tenant lifecycle `[ARCH-02]`. Vendors notify it via
 | **AP-2c** key lifecycle (wraps existing minter) | Endpoints create/rotate/revoke API keys — **reuse the recognition `/admin` `manage_api_keys` mechanism**, keys hashed, scoped, tenant-bound. Business API owns *policy*; minter is *mechanism* (§7). | create key → recognition `require_auth` accepts it; revoke → recognition returns 401; **no second key SoR introduced** `[ARCH-02]` | AP-2a, AP-1b |
 | **AP-2d** usage metering | Record-call ingest + daily rollup (job or endpoint) writing `usage_daily`. | N recorded calls → `usage_daily.count == N` for that tenant/day; other tenants unaffected | AP-2a, AP-1c |
 | **AP-2e** recognition auth bridge | Update recognition auth middleware to validate keys against business DB (direct query or short-TTL cache) and set tenant context for RLS. **Contract/boundary change — follow `docs/workbay/contracts/`.** | valid business-DB key authorizes a recognition call; unknown key 401; tenant context scopes RLS; latency within SLO (cache if needed) | AP-2c |
-| **AP-2f** idempotent webhook receiver (generic) | Skeleton that verifies provider signature, dedupes on `event_id` into `billing_events`, dispatches to a handler, marks processed. Provider-agnostic (Clerk/Polar plug in at AP-3/AP-5). | same `event_id` delivered twice → handler runs **once** `[API-02][RES-01]`; bad signature rejected; unknown event stored+ignored | AP-2a, AP-1e |
+| **AP-2f** idempotent webhook receiver (generic) | Skeleton that verifies provider signature, dedupes on `event_id` into `billing_events`, dispatches to a handler, marks processed. Provider-agnostic (Clerk/Stripe plug in at AP-3/AP-5). | same `event_id` delivered twice → handler runs **once** `[API-02][RES-01]`; bad signature rejected; unknown event stored+ignored | AP-2a, AP-1e |
 
 > **Boundary note (AP-2e):** this is the one sub-slice that edits the recognition service, not just the new business service. It crosses a service contract — do it under the repo's cross-service integration rules (contracts + review coverage), not as a blind offload. Consider keeping AP-2e operator/Claude-supervised even if 2a–2d/2f are offloaded.
 

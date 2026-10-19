@@ -1,5 +1,7 @@
 # Local AI + Managed-Default Product Roadmap
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > **Status:** Active product direction (2026-07-31). Supersedes remote-only permanence in [ADR-011](../adrs/ADR-011-retire-on-device-recognition-remote-only.md) for *customer-facing* compute placement; does not reopen URL-derived tenanting or dual-mode probe defects that ADR-011 fixed.
 > **Source brief:** [AltContext Local AI Strategy Session Brief](../assessments/current/AltContext_Local_AI_Strategy_Session_Brief.docx) (31 Jul 2026).
 > **Canon validation:** `~/Development/heuristics-canon-research/` — rule IDs cited as `[RULE-ID]` (business-marketing, ml-systems, engineering, security).
@@ -119,7 +121,7 @@ This section is the operational heart of the doc. Each row names **what to chang
 | **FIR (YuNet/SFace commercial stack)** | "Replace buffalo for commercial SaaS only" | **Dual purpose:** commercial license for managed **and** packageable CPU-first stack for Private Worker proof. Accelerate FIR relative to GPU detours. |
 | **Context-aware description roadmap** | Hosted-only description loop | Description ships first on **managed**; local description is a later worker capability after face worker lifecycle is stable. Contract stays provider-neutral. |
 | **Privacy-hybrid / deferred sovereignty** | Post-MVP "embeddings maybe in WP" | Private Worker is the **practical sovereignty path** for privacy-sensitive buyers without rewriting WP into a vector DB. Embedding authority can still minimize remote retention. |
-| **SaaS ops / Polar / Clerk** | Meter GPU minutes as the product | Meter **hosted processing** as variable add-on; **plan price** = sites/teams/workflow/support. Free tier still needs conversion hypothesis `[BOOT-06]`. |
+| **SaaS ops / Stripe / Clerk** | Meter GPU minutes as the product | Meter **hosted processing** as variable add-on; **plan price** = sites/teams/workflow/support. Free tier still needs conversion hypothesis `[BOOT-06]`. |
 | **Plugin GPL / open source** | Fear of clone → cripple plugin | Assume plugin is copyable. Compete on pace, support, eval, integrations, trust. Keep records portable. |
 
 ### 4.4 KEEP / accelerate (aligned work — do not cancel)

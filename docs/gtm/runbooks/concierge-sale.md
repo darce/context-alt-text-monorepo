@@ -1,27 +1,29 @@
 # Concierge sale runbook (AP-7)
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 Manual sell-and-provision loop for the first paying customers. **No self-serve signup, no billing webhooks, no dashboard** — those land in AP-1..AP-5. This runbook is the week-1 revenue path.
 
 ## Prerequisites
 
 - Recognition stack reachable with the `/admin` minter DB (local, staging, or prod).
 - Operator shell in the monorepo with DSN configured for the target env.
-- Polar account (operator-manual SaaS UI) — this lane does **not** automate Polar.
+- Stripe account (operator-manual SaaS UI) — this lane does **not** automate Stripe.
 - Lead/tracking sheet (Notion/Airtable/`leads`) for post-sale records.
 
 ## End-to-end loop
 
-### 1. Create a Polar payment link
+### 1. Create a Stripe payment link
 
-In the Polar dashboard, create a **one-time** or **subscription** payment link for the agreed plan/price (typically Pro). Copy the checkout URL.
+In the Stripe dashboard, create a **one-time** or **subscription** payment link for the agreed plan/price (typically Pro). Copy the checkout URL.
 
-Do not hardcode product IDs in the repo; treat Polar as operator-owned external config.
+Do not hardcode product IDs in the repo; treat Stripe as operator-owned external config.
 
 ### 2. Personalized pitch (Move 1)
 
 Send a soft CTA with the payment link. Positioning: plan §10 Move 1 — private demo or direct offer to the warm tribe (galleries, event orgs, publishers, photographers, membership sites). Goal is paid intent, not a calendar book.
 
-### 3. On Polar payment confirmation → provision
+### 3. On Stripe payment confirmation → provision
 
 From the monorepo root (against the env that serves the customer):
 
@@ -67,7 +69,7 @@ In the tracking sheet / `leads` surface, record:
 | Label / org | `LABEL` |
 | Plan | `PLAN` |
 | Tenant id | printed `tenant_id` |
-| Polar payment | link/id + paid date |
+| Stripe payment | link/id + paid date |
 | Key status | minted (never store the raw key) |
 
 ## Plan values
@@ -103,7 +105,7 @@ Default when unset: `https://api.altcontext.com`.
 ## Out of scope (do not invent here)
 
 - Clerk signup, business DB, customer dashboard
-- Automated Polar webhooks → plan flips
+- Automated Stripe webhooks → plan flips
 - Parallel key stores or plaintext key archives (`[ARCH-02]`)
 
 ## Related

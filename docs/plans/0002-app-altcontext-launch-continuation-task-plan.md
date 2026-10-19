@@ -1,9 +1,11 @@
 # APP-1. Plan 0002 — complete app.altcontext.com launch
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 - Status: active continuation; offline landed-work reconciliation recorded 2026-09-22. This document is not a release acceptance or live-integration receipt.
 - Owner: APP-1, existing `feature/app-1` integration worktree.
 - Inspected baseline: `11fe4dea7ae1b065893aca38d215b38e7a18c23f`.
-- Supersedes the execution sequence, not APP-R1..R6 or APP-SC-01..20, in [Plan 0001](0001-app-altcontext-beta-clerk-polar-task-plan.md).
+- Supersedes the execution sequence, not APP-R1..R6 or APP-SC-01..20, in [Plan 0001](0001-app-altcontext-beta-clerk-stripe-task-plan.md).
 - Epic: [E16 SaaS foundation](../epics/v0.3.1/saas-foundation-epic.md).
 - The operator subsequently authorized remote implementation and orchestration. Use `grok-remote` / `grok-4.6` / high for implementation and `codex-remote` / `gpt-5.6-luna` / max for grunt work under the latest operator instruction. Local implementation lanes remain prohibited. Account provisioning and real integration rehearsal remain operator-dependent; live charges remain behind the paid gate.
 
@@ -15,7 +17,7 @@
 
 ## Objective
 
-An invited customer signs into app.altcontext.com with Clerk, claims one local tenant, obtains and manages a local API key, connects WordPress, produces a caption, sees accurate allowance and can later opt into Polar billing without replacing tenant or key. Complete sandbox billing before admitting the free beta. Keep live payments disabled until the separate paid gate.
+An invited customer signs into app.altcontext.com with Clerk, claims one local tenant, obtains and manages a local API key, connects WordPress, produces a caption, sees accurate allowance and can later opt into Stripe billing without replacing tenant or key. Complete sandbox billing before admitting the free beta. Keep live payments disabled until the separate paid gate.
 
 ## Recovered evidence and precedence
 
@@ -32,10 +34,10 @@ The old plan called implemented surfaces new. The billing contract now exists in
 This is a documentation-only classification. The current checkout is the source authority; the supplied landed receipts are execution evidence even when their historical SHAs or VM bundles are not resolvable here. No MCP status is changed, no credentials or accounts are provisioned, and no live provider, host, browser, or deployment evidence is implied.
 
 - W4 usage findings 15849–15852 are offline-addressed by the landed G1/G2/G3 source and receipts. The exact matrix, including residual evidence, is in [app1-offline-evidence-reconciliation-20260922.md](../assessments/current/app1-offline-evidence-reconciliation-20260922.md). A new operation remains independently chargeable even for identical bytes; a terminal ticket cannot mint work. Post-start compute failures remain conservatively chargeable under the accepted cost contract; “all failures free” is not the contract.
-- P01 enumeration and recovery are implemented in the current provider, reconciliation worker, and fenced repository. The supplied R1 receipt is green offline; the initial R1 review remains pending, and Polar sandbox/live evidence is external.
+- P01 enumeration and recovery are implemented in the current provider, reconciliation worker, and fenced repository. The supplied R1 receipt is green offline; the initial R1 review remains pending, and Stripe sandbox/live evidence is external.
 - P02's source census is complete in the 103-row route inventory. It marks `/scene/describe/multipart`, `/scene/describe/async`, and `/scene/describe/run` as `METERED` with handler-level admission sites (`docs/assessments/current/app-1-s0-route-metering-inventory.md:97-100`). The named scene test asserts that all three posts reserve usage and bind job identity (`apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py:331-358`), but does not observe reservation-versus-dispatch order; add that assertion before treating the ordering guard as complete (TEST-15). These route-level facts do not assign U ownership of terminal worker completion/settlement: P must identify those seams and grant U the exact paths before dispatch. `/roster/curation/sync` also uses durable usage admission. The inventory marks 15 high-cost paths without a per-run work/byte cap as `GAP`, including tenant-wide clustering/recovery and unbounded retention/topology operations. `PAID_ACTIVE` operator authorization and request-rate limits remain useful guards but do not cap per-call work.
 - P03 is not closed as a whole: durable checkout-attempt identity, recovery/enumeration, and full-header verifier code are landed and receipted offline, but genuine webhook sandbox compatibility remains unproven. Keep the finding open until V has that evidence.
-- P05 is split: the evaluator now fail-closes untyped/partial evidence, zero/failed/skipped JUnit, missing or mismatched parametrized cases, missing evidence-only artifacts, and release-mode partial selection. The supplied evaluator receipt is green offline; the full current manifest plus real PostgreSQL, restore, Clerk, Polar, browser, and alert/telemetry rehearsals remain V work.
+- P05 is split: the evaluator now fail-closes untyped/partial evidence, zero/failed/skipped JUnit, missing or mismatched parametrized cases, missing evidence-only artifacts, and release-mode partial selection. The supplied evaluator receipt is green offline; the full current manifest plus real PostgreSQL, restore, Clerk, Stripe, browser, and alert/telemetry rehearsals remain V work.
 - HOST-RV01 still blocks main after the host single-fix wave; no extra host fix is authorized here. N1 recovery work remains queued/running under coordinator control, B1’s remaining UI is incomplete, and user accounts are not provisioned.
 
 ## Wind-down addendum — 2026-09-22
@@ -58,12 +60,12 @@ This addendum supersedes the live-handle descriptions and stale implementation p
 - Checkout/Link portability assessment committed at `581405f99`; operator decisions recorded in handoff decision 13236. Checkout, reconcile and keys/hooks branches were bundled under `.task-state/branch-archive/` and their clean, integrated worktrees retired before new admission.
 - Billing spec checkpoint `49325e31a` integrated at `0307f770b`; evaluator checkpoint `34b2572ff` integrated at `5d5717c3f`, with 21 focused VM tests after behavioral RED. Their worktrees were bundled and retired. The evaluator review is `app1-eval-review-20260922-v2` on Luna/max.
 - Composition guard `6ecb1ce5f` integrated at `8d15cace1` with 19 focused VM tests. Its worktree is bundled and retired. Audience and authorized-party configuration are separate in composition; the second loader in `PortalAuthSettings.from_env` still requires correction.
-- Billing adapter `bbcab9a90` integrated at `3c41aef1e` with 58 focused VM tests and a formatting receipt. It supplies attempt-owned idempotency, typed checkout ID/URL, bounded recovery/enumeration and full-header signature verification. Real Polar delivery rehearsal remains outstanding. Its worktree is retained only while the existing remote review owns a live lease; no additional review is admitted.
+- Billing adapter `bbcab9a90` integrated at `3c41aef1e` with 58 focused VM tests and a formatting receipt. It supplies attempt-owned idempotency, typed checkout ID/URL, bounded recovery/enumeration and full-header signature verification. Real Stripe delivery rehearsal remains outstanding. Its worktree is retained only while the existing remote review owns a live lease; no additional review is admitted.
 - Historical active-pass snapshot: `app1-checkout-store-20260922-v2` and `app1-pretenant-auth-20260922-v1` were Grok/high VM passes with four slice worktrees. Wind-down supersedes those handles; no live implementation pass or new reviewer is claimed here.
 - Pretenant authentication is split from the full claim endpoint to run independently of checkout schema. It owns only `portal_auth.py` and two auth test files. The claim endpoint still needs an explicit durable replay outcome; the existing `claim_tenant` service returns only `PortalPrincipal`. Do not infer 201 versus 200 from a racy pre-read.
 - Codemap discovers existing symbols; its main index predates feature changes, so remote briefs require exact-source verification. Verified semantic reinjection uses `gte-base-en-v1.5`; prior art and limitations accompany dispatch.
-- The historical checkpoint said the operator would provision Clerk development and Polar sandbox credentials. They are not provisioned for this offline task; no credentials, accounts or live provider/network action is claimed. Blocker 821 still gates genuine rehearsal/release.
-- Composition now rejects known Polar host/environment mismatches and uses the sandbox default correctly. Seller-account wiring and cross-slice construction still need harmonizing verification.
+- The historical checkpoint said the operator would provision Clerk development and Stripe sandbox credentials. They are not provisioned for this offline task; no credentials, accounts or live provider/network action is claimed. Blocker 821 still gates genuine rehearsal/release.
+- Historical composition checks are not Stripe mode-isolation proof. Stripe test/live use the same API host; validate credentials, object livemode and seller namespace under the selected contract.
 - Installed Grok adapter emits `--no-subagents`; parallelism is coordinator-owned remote lanes, not nested Grok flocks. Never spoof capability or sandbox receipts. Model discovery warning does not prove the pinned model was served; record actual receipts.
 
 WorkBay `lane_dag` validates the next-stage edges below: four manifest roots, two second-layer nodes, one third-layer node; three lane-durations is a structural lower bound, not a wall-clock forecast. Billing implementation is already integrated, although its remote review still owns its tree. Planned nodes are not dispatched and have no worktrees; exact tests and claim persistence ownership must be finalized before admission.
@@ -76,7 +78,7 @@ pretenant-auth ──► claim-http ─────────┘
 eval-review (independent)
 ```
 
-The claim-to-checkout HTTP edge serializes shared `portal.py` ownership; the other edges carry interfaces or implementation prerequisites. GRPH-09 conflict coloring and GRPH-31 critical-path list scheduling justify that distinction. Keep at most four actual slice trees, including review trees. Clerk/Polar accounts gate real rehearsal after browser integration, not these offline nodes.
+The claim-to-checkout HTTP edge serializes shared `portal.py` ownership; the other edges carry interfaces or implementation prerequisites. GRPH-09 conflict coloring and GRPH-31 critical-path list scheduling justify that distinction. Keep at most four actual slice trees, including review trees. Clerk/Stripe accounts gate real rehearsal after browser integration, not these offline nodes.
 
 These are point-in-time observations. Consult MCP pass state before recovery; an RPC timeout does not prove a remote pass stopped. Use the recorded pass ID with `await_offload_pass`, never duplicate a live dispatch.
 
@@ -122,13 +124,13 @@ Own this plan, the epic's active APP-1 section, the now-present `docs/specs/app-
 - Record endpoint schemas, error/status vocabulary, verified pre-tenant identity versus tenant-bound principal, invitation claim plus beta grant transaction, and replay behavior.
 - Define durable checkout attempt lifecycle, tenant/catalog/environment binding, customer mapping, ambiguous result recovery and a new attempt after a completed/expired purchase. Pin supported vendor behavior with official documentation and sanitized sandbox fixtures before C implementation.
 - Define bounded authoritative provider enumeration, cursor/checkpoint durability, lease/fencing ownership and no network calls while holding database row locks. C owns shared schema/provider protocol; R owns processing.
-- Resolve webhook signature compatibility (APP1-HG-45) before treating internal fixtures as vendor proof. This packet does not claim the existing verifier accepts genuine Polar deliveries.
+- Resolve webhook signature compatibility (APP1-HG-45) before treating internal fixtures as vendor proof. This packet does not claim the existing verifier accepts genuine Stripe deliveries.
 - Use the refreshed route inventory, which names the HTTP handlers and admission sites for `/scene/describe/multipart`, `/scene/describe/async`, and `/scene/describe/run` (`docs/assessments/current/app-1-s0-route-metering-inventory.md:97-103`). Add a reservation-versus-dispatch order assertion to `test_three_compute_posts_reserve_before_dispatch` (`apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py:331-358`). Name the terminal worker completion/settlement seams, cancellation owner, and costly cluster/GPU control owners, then grant U the exact remaining paths before dispatch. Free polling does not consume image allowance.
 - Resolve the remaining stale inherited dispositions and one-time ownership of app mount, composition, migration and contract files. The latest user-requested harmonizing gate supersedes the older request for a clean planning review before dispatch; the coordinator records gate state. No blanket S0 redispatch.
 
 ### C — checkout, provider and shared schema
 
-Existing anchors: `recognition/infrastructure/billing/polar_provider.py:PolarBillingProvider.create_checkout_session`, `_checkout_idempotency_key`; `recognition/domain/portal_contracts.py:BillingProvider`; `db/models/portal_billing.py`; `db/migrations/versions/001_identity_schema.py`.
+Existing anchors: `historical BillingProvider adapter (not Stripe evidence):BillingProvider.create_checkout_session`, `_checkout_idempotency_key`; `recognition/domain/portal_contracts.py:BillingProvider`; `db/models/portal_billing.py`; `db/migrations/versions/001_identity_schema.py`.
 
 New surfaces: `recognition/application/services/checkout_service.py`, `recognition/infrastructure/repositories/checkout_attempt_repository.py`. Add durable attempt and R's agreed cursor/lease storage in the existing schema authority, with safe upgrades for existing installations. Preserve the pre-tenant API-key lookup boundary when deciding HG-61; do not blindly add RLS that breaks credential authentication.
 
@@ -180,7 +182,7 @@ Own `scripts/run_app_portal_evals.py:run_evals`, its tests, APP-1 eval manifest 
 
 First prove missing artifacts, zero cases, skipped mandatory cases, failed child commands and omitted required cases cannot produce a passing release record. Then run the full declared testpaths with `ACX_STRICT_GATE=1`, `ACX_PORTAL_TESTS_REQUIRE_PG=1`, locked dev environment and fresh JUnit, without positional narrowing. Keep red and green evidence, SHA, count, exit status and artifact identity.
 
-Require real PostgreSQL RLS/concurrency under a non-owner role; reset-role denial; off-host restore preserving revoked keys and cutoff; uncertain recovery tail stays closed; billing reconciliation before paid traffic; alert delivery and telemetry privacy; actual Clerk/Polar sandbox rehearsal; two-tenant browser-to-WordPress first-caption journey. Retain original Plan 0001 APP-SC-01..18 coverage. APP-SC-19 is cohort observation after admission, not a pre-admission unit test. APP-SC-20 is the separately authorized paid canary.
+Require real PostgreSQL RLS/concurrency under a non-owner role; reset-role denial; off-host restore preserving revoked keys and cutoff; uncertain recovery tail stays closed; billing reconciliation before paid traffic; alert delivery and telemetry privacy; actual Clerk/Stripe sandbox rehearsal; two-tenant browser-to-WordPress first-caption journey. Retain original Plan 0001 APP-SC-01..18 coverage. APP-SC-19 is cohort observation after admission, not a pre-admission unit test. APP-SC-20 is the separately authorized paid canary.
 
 ## Deferred-finding ownership crosswalk
 

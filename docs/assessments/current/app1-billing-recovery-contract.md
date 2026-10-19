@@ -1,17 +1,19 @@
 # APP-1 C0 billing recovery contract
 
-Date: 2026-09-22. Status: implemented C0 contract/persistence. Not R1, not live Polar, not N1 writer wiring.
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
+Date: 2026-09-22. Status: implemented C0 contract/persistence. Not R1, not live Stripe, not N1 writer wiring.
 
 This document is the handoff surface for R1 and namespace N1. It distinguishes **implemented C0** from **future consumers**. Current typed `BillingProvider` methods remain authority. `create_checkout_session` and `EnumerationPage(items, next_cursor, exhausted)` construction are preserved.
 
-Rules used: DDIA ch7/8/11 (atomic lease txn, fencing, idempotent sinks); RES-01/RES-02 (idempotent item progress, bounded failure); DATA-03 (migration/model parity); PERF-13 (page limit 50 vs Polar 100); GRPH-09/GRPH-31 (disjoint C0 vs R1 ownership; no lock across vendor I/O).
+Rules used: DDIA ch7/8/11 (atomic lease txn, fencing, idempotent sinks); RES-01/RES-02 (idempotent item progress, bounded failure); DATA-03 (migration/model parity); PERF-13 (page limit 50 vs Stripe 100); GRPH-09/GRPH-31 (disjoint C0 vs R1 ownership; no lock across vendor I/O).
 
 ## Implemented now (C0)
 
 Owned paths only:
 
 - `recognition/domain/portal_contracts.py` — types, bounds, `BillingProvider`, `BillingReconciliationRepository` protocol
-- `recognition/infrastructure/billing/polar_provider.py` — typed page observations; no silent drop
+- `historical BillingProvider adapter (receipt is not Stripe proof)` — typed page observations; no silent drop
 - `db/models/portal_billing.py` — cursor/quarantine/progress models; nullable inbox/projection namespace columns
 - `db/migrations/versions/001_identity_schema.py` — fresh+heal tables, operator-scope RLS, additive namespace columns
 - `recognition/infrastructure/repositories/billing_reconciliation_repository.py` — fenced persistence
@@ -22,7 +24,7 @@ Not implemented here, and not to be inferred as shipped:
 - `scripts/billing_reconcile.py` (R1)
 - `billing_repository.py`, webhook router, entitlement service, portal composition
 - known-projection / inbox item leases
-- Polar sandbox or live vendor evidence
+- Stripe sandbox or live vendor evidence
 - namespace isolation on existing inbox/projection uniqueness
 
 ## Exact caller signatures
@@ -108,7 +110,7 @@ Checkout uniqueness (already landed, asserted by C0 tests): two distinct contrac
 
 | Consumer | May start after C0 | Must not do |
 | --- | --- | --- |
-| **R1** worker | Consume signatures above; lease, commit, enumerate/retrieve, per-item complete/quarantine, then advance; non-zero `--once` if no `last_progress_at` / exhausted cursor | Edit C0 schema/repository; hold DB lock across Polar; invent tenant from email; grant paid from retry |
+| **R1** worker | Consume signatures above; lease, commit, enumerate/retrieve, per-item complete/quarantine, then advance; non-zero `--once` if no `last_progress_at` / exhausted cursor | Edit C0 schema/repository; hold DB lock across Stripe; invent tenant from email; grant paid from retry |
 | **N1** | Namespace writer/reader + uniqueness after audited mapping | Guess legacy environment/seller; silently break known projection reads |
 | **K / H / U** | Unchanged inbox/projection reads | Treat nullable namespace columns as authoritative |
-| **V** | Later Polar sandbox | Treat C0 fake-provider tests as live vendor evidence |
+| **V** | Later Stripe sandbox | Treat C0 fake-provider tests as live vendor evidence |

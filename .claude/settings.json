@@ -54,6 +54,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-bash-remote-gate-routing.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Bash|Grep|Glob",
         "hooks": [
           {
@@ -229,6 +239,99 @@
           }
         ]
       }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(git push *)",
+      "Bash(make task-finish *)",
+      "Bash(git branch -D *)",
+      "Bash(git worktree remove *)",
+      "Bash(git reset --hard *)",
+      "Bash(make lane-reap *)"
+    ],
+    "ask": [
+      "Bash(make release-* *)",
+      "Bash(scripts/release.sh *)",
+      "Bash(make slice-start *)",
+      "mcp__workbay-handoff-mcp__archive",
+      "mcp__workbay-handoff-mcp__import_handoff_state",
+      "mcp__workbay-handoff-mcp__set_handoff_state"
+    ],
+    "allow": [
+      "mcp__workbay-handoff-mcp__get_handoff_state",
+      "mcp__workbay-handoff-mcp__integrity_check",
+      "mcp__workbay-handoff-mcp__export_handoff_state",
+      "mcp__workbay-handoff-mcp__get_verified_tests",
+      "mcp__workbay-handoff-mcp__load_session",
+      "mcp__workbay-handoff-mcp__audit_decision_ids",
+      "mcp__workbay-handoff-mcp__list_handoff_rows",
+      "mcp__workbay-handoff-mcp__validate",
+      "mcp__workbay-handoff-mcp__search_handoff",
+      "mcp__workbay-handoff-mcp__find_related_prior_work",
+      "mcp__workbay-handoff-mcp__list_tool_domains",
+      "mcp__workbay-handoff-mcp__record_event",
+      "mcp__workbay-handoff-mcp__review_findings",
+      "mcp__workbay-handoff-mcp__close_slice",
+      "mcp__workbay-orchestrator-mcp__get_latest_slice_review_packet",
+      "mcp__workbay-orchestrator-mcp__get_review_findings_summary",
+      "mcp__workbay-orchestrator-mcp__list_worktree_lanes",
+      "mcp__workbay-orchestrator-mcp__get_lane_activity",
+      "mcp__workbay-orchestrator-mcp__list_lane_messages",
+      "mcp__workbay-orchestrator-mcp__list_lane_briefs",
+      "mcp__workbay-orchestrator-mcp__list_worker_reports",
+      "mcp__workbay-orchestrator-mcp__get_plan_cursor",
+      "mcp__workbay-orchestrator-mcp__list_plan_cursors",
+      "mcp__workbay-orchestrator-mcp__list_turn_metrics",
+      "mcp__workbay-orchestrator-mcp__get_turn_metrics_summary",
+      "mcp__workbay-orchestrator-mcp__orchestrator_status",
+      "mcp__workbay-orchestrator-mcp__worker_status",
+      "mcp__workbay-orchestrator-mcp__worker_event_history",
+      "mcp__workbay-orchestrator-mcp__list_available_backends",
+      "mcp__workbay-orchestrator-mcp__lane_dag",
+      "mcp__workbay-orchestrator-mcp__get_metrics_summary",
+      "mcp__workbay-orchestrator-mcp__list_tool_domains",
+      "Bash(make context)",
+      "Bash(make tasks)",
+      "Bash(make slice-commit)",
+      "Bash(make check-agent-workflows)",
+      "Bash(make check-all)",
+      "Bash(make check-bootstrap)",
+      "Bash(make check-claude-settings-pin)",
+      "Bash(make check-consumer-install)",
+      "Bash(make check-dev-editables)",
+      "Bash(make check-disk-space)",
+      "Bash(make check-duplicate-test-basenames)",
+      "Bash(make check-git-overlay-install)",
+      "Bash(make check-handoff)",
+      "Bash(make check-harness-coherence)",
+      "Bash(make check-harness-sync)",
+      "Bash(make check-hook-twin-parity)",
+      "Bash(make check-hooks)",
+      "Bash(make check-legacy-overlay-guard)",
+      "Bash(make check-make-version)",
+      "Bash(make check-mcp-pins)",
+      "Bash(make check-overlay-drift)",
+      "Bash(make check-overlay-gates)",
+      "Bash(make check-protocol)",
+      "Bash(make check-release-manifest)",
+      "Bash(make check-release-tag-provenance)",
+      "Bash(make check-release-version-drift)",
+      "Bash(make check-remote)",
+      "Bash(make check-review-pipeline)",
+      "Bash(make check-runtime-state)",
+      "Bash(make check-system)",
+      "Bash(make check-system-integration)",
+      "Bash(make check-telemetry-fresh)",
+      "Bash(make check-uvlock-current)",
+      "Bash(make check-workbay)",
+      "Bash(make test-bridge)",
+      "Bash(make test-contract)",
+      "Bash(make test-handoff)",
+      "Bash(make test-orchestrator)",
+      "Bash(make test-rehearsal)",
+      "Bash(make test-tier-e2e)",
+      "Bash(make test-tier-fast)"
     ]
   }
 }

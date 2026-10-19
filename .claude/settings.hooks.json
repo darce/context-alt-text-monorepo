@@ -42,6 +42,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-bash-remote-gate-routing.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Bash|Grep|Glob",
         "hooks": [
           {

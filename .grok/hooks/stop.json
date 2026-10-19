@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "_managed_by": "workbay-bootstrap",
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"{{consumer_root}}/scripts/hooks/compact-session.py\"",
+            "env": {
+              "WORKBAY_HANDOFF_HARNESS": "grok"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

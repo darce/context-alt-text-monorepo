@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Admin\DashboardPage;
-use AltContext\Admin\DescriptionHistoryPage;
 use AltContext\Admin\Menu;
 use AltContext\Admin\RetentionPage;
 use AltContext\Admin\RosterPage;
@@ -43,7 +42,6 @@ class MenuTest extends TestCase
                 ['alt-context-dashboard', 'Overview'],
                 ['alt-context-workbench', 'Review Queue'],
                 ['alt-context-roster', 'People'],
-                ['alt-context-description-history', 'Description Runs'],
                 ['alt-context-settings', 'Settings'],
             ],
             $menuItems
@@ -56,16 +54,13 @@ class MenuTest extends TestCase
         $workbenchPage = new WorkbenchPage();
         $rosterPage = new RosterPage();
         $settingsPage = new SettingsPage();
-        $descriptionHistoryPage = new DescriptionHistoryPage();
         $retentionPage = new RetentionPage();
 
         $menu = new Menu(
             $dashboardPage,
             $workbenchPage,
             $rosterPage,
-            $settingsPage,
-            $descriptionHistoryPage,
-            $retentionPage
+            $settingsPage
         );
 
         $menu->register_menu();
@@ -74,7 +69,6 @@ class MenuTest extends TestCase
             'alt-context-dashboard' => $dashboardPage,
             'alt-context-workbench' => $workbenchPage,
             'alt-context-roster' => $rosterPage,
-            'alt-context-description-history' => $descriptionHistoryPage,
             'alt-context-settings' => $settingsPage,
         ];
 
@@ -101,31 +95,27 @@ class MenuTest extends TestCase
         }
     }
 
-    public function testRegistersDescriptionHistorySubmenu(): void
+    public function testHistoryMenuIsRetiredAndItsOldUrlRedirectsToImageReview(): void
     {
-        $menu = new Menu(
-            new DashboardPage(),
-            new WorkbenchPage(),
-            new RosterPage(),
-            new SettingsPage()
-        );
-
+        $menu = new class (new DashboardPage(), new WorkbenchPage(), new RosterPage(), new SettingsPage()) extends Menu {
+            public bool $terminated = false;
+            protected function terminate(): void { $this->terminated = true; }
+        };
         $menu->register_menu();
+        self::assertNotContains('alt-context-description-history', array_column($GLOBALS['__ac_submenu_pages'], 'menu_slug'));
+        $_GET['page'] = 'alt-context-description-history';
+        $menu->render_description_history_page();
+        unset($_GET['page']);
+        self::assertSame('/wp-admin/admin.php?page=alt-context-workbench', $GLOBALS['__ac_safe_redirect']['location'] ?? null);
+        self::assertTrue($menu->terminated);
+    }
 
-        $historyPage = null;
-        foreach ($GLOBALS['__ac_submenu_pages'] as $page) {
-            if (($page['menu_slug'] ?? null) === 'alt-context-description-history') {
-                $historyPage = $page;
-                break;
-            }
-        }
-
-        $this->assertIsArray($historyPage);
-        $this->assertSame('alt-context-dashboard', $historyPage['parent_slug'] ?? null);
-        $this->assertSame('Description Runs', $historyPage['menu_title'] ?? null);
-        $this->assertSame('manage_options', $historyPage['capability'] ?? null);
-        $this->assertIsArray($historyPage['callback'] ?? null);
-        $this->assertSame('render_description_history_page', $historyPage['callback'][1] ?? null);
+    public function testHistoryRedirectRunsBeforeWordPressChecksRemovedPageAccess(): void
+    {
+        $menu = new Menu(new DashboardPage(), new WorkbenchPage(), new RosterPage(), new SettingsPage());
+        $menu->init();
+        $earlyCallbacks = array_column($GLOBALS['__ac_actions']['admin_menu'][0] ?? [], 'callback');
+        self::assertContains([$menu, 'render_description_history_page'], $earlyCallbacks);
     }
 
     public function testSubmenusAreMeceFrequencyOrderedAndCapabilityStable(): void
@@ -133,9 +123,9 @@ class MenuTest extends TestCase
         $this->assertTrue(defined(Menu::class . '::SUBMENU_IA'));
 
         $goals = array_column(Menu::SUBMENU_IA, 'goal');
-        $this->assertCount(5, Menu::SUBMENU_IA);
+        $this->assertCount(4, Menu::SUBMENU_IA);
         $this->assertSame(
-            ['Overview', 'Review Queue', 'People', 'Description Runs', 'Settings'],
+            ['Overview', 'Review Queue', 'People', 'Settings'],
             array_column(Menu::SUBMENU_IA, 'menu_title')
         );
         $this->assertSame($goals, array_unique($goals), 'Each submenu must own exactly one user goal (NAV-05).');
@@ -148,7 +138,7 @@ class MenuTest extends TestCase
         $this->assertSame('alt-context-dashboard', $byGoal['orient']);
         $this->assertSame('alt-context-workbench', $byGoal['name_person']);
         $this->assertSame('alt-context-roster', $byGoal['manage_named_people']);
-        $this->assertSame('alt-context-description-history', $byGoal['see_description_history']);
+        $this->assertArrayNotHasKey('see_description_history', $byGoal);
         $this->assertSame('alt-context-settings', $byGoal['configure_service']);
         $this->assertArrayNotHasKey('control_data_lifecycle', $byGoal);
 

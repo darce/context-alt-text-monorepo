@@ -23,9 +23,6 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-vi.mock('../BulkDescribeReviewLink', () => ({
-  BulkDescribeReviewLink: () => null,
-}));
 
 const idleProgress = {
   status: null,
@@ -62,9 +59,7 @@ const baseProps = () => ({
 
 const describedTargets = (button: HTMLElement): HTMLElement[] => {
   const ids = (button.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
-  return ids
-    .map((id) => document.getElementById(id))
-    .filter((node): node is HTMLElement => node !== null);
+  return ids.map((id) => document.getElementById(id)).filter((node): node is HTMLElement => node !== null);
 };
 
 describe('BulkDescribeCta recognition disclosure (HAI-04 / HAI-05 / RLSE-04)', () => {
@@ -78,11 +73,19 @@ describe('BulkDescribeCta recognition disclosure (HAI-04 / HAI-05 / RLSE-04)', (
     expect(screen.getByRole('button', { name: 'Describe 3 selected' })).toBeInTheDocument();
   });
 
+  it('explains that an empty selection has no estimate rather than implying no credits', () => {
+    render(<BulkDescribeCta {...baseProps()} selectedCount={0} recognitionPolicy={RECOGNITION_POLICY.ON} />);
+    expect(screen.getByText(/Select images to see the estimated description cost/)).toBeInTheDocument();
+    expect(screen.queryByText(/~0 credits/)).not.toBeInTheDocument();
+  });
+
   it('discloses ON wording, credits, and a Settings off-ramp when recognition is known on', () => {
     render(<BulkDescribeCta {...baseProps()} selectedCount={12} recognitionPolicy={RECOGNITION_POLICY.ON} />);
 
     const disclosure = screen.getByText(/Identifies people first \(AI\)/);
-    expect(disclosure).toHaveTextContent('Identifies people first (AI) · ~12 credits · Turn off in Settings');
+    expect(disclosure).toHaveTextContent(
+      'Identifies people first (AI) · Estimated description cost: ~12 credits · Turn off in Settings',
+    );
     const settings = screen.getByRole('link', { name: 'Settings' });
     expect(settings).toHaveAttribute('href', '#/settings');
     expect(disclosure).toContainElement(settings);
@@ -98,8 +101,7 @@ describe('BulkDescribeCta recognition disclosure (HAI-04 / HAI-05 / RLSE-04)', (
     expect(disclosure).toContainElement(controls);
     expect(controls).toHaveAttribute('href', '#/settings');
     expect(screen.getAllByRole('link', { name: 'Settings' })).toHaveLength(1);
-    expect(describedTargets(screen.getByRole('button', { name: 'Describe 2 selected' })))
-      .not.toContain(disclosure);
+    expect(describedTargets(screen.getByRole('button', { name: 'Describe 2 selected' }))).not.toContain(disclosure);
     expect(disclosure.closest('[aria-live], [role="status"]')).toBeNull();
   });
 
@@ -107,7 +109,7 @@ describe('BulkDescribeCta recognition disclosure (HAI-04 / HAI-05 / RLSE-04)', (
     render(<BulkDescribeCta {...baseProps()} selectedCount={4} recognitionPolicy={RECOGNITION_POLICY.OFF} />);
 
     expect(
-      screen.getByText('People are not identified (recognition off) · ~4 credits'),
+      screen.getByText('People are not identified (recognition off) · Estimated description cost: ~4 credits'),
     ).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
   });
@@ -118,9 +120,7 @@ describe('BulkDescribeCta recognition disclosure (HAI-04 / HAI-05 / RLSE-04)', (
     const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     const targets = describedTargets(button);
     expect(targets.length).toBeGreaterThan(0);
-    expect(targets.some((node) => node.textContent?.includes('Identifies people first (AI)'))).toBe(
-      true,
-    );
+    expect(targets.some((node) => node.textContent?.includes('Identifies people first (AI)'))).toBe(true);
   });
 
   it('does not claim recognition is off while the policy is unknown', () => {
@@ -145,20 +145,12 @@ describe('BulkDescribeCta recognition disclosure — settings probe failed', () 
   });
 
   it('names the degradation instead of claiming it is still checking', () => {
-    render(
-      <BulkDescribeCta
-        {...baseProps()}
-        selectedCount={7}
-        recognitionPolicy={RECOGNITION_POLICY.UNAVAILABLE}
-      />,
-    );
+    render(<BulkDescribeCta {...baseProps()} selectedCount={7} recognitionPolicy={RECOGNITION_POLICY.UNAVAILABLE} />);
 
     // TWO surfaces carry the copy: the describing node and the announcing region
     // (WBUX6-W4-B-02). Exactly two — a third would mean a duplicated surface.
     expect(
-      screen.getAllByText(
-        /Recognition settings unavailable — describing without identifying people · ~7 credits/,
-      ),
+      screen.getAllByText(/Recognition settings unavailable — describing without identifying people · ~7 credits/),
     ).toHaveLength(2);
     // The unbounded-wait wording must be gone; that is the whole regression.
     expect(screen.queryByText(/Checking recognition settings/)).not.toBeInTheDocument();
@@ -171,9 +163,7 @@ describe('BulkDescribeCta recognition disclosure — settings probe failed', () 
 
     const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     expect(
-      describedTargets(button).some((node) =>
-        node.textContent?.includes('Recognition settings unavailable'),
-      ),
+      describedTargets(button).some((node) => node.textContent?.includes('Recognition settings unavailable')),
     ).toBe(true);
   });
 });
@@ -203,13 +193,7 @@ describe('degraded-recognition notice: describe and announce are different nodes
   };
 
   it('mirrors the copy into a polite live region that is NOT the describedby target', () => {
-    render(
-      <BulkDescribeCta
-        {...baseProps()}
-        selectedCount={7}
-        recognitionPolicy={RECOGNITION_POLICY.UNAVAILABLE}
-      />,
-    );
+    render(<BulkDescribeCta {...baseProps()} selectedCount={7} recognitionPolicy={RECOGNITION_POLICY.UNAVAILABLE} />);
 
     const { describedIds, describing, announcing } = degradedNodes();
     expect(describing).toBeDefined();
@@ -228,13 +212,7 @@ describe('degraded-recognition notice: describe and announce are different nodes
   });
 
   it('mirrors the SAME string, so the two surfaces cannot drift apart', () => {
-    render(
-      <BulkDescribeCta
-        {...baseProps()}
-        selectedCount={7}
-        recognitionPolicy={RECOGNITION_POLICY.UNAVAILABLE}
-      />,
-    );
+    render(<BulkDescribeCta {...baseProps()} selectedCount={7} recognitionPolicy={RECOGNITION_POLICY.UNAVAILABLE} />);
 
     const { describing, announcing } = degradedNodes();
     expect(describing?.textContent?.trim()).toBe(announcing[0].textContent?.trim());
@@ -244,22 +222,14 @@ describe('degraded-recognition notice: describe and announce are different nodes
   });
 
   it('announces nothing in the resolved states — only the degradation is announced', () => {
-    for (const policy of [
-      RECOGNITION_POLICY.ON,
-      RECOGNITION_POLICY.OFF,
-      RECOGNITION_POLICY.LOADING,
-    ]) {
+    for (const policy of [RECOGNITION_POLICY.ON, RECOGNITION_POLICY.OFF, RECOGNITION_POLICY.LOADING]) {
       const { unmount } = render(<BulkDescribeCta {...baseProps()} recognitionPolicy={policy} />);
       expect(
-        screen
-          .getAllByRole('status')
-          .some((node) => node.textContent?.includes('Recognition settings unavailable')),
+        screen.getAllByRole('status').some((node) => node.textContent?.includes('Recognition settings unavailable')),
       ).toBe(false);
       // "Checking recognition settings…" must stay a DESCRIPTION, never an announcement.
       expect(
-        screen
-          .getAllByRole('status')
-          .some((node) => node.textContent?.includes('Checking recognition settings')),
+        screen.getAllByRole('status').some((node) => node.textContent?.includes('Checking recognition settings')),
       ).toBe(false);
       unmount();
     }

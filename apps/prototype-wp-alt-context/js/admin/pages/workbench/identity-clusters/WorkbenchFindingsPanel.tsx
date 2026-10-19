@@ -509,10 +509,10 @@ export const WorkbenchFindingsPanel = ({
       {!hasFindings && !repairPending && !isAssignmentError && (
         <EmptyState
           variant={EmptyStateVariant.EMPTY}
-          heading={__('No findings yet', 'alt-context')}
-          body={__('Run a scan and new findings will appear here automatically.', 'alt-context')}
-          announcement={__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
-          action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+            heading={__('No recognition suggestions to review', 'alt-context')}
+            body={__('Recognized people appear beside each image. Description drafts are separate results in the media library.', 'alt-context')}
+            announcement={__('No recognition suggestions to review. Description drafts are separate results in the media library.', 'alt-context')}
+            action={{ label: __('Choose images', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
           onActivate={() => {
             queueMicrotask(() => {
               document.getElementById('acx-workbench-scan-heading')?.focus();

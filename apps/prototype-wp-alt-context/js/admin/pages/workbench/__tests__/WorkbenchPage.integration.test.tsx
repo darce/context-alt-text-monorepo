@@ -737,7 +737,7 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     // Initial paint: queues are empty and the panel says so explicitly.
     expect(
-      await screen.findByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      await screen.findByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).toBeInTheDocument();
 
     // The projected results become available server-side only now.
@@ -794,7 +794,7 @@ describe('WorkbenchPage (integration-lite)', () => {
     expect(await screen.findByText('1 unlabeled group')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeEnabled();
     expect(
-      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      screen.queryByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).not.toBeInTheDocument();
   });
 

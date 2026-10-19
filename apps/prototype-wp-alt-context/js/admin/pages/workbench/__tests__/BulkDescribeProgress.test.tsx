@@ -16,9 +16,6 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-vi.mock('../BulkDescribeReviewLink', () => ({
-  BulkDescribeReviewLink: () => null,
-}));
 
 const PAUSED_LABEL = 'Waiting for the service — progress updates paused.';
 const COUNTDOWN_SELECTOR = '.acx-media-selection__bulk-describe-countdown';

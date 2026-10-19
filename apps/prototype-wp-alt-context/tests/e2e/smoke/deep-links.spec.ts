@@ -11,10 +11,6 @@ import { getAcxAdminHashUrl, getAcxAdminRouteUrlWithParams } from '../fixtures/a
 import { requireBaseUrl } from '../fixtures/axe';
 
 const WORKBENCH_SHELL = '.acx-workbench';
-/** Apply-view section chrome (DescribeRunApplyView) — discriminating vs list. */
-const RUN_APPLY_SECTION = 'section.acx-run-apply';
-/** List chrome present only on the full history list surface. */
-const HISTORY_LIST = '.acx-history__list';
 
 const openHash = async (page: Page, baseURL: string, slug: Parameters<typeof getAcxAdminHashUrl>[1], hashHref: string) => {
   const url = getAcxAdminHashUrl(baseURL, slug, hashHref);
@@ -33,21 +29,16 @@ test('workbench status=missing deep-link via contract builder lands filter activ
   await expect(page.getByRole('combobox', { name: 'Status' })).toContainText('Missing alt text');
 });
 
-test('description-history run= deep-link via contract builder lands apply surface', async ({
+test('description run deep-link lands per-image Workbench review', async ({
   page,
   baseURL,
 }) => {
   const base = requireBaseUrl(baseURL);
-  // Synthetic run id — surface must still switch into the apply view chrome.
-  await openHash(page, base, 'alt-context-description-history', toDescriptionHistoryRun('e21-10-deep-link'));
-  await expect(page).toHaveURL(/page=alt-context-description-history/);
-  await expect(page).toHaveURL(/#\/description-history\?run=/);
-  // Discriminating apply-view chrome (not the history list).
-  await expect(page.getByRole('heading', { name: /Apply generated descriptions/i })).toBeVisible();
-  await expect(page.locator(RUN_APPLY_SECTION)).toBeVisible();
-  await expect(page.getByRole('link', { name: /Back to full history/i })).toBeVisible();
-  // List chrome must be absent on the run-scoped apply surface.
-  await expect(page.locator(HISTORY_LIST)).toHaveCount(0);
+  await openHash(page, base, 'alt-context-workbench', toDescriptionHistoryRun('e21-10-deep-link'));
+  await expect(page).toHaveURL(/page=alt-context-workbench/);
+  await expect(page).toHaveURL(/#\/workbench\?hasDraft=1&run=/);
+  await expect(page.locator(WORKBENCH_SHELL)).toBeVisible();
+  await expect(page.locator('.acx-history__list')).toHaveCount(0);
 });
 
 

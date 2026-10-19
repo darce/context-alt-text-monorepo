@@ -159,7 +159,8 @@ export const toRosterPerson = (personUuid: string): string => {
   return href(ROUTE.roster, params);
 };
 
-export const toDescriptionHistory = (): string => href(ROUTE.descriptionHistory);
+/** Compatibility helper: description review now lives beside each image. */
+export const toDescriptionHistory = (): string => href(ROUTE.workbench);
 
 export const toGuidedPrototype = (): string => href(ROUTE.guidedPrototype);
 
@@ -186,12 +187,12 @@ export const serializeRunParam = (runId: string | null | undefined): string | nu
 
 /** Deep-link to a description-history apply view; empty/whitespace ids omit `run` (list). */
 export const toDescriptionHistoryRun = (runId: string): string => {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ hasDraft: '1' });
   const serialized = serializeRunParam(runId);
   if (serialized !== null) {
     params.set(APP_LINK_PARAMS.run, serialized);
   }
-  return href(ROUTE.descriptionHistory, params);
+  return href(ROUTE.workbench, params);
 };
 
 // ── Folded from workbenchOverlayLinks (deleted; single owner) ─────────────

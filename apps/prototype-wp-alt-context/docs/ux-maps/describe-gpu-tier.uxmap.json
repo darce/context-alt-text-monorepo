@@ -1,7 +1,7 @@
 {
   "map_ref": "describe-gpu-tier",
   "product": "alt-context WP plugin admin SPA — describe run GPU tier + lifecycle state",
-  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/QueueDraftCell.tsx",
   "goals": [
     "Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).",
     "A cold GPU start (~90–100 s measured, VLM-3B decision 2266) is a bounded, cancellable wait, never a silent hang (INT-08, CARD-09).",
@@ -57,7 +57,7 @@
         },
         {
           "id": "z-review-link",
-          "label": "Review & apply drafts link — Hidden until the run is terminal; terminal runs link to #/description-history?run=<id>, regardless of item tier.",
+          "label": "Review & apply drafts link — Hidden until the run is terminal; terminal runs link to #/workbench?hasDraft=1&run=<id>, regardless of item tier.",
           "role": "nav",
           "states": ["default", "empty", "degraded"]
         }
@@ -66,19 +66,19 @@
     {
       "id": "describe-run-apply",
       "kind": "screen",
-      "title": "Description History › Review & apply",
-      "purpose": "Review per-item drafts, see tier per item, apply to media. The canonical Description History route selects the run with the run query parameter; Back to full history clears that selection. Run phases: all-final = default; loading = loading; no items = empty; partial-provisional = degraded. Serves job `gpu-tier-awareness`.",
-      "route": "#/description-history?run=<id>",
+      "title": "Media library description review › Review & apply",
+      "purpose": "Review, edit and explicitly approve each image draft beside saved alt text. The run query parameter previews that run; the visible version chooser selects previous descriptions. Loading = loading; no drafts = empty; unavailable history = error or degraded. No selection saves automatically. Serves job `gpu-tier-awareness`.",
+      "route": "#/workbench?hasDraft=1&run=<id>",
       "job_entry": false,
       "deep_link": true,
       "url_params": ["run"],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/QueueDraftCell.tsx",
       "primary_action_id": "apply-descriptions",
       "states": ["default", "loading", "empty", "error", "degraded"],
       "zones": [
         {
           "id": "z-item-tier-badge",
-          "label": "Per-item compute tier text, separate from naming provenance, in safe, overwrite, history-completion and no-draft rows: final_gpu = Final (GPU); provisional_cpu = Provisional (CPU); null or unrecognized = Unknown. Failure status does not determine tier.",
+          "label": "Per-image draft and saved-alt distinction, with version run/time provenance. Run result tier and naming provenance remain in the existing result API; this row does not infer a tier from failure status.",
           "role": "status",
           "evidence_linked": true,
           "states": ["default", "error", "degraded"]
@@ -184,8 +184,8 @@
     },
     {
       "id": "apply-descriptions",
-      "verb": "Apply",
-      "target": "POST describe/run/:id/apply",
+      "verb": "Accept draft",
+      "target": "POST description/correct for one media item",
       "hierarchy": "primary",
       "costly": false,
       "irreversible": false,
@@ -241,7 +241,7 @@
         },
         {
           "screen_id": "describe-run-apply",
-          "branch_label": "Review per-item compute tiers and separate naming badges; apply safe drafts, explicitly select overwrites, or back out to #/description-history"
+          "branch_label": "Review each image draft, preview an earlier version, edit or explicitly accept; saved alt text changes only on approval"
         }
       ]
     },

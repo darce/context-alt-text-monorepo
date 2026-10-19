@@ -234,3 +234,33 @@ def test_preview_rejects_evidence_outside_tenant_run(monkeypatch):
             },
         )
         assert response.status_code == 400
+
+
+def test_suppressed_second_person_still_blocks_ungrounded_substitution(monkeypatch):
+    _install_faces(monkeypatch, label="Ada")
+    withheld_id, withheld_roster = uuid.uuid4(), uuid.uuid4()
+
+    async def confirmed(*args, **kwargs):
+        return [
+            ConfirmedFace(FACE_ID, CLUSTER_ID, ROSTER_ID, "Ada", 0.99, BOX),
+            ConfirmedFace(
+                withheld_id, uuid.uuid4(), withheld_roster, "Withheld", 0.99, NormalizedBox(0.5, 0.1, 0.1, 0.1)
+            ),
+        ]
+
+    async def suppressed(*args, **kwargs):
+        return frozenset([withheld_roster])
+
+    async def detected(*args, **kwargs):
+        return [SimpleNamespace(identity_id=f.identity_id, box=f.box) for f in await confirmed()]
+
+    monkeypatch.setattr(naming_preview_service, "load_confirmed_faces", confirmed)
+    monkeypatch.setattr(naming_preview_service, "load_suppressed_roster_ids", suppressed)
+    monkeypatch.setattr(join, "load_detected_faces", detected)
+    with _client() as (client, sf):
+        run_id = _seed(sf, stored=GENERIC, basis={**BASE, "phrase_boxes": []})
+        response = client.get(f"/scene/describe/run/{run_id}/items")
+        assert response.status_code == 200, response.text
+        item = response.json()["items"][0]
+        assert item["alt_text_draft"] == GENERIC
+        assert item["provenance"]["naming"]["status"] == "ambiguous_grounding"

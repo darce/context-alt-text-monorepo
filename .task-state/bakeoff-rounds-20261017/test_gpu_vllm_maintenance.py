@@ -15,6 +15,14 @@ loader = importlib.util.spec_from_file_location('maintenance', HERE / 'gpu_vllm_
 m = importlib.util.module_from_spec(loader)
 loader.loader.exec_module(m)
 OP = '12345678-1234-4234-8234-123456789abc'
+# Literal fields from references/actual-docker-producer.json (MCP19207).
+# Keep the captured stdout/stderr bytes, including trailing newlines, standalone.
+OBSERVED_MISSING = {
+    'returncode': 1,
+    'stdout': '[]\n',
+    'stderr': 'error: no such object: wb-bake-minicpm45-058c78d4a8ad480a8c787b870e805f8e\n',
+    'requested_name': 'wb-bake-minicpm45-058c78d4a8ad480a8c787b870e805f8e',
+}
 
 
 def original():
@@ -35,6 +43,7 @@ class Fake:
         self.fail_start = False
         self.fail_restore = False
         self.now = 0
+        self.image = {'Id': m.CANDIDATE_IMAGE, 'RepoDigests': [m.CANDIDATE_REF]}
 
     def clock(self):
         return self.now
@@ -47,7 +56,7 @@ class Fake:
         self.calls.append((list(args), env))
         rc, out, err = 0, '', ''
         if args[:3] == ['docker', 'image', 'inspect']:
-            out = json.dumps([{'Id': m.CANDIDATE_IMAGE, 'RepoDigests': [m.CANDIDATE_REF]}])
+            out = json.dumps([self.image])
         elif args[:2] == ['docker', 'inspect']:
             obj = self.old if args[2] == 'acx-gpu-vlm' else self.candidate
             if obj is None:
@@ -57,7 +66,9 @@ class Fake:
         elif args[:2] == ['docker', 'stop']:
             self.candidate = None
         elif args[:2] == ['systemctl', 'show']:
-            out = ('ActiveState=active\nUnitFileState=enabled\n' if args[2] == m.ORIGINAL_SERVICE
+            out = (('ActiveState=active\nUnitFileState=enabled\n' if self.old is not None
+                    else 'ActiveState=inactive\nMainPID=0\nControlGroup=\nJob=\nUnitFileState=enabled\n')
+                   if args[2] == m.ORIGINAL_SERVICE
                    else ('LoadState=loaded\nActiveState=deactivating\nSubState=stop-post\nMainPID=0\n'
                          if 'MainPID' in args else 'LoadState=not-found\n'))
         elif args[:2] == ['systemctl', 'stop']:
@@ -74,7 +85,7 @@ class Fake:
             else:
                 self.candidate = {'Id': 'candidate-container',
                                   'Name': '/workbay-bakeoff-vllm-' + OP,
-                                  'Image': m.CANDIDATE_IMAGE,
+                                  'Image': self.image['Id'],
                                   'Config': {'Labels': {'workbay.owner': 'Bakeoff',
                                                        'workbay.operation': OP}},
                                   'State': {'Running': True, 'Pid': 456}}
@@ -312,6 +323,100 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(m.Refusal, 'absence unknown'):
             self.runtime.prepare()
         self.assertFalse(any(c[0][:2] == ['systemctl', 'stop'] for c in self.fake.calls))
+
+    def test_inspect_literal_installed_docker_absence(self):
+        observed = OBSERVED_MISSING
+        name = observed['requested_name']
+        result = subprocess.CompletedProcess(['docker', 'inspect', name],
+                                             observed['returncode'],
+                                             observed['stdout'], observed['stderr'])
+        with patch.object(self.runtime, 'runner', return_value=result) as runner:
+            self.assertIsNone(self.runtime.inspect(name))
+        runner.assert_called_once_with(['docker', 'inspect', name], timeout=8, env=None)
+
+    def test_inspect_supported_absence_forms(self):
+        name = self.runtime.name
+        for prefix in ('Error: No such object: ', 'Error: No such container: ',
+                       'error: no such object: '):
+            with self.subTest(prefix=prefix):
+                result = subprocess.CompletedProcess([], 1, '[]\n', prefix + name + '\n')
+                with patch.object(self.runtime, 'runner', return_value=result):
+                    self.assertIsNone(self.runtime.inspect(name))
+
+    def test_inspect_absence_requires_rc_one(self):
+        name = self.runtime.name
+        for prefix in ('Error: No such object: ', 'Error: No such container: ',
+                       'error: no such object: '):
+            for rc in (-9, 0, 2, 125, 126, 127):
+                with self.subTest(prefix=prefix, rc=rc):
+                    result = subprocess.CompletedProcess([], rc, '[]\n', prefix + name + '\n')
+                    with patch.object(self.runtime, 'runner', return_value=result):
+                        reason = 'inspect shape refused' if rc == 0 else 'absence unknown'
+                        with self.assertRaisesRegex(m.Refusal, reason):
+                            self.runtime.inspect(name)
+
+    def test_inspect_rejects_inexact_names_and_unfamiliar_errors(self):
+        name = self.runtime.name
+        errors = [None, '', 'Cannot connect to the Docker daemon',
+                  'permission denied while inspecting ' + name,
+                  'error: no such container: ' + name,
+                  'ERROR: NO SUCH OBJECT: ' + name]
+        for prefix in ('Error: No such object: ', 'Error: No such container: ',
+                       'error: no such object: '):
+            errors.extend(prefix + wrong for wrong in
+                          ('other-container', 'prefix-' + name, name + '-suffix',
+                           name[:-1], name.upper()))
+            errors.extend(('daemon error: ' + prefix + name,
+                           prefix + name + '\npermission denied\n',
+                           'permission denied\n' + prefix + name + '\n'))
+        for error in errors:
+            with self.subTest(stderr=error):
+                result = subprocess.CompletedProcess([], 1, '[]\n', error)
+                with patch.object(self.runtime, 'runner', return_value=result):
+                    with self.assertRaisesRegex(m.Refusal, 'absence unknown'):
+                        self.runtime.inspect(name)
+
+    def test_prepare_and_restore_with_lowercase_absence(self):
+        delegate = self.fake.run
+        missing_names = []
+        def run(args, timeout, env=None):
+            result = delegate(args, timeout, env)
+            if args[:2] == ['docker', 'inspect'] and result.returncode == 1:
+                missing_names.append(args[2])
+                result.stdout = OBSERVED_MISSING['stdout']
+                result.stderr = OBSERVED_MISSING['stderr'].replace(
+                    OBSERVED_MISSING['requested_name'], args[2])
+            return result
+        self.runtime.runner = run
+        self.assertEqual(self.runtime.prepare()['status'], 'ready')
+        self.assertEqual(self.runtime.restore()['status'], 'restored')
+        self.assertIn('acx-gpu-vlm', missing_names)
+        self.assertIn(self.runtime.name, missing_names)
+        self.assertIsNone(self.fake.candidate)
+        self.assertEqual(self.fake.old['Image'], m.ORIGINAL_IMAGE)
+        self.assertFalse((self.root / 'api-key').exists())
+
+    def test_unknown_candidate_absence_refused_before_stop(self):
+        delegate = self.fake.run
+        name = self.runtime.name
+        for rc, error in ((1, 'error: no such object: ' + name + '-suffix\n'),
+                          (2, 'error: no such object: ' + name + '\n'),
+                          (1, 'permission denied while inspecting ' + name)):
+            with self.subTest(rc=rc, stderr=error):
+                def run(args, timeout, env=None):
+                    result = delegate(args, timeout, env)
+                    if args == ['docker', 'inspect', name]:
+                        result.returncode, result.stdout, result.stderr = rc, '[]\n', error
+                    return result
+                self.runtime.runner = run
+                with self.assertRaisesRegex(m.Refusal, 'absence unknown'):
+                    self.runtime.prepare()
+                self.assertFalse(any(c[0][:2] in (['systemctl', 'stop'], ['docker', 'stop'])
+                                     or c[0][0] == 'systemd-run' for c in self.fake.calls))
+                self.assertIsNotNone(self.fake.old)
+                self.assertFalse((self.root / 'before.json').exists())
+                self.assertTrue((self.root / 'api-key').exists())
+                (self.root / 'restore.lock').unlink()
 
     def test_reap_waits_for_auto_remove(self):
         self.runtime.prepare()

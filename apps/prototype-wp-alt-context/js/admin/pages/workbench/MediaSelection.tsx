@@ -892,7 +892,15 @@ export const BulkDescribeCta = ({
               return (
                 <>
                   {sprintf(
-                    __('Identifies people first (AI) · ~%d credits · Turn off in', 'alt-context'),
+                    selectedCount === 0
+                      ? __(
+                          'Identifies people first (AI) · Select images to see the estimated description cost · Turn off in',
+                          'alt-context',
+                        )
+                      : __(
+                          'Identifies people first (AI) · Estimated description cost: ~%d credits · Turn off in',
+                          'alt-context',
+                        ),
                     selectedCount,
                   )}{' '}
                   <a href={toSettings()}>{__('Settings', 'alt-context')}</a>
@@ -900,7 +908,15 @@ export const BulkDescribeCta = ({
               );
             case RECOGNITION_POLICY.OFF:
               return sprintf(
-                __('People are not identified (recognition off) · ~%d credits', 'alt-context'),
+                selectedCount === 0
+                  ? __(
+                      'People are not identified (recognition off) · Select images to see the estimated description cost',
+                      'alt-context',
+                    )
+                  : __(
+                      'People are not identified (recognition off) · Estimated description cost: ~%d credits',
+                      'alt-context',
+                    ),
                 selectedCount,
               );
             case RECOGNITION_POLICY.UNAVAILABLE:
@@ -1175,7 +1191,10 @@ export const BulkDescribeProgress = ({
     );
   }
 
-  if (isTerminal && (status === DESCRIBE_RUN_STATUS.COMPLETED || status === DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS)) {
+  if (
+    isTerminal &&
+    (status === DESCRIBE_RUN_STATUS.COMPLETED || status === DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS)
+  ) {
     const draftsReady = sprintf(
       _n('✔ %1$d draft ready to review', '✔ %1$d drafts ready to review', run.completed, 'alt-context'),
       run.completed,

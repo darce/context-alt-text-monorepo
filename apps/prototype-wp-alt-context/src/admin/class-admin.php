@@ -68,7 +68,6 @@ class Admin {
 		'alt-context-dashboard',
 		'alt-context-workbench',
 		'alt-context-roster',
-		'alt-context-description-history',
 		'alt-context-settings',
 	);
 

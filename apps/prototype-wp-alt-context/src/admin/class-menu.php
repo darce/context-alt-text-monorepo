@@ -7,8 +7,7 @@ class Menu {
 
 	/**
 	 * MECE admin IA (NAV-05): one slug per user goal, frequency-ordered (NAV-06).
-	 * Review Queue is the unique naming home; Description Runs is the unique
-	 * description-history home. Data retention is a Settings concern, not a
+	 * Review Queue owns people review and per-image description review. Data retention is a Settings concern, not a
 	 * top-level destination (NAV-14: the retired slug still redirects).
 	 *
 	 * @var list<array{slug: string, menu_title: string, goal: string}>
@@ -17,14 +16,12 @@ class Menu {
 		array( 'slug' => 'alt-context-dashboard', 'menu_title' => 'Overview', 'goal' => 'orient' ),
 		array( 'slug' => 'alt-context-workbench', 'menu_title' => 'Review Queue', 'goal' => 'name_person' ),
 		array( 'slug' => 'alt-context-roster', 'menu_title' => 'People', 'goal' => 'manage_named_people' ),
-		array( 'slug' => 'alt-context-description-history', 'menu_title' => 'Description Runs', 'goal' => 'see_description_history' ),
 		array( 'slug' => 'alt-context-settings', 'menu_title' => 'Settings', 'goal' => 'configure_service' ),
 	);
 
 	private DashboardPage $dashboardPage;
 	private WorkbenchPage $workbenchPage;
 	private RosterPage $rosterPage;
-	private DescriptionHistoryPage $descriptionHistoryPage;
 	private RetentionPage $retentionPage;
 	private SettingsPage $settingsPage;
 
@@ -33,20 +30,20 @@ class Menu {
 		WorkbenchPage $workbenchPage,
 		RosterPage $rosterPage,
 		SettingsPage $settingsPage,
-		?DescriptionHistoryPage $descriptionHistoryPage = null,
 		?RetentionPage $retentionPage = null
 	) {
 		$this->dashboardPage           = $dashboardPage;
 		$this->workbenchPage           = $workbenchPage;
 		$this->rosterPage              = $rosterPage;
 		$this->settingsPage            = $settingsPage;
-		$this->descriptionHistoryPage  = $descriptionHistoryPage ?? new DescriptionHistoryPage();
 		$this->retentionPage           = $retentionPage ?? new RetentionPage();
 	}
 
 	public function init(): void {
 		add_action( 'admin_menu', array( $this, 'register_menu' ) );
 		add_action( 'admin_init', array( $this, 'render_retention_page' ) );
+		// Removed pages fail WordPress access checks before admin_init runs.
+		add_action( 'admin_menu', array( $this, 'render_description_history_page' ), 0 );
 	}
 
 	public function register_menu(): void {
@@ -86,16 +83,6 @@ class Menu {
 			'alt-context-roster',
 			array( $this, 'render_roster_page' )
 		);
-
-		add_submenu_page(
-			'alt-context-dashboard',
-			__( 'Alt Context Description Runs', 'alt-context' ),
-			__( 'Description Runs', 'alt-context' ),
-			'manage_options',
-			'alt-context-description-history',
-			array( $this, 'render_description_history_page' )
-		);
-
 		add_submenu_page(
 			'alt-context-dashboard',
 			__( 'Alt Context Settings', 'alt-context' ),
@@ -119,7 +106,13 @@ class Menu {
 	}
 
 	public function render_description_history_page(): void {
-		$this->descriptionHistoryPage->render();
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( (string) $_GET['page'] ) ) : '';
+		if ( 'alt-context-description-history' !== $page ) {
+			return;
+		}
+		// No fragment: browsers retain incoming run/filter fragments across this redirect.
+		wp_safe_redirect( admin_url( 'admin.php?page=alt-context-workbench' ) );
+		$this->terminate();
 	}
 
 	public function render_retention_page(): void {

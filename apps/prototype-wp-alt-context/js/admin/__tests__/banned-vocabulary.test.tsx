@@ -26,7 +26,7 @@ const pagesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 /** Page modules that live directly under js/admin/pages/*.tsx */
 const pageModulesOnDisk = readdirSync(pagesDir)
-  .filter((name) => !name.startsWith('._') && (name.endsWith('Page.tsx') || name === 'DescribeRunApplyView.tsx'))
+  .filter((name) => !name.startsWith('._') && name.endsWith('Page.tsx'))
   .map((name) => name.replace(/\.tsx$/, ''))
   .sort();
 
@@ -34,15 +34,7 @@ const pageModulesOnDisk = readdirSync(pagesDir)
  * Sweep registry: every page module must appear here. Add fixtures when a new
  * page lands — the test fails if the disk list and this map diverge.
  */
-const PAGE_SWEEP = [
-  'DashboardPage',
-  'WorkbenchPage',
-  'RosterPage',
-  'DescriptionHistoryPage',
-  'RetentionPage',
-  'SettingsPage',
-  'DescribeRunApplyView',
-] as const;
+const PAGE_SWEEP = ['DashboardPage', 'WorkbenchPage', 'RosterPage', 'RetentionPage', 'SettingsPage'] as const;
 
 type PageName = (typeof PAGE_SWEEP)[number];
 
@@ -503,8 +495,6 @@ vi.mock('../api/recognition', async () => {
 });
 
 import { DashboardPage } from '../pages/DashboardPage';
-import { DescribeRunApplyView } from '../pages/DescribeRunApplyView';
-import { DescriptionHistoryPage } from '../pages/DescriptionHistoryPage';
 import { RetentionPage } from '../pages/RetentionPage';
 import { RosterPage } from '../pages/RosterPage';
 import { SettingsPage } from '../pages/SettingsPage';
@@ -549,10 +539,8 @@ const pageRenderers: Record<PageName, () => React.JSX.Element> = {
   DashboardPage: () => <DashboardPage />,
   WorkbenchPage: () => <WorkbenchPage />,
   RosterPage: () => <RosterPage />,
-  DescriptionHistoryPage: () => <DescriptionHistoryPage />,
   RetentionPage: () => <RetentionPage />,
   SettingsPage: () => <SettingsPage />,
-  DescribeRunApplyView: () => <DescribeRunApplyView runId="run-1" />,
 };
 
 const wrap = (node: React.JSX.Element) => {

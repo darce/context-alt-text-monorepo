@@ -31,8 +31,7 @@ export const NAMING_REALIZER = {
   SUBSTITUTED: 'substituted',
 } as const;
 
-export type NamingProvenanceStatus =
-  (typeof NAMING_PROVENANCE_STATUS)[keyof typeof NAMING_PROVENANCE_STATUS];
+export type NamingProvenanceStatus = (typeof NAMING_PROVENANCE_STATUS)[keyof typeof NAMING_PROVENANCE_STATUS];
 export type NamingRealizer = (typeof NAMING_REALIZER)[keyof typeof NAMING_REALIZER];
 
 /** C7 per-item naming provenance. Older run items may omit this field entirely.
@@ -191,9 +190,7 @@ export type AltTextWriteStatus =
  * long-description failure (history intact). Lockstep with PHP
  * `AltTextWriteStatus::PARTIAL_REASONS`.
  */
-export type AltTextWritePartialReason =
-  | 'provenance_write_failed'
-  | 'description_write_failed';
+export type AltTextWritePartialReason = 'provenance_write_failed' | 'description_write_failed';
 
 /**
  * Nested `description_write` when `acx_alt_style` is `alt_plus_description`.
@@ -240,11 +237,9 @@ const firstContractKeyError = (
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string');
 
-const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value);
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
-const isInteger = (value: unknown): value is number =>
-  isFiniteNumber(value) && Number.isInteger(value);
+const isInteger = (value: unknown): value is number => isFiniteNumber(value) && Number.isInteger(value);
 
 const DESCRIPTION_ADAPTERS: ReadonlySet<string> = new Set(Object.values(DESCRIPTION_ADAPTER));
 const PROVIDER_MODES: ReadonlySet<string> = new Set(Object.values(PROVIDER_MODE));
@@ -270,10 +265,7 @@ const ALT_TEXT_WRITE_STATUSES = new Set([
   'partial',
   'failed',
 ]);
-const ALT_TEXT_WRITE_PARTIAL_REASONS = new Set([
-  'provenance_write_failed',
-  'description_write_failed',
-]);
+const ALT_TEXT_WRITE_PARTIAL_REASONS = new Set(['provenance_write_failed', 'description_write_failed']);
 const DESCRIPTION_WRITE_STATUSES = new Set([
   'written',
   'forced_overwrite',
@@ -481,16 +473,10 @@ const validateNamedCaptionProvenance = (value: unknown, path: string): string | 
   if (typeof value.naming_allowed !== 'boolean') {
     return `${path}.naming_allowed`;
   }
-  if (
-    value.reason !== null &&
-    (typeof value.reason !== 'string' || !NAMING_PREVIEW_REASONS.has(value.reason))
-  ) {
+  if (value.reason !== null && (typeof value.reason !== 'string' || !NAMING_PREVIEW_REASONS.has(value.reason))) {
     return `${path}.reason`;
   }
-  if (
-    value.mode !== null &&
-    (typeof value.mode !== 'string' || !NAMING_PREVIEW_MODES.has(value.mode))
-  ) {
+  if (value.mode !== null && (typeof value.mode !== 'string' || !NAMING_PREVIEW_MODES.has(value.mode))) {
     return `${path}.mode`;
   }
   if (typeof value.status !== 'string' || value.status === '') {
@@ -594,14 +580,19 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
   if (missingRequiredKey) {
     return `response.${missingRequiredKey}`;
   }
-  const unexpectedTopLevelKey = Object.keys(payload).find(
-    (key) => !includesString(VISUAL_FACTS_RESPONSE_KEYS, key),
-  );
+  const unexpectedTopLevelKey = Object.keys(payload).find((key) => !includesString(VISUAL_FACTS_RESPONSE_KEYS, key));
   if (unexpectedTopLevelKey) {
     return `response.${unexpectedTopLevelKey}`;
   }
 
-  for (const key of ['tenant_id', 'image_hash', 'context_hash', 'model_id', 'model_version', 'prompt_or_task_version'] as const) {
+  for (const key of [
+    'tenant_id',
+    'image_hash',
+    'context_hash',
+    'model_id',
+    'model_version',
+    'prompt_or_task_version',
+  ] as const) {
     if (typeof payload[key] !== 'string') {
       return `response.${key}`;
     }
@@ -715,11 +706,7 @@ const validateVisualFactsResponse = (payload: unknown): string | null => {
     return startupIdError;
   }
   if (hasOwn(payload, 'timing')) {
-    const timingError = validateTimingObject(
-      payload.timing,
-      'response.timing',
-      DESCRIBE_OPERATION_TIMING_KEYS,
-    );
+    const timingError = validateTimingObject(payload.timing, 'response.timing', DESCRIBE_OPERATION_TIMING_KEYS);
     if (timingError) {
       return timingError;
     }
@@ -757,11 +744,7 @@ export interface DescribeMediaWriteOptions {
   operationId?: string;
 }
 
-export type DescriptionCandidateReason =
-  | 'missing_alt'
-  | 'has_alt_text'
-  | 'unsupported_mime'
-  | 'decorative';
+export type DescriptionCandidateReason = 'missing_alt' | 'has_alt_text' | 'unsupported_mime' | 'decorative';
 
 export interface DescriptionCandidateRow {
   media_id: number;
@@ -909,8 +892,7 @@ export const isGpuState = (value: unknown): value is GpuState =>
   typeof value === 'string' && (Object.values(GPU_STATE) as string[]).includes(value);
 
 export const isNamingProvenanceStatus = (value: unknown): value is NamingProvenanceStatus =>
-  typeof value === 'string' &&
-  (Object.values(NAMING_PROVENANCE_STATUS) as string[]).includes(value);
+  typeof value === 'string' && (Object.values(NAMING_PROVENANCE_STATUS) as string[]).includes(value);
 
 export const isNamingRealizer = (value: unknown): value is NamingRealizer =>
   typeof value === 'string' && (Object.values(NAMING_REALIZER) as string[]).includes(value);
@@ -939,9 +921,7 @@ export const parseNamingProvenance = (value: unknown): NamingProvenance | undefi
   if (!Array.isArray(record.names_applied)) {
     return undefined;
   }
-  const namesApplied = record.names_applied.filter(
-    (name): name is string => typeof name === 'string',
-  );
+  const namesApplied = record.names_applied.filter((name): name is string => typeof name === 'string');
   if (namesApplied.length !== record.names_applied.length) {
     return undefined;
   }
@@ -975,8 +955,7 @@ export const DESCRIBE_OPERATION_ERROR_CODE = {
 export type DescribeOperationErrorCode =
   (typeof DESCRIBE_OPERATION_ERROR_CODE)[keyof typeof DESCRIBE_OPERATION_ERROR_CODE];
 
-export type DescriptionCorrectionCode =
-  (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
+export type DescriptionCorrectionCode = (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
 
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
 export type DescribeResultTier = (typeof DESCRIBE_RESULT_TIER)[keyof typeof DESCRIBE_RESULT_TIER];
@@ -1002,8 +981,7 @@ const TERMINAL_DESCRIBE_RUN_STATUSES: ReadonlySet<DescribeRunStatus> = new Set([
 ]);
 
 /** A run is terminal once it can no longer make progress (success, partial, failure, or cancel). */
-export const isDescribeRunTerminal = (status: DescribeRunStatus): boolean =>
-  TERMINAL_DESCRIBE_RUN_STATUSES.has(status);
+export const isDescribeRunTerminal = (status: DescribeRunStatus): boolean => TERMINAL_DESCRIBE_RUN_STATUSES.has(status);
 
 export interface DescribeRunResponse {
   tenant_id: string;
@@ -1183,6 +1161,34 @@ export const fetchDescriptionCandidates = async ({
   });
 };
 
+export interface DescribeRunDirectoryItem {
+  run_id: string;
+  created_at: number;
+  media_ids: number[];
+}
+
+export interface DescribeRunDirectoryResponse {
+  items: DescribeRunDirectoryItem[];
+  total: number;
+  next_offset: number | null;
+}
+
+/** Accepted runs for visible media. Listing and reading results never submits inference. */
+export const fetchDescribeRuns = async (
+  mediaIds: readonly number[],
+  offset = 0,
+): Promise<DescribeRunDirectoryResponse> => {
+  const params = new URLSearchParams({ limit: '5', offset: String(offset) });
+  for (const id of mediaIds) {
+    params.append('media_ids[]', String(id));
+  }
+  return fetchRequiredApi<DescribeRunDirectoryResponse>(`${getEndpoint('recognitionDescribeRuns')}?${params}`, {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(10_000),
+  });
+};
+
 export const fetchDescriptionHistory = async ({
   limit = 50,
   offset = 0,
@@ -1283,10 +1289,7 @@ const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): Desc
       malformed(`${itemPath}.${missingKey}`);
     }
     if (hasOwn(item, 'processing_ms')) {
-      const processingError = validateNullableNonNegativeNumber(
-        item.processing_ms,
-        `${itemPath}.processing_ms`,
-      );
+      const processingError = validateNullableNonNegativeNumber(item.processing_ms, `${itemPath}.processing_ms`);
       if (processingError) {
         malformed(processingError);
       }
@@ -1298,10 +1301,7 @@ const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): Desc
       }
     }
     if (hasOwn(item, 'thumbnail_srcset')) {
-      const thumbnailSrcsetError = validateNullableString(
-        item.thumbnail_srcset,
-        `${itemPath}.thumbnail_srcset`,
-      );
+      const thumbnailSrcsetError = validateNullableString(item.thumbnail_srcset, `${itemPath}.thumbnail_srcset`);
       if (thumbnailSrcsetError) {
         malformed(thumbnailSrcsetError);
       }
@@ -1427,7 +1427,11 @@ const validateDescribeRunResponse = (payload: unknown): string | null => {
       return 'response.terminal';
     }
   }
-  if (hasOwn(payload, 'fallback_reason') && payload.fallback_reason !== null && typeof payload.fallback_reason !== 'string') {
+  if (
+    hasOwn(payload, 'fallback_reason') &&
+    payload.fallback_reason !== null &&
+    typeof payload.fallback_reason !== 'string'
+  ) {
     return 'response.fallback_reason';
   }
   return null;
@@ -1490,28 +1494,22 @@ export const submitBulkDescribeRun = async (
 
 export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
   parseDescribeRunResponse(
-    await fetchRequiredApi<unknown>(
-      `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`,
-      {
-        method: 'GET',
-        restNonce: getConfig().nonce,
-        // Status is a cheap read polled every ~2s; a short timeout keeps a slow
-        // poll from hanging and lets the next interval retry (INT-04).
-        signal: createRecognitionTimeoutSignal(10_000),
-      },
-    ),
+    await fetchRequiredApi<unknown>(`${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}`, {
+      method: 'GET',
+      restNonce: getConfig().nonce,
+      // Status is a cheap read polled every ~2s; a short timeout keeps a slow
+      // poll from hanging and lets the next interval retry (INT-04).
+      signal: createRecognitionTimeoutSignal(10_000),
+    }),
   );
 
 export const cancelBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
   parseDescribeRunResponse(
-    await fetchRequiredApi<unknown>(
-      `${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`,
-      {
-        method: 'POST',
-        restNonce: getConfig().nonce,
-        signal: createRecognitionTimeoutSignal(30_000),
-      },
-    ),
+    await fetchRequiredApi<unknown>(`${getEndpoint('recognitionDescribeRuns')}/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(30_000),
+    }),
   );
 
 /**
@@ -1535,11 +1533,7 @@ export const fetchDescribeRunItems = async (runId: string): Promise<DescribeRunI
     ...response,
     items: response.items.map((item) => {
       const provenance = item.provenance;
-      if (
-        !provenance ||
-        typeof provenance !== 'object' ||
-        !('naming' in provenance)
-      ) {
+      if (!provenance || typeof provenance !== 'object' || !('naming' in provenance)) {
         return item;
       }
 
@@ -1670,10 +1664,7 @@ export const resolveDescribeErrorDataField = (error: unknown, field: string): st
  * not invent a value ([rg-015]). `-0` is treated as `0`. Used for
  * `warmup_eta_seconds`.
  */
-export const resolveDescribeErrorDetailNumberField = (
-  error: unknown,
-  field: string,
-): number | null => {
+export const resolveDescribeErrorDetailNumberField = (error: unknown, field: string): number | null => {
   if (!(error instanceof Error)) {
     return null;
   }
@@ -1695,10 +1686,7 @@ export const resolveDescribeErrorDetailNumberField = (
  * Used by partial-correction reconcile to read `is_decorative` from server
  * truth rather than re-deriving from request intent [A-03].
  */
-export const resolveDescribeErrorDataBooleanField = (
-  error: unknown,
-  field: string,
-): boolean | null => {
+export const resolveDescribeErrorDataBooleanField = (error: unknown, field: string): boolean | null => {
   if (!(error instanceof Error)) {
     return null;
   }

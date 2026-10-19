@@ -172,9 +172,6 @@ vi.mock('../../../hooks/useRecognitionCooldown', () => ({
   }),
 }));
 
-vi.mock('../BulkDescribeReviewLink', () => ({
-  BulkDescribeReviewLink: () => null,
-}));
 
 vi.mock('../JobPipelineContext', () => ({
   useJobPipeline: () => ({ scanRun: { isScanning: false, progress: null }, scan: vi.fn() }),

@@ -15,10 +15,6 @@ const adminRoutes = [
     label: 'Settings',
     slug: 'alt-context-settings',
   },
-  {
-    label: 'Description History',
-    slug: 'alt-context-description-history',
-  },
 ] as const;
 
 export type AcxAdminRoute = (typeof adminRoutes)[number];
@@ -26,8 +22,8 @@ export type AcxAdminRouteSlug = AcxAdminRoute['slug'];
 
 export const acxAdminRoutes = adminRoutes;
 
-/** Retired slug: PHP still redirects to Settings. Not a top-level admin destination. */
-export const acxRedirectOnlyAdminSlugs = ['alt-context-retention'] as const;
+/** Retired slugs redirect to their canonical Settings or Workbench destination. */
+export const acxRedirectOnlyAdminSlugs = ['alt-context-retention', 'alt-context-description-history'] as const;
 
 export const getAcxAdminRouteUrl = (baseUrl: string, slug: AcxAdminRouteSlug): string => {
   const adminRoot = new URL(baseUrl);

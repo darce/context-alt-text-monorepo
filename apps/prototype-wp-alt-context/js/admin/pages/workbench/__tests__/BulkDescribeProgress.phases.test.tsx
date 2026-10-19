@@ -16,9 +16,6 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-vi.mock('../BulkDescribeReviewLink', () => ({
-  BulkDescribeReviewLink: () => null,
-}));
 
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'tenant',

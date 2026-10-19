@@ -28,6 +28,10 @@ ORIGINAL_IMAGE = 'sha256:fc26b60b30836e5a12fdb28823a3d4bda984c9386a4b04200c78e5a
 ORIGINAL_CONFIG = '60b918fa38f308933e08bbbcf881d66336c2567b786764a095430c7313710849'
 ORIGINAL_BINARY = '59a74a6528e0dcedfb89e6a3df41b8dbd593a2c3689096a2d030ad1c67ffe4d0'
 CANDIDATE_IMAGE = 'sha256:ee2917e260bb5037ca93944bfcb845a8f867674c63de2284d28c541f1eaf3f08'
+CANDIDATE_MANIFEST = 'sha256:d8d39b59e909d2378ac4feeb191f7e7b6f1342477dc66b7c47cec89e9985ad8a'
+# Legacy Docker reports the config ID; containerd-backed Docker reports the
+# pinned amd64 manifest ID. Neither identity permits a different RepoDigest.
+CANDIDATE_IDS = (CANDIDATE_IMAGE, CANDIDATE_MANIFEST)
 CANDIDATE_REF = 'vllm/vllm-openai@sha256:d8d39b59e909d2378ac4feeb191f7e7b6f1342477dc66b7c47cec89e9985ad8a'
 MODEL = 'Qwen/Qwen3-VL-8B-Instruct'
 MODEL_DIR = Path('/opt/acx-gpu/bakeoff-owned-cache/qwen3-vl-8b-0c351dd01ed87e9c1b53cbc748cba10e6187ff3b')
@@ -277,7 +281,8 @@ class Runtime:
             # A daemon outage/permission error is NOT proof that a container is absent.
             require(result.returncode == 1 and
                     (result.stderr or '').strip() in ('Error: No such object: ' + name,
-                                                      'Error: No such container: ' + name),
+                                                      'Error: No such container: ' + name,
+                                                      'error: no such object: ' + name),
                     'container absence unknown')
             return None
         rows = decode_json(result.stdout)
@@ -286,7 +291,7 @@ class Runtime:
         return rows[0]
 
     def enabled(self, active=False, timeout=15):
-        result = self.checked(['systemctl', 'show', ORIGINAL_SERVICE,
+        result = self.checked(['systemctl', 'show', ORIGINAL_SERVICE, '--all',
                                '-p', 'ActiveState', '-p', 'UnitFileState'], timeout)
         lines = result.stdout.splitlines()
         require('UnitFileState=enabled' in lines, 'original service not enabled')
@@ -359,15 +364,16 @@ class Runtime:
         result = self.checked(['docker', 'image', 'inspect', CANDIDATE_REF])
         rows = decode_json(result.stdout)
         require(isinstance(rows, list) and len(rows) == 1 and
-                rows[0]['Id'] == CANDIDATE_IMAGE and
-                CANDIDATE_REF in (rows[0].get('RepoDigests') or []), 'candidate image pin drift')
+                isinstance(rows[0], dict) and rows[0].get('Id') in CANDIDATE_IDS and
+                rows[0].get('RepoDigests') == [CANDIDATE_REF], 'candidate image pin drift')
+        self.candidate_image_id = rows[0]['Id']
 
     def owned_candidate(self, candidate):
         labels = candidate['Config'].get('Labels') or {}
         require(candidate.get('Name') == '/' + self.name, 'candidate name refused untouched')
         require(labels.get('workbay.owner') == 'Bakeoff' and
                 labels.get('workbay.operation') == self.operation and
-                candidate['Image'] == CANDIDATE_IMAGE, 'foreign candidate refused untouched')
+                candidate['Image'] == self.candidate_image_id, 'foreign candidate refused untouched')
         require(isinstance(candidate['Id'], str) and
                 re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', candidate['Id']),
                 'candidate ID refused')
@@ -437,7 +443,7 @@ class Runtime:
     def before(self, stats, start):
         return dict(version=1, operation=self.operation, candidate_name=self.name, unit=self.unit,
                     labels={'workbay.owner': 'Bakeoff', 'workbay.operation': self.operation},
-                    original_image_id=ORIGINAL_IMAGE, candidate_image_id=CANDIDATE_IMAGE,
+                    original_image_id=ORIGINAL_IMAGE, candidate_image_id=self.candidate_image_id,
                     candidate_image_ref=CANDIDATE_REF, qwen_config_sha256=ORIGINAL_CONFIG,
                     qwen_binary_sha256=ORIGINAL_BINARY, qwen_weight_stats=stats,
                     original_network_mode=self.spec['original_network_mode'],
@@ -479,22 +485,21 @@ class Runtime:
                 self.policy.publish(self.root / 'before.json', self.before(stats, start))
                 # Failed/timed-out stop may have had an effect and needs restore too.
                 stopped = True
-                self.checked(['systemctl', 'stop', ORIGINAL_SERVICE], 30,
-                             message='original stop failed')
-                require(self.inspect('acx-gpu-vlm') is None, 'original container still present')
+                self.stop_original()
+                readiness_deadline = self.clock() + 150
                 env = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C', 'VLLM_API_KEY': key}
                 self.checked(self.command(), 20, env, 'candidate service start failed')
             # ExecStopPost must be able to take the lock while readiness is pending.
-            candidate = self.candidate_ready(key, start + 150)
-            with self.lock(start + 150):
-                self.remaining(start + 150, 1)
+            candidate = self.candidate_ready(key, readiness_deadline)
+            with self.lock(readiness_deadline):
+                self.remaining(readiness_deadline, 1)
                 require(not (self.root / 'restored.json').exists(), 'candidate already restored')
-                current = self.inspect(self.name, self.remaining(start + 150, 8))
+                current = self.inspect(self.name, self.remaining(readiness_deadline, 8))
                 require(current is not None and current['Id'] == candidate['Id'] and
                         current['State']['Running'], 'candidate changed after readiness')
                 self.owned_candidate(current)
                 receipt = dict(status='ready', operation=self.operation, candidate_name=self.name,
-                               candidate_image_id=CANDIDATE_IMAGE, candidate_image_ref=CANDIDATE_REF,
+                               candidate_image_id=self.candidate_image_id, candidate_image_ref=CANDIDATE_REF,
                                candidate_id=candidate['Id'], runtime_max_seconds=1500,
                                models_verified=True, owner_window_external=True)
                 self.policy.publish(self.root / 'prepared.json', receipt)
@@ -523,6 +528,23 @@ class Runtime:
                 '); restoration verified but service stop uncertain')
         raise Refusal('launch failed (' + launch_error + '); original restored') from None
 
+    def stop_original(self):
+        # Native TimeoutStopUSec is 90s. Bound stop and both postcondition reads
+        # together; a nonzero stop status alone neither proves nor disproves exit.
+        deadline = self.clock() + 110
+        self.run(['systemctl', 'stop', ORIGINAL_SERVICE], self.remaining(deadline, 110))
+        result = self.checked(['systemctl', 'show', ORIGINAL_SERVICE,
+                               '-p', 'ActiveState', '-p', 'MainPID',
+                               '-p', 'ControlGroup', '-p', 'Job'], self.remaining(deadline, 8),
+                              message='original stop state unknown')
+        fields = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+        require(fields.get('ActiveState') in ('inactive', 'failed') and
+                fields.get('MainPID') == '0' and fields.get('ControlGroup') == '' and
+                fields.get('Job') == '', 'original stop not quiescent')
+        require(self.inspect('acx-gpu-vlm', self.remaining(deadline, 8)) is None,
+                'original container still present')
+        self.remaining(deadline, 1)
+
     def check_unit_absent(self):
         result = self.run(['systemctl', 'show', self.unit, '-p', 'LoadState'], 10)
         require(result.returncode in (0, 1, 4) and result.stdout.strip() == 'LoadState=not-found',
@@ -542,6 +564,11 @@ class Runtime:
         start = value.get('start_monotonic')
         require(type(start) in (int, float) and math.isfinite(start) and start >= 0,
                 'before clock refused')
+        require(value.get('candidate_image_id') in CANDIDATE_IDS, 'before image refused')
+        # Restore follows the actual pre-stop inspect sealed for this residency,
+        # even when a fresh process executes ExecStopPost. Never accept either pin
+        # arbitrarily for the materialized candidate.
+        self.candidate_image_id = value['candidate_image_id']
         require(value == self.before(stats, start), 'before identity/config refused')
         return value
 

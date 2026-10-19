@@ -70,7 +70,8 @@ These are distinct immutable identities:
 | Original selected Config hash | `60b918fa38f308933e08bbbcf881d66336c2567b786764a095430c7313710849` |
 | Original running binary hash | `59a74a6528e0dcedfb89e6a3df41b8dbd593a2c3689096a2d030ad1c67ffe4d0` |
 | Candidate immutable reference | `vllm/vllm-openai@sha256:d8d39b59e909d2378ac4feeb191f7e7b6f1342477dc66b7c47cec89e9985ad8a` |
-| Candidate actual Docker image config ID | `sha256:ee2917e260bb5037ca93944bfcb845a8f867674c63de2284d28c541f1eaf3f08` |
+| Candidate pinned amd64 manifest; installed containerd-backed Docker `Id` | `sha256:d8d39b59e909d2378ac4feeb191f7e7b6f1342477dc66b7c47cec89e9985ad8a` |
+| Candidate legacy Docker config `Id` (distinct provenance) | `sha256:ee2917e260bb5037ca93944bfcb845a8f867674c63de2284d28c541f1eaf3f08` |
 
 The original hash exactly follows the supplied producer: SHA256 of ordinary
 `json.dumps(..., sort_keys=True)` for selected `Config` fields `Image`, `Cmd`,
@@ -87,7 +88,12 @@ compares actual path/bytes/inode/mtime_ns for exactly:
 ```
 
 Before stopping anything it inspects the candidate immutable image reference and
-requires both its actual `Id` and the exact `RepoDigests` entry; verifies exactly
+requires its actual `Id` to be exactly one of those two candidate identities and
+`RepoDigests` to equal the singleton pinned reference above. All other IDs or
+digests, including additional digests, are refused. The actual observed `Id` is
+sealed in `before.json` and the prepared receipt; every candidate check, including
+a fresh restore process, requires that residency's sealed ID. The other known
+ID is not an interchangeable container identity. It also verifies exactly
 one NVIDIA A10, at least 8 host CPUs and 64 GiB available memory; and hashes all
 14 pinned assets from the supplied download spec. The only candidate model path
 is:
@@ -99,14 +105,29 @@ is:
 Model files cannot be symlinks or hardlinks; model paths must be root owned and
 not writable by group/other. Nothing is fetched or installed. Neither an
 existing candidate container nor an existing candidate service is adopted.
-Docker errors other than exact “No such object/container” responses are not
-accepted as absence.
+Docker absence requires return code 1 and, after the existing outer whitespace
+trim, exactly `Error: No such object: <requested-name>`,
+`Error: No such container: <requested-name>`, or the installed CLI's observed
+`error: no such object: <requested-name>`. The full requested name must match.
+Other return codes, name prefixes/suffixes, daemon/permission errors, and
+unfamiliar messages are refused; stdout `[]` alone does not establish absence.
 
 `before.json` contains only safe immutable operation, identity, labels, original
 weight stats, route, config/binary hashes, enabled service, and fixed-clock
 fields. It is published with O_EXCL/O_NOFOLLOW, mode 0400, file fsync and directory
 fsync **before** stopping the original service. Existing before/receipt data is
 never overwritten. A partial write fails closed and retains evidence.
+
+The original stop and its postcondition reads share a finite 110-second phase,
+covering the native unit's `TimeoutStopUSec=1min 30s`. Before any candidate launch,
+`systemctl show` must succeed and report `ActiveState=inactive` or `failed`,
+`MainPID=0`, `ControlGroup=` and `Job=`. Every field must be present. Docker must
+then report literal exact-name absence for `acx-gpu-vlm` under the same strict
+absence contract above. A nonzero stop exit is accepted only with all these
+postconditions. A timeout, active/deactivating state, pending job, live PID,
+nonempty group, missing field, materialized container or unknown absence refuses
+launch and retains the existing restoration path. No `reset-failed`, start-rate
+limit reset, or unit configuration change is performed.
 
 ## Candidate and automatic restore
 
@@ -135,8 +156,8 @@ restore CLI with the same operation/spec. The runtime clock is fixed before
 start; no helper operation updates or extends the service timer. This service
 is a bounded maintenance backstop, not an outer owner-window grant.
 
-Prepare accepts readiness only within 150 seconds of its recorded pre-start
-clock, with HTTP 200 on `/health` and `/v1/models` containing exactly the expected
+After the stop phase, prepare fixes a separate 150-second readiness deadline
+immediately before candidate launch, with HTTP 200 on `/health` and `/v1/models` containing exactly the expected
 served ID. It then rechecks the same running, correctly labelled candidate.
 The root lock is released during HTTP polling so ExecStopPost can restore after
 an early candidate exit. A failed start/stop/readiness path attempts restore;
@@ -170,6 +191,7 @@ Run only the scoped stdlib tests from this directory:
 
 ```text
 python -B test_gpu_vllm_maintenance.py
+python -B test_gpu_native_contracts.py
 ```
 
 The in-process Runtime/FilePolicy seams permit fake execution and current-UID
@@ -179,7 +201,66 @@ objects, foreign identities, image/config/route/weights/binary drift, startup
 failure and restore uncertainty, repeated restore, secret redaction, strict
 files/specs, asset hashing, fixed resource/command contract, AutoRemove delay,
 automatic restore during readiness, pending-launch refusal, and finite
-command/HTTP clocks. The final scoped run passes 24 tests.
+command/HTTP clocks. The final scoped run passes 30 tests (the existing 24 plus
+six absence regressions).
+
+For VLLM-NATIVE-ABSENCE-01 (MCP19207), the standalone regression copies the literal
+return code 1, stdout `[]\n`, stderr
+`error: no such object: wb-bake-minicpm45-058c78d4a8ad480a8c787b870e805f8e\n`,
+and requested name from `references/actual-docker-producer.json`, retaining both
+trailing newlines. The producer was read before constructing the fixture
+([GRPH-33](../../references/canon-matched.md#grph-33)). The original 24 tests
+passed; the literal regression then failed on unchanged production source with
+`container absence unknown`. Adding only the exact lowercase allowlist entry
+makes it pass ([DBG-11](../../references/canon-matched.md#dbg-11)). Additional
+tests preserve both uppercase variants, reject other return codes and inexact
+names/messages, verify refusal before any stop/launch, and exercise fake
+prepare/restore using lowercase absence throughout. This verifies the captured
+CLI response contract, not native execution.
+
+The current native-contract regression first failed on unchanged R2 source:
+the literal `references/actual-native-producers.json` image produced `candidate
+image pin drift`; a virtual 90-second native stop exceeded the original
+30-second timeout in the helper and all three extracted setup programs. After
+the change, the existing 30 tests and nine new stdlib tests complete successfully.
+The new tests execute the actual recipe AST stop/start/readiness block and its
+recovery handler against `subprocess.CompletedProcess` producers, virtual clocks,
+fake HTTP responses and private temporary directories. They cover terminal
+failed/inactive states despite a nonzero stop exit, the complete refusal matrix,
+110-second stop exhaustion, slow HTTP/inspect work within readiness 150, and
+executed setup scope/outer bounds 540/570. The capture omits `ControlGroup`;
+tests explicitly supply an empty group for the positive scenario and refuse a
+missing group. This is a prospective source contract, not proof of native
+quiescence.
+
+Only the unclaimed R20C/R21/R22 recipes are changed. Their standalone transferred
+setup strings implement the same stop postconditions and readiness 150, with
+setup scope `RuntimeMaxSec=540` and outer call 570. Model runtime 1500, client
+1200, the coordinator's intent 1800, and all model/prompt/cohort/seed/sampling
+inputs stay fixed. R20C is prospective and contains no asset-prefetch task;
+already verified assets are reused. Each recipe retains exactly one
+`__PREVIOUS_AUTO__` placeholder for the coordinator to fill from the actual prior
+full settlement. Setup quiescence is still required before cleanup. No active
+R20/R20B script or publication is edited.
+
+The export baseline is scoped R2 native8a974 plus the unclaimed coordinator
+recipes from canonical8b9829d6; it is not a whole-tree equivalence claim. The
+supplied verified ONNX semantic reinjection (MCP19207/18561/18562) and literal
+native producer are the evidence inputs. R20's GSQ load and R20B's stop timeout
+do not establish GSQ inference or a model defect. The original later returned
+HTTP 200 with unchanged config/binary/weights; report the actual native response
+on activation rather than attributing failure to the last warning.
+
+The Pinedo/Sinnen physical-host separation remains: the backend Root scope
+controls the recipe/client, while the GPU guest's setup scope, model service and
+restore process consume their separately bounded CPU/memory and exclusive GPU
+residency. The real resource DAG requires prior full settlement before START,
+actual host identity and sealed before evidence before stopping the incumbent,
+original quiescence before candidate launch, authenticated candidate identity
+before client inference, and client reaping plus setup quiescence before cleanup.
+Verified original restoration precedes physical lease closure and withdrawal.
+These resource-exclusion and evidence dependencies are unchanged; there is no
+new CLI surface or UX map.
 
 Native vLLM/image/GPU/systemd compatibility remains untested by this source turn.
 If v0.11.0 rejects the fixed arguments, lacks native Qwen3-VL compatibility, or
@@ -187,5 +268,9 @@ fails readiness, report the native failure; do not substitute another runtime,
 install drivers, or patch the original service. The coordinator must verify the
 actual `/v1/models` response **and the completion response's model** downstream;
 automatic Qwen restoration must never be relabelled as a candidate response.
-The supplied RES-02 deadlines, DBG-11 causal failure cases, GRPH-32 named before
-fields, and GRPH-33 sealed input/output contracts informed these boundaries.
+The supplied [canon v0.26.2](https://github.com/darce/heuristics-canon) excerpts
+for [RES-02](../../references/canon-matched.md#res-02) deadlines,
+[DBG-11](../../references/canon-matched.md#dbg-11) causal failure cases,
+[GRPH-32](../../references/canon-matched.md#grph-32) named before fields, and
+[GRPH-33](../../references/canon-matched.md#grph-33) sealed input/output contracts
+informed these boundaries.

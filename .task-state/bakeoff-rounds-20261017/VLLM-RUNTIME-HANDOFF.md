@@ -99,12 +99,29 @@ one NVIDIA A10, at least 8 host CPUs and 64 GiB available memory; and hashes all
 is:
 
 ```text
-/opt/acx-gpu/bakeoff-owned-cache/qwen3-vl-8b-0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+/root/bakeoff-owned-cache/qwen3-vl-8b-0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
 ```
 
 Model files cannot be symlinks or hardlinks; model paths must be root owned and
-not writable by group/other. Nothing is fetched or installed. Neither an
-existing candidate container nor an existing candidate service is adopted.
+not writable by group/other. The model directory and **every ancestor through
+`/`** must pass the unchanged ownership, mode and symlink guards. Native R23
+refused the previous `/opt/acx-gpu/bakeoff-owned-cache` location because
+`/opt/acx-gpu` was UID 1001/GID 1001, mode 0755, despite the owned leaf and cache
+parent both being root/root, mode 0700. The refusal occurred before `before.json`,
+original stop or candidate launch; the original Qwen/config remained unchanged.
+
+The coordinator owns relocation of **only the owned model leaf** by atomic
+same-device rename (captured device 2049) into the private cache parent. `/root`
+and `/root/bakeoff-owned-cache` must be root/root, mode 0700. Preserve all 14
+files' bytes, SHA256s and inodes; do not copy weights or change ownership of the
+shared `/opt/acx-gpu` ancestor. This source change performs no cache mutation.
+Retain the failed R23 root, key proof and full capture, including its lock and
+three initial files. The coordinator owns exact source promotion, independent
+XHIGH review and fresh native activation under a new UUID and owner window;
+the failed operation is not reused and no active clock is extended.
+
+Nothing is fetched or installed. Neither an existing candidate container nor an
+existing candidate service is adopted.
 Docker absence requires return code 1 and, after the existing outer whitespace
 trim, exactly `Error: No such object: <requested-name>`,
 `Error: No such container: <requested-name>`, or the installed CLI's observed
@@ -192,6 +209,7 @@ Run only the scoped stdlib tests from this directory:
 ```text
 python -B test_gpu_vllm_maintenance.py
 python -B test_gpu_native_contracts.py
+python -B test_vllm_cache_ancestry.py
 ```
 
 The in-process Runtime/FilePolicy seams permit fake execution and current-UID
@@ -274,3 +292,26 @@ for [RES-02](../../references/canon-matched.md#res-02) deadlines,
 [GRPH-32](../../references/canon-matched.md#grph-32) named before fields, and
 [GRPH-33](../../references/canon-matched.md#grph-33) sealed input/output contracts
 informed these boundaries.
+
+For the R23 ancestry regression, the supplied
+`references/actual-native-cache-ancestry.json` was read before constructing the
+stat fixture (GRPH-33 actual producer). The new six-test suite executes the real
+`Runtime.validate_assets` with the default root policy, real `Path` ancestry and
+predicates, and `os.stat_result` producers, including directory type bits in
+`st_mode`. `Path.stat` supplies metadata and per-asset reads are spied; test-only
+`MODEL_DIR` replacement contrasts the old and prospective paths. The old fixed
+location first raised the captured ownership/mode refusal; the
+prospective private location passed against the same unchanged guard (DBG-11
+cause). After changing only `MODEL_DIR`, the fixed-location case also passes and
+forwards exactly all 14 original size/SHA256 pins to `validate_asset`. Non-root
+ownership, group/other write permission and symlinks at every directory remain
+refused before any asset call. This is a source regression, not native cache
+verification or a new residency claim. Existing finite stop, readiness, restore
+and service bounds remain unchanged (RES-02 finite bounds).
+
+In this scoped checkout the 30 existing helper tests and six ancestry tests
+pass. The existing nine-test native-contract suite was attempted but cannot
+import because `references/actual-native-producers.json` is absent; its
+`*.remote.py` recipe inputs are also absent. Those tests were not changed and
+their missing producer/recipe inputs were not synthesized. The earlier nine-test
+result above describes the prior source turn, not this checkout's validation.

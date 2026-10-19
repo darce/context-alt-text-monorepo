@@ -34,7 +34,7 @@ CANDIDATE_MANIFEST = 'sha256:d8d39b59e909d2378ac4feeb191f7e7b6f1342477dc66b7c47c
 CANDIDATE_IDS = (CANDIDATE_IMAGE, CANDIDATE_MANIFEST)
 CANDIDATE_REF = 'vllm/vllm-openai@sha256:d8d39b59e909d2378ac4feeb191f7e7b6f1342477dc66b7c47cec89e9985ad8a'
 MODEL = 'Qwen/Qwen3-VL-8B-Instruct'
-MODEL_DIR = Path('/opt/acx-gpu/bakeoff-owned-cache/qwen3-vl-8b-0c351dd01ed87e9c1b53cbc748cba10e6187ff3b')
+MODEL_DIR = Path('/root/bakeoff-owned-cache/qwen3-vl-8b-0c351dd01ed87e9c1b53cbc748cba10e6187ff3b')
 ORIGINAL_WEIGHTS = (
     '/opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf',
     '/opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-mmproj.gguf',

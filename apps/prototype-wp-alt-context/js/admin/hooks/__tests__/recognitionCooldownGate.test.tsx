@@ -176,9 +176,9 @@ describe('recognition cooldown gate over the six pollers', () => {
   it('one 429 mid-flight quiets live pollers after at most one already-scheduled tick each', async () => {
     renderHook(() => useAllPollers(), { wrapper: createWrapper() });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_600);
+      await vi.advanceTimersByTimeAsync(5_100);
     });
-    // Pollers are live (scan-family fired its 1.5s tick).
+    // Pollers are live (scan-family fired its bounded 5s fallback tick).
     expect(fetchScanStatusMock.mock.calls.length).toBe(6);
 
     // The server says "ask again later" once.
@@ -193,23 +193,23 @@ describe('recognition cooldown gate over the six pollers', () => {
     );
 
     // Already-scheduled interval ticks may fire once more; after they drain,
-    // the window is quiet until expiry (t_arm=1.6s, expiry=11.6s).
+    // the window is quiet until expiry (t_arm=5.1s, expiry=15.1s).
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3_400); // t=5s
+      await vi.advanceTimersByTimeAsync(3_400); // t=8.5s
     });
     const quiesced = gatedCallCounts();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(6_000); // t=11s, still inside the window
+      await vi.advanceTimersByTimeAsync(6_000); // t=14.5s, still inside the window
     });
     expect(gatedCallCounts()).toEqual(quiesced);
 
-    // Ungated: sync health fired its 15s tick regardless of the window? Not yet at t=11s.
+    // Ungated sync health has not reached its 15s tick yet.
     expect(fetchSyncHealthMock).toHaveBeenCalledTimes(1);
 
     // Past expiry the gated pollers resume.
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000); // t=16s
+      await vi.advanceTimersByTimeAsync(5_000); // t=19.5s
     });
     expect(gatedCallCounts().scan).toBeGreaterThan(quiesced.scan);
     expect(fetchSyncHealthMock).toHaveBeenCalledTimes(2);

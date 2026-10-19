@@ -101,9 +101,13 @@ the shared private endpoint, winner routing, and concurrency one. Both mount
 confirmed WordPress run `90a469e1-cbc9-4c16-80d2-382863f7ba73` completed with
 one final GPU draft and zero errors; attachment alt text was preserved. This
 proves execution, not caption quality. Further description runs must respect
-the bake-off owner's exclusive GPU windows. Cold-start registration of
-`dev-auraface` remains a separate shared lifecycle change; client configuration
-alone does not establish automatic wake-up for that deployment.
+the bake-off owner's exclusive GPU windows. The canonical lifecycle publisher
+subsequently registered `dev-auraface` in release
+`4c8ca686e754c8d209db3d88a6bf582e3d7beec5`. All four producer snapshots were
+fresh and trustworthy; controller code, effective units, runtime settings and
+PostgreSQL containers were unchanged. This wires AuraFace's queued work into
+automatic startup. A separate inference test starting from a stopped GPU has
+not been run.
 
 ## Automatic development seeding
 

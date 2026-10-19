@@ -205,9 +205,6 @@ const describeDraftCount = (run: DescribeRunResponse | null): number => run?.com
 const describeCanCancel = (runId: string | null, progress: DescribeRunProgress): boolean =>
   runId !== null && progress.run?.cancel_requested !== true && !progress.isTerminal;
 
-const gpuIsWarming = (gpuState: GpuState): boolean =>
-  gpuState === GPU_STATE.STARTING || gpuState === GPU_STATE.WARMING;
-
 const mapDescribeStatusToSettleOutcome = (status: DescribeRunStatus): DescribeRunSettleOutcome => {
   switch (status) {
     case DESCRIBE_RUN_STATUS.COMPLETED:
@@ -372,13 +369,8 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
     return snapshot(ACTIVITY_KIND.IDLE, idleFields(GPU_STATE.UNKNOWN));
   }
 
-  if (gpuIsWarming(gpu.gpuState)) {
-    return snapshot(ACTIVITY_KIND.WARMING, {
-      ...idleFields(gpu.gpuState),
-      canCancel: false,
-    });
-  }
-
+  // A shared GPU can be starting for another caller. Only this run's phase
+  // makes the workbench busy; global lifecycle must not replace finished drafts.
   return snapshot(ACTIVITY_KIND.IDLE, idleFields(gpuState));
 };
 

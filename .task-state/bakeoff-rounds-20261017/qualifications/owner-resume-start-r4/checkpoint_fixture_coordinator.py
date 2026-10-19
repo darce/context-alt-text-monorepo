@@ -18,6 +18,7 @@ import time
 import uuid
 
 FLOW_SHA = '369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062'
+NEW_ENVS = ('dev', 'dev-fir', 'prod', 'staging', 'dev-auraface')
 ENV = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/root',
        'LANG': 'C', 'LC_ALL': 'C', 'PYTHONDONTWRITEBYTECODE': '1'}
 
@@ -86,6 +87,77 @@ def snapshot(roots):
     return result
 
 
+def fifth_load(h, demand, revision):
+    """Controlled private fixture input, under its real persistent load fence."""
+    path = Path('/run/acx-write/dev-auraface')
+    lock = os.open(path / 'describe-load.json.lock', os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        value = dict(written_at=time.time(), queue_depth=0, in_flight=0,
+                     batch_in_progress=False, lease_demand=demand, revision=revision)
+        temporary = path / ('fixture-load-' + uuid.uuid4().hex)
+        h.put(temporary, value, 0o644)
+        fd = os.open(temporary, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            os.fchown(fd, 10001, 10001)
+            s = os.fstat(fd)
+            require(stat.S_ISREG(s.st_mode) and s.st_nlink == 1 and s.st_uid == s.st_gid == 10001
+                    and stat.S_IMODE(s.st_mode) == 0o644, 'private fifth load ownership/mode')
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temporary, path / 'describe-load.json')
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return value
+    finally:
+        os.close(lock)
+
+
+def provision_fifth(h, d, run, overlay_fd):
+    """Only after legacy history, extend the proven private /run fixture."""
+    overlay = d.sealed_overlay_receipt(overlay_fd)
+    prefix = h.directory('/run/acx-write', private=False)
+    try:
+        s = os.fstat(prefix)
+        require(d.descriptor_mount(prefix) == overlay['after']['targets']['/run']['mount_id']
+                and s.st_uid == s.st_gid == 0 and stat.S_IMODE(s.st_mode) == 0o755,
+                'fifth setup requires proven private Root0755 runtime prefix')
+        require(set(os.listdir(prefix)) == set(NEW_ENVS[:-1]), 'exact legacy four-environment fixture')
+        h.mkdir('/run/acx-write/dev-auraface', 0o770, 0, 10001)
+        fd = os.open('dev-auraface', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=prefix)
+        try:
+            for name in ('gpu-intent.json.lock', 'describe-load.json.lock'):
+                fence = os.open(name, os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                0o600, dir_fd=fd)
+                try:
+                    os.fchown(fence, 0, 10001)
+                    os.fchmod(fence, 0o660)
+                    s = os.fstat(fence)
+                    require(stat.S_ISREG(s.st_mode) and s.st_nlink == 1 and s.st_uid == 0
+                            and s.st_gid == 10001 and stat.S_IMODE(s.st_mode) == 0o660,
+                            'exclusive Root10001 persistent fifth fence')
+                    os.fsync(fence)
+                finally:
+                    os.close(fence)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.fsync(prefix)
+    finally:
+        os.close(prefix)
+    value = fifth_load(h, 0, 1)
+    require(not os.path.lexists('/run/acx-write/dev-auraface/gpu-intent.json'),
+            'fifth fixture must have no intent publication')
+    h.put(run / 'fifth-fixture-setup.json', dict(environments=NEW_ENVS,
+          private_run_mount=overlay['after']['targets']['/run'], load=value,
+          custody=snapshot(['/run/acx-write'])))
+
+
 def namespace(args, base, inputs, h, d, deadline):
     """Only entered as fresh namespace PID1. All effectful failures retain custody."""
     require(os.getpid() == 1, 'fresh namespace PID1 required')
@@ -108,14 +180,14 @@ def namespace(args, base, inputs, h, d, deadline):
             stage = h.fixture(base / 'old-procedure', scripts, ids, run)
             with d.held_inventory() as after:
                 d.fresh_overlays(before, after)
-                fd = os.memfd_create('checkpoint-overlay-proof', os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
-                h.HELD.append(fd)
-                receipt = dict(version=1, creator=d.creator_identity(), creator_fd=fd,
+                overlay_fd = os.memfd_create('checkpoint-overlay-proof', os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+                h.HELD.append(overlay_fd)
+                receipt = dict(version=1, creator=d.creator_identity(), creator_fd=overlay_fd,
                                before=before, after=after)
-                os.write(fd, json.dumps(receipt, sort_keys=True).encode())
-                os.fchmod(fd, 0o400)
-                fcntl.fcntl(fd, 1033, d.RECEIPT_SEALS)
-                require(d.sealed_overlay_receipt(fd) == receipt, 'native sealed memfd identity')
+                os.write(overlay_fd, json.dumps(receipt, sort_keys=True).encode())
+                os.fchmod(overlay_fd, 0o400)
+                fcntl.fcntl(overlay_fd, 1033, d.RECEIPT_SEALS)
+                require(d.sealed_overlay_receipt(overlay_fd) == receipt, 'native sealed memfd identity')
                 h.put(run / 'overlay-proof.json', receipt)
         installed = h.install_adapters(stage, run, raw, scripts)
         h.credential_preflight(stage, run, installed)
@@ -177,6 +249,15 @@ def namespace(args, base, inputs, h, d, deadline):
             require(len(refused) == 1 and 'operation budget exhausted' in
                     h.read_json(refused[0] / 'result.json')['error'], 'exact budget causation')
             require(cli(stage, 'reconcile', window, meta['id'])[0] != 0, 'legacy reconcile33 RED')
+        legacy = [stage, window, '/var/lib/acx-gpu'] + [Path('/run/acx-write', e) for e in NEW_ENVS[:-1]]
+        legacy_before = snapshot(legacy)
+        provision_fifth(h, d, run, overlay_fd)
+        require(snapshot(legacy) == legacy_before, 'fifth fixture setup changed legacy custody/state/fences')
+        # Keep the pinned old helper untouched; only the new stage uses five.
+        new_custody = module('checkpoint_new_topology', inputs['new-procedure/owner-custody.py'])
+        require(new_custody.ENVS == NEW_ENVS, 'new stage requires exact fixed five-environment order')
+        lifecycle.load = reaper.AggregateJobLoadSource(Path('/run/acx-write'), stale_seconds=120,
+                                                     expected_environments=NEW_ENVS)
         new = Path('/tmp/checkpoint-qualified-stage')
         h.mkdir(new)
         for name in scripts:
@@ -275,12 +356,39 @@ def namespace(args, base, inputs, h, d, deadline):
         afterbytes = Counter(p.read_bytes() for p in window.rglob('*') if p.is_file())
         require(not (Counter(oldfiles.values()) - afterbytes), 'archived original bytes missing')
         require(cli(new, 'reconcile', window, meta['id'])[:2] == (0, previous), 'checkpoint predecessor preserved')
+        demand = fifth_load(h, 1, 2)
+        before = snapshot(stable + [new])
+        oldops = {p.name for p in (window / 'ops').iterdir()}
+        rc, _, _ = cli(new, 'start', window, previous)
+        added = {p.name for p in (window / 'ops').iterdir()} - oldops
+        require(rc != 0 and len(added) == 1, 'fifth demand must refuse exactly one native START')
+        refused = window / 'ops' / added.pop()
+        result = h.read_json(refused / 'result.json')
+        require(result['outcome'] == 'refused' and 'work/demand' in result['error'],
+                'fifth demand must be the actual refusal cause')
+        preflight = h.read_json(refused / 'preflight.json')
+        require(len(preflight['loads']) == 5 and preflight['loads'][-1] == demand,
+                'actual START must consume fifth load')
+        require(not any((refused / n).exists() for n in
+                        ('candidate.json', 'writer-started.json', 'writer-stopped.json', 'publication.json'))
+                and not h.children(), 'refused START must never start a publication writer')
+        after = snapshot(stable + [new])
+        require({p: v for p, v in after.items() if not Path(p).is_relative_to(refused)} == before,
+                'fifth demand refusal changed state outside its diagnostic operation')
+        require(cli(new, 'reconcile', window, meta['id'])[:2] == (0, previous),
+                'demand refusal advanced the predecessor')
+        h.put(run / 'fifth-demand-refused.json', dict(load=demand, operation=refused.name,
+              result=result, same_predecessor=previous, no_writer=True, unchanged_custody=True))
+        zero_load = fifth_load(h, 0, 3)
         for action in ('start', 'auto'):
             rc, op, _ = cli(new, action, window, previous)
             require(rc == 0 and cli(new, 'reconcile', window, meta['id'])[:2] == (0, op), 'resumed native publication')
             candidate = h.read_json(window / 'ops' / op / 'candidate.json')
             stopped = h.read_json(window / 'ops' / op / 'writer-stopped.json')
             require(stopped['native_reaped'] and stopped['native_publish_completed'], 'resumed native writer proof')
+            if action == 'start':
+                loads = h.read_json(window / 'ops' / op / 'preflight.json')['loads']
+                require(len(loads) == 5 and loads[-1] == zero_load, 'resumed START consumes fresh fifth zero load')
             require(candidate['requested_by'] == oldcurrent['requested_by'] and
                     candidate['sequence'] == oldcurrent['sequence'] + 1, 'same actor and next sequence')
             oldcurrent = candidate
@@ -290,6 +398,7 @@ def namespace(args, base, inputs, h, d, deadline):
         h.archive_owned(run)
         h.put(run / 'selected-result.json', dict(status='ROOT_SELECTED_CHECKPOINT_PASS',
               full_qualification=False, case=args.case, remaining_controls=['crash-injection'],
+              environments=NEW_ENVS, fifth_demand_refusal=refused.name,
               window_id=meta['id'], predecessor_proof=proof, checkpoint=json.loads(receipt)))
         h.close_held()
         return 0

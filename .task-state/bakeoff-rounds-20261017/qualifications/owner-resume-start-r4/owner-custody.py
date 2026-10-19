@@ -7,7 +7,7 @@ All live paths are supplied only by its fixed Production configuration.
 import ast,errno,fcntl,hashlib,importlib.util,json,os,pathlib,select,signal,stat,subprocess,sys,time,uuid
 from datetime import UTC,datetime,timedelta
 P=pathlib.Path
-ENVS=('dev','dev-fir','prod','staging')
+ENVS=('dev','dev-fir','prod','staging','dev-auraface')
 PIN='54f7bd837f20c24529ce3e1ea53e91a405b16234c62092890c22b507c149a2d9'
 LOAD_PIN='0d08441a76a5f9f5c38ac32c3b4dd7956de07af3255fb31748bef36b5da26521'
 MAX=1048576

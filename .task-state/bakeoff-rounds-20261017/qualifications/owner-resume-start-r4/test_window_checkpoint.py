@@ -252,6 +252,57 @@ class Checkpoint(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'operation budget exhausted'):
             self.c.known_candidates(self.fd)
 
+    def test_fixed_fifth_fences_and_start_stop_load_guard(self):
+        expected = ('dev', 'dev-fir', 'prod', 'staging', 'dev-auraface')
+        self.assertEqual(self.c.ENVS, expected, 'all five fixed producers are required in order')
+        fifth = self.paths.runtime / 'dev-auraface'
+        for action in ('auto', 'start', 'stop'):
+            fences = self.paths.fences(action)
+            self.assertEqual(fences, [self.paths.lifecycle] + [
+                self.paths.runtime / env / 'gpu-intent.json.lock' for env in expected] + ([] if action == 'auto' else [
+                self.paths.runtime / env / 'describe-load.json.lock' for env in expected]) + [
+                self.paths.store / '.intent-authority.json.lock'])
+        load = fifth / 'describe-load.json'
+        original = load.read_bytes()
+        value = json.loads(original)
+        load.write_text(json.dumps(dict(value, lease_demand=1)))
+        before = inventory(self.base)
+        for action in ('start', 'stop'):
+            state = self.c.view(self.paths, action)
+            self.assertEqual(len(state['loads']), 5)
+            self.assertEqual(state['loads'][-1]['lease_demand'], 1)
+            with self.assertRaisesRegex(RuntimeError, 'work/demand'):
+                self.c.guard(state, self.candidates[self.current], self.candidates, ACTOR, action)
+        self.assertEqual(inventory(self.base), before)
+        load.write_bytes(original)
+        for action in ('start', 'stop'):
+            self.assertEqual(self.c.guard(self.c.view(self.paths, action), self.candidates[self.current],
+                                          self.candidates, ACTOR, action), 32)
+        self.assert_valid_baseline()
+        before = inventory(Path(self.w['path']) / 'ops')
+        state = self.c.view(self.paths, 'start')
+        self.assert_checkpoint_result(before, state, self.checkpoint())
+
+    def test_missing_fifth_intent_fence_refuses_checkpoint_read_only(self):
+        fifth = self.paths.runtime / 'dev-auraface'
+        # Explicit fixture addition makes the old four-environment source RED;
+        # never derive the asserted fifth producer from the implementation.
+        if not fifth.exists():
+            fifth.mkdir(mode=0o700)
+        fence = fifth / 'gpu-intent.json.lock'
+        self.assertIn(fence, self.paths.fences('auto'), 'checkpoint must fence the actual fifth producer')
+        fence.unlink(missing_ok=True)
+        before = inventory(self.base)
+        with self.assertRaises(FileNotFoundError) as caught:
+            self.checkpoint()
+        self.assertEqual(Path(caught.exception.filename), fence)
+        self.assertEqual(inventory(self.base), before)
+        self.c.unlock([self.c.lock_path(fence, time.monotonic()+1)])
+        self.assert_valid_baseline()
+        before = inventory(Path(self.w['path']) / 'ops')
+        state = self.c.view(self.paths, 'start')
+        self.assert_checkpoint_result(before, state, self.checkpoint())
+
     def test_refusal_matrix_is_read_only(self):
         cases = dict(over33='checkpoint operation budget exhausted',
                      pending='pending or unexpected operation inventory',

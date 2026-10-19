@@ -135,7 +135,7 @@ def idle_view(previous):
                                intents={previous['nonce']: dict(sequence=4, publication=publication)}),
                 publications={'unit/prod/gpu-intent.json': copy.deepcopy(previous)},
                 loads=[dict(written_at=time.time(), queue_depth=0, in_flight=0,
-                            batch_in_progress=False, revision=1) for _ in range(4)], deferred=None)
+                            batch_in_progress=False, revision=1) for _ in load_custody().ENVS], deferred=None)
 
 
 class ResumeControls(unittest.TestCase):

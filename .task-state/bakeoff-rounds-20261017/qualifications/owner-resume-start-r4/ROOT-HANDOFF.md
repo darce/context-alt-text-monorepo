@@ -8,7 +8,7 @@ in `context/source-origin.json`; the native export deliberately strips history.
 Baseline source receipts, evidence pins and `root_fixture_plan.py` are historical
 inputs and remain unchanged. Their old stage digests do not qualify this source.
 The regenerated seven-script manifest SHA256 is
-`7eeb57cdc2620aff491ffeed05a1070134acf0bb874586e8fc3c130a0bf8a425`.
+`20877883ec65bf7ff992510946db5d36955849d9dfd15ac0e3715b2825d577c9`.
 
 The supplied native evidence identifies the 33rd terminal refused operation
 (`a3711ad0`), full external history custody (`61347fe1`), and latest proven
@@ -17,6 +17,28 @@ inputs, not authority issued by this patch. Qualification must establish the
 actual current persisted predecessor using original native receipts and guards.
 Never substitute a new window, reset authority, delete operations, raise the
 ordinary cap, manufacture ACK/source proof, or modify the original sealed stage.
+
+## Fixed fifth-environment correction (HIGH19197)
+
+`owner-custody.py` now uses exactly
+`ENVS=('dev','dev-fir','prod','staging','dev-auraface')`; Paths is unchanged.
+Checkpoint fences all five intent producers and accepts these five environment
+directories even when the fifth intent is absent. START/STOP additionally fence
+and require all five current loads. Four-load inventories, a missing fifth load,
+and nonzero/stale fifth-load evidence refuse. Foreign environment checks remain;
+the directory bound is five, the ordinary operation cap stays 32, and checkpoint
+alone remains bounded at 33. AUTO/checkpoint still do not read loads.
+
+Before checkpoint, the Root coordinator must provision exactly the missing
+`/run/acx-write/dev-auraface/gpu-intent.json.lock` as ordinary fixed-topology
+setup from its Root0700 stage: exclusive creation (`O_EXCL`), no-follow open,
+UID0/GID10001, mode0660. Preserve every existing persistent fence. The archive
+function still requires existing fences and does not provision this file.
+No authority, publication, load or service configuration change is authorized.
+Use a new stage containing the exact seven script pins plus the protected old
+procedure receipt. The sealed `991aa72e...` four-environment stage is immutable
+and used only to reproduce old history; the full prior 993-file `61347fe1...`
+custody evidence remains unchanged. Continue the same window and predecessor.
 
 ## Protected procedure continuation
 
@@ -75,7 +97,7 @@ at most 1 MiB. Native boot/PID/start identities must prove both guardian and any
 writer absent or replaced; an existing matching process, including a zombie,
 refuses. A writer requires its original identity and native reaped wait receipt.
 
-The helper takes the window fence, lifecycle fence, four intent fences, then
+The helper takes the window fence, lifecycle fence, five intent fences, then
 authority fence, exactly as the existing AUTO guardian. It requires existing
 safe fences and uses one 15-second lock deadline. No checkpoint subprocess is
 created. Client operation creation now also takes the window fence, preventing
@@ -139,9 +161,19 @@ are not native Root Green. Final controls also passed exact-ID JSON CLI dispatch
 unchanged operation inventory, and root-group authority acceptance. An isolated
 in-memory mutation raising the ordinary cap from 32 to 33 made the cap control
 fail, demonstrating Green-to-Red sensitivity without editing source or tests.
-The existing `test_resume_start.py` had four dispatch
-errors because its substituted custody module lacks `validate_procedure`; its
-three unchanged guard/guardian methods passed. Independent tests were not edited.
+For this fifth-environment delta, the unchanged `test_window_checkpoint.py`
+passed all seven methods (36.914 seconds). Twenty-seven private pure/source
+controls passed, including exact fence ordering, four-to-five load admission,
+fifth nonzero/stale/missing load refusals, five-directory acceptance with an
+absent fifth intent, and fifth/foreign publication refusals. Private filesystem
+controls also refused each of the five missing intent fences without creating
+it or changing history, then retained an owned fifth publication with the same
+window/predecessor, original operation bytes/inodes and unchanged resource bytes.
+These ran as UID1002 and are source bounds, not native Root Green. The unchanged
+`test_resume_start.py` ran seven methods: five passed, while its hardcoded
+four-load fixtures caused one error and five failed subtests across the other
+two methods (`unknown required load inventory`). Tests and pinned inputs were
+not edited. Earlier four-environment Root/gate results do not qualify this delta.
 
 Root must qualify the final exact seven-script manifest in actual isolated tmpfs
 mounts/private proc with the complete pinned real writer/load/controller source,

@@ -1,12 +1,14 @@
 # INV-NEXTVER-01 Unimplemented Inventory
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 Status-tagged inventory of planned-but-unshipped work (scoped sources only).
 
 ## Codemap-grounded corrections (2026-07-12)
 
 - Demo funnel stack DS-1..DS-6 is largely BUILT in `apps/prototype-description-service/recognition/` (`demo.py` `/x/{slug}` router+`resolve_demo_slug`, `demo_provisioning_service.provision_demo`/`generate_slug`, demo_expiry sweep, demo_quota routes, `test_demo_router` enumeration/429/expiry-410 coverage).
 - `/admin` minter exists: `interface_adapters/http/routers/admin.py` `mint_key`, `mint_key_atomic`, `console_mint_key`; `api_key_admin_service.mint_api_key`; `scripts/provision_demo.py`; provision_customer script+tests.
-- Genuine unshipped gaps for launch: telemetry (OB-*: no posthog/sentry in app code), payments (Polar: AP-5/AP-7 link), public landing (MK-*), Clerk self-serve (AP-3/AP-4).
+- Genuine unshipped gaps for launch: telemetry (OB-*: no posthog/sentry in app code), payments (Stripe: AP-5/AP-7 link), public landing (MK-*), Clerk self-serve (AP-3/AP-4).
 - Note: the GTM section-14 table rows below were originally tagged from markdown only and are corrected here.
 
 ## v0.4.1
@@ -78,9 +80,9 @@ Status-tagged inventory of planned-but-unshipped work (scoped sources only).
 | AP-2: Business API service (tenant CRUD, key lifecycle over | gtm/altcontext-productization-launch-plan.md#14 | partial | code: admin.py mint_key/mint_key_atomic exist; full Business API not | Business API service (tenant CRUD, key lifecycle over `/admin`) | L |
 | AP-3: Clerk integration + `user.*` webhooks (idempotent) → tenant | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Epic no status | Clerk integration + `user.*` webhooks (idempotent) → tenant lifecycle; cache | L |
 | AP-4: `app.altcontext.com` dashboard: key, usage, install steps, upgrade link | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Epic no status | `app.altcontext.com` dashboard: key, usage, install steps, upgrade link | L |
-| AP-5: Polar products + checkout + `subscription.*` webhooks → | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Epic no status | Polar products + checkout + `subscription.*` webhooks → plan/quota enforcement | L |
+| AP-5: Stripe products + checkout + `subscription.*` webhooks → | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Epic no status | Stripe products + checkout + `subscription.*` webhooks → plan/quota enforcement | L |
 | AP-6: Resend welcome + receipt from `mail.altcontext.com` | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Atomic no status | Resend welcome + receipt from `mail.altcontext.com` | S |
-| AP-7: Concierge fast-path: `make` recipe + Polar payment link | gtm/altcontext-productization-launch-plan.md#14 | partial | provision_customer script exists; Polar link missing | Concierge fast-path: `make` recipe + Polar payment link (ship week | S |
+| AP-7: Concierge fast-path: `make` recipe + Stripe payment link | gtm/altcontext-productization-launch-plan.md#14 | partial | provision_customer script exists; Stripe link missing | Concierge fast-path: `make` recipe + Stripe payment link (ship week | S |
 | AP-8: CRM projection sync (DB→Attio via API on lifecycle | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Atomic no status | CRM projection sync (DB→Attio via API on lifecycle events, one-way) | S |
 | MK-1: Static landing implementing §8 skeleton + copy | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Epic no status | Static landing implementing §8 skeleton + copy | L |
 | MK-2: Before/After hero component (real image, 3 caption tiers) | gtm/altcontext-productization-launch-plan.md#14 | not-started | §14 Atomic no status | Before/After hero component (real image, 3 caption tiers) | S |

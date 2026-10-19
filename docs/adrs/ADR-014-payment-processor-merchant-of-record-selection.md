@@ -1,58 +1,43 @@
-# ADR-014: Payment processor and merchant-of-record selection
+# ADR-014: Standard Stripe direct payments
 
-- **Status:** Superseded 2026-09-30 by the Stripe-direct decision (APP-1 2026-09-22; APP1RB-1 `claude_decision_billing_is_stripe_direct_polar_is_removed_20260930`); clarified 2026-10-17. Polar is obsolete and will not be provisioned.
-- **Original date:** 2026-07-12.
-- **Decider:** Founder (Daniel).
-- **Context:** INV-NEXTVER-01; current implementation proposal APP-1.
-- **Evidence:** [vendor comparison](../assessments/current/app-portal-build-buy-reassessment-2026-09-19.md), [launch recommendation with source-book corpus](../assessments/current/app-portal-launch-recommendation-2026-09-19.md).
-- **Execution:** [Plan 0001](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md); [SaaS roadmap](../roadmaps/roadmap-saas-operations.md).
+- **Status:** ACCEPTED — current billing-provider authority.
+- **Confirmed:** 2026-10-19 by the operator; standard Stripe direct was selected in APP-1 on 2026-09-22.
+- **Supersedes:** all earlier payment-provider selection and merchant-of-record recommendations in project plans, scopes, assessments, roadmaps and runbooks.
+- **Implementation status:** selected design; deployment and release acceptance require their own evidence.
+- **Execution:** [launch continuation](../plans/0002-app-altcontext-launch-continuation-task-plan.md), [account/billing contract](../specs/app-portal-account-billing-spec.md).
 
-## Context
+## Decision
 
-The immediate objective is a bounded free self-service beta that exposes signup, key installation, usage and recovery behavior. Paid conversion must be implemented and sandbox-tested before beta admission, with live checkout disabled until the paid release gate. The founder's attention and compute exposure are more consequential initially than small processing-rate differences.
+Use **standard Stripe payments on AltContext's own Stripe account**, with Stripe Checkout Sessions and the hosted customer portal. Use Stripe Billing for the selected recurring offer. **Do not use Stripe Managed Payments or any merchant-of-record arrangement.**
 
-The July decision favored a merchant of record (MoR) for a solo global launch. That remains a useful operating assumption, not proof of the actual seller's jurisdiction or tax obligations. Confirm seller/product/payout eligibility. A MoR handles the contracted transaction tax/payment responsibilities; it does not eliminate seller accounting, all fees, product obligations or incident work.
+AltContext is the seller. Tax determination and manual calculation, registration, collection, reporting and remittance remain AltContext's responsibility. Do not assume Stripe performs those duties automatically or enable an automated tax product by implication.
 
-The July decision also overstated Polar's self-hosting exit, Stripe Managed Payments' exclusion and payment portability. This revision removes those claims. The commercial facts and counter-cases are in the linked assessment, refreshed from primary sources on 2026-09-19.
+Clerk supplies interactive authentication. AltContext retains its stable tenant UUID, API keys, usage ledger, audited grants, admission controls and entitlement projection. Stripe owns financial payment, invoice and subscription records. WordPress reads tenant usage and submits work; its local attempt limit is an optional site safety cap, not a refillable account balance.
 
-## Recommended decision
+## Accounting and customer experience
 
-**Superseded: use standard Stripe Checkout Sessions on AltContext's own Stripe account plus Stripe Billing (excluding Stripe Managed Payments and any merchant-of-record arrangement). Keep a small provider adapter and local entitlement projection.** The original Polar recommendation below is retained as history only.
+Customer-facing units must match the billable operation contract. Use image-description units or clearly defined credits; model input/output tokens and GPU cost are internal cost measurements unless an explicit token-priced offer is approved.
 
-This is a reasoned choice under uncertainty, not a measured assertion of best developer experience. Polar's hosted flow, sandbox and customer-state interface fit one subscription offer and the existing planned lifecycle. There is no demonstrated integration advantage that justifies another mandatory vendor bake-off. Prove this path early; reopen only on concrete failure or meaningful new evidence.
+Reserve tenant allowance atomically before costly dispatch, settle once under the accepted charging policy, and deduplicate retries and verified payment events. API-key rotation must not reset allowance. Reads and polling do not spend image units. Preserve used, reserved, remaining, allowance, period and observation time; unavailable counts remain unknown.
 
-- Clerk owns human identity; AltContext retains local API-key issuance/verification and tenant authorization.
-- Polar owns subscription/payment facts; AltContext derives access according to explicit entitlement policy. The processor is not merely a notifier whose financial truth we edit locally.
-- Use the existing service/customer-state authority for beta, with restricted reset roles and tested restore. No second writable credential database.
-- A local beta grant creates no paid subscription, payment instrument requirement, charge or arrears.
-- Start with one monthly offer and allowance; defer overages, annual pricing, multiple tiers and bespoke billing UI.
-- Verify signatures, persist/dedupe webhooks before acknowledgement, reconcile missed/reordered events and keep billing network calls off the recognition path.
+One account area owns **Usage & billing**: allowance, consumption, pending reservations, reset/expiry date, transaction history and hosted billing-management entry. WordPress shows a compact read-only balance and selected-run estimate next to Describe, with a link to that account area. Keep local site caps in Settings.
 
-## Alternatives and counter-cases
+The initial recurring offer and its allowance are the existing launch baseline. Purchased top-ups and automatic refills need an explicit product/ledger contract before implementation: unit quantity, currency and tax, expiry/rollover, refunds, credit priority, verified-payment grant idempotency and reconciliation. Auto-refill, if approved later, is opt-in with a threshold and a spending cap. A checkout return URL never credits an account.
 
-| Option | Decision for this launch | When it becomes preferable |
-| --- | --- | --- |
-| Polar Starter | Recommended implementation | Passes actual eligibility and sandbox lifecycle proof |
-| Stripe Managed Payments | Eligible contender; do not exclude by old preview status | Existing eligible Stripe setup or required capability materially reduces remaining work; accepts its actual fee schedule |
-| Paddle | Credible MoR alternative | Account approval, coverage, operations or measured international economics favor it |
-| Stripe direct + Billing | Defer | Explicit seller-owned tax/compliance operating plan and a concrete business benefit justify it |
-| Dodo Payments | Reserve | Approval/integration benefit or total effective cost, including payout/recovery fees, wins |
-| Lemon Squeezy | Lower priority for new integration | Specific existing account/capability advantage outweighs its announced Stripe Managed Payments direction; no shutdown is presumed |
-| Clerk Billing + Stripe | Defer | Accepted merchant/tax/currency requirements fit its actual limitations; it is not a MoR substitute |
+## Integration and release boundary
 
-## Cost and exit
+Use the existing small `BillingProvider` boundary; do not add another vendor framework. Pin the Stripe API/SDK and genuine webhook fixtures during implementation. Verify signatures over the unmodified request body using `Stripe-Signature`, persist an inbox event before acknowledgement, and reconcile authoritative Stripe state. Keep provider calls off the recognition/description admission path.
 
-Polar Starter currently lists 5% + US$0.50, with a non-US card surcharge and payout/dispute costs. Do not assume the old Early Member rate can be captured now. Use actual transaction size/volume before buying a paid rate reduction. [Polar pricing](https://polar.sh/resources/pricing)
+Keep test and live credentials, webhook secrets, object mappings and seller-account namespaces separate. Live payments stay disabled until the paid gate is approved and real sandbox evidence covers checkout, duplicate/reordered events, interruption, cancellation, renewal, refund and recovery. Historical adapter tests are not proof of the selected Stripe integration.
 
-Stripe Managed Payments adds 3.5% to Payments fees; optional Billing is separate. Its early-volume cost difference is insufficient by itself to justify rejecting it. [Stripe pricing](https://stripe.com/managed-payments)
+## Documentation precedence
 
-Export tenant/provider/customer/catalog mappings and preserve direct customer contact subject to consent. An adapter limits code coupling; it cannot guarantee moving subscriptions or payment methods. A switch may require provider cooperation and customer reauthorization. Polar's open-source code does not reproduce its merchant agreements or payout operation.
+This file owns provider selection and tax responsibility. Plans own sequencing; specs own request/state contracts; runbooks require deployed-version evidence. A superseded document must identify its replacement before its body. Remove contradictory recommendations instead of retaining an active-looking alternative table.
 
-## Execution and falsifiers
+Before editing account or billing documentation, follow this decision. Do not infer the current provider from an old filename, search snippet or historical receipt.
 
-1. S0 records actual seller/product/payout eligibility and one offer's required lifecycle. S1 performs the chosen integration proof; the proposed two engineer-day timebox is discovery, not complete billing delivery.
-2. If Polar fails a required contract or eligibility check, inspect one matching fallback before production integration. Use the current comparison; do not silently add a second provider.
-3. S5 completes checkout, signed inbox, reconciliation, cancellation/payment recovery and hosted portal. S6 proves no-charge beta plus recovery and cost containment. S7 enables explicit paid conversion only after the paid-ready gate.
-4. Reassess at the first paid-cohort review and material geography/volume changes. Measure support/engineering burden and effective cost, not vendor affinity.
+## Research basis
 
-Canon basis: Lean UX ch-3/10/12 (learning/outcomes), Good Strategy Bad Strategy ch-5/8 (bottleneck/coherence), The 4-Hour Workweek ch-8/10/11 (owner attention and demand), Modern Software Engineering ch-11/12 (small adapters), DDIA ch-7/8/11/12 (transaction/projection correctness). The linked recommendation traces these to the local `distilled/` corpus, lexicons, reasoning cards and principles, including disconfirmers.
+Canon v0.26.2: [DATA-14 — No dual writes](../../../heuristics-canon-v0.26.2/lexicons/engineering.md#data-14), *Designing Data-Intensive Applications*, ch. 11, supports one durable accounting authority with derived UI views; [NAV-05 — MECE categories](../../../heuristics-canon-v0.26.2/lexicons/interaction-ux.md#nav-05), *Designing Interfaces, 3rd ed.*, supports one primary Usage & billing home. These are architecture/UX mechanisms, not vendor or tax advice.
+
+Official implementation references: [Stripe Checkout](https://docs.stripe.com/payments/checkout), [customer portal](https://docs.stripe.com/customer-management), [webhook signatures](https://docs.stripe.com/webhooks/signature).

@@ -1,12 +1,14 @@
 # E16. SaaS Foundation (Epic)
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 ## Active app.altcontext.com launch scope
 
 As of 2026-09-21, APP-1 owns this launch. Its foundation landed at `e2a539107`; the launch is still incomplete. [Plan 0002 — launch continuation](../../plans/0002-app-altcontext-launch-continuation-task-plan.md) consolidates the remaining work and supersedes the historical execution architecture below. Status: remaining-work plan under review; no new remote dispatch authorized.
 
 - Clerk owns human identity/session/recovery; existing local tenant and API-key authority remains authoritative.
 - Complete invitation onboarding, key management, WordPress connection, accurate usage/admission and bounded cost.
-- Complete Polar checkout, hosted billing management, durable webhook/reconciliation and sandbox lifecycle before free-beta admission.
+- Complete Stripe checkout, hosted billing management, durable webhook/reconciliation and sandbox lifecycle before free-beta admission.
 - Deliver the app host/browser journey, tenant isolation, reset containment, restore, privacy-safe telemetry and release evidence.
 - Activate live paid conversion only after the separate commercial/canary gate; beta has no card requirement, automatic charge or arrears.
 
@@ -16,14 +18,14 @@ E16-7 and GTM AP-3/AP-4/AP-5 are inherited requirements, not parallel implementa
 
 The separate business database, new credential authority, auth-vendor bake-off, webhook-minted key and Phase-2-only billing/limits below are historical alternatives. They are not APP-1 requirements. Historical unchecked criteria and “no implementation started” status must not be read as the current APP-1 ledger.
 
-> **2026-09-19 recommended beta sequence:** [APP-1 Plan 0001](../../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md) is the proposed integration owner for Clerk identity, existing local tenant/API-key authority, capped free self-service and Polar sandbox-complete billing before beta. The separate business database, new credential service and deferred quota/billing sequence below are historical design, not prerequisites for APP-1. The existing repository now has create/list/revoke operations as recorded in APP-1's evidence. Keep E16-7 findings/cases as inherited work; no parallel implementation or shipped-status claim is implied.
+> **2026-09-19 recommended beta sequence:** [APP-1 Plan 0001](../../plans/0001-app-altcontext-beta-clerk-stripe-task-plan.md) is the proposed integration owner for Clerk identity, existing local tenant/API-key authority, capped free self-service and Stripe sandbox-complete billing before beta. The separate business database, new credential service and deferred quota/billing sequence below are historical design, not prerequisites for APP-1. The existing repository now has create/list/revoke operations as recorded in APP-1's evidence. Keep E16-7 findings/cases as inherited work; no parallel implementation or shipped-status claim is implied.
 
 > **Epic Short ID**: E16
 > **Status**: planning -- no implementation started
 > **Parent**: [roadmap-saas-operations.md](../../roadmaps/roadmap-saas-operations.md) Phase 1
 > **Prerequisites**: E14 (self-hosting baseline deployed), E15-3 (plugin settings page — **not yet implemented**, must land before E16 success criteria can be verified)
 
-> **2026-09-16 planning amendment**: The draft [E16-7 key panel](../../tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md) uses the existing recognition identity database and in-house API-key service with purchased Clerk identity. Its [build/buy assessment](../../assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md) keeps Polar subscription self-service and local entitlements in a later task. This is an explicit exception to the business-DB/key-service design below; reconcile the two authority models before implementing billing or migrating credentials. E16-7 is not yet allocated as an epic phase or approved for implementation.
+> **2026-09-16 planning amendment**: The draft [E16-7 key panel](../../tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md) uses the existing recognition identity database and in-house API-key service with purchased Clerk identity. Its [build/buy assessment](../../assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md) keeps Stripe subscription self-service and local entitlements in a later task. This is an explicit exception to the business-DB/key-service design below; reconcile the two authority models before implementing billing or migrating credentials. E16-7 is not yet allocated as an epic phase or approved for implementation.
 
 Build the business infrastructure layer — a separate business database, vendor-managed auth, API key self-service, usage metering, and observability — so that WordPress site owners can sign up, get an API key, and start using Alt Context without manual operator provisioning.
 
@@ -48,7 +50,7 @@ The `altcontext-marketing-monorepo` has proven patterns for API key management, 
 - DNS: `app.altcontext.com`, `mail.altcontext.com` SPF/DKIM prep
 
 **Out of scope (Phase 2+):**
-- Payment processing (Polar -- Phase 2)
+- Payment processing (Stripe -- Phase 2)
 - Plan enforcement and usage limits (Phase 2)
 - Transactional email (Resend -- Phase 3)
 - Full marketing backend port from Fly.io (Phase 4)
@@ -74,7 +76,7 @@ OCI VM
 │   │   ├── name         TEXT
 │   │   ├── slug         TEXT UNIQUE
 │   │   ├── plan         TEXT DEFAULT 'free' (free/pro/business)
-│   │   ├── billing_id   TEXT (Polar customer ID, Phase 2)
+│   │   ├── billing_id   TEXT (Stripe customer ID, Phase 2)
 │   │   ├── created_at   TIMESTAMPTZ
 │   │   └── updated_at   TIMESTAMPTZ
 │   │
@@ -106,7 +108,7 @@ OCI VM
 │   │   ├── consent_status TEXT (pending/express/withdrawn)
 │   │   └── created_at   TIMESTAMPTZ
 │   │
-│   └── billing_events (Polar webhook audit log — Phase 2)
+│   └── billing_events (Stripe webhook audit log — Phase 2)
 │       ├── id           UUID PRIMARY KEY
 │       ├── tenant_id    UUID FK → tenants
 │       ├── event_type   TEXT
@@ -157,7 +159,7 @@ WordPress Plugin → api.altcontext.com (recognition)
 | Function | Vendor | Integration Point |
 |----------|--------|-------------------|
 | **Auth** | WorkOS or Clerk | Customer dashboard login/signup. Webhook → business API creates tenant row. |
-| **Billing** | Polar (Phase 2) | Checkout link in dashboard. Webhook → business API updates plan field. |
+| **Billing** | Stripe (Phase 2) | Checkout link in dashboard. Webhook → business API updates plan field. |
 | **Error tracking** | Sentry | Python SDK in recognition + business API. JS SDK in WP plugin. |
 | **Product analytics** | PostHog | Backend events (API calls, key lifecycle). Dashboard: DAU, API volume. |
 | **Email** | Resend (Phase 3) | Welcome email, usage alerts, receipts. `mail.altcontext.com` domain. |

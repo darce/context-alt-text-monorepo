@@ -1,5 +1,7 @@
 # Offload Brief — AP-7: Concierge Sell-and-Provision Fast-Path
 
+> **Billing authority:** [ADR-014](../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 > **Purpose:** the *first* offload lane. Ships in week 1, unblocks revenue, and **does not depend on AP-1/AP-2** — it wraps the *existing* recognition `/admin` minter (`manage_api_keys`), the same path the demo uses. Plan enforcement is manual (concierge), so no billing stack is required.
 > **Backend:** `grok-cli` · **Effort:** high · **Token budget:** set per your governor (suggest a bounded single-pass cap).
 > **Task branch:** create via branch-lifecycle first (see the parent message for commands); offload runs inside that feature-branch worktree.
@@ -12,7 +14,7 @@ Give the operator a one-command way to convert a paying concierge customer into 
 
 **Deliverables:**
 1. **`make provision-customer EMAIL=<e> [PLAN=pro] [LABEL="<name>"]`** — mints a **real** (non-demo) tenant + API key via the existing `/admin` `manage_api_keys` mechanism (no demo expiry/quota; labeled as a customer), and prints: the API key **once**, the tenant id, and a copy-paste WP install snippet (API URL + key). Idempotent on `EMAIL` (re-running does not create a second tenant for the same email; it reports the existing one).
-2. **Runbook** `docs/gtm/runbooks/concierge-sale.md` — the manual sale loop around the command: (a) create a Polar one-time or subscription **payment link** for the agreed plan/price; (b) send it with the personalized pitch (reference plan §10 Move 1); (c) on Polar payment confirmation, run `make provision-customer`; (d) email the key + install steps (manual send now; Resend automates later in AP-6); (e) record the customer in the `leads`/tracking sheet.
+2. **Runbook** `docs/gtm/runbooks/concierge-sale.md` — the manual sale loop around the command: (a) create a Stripe one-time or subscription **payment link** for the agreed plan/price; (b) send it with the personalized pitch (reference plan §10 Move 1); (c) on Stripe payment confirmation, run `make provision-customer`; (d) email the key + install steps (manual send now; Resend automates later in AP-6); (e) record the customer in the `leads`/tracking sheet.
 3. **No new source-of-truth for keys** — reuse the recognition minter; do **not** stand up a parallel key store (`[ARCH-02]`). The raw key is shown once and never persisted in plaintext.
 
 **Explicitly out of scope (do not build):** Clerk signup, the business DB, the dashboard, automated billing webhooks, plan *enforcement*. Those are AP-1..AP-5. AP-7 is the manual bridge that works *today*.
@@ -38,7 +40,7 @@ make provision-customer EMAIL=concierge-test@example.com PLAN=pro LABEL="Test Co
 ## Notes for the lane
 
 - Model the target on the `provision-demo` shape described in §5 of the plan (that slice, DS-3, is not built yet — follow the §5 text, not an existing make target) minus the `demo_instances` slug/expiry/quota; label the key as customer-scoped.
-- Polar account creation + payment-link generation are **operator-manual** (external SaaS UI) — the runbook documents them; the lane does not automate Polar.
+- Stripe account creation + payment-link generation are **operator-manual** (external SaaS UI) — the runbook documents them; the lane does not automate Stripe.
 - Keep the command output copy-paste-friendly for the operator to drop into an email until AP-6 (Resend) automates it.
 
 ---

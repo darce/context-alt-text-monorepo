@@ -101,12 +101,12 @@ const renderBody = (
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const content = (rows: WorkbenchMediaItem[]) => (
     <QueryClientProvider client={client}>
       <table>
         <tbody>
           <MediaSelectionTableBody
-            items={items}
+            items={rows}
             isLoading={false}
             detailIsLoading={false}
             onToggleRow={() => undefined}
@@ -116,8 +116,10 @@ const renderBody = (
           />
         </tbody>
       </table>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(content(items));
+  return { ...view, rerenderItems: (rows: WorkbenchMediaItem[]) => view.rerender(content(rows)) };
 };
 
 describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-04]', () => {
@@ -165,7 +167,7 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     renderBody([makeItem({ title: 'Flower', altText: null })]);
     const versions = screen.getByRole('combobox', { name: 'Description version' });
     expect(screen.getByText(newest.draftText)).toBeInTheDocument();
-    await user.selectOptions(versions, JSON.stringify([previous.source, previous.runId, previous.draftText]));
+    await user.selectOptions(versions, JSON.stringify([previous.source, previous.runId]));
     expect(screen.getByText(previous.draftText)).toBeInTheDocument();
     expect(correction).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Edit draft for Flower' }));
@@ -183,6 +185,30 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
     expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'empty');
     expect(screen.queryByTestId('acx-empty-state-live-region')).not.toBeInTheDocument();
+  });
+
+  it('keeps the selected older run when current identity weaving refreshes its text', async () => {
+    const user = userEvent.setup();
+    const newest: QueueDraft = {
+      mediaId: 42,
+      draftText: 'Latest description.',
+      existingAlt: false,
+      runId: 'new-run',
+      source: 'describe_run',
+    };
+    const previous: QueueDraft = { ...newest, runId: 'old-run', draftText: 'A woman waves.' };
+    queueDrafts.draftsByMediaId[42] = newest;
+    queueDrafts.historyByMediaId[42] = [newest, previous];
+    const items = [makeItem()];
+    const view = renderBody(items);
+    const versions = screen.getByRole('combobox', { name: 'Description version' });
+    await user.selectOptions(versions, screen.getByRole('option', { name: 'Run old-run' }));
+    expect(screen.getByText(previous.draftText)).toBeInTheDocument();
+
+    queueDrafts.historyByMediaId[42] = [newest, { ...previous, draftText: 'Ada waves.' }];
+    view.rerenderItems(items);
+    expect(screen.getByText('Ada waves.')).toBeInTheDocument();
+    expect(screen.queryByText(newest.draftText)).not.toBeInTheDocument();
   });
 
   it('shows loading faces in a row while identities are loading', () => {

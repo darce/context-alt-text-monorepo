@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -36,6 +37,7 @@ from scene.application.describe_run_worker import (
     publish_demand_snapshot,
     run_describe_job,
 )
+from scene.application.description_naming_projection import DescriptionImageEvidence, project_run_item_names
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.gpu_state import read_gpu_state
 from scene.application.identity_merge import NamingStatus
@@ -759,7 +761,47 @@ async def list_describe_run_items(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
     _reject_single_run(run)
     items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
-    return _run_items_response(run, items)
+    return await _current_run_items_response(session, run, items)
+
+
+class DescribeRunNamingPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    images: list[DescriptionImageEvidence] = Field(default_factory=list, max_length=100)
+
+
+async def _current_run_items_response(session, run, items, image_evidence=()) -> DescribeRunItemsResponse:
+    response = _run_items_response(run, items)
+    if not run.recognition_enabled:
+        return response
+    updates = await project_run_item_names(
+        session=session, tenant_id=run.tenant_id, items=items, image_evidence=image_evidence
+    )
+    return response.model_copy(
+        update={"items": [item.model_copy(update=updates.get(item.media_id, {})) for item in response.items]}
+    )
+
+
+@router.post("/describe/run/{run_id}/items/preview", response_model=DescribeRunItemsResponse)
+async def preview_describe_run_items(
+    run_id: uuid.UUID,
+    body: DescribeRunNamingPreviewRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+) -> DescribeRunItemsResponse:
+    """Read-only CPU projection. Never submits inference or consumes credits."""
+    tenant_id = _require_tenant_uuid(auth)
+    repo = await _prepare_repo(session=session, auth=auth, tenant_id=tenant_id)
+    run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+    _reject_single_run(run)
+    items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
+    members = {item.media_id for item in items}
+    if any(image.media_id not in members for image in body.images):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image evidence outside describe run")
+    if len({image.media_id for image in body.images}) != len(body.images):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate image evidence")
+    return await _current_run_items_response(session, run, items, body.images)
 
 
 @router.delete("/describe/run/{run_id}", response_model=DescribeRunResponse)

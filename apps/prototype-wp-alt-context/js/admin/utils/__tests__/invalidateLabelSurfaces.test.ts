@@ -16,6 +16,8 @@ describe('invalidateLabelSurfaces', () => {
       queryKeys.suggestions.mergePending(),
       queryKeys.suggestions.namePending(),
       queryKeys.roster.all,
+      ['describe-run-items', 'existing-run'],
+      ['description-history', 'runs', [71], null],
     ];
 
     labelSurfaceKeys.forEach((queryKey) => queryClient.setQueryData(queryKey, {}));

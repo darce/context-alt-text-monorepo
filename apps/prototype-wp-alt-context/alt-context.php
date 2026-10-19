@@ -144,7 +144,6 @@ require_once ACX_PLUGIN_DIR . 'src/admin/class-dashboard-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-workbench-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-roster-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-settings-page.php';
-require_once ACX_PLUGIN_DIR . 'src/admin/class-description-history-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-retention-page.php';
 require_once ACX_PLUGIN_DIR . 'src/admin/class-menu.php';
 

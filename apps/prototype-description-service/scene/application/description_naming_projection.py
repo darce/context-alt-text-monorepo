@@ -19,7 +19,13 @@ from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.hashing import compute_context_hash, compute_image_hash
 from scene.application.identity_merge import join
 from scene.application.identity_merge.merge import NormalizedBox, PhraseBox, merge_identities, span_replaceable
-from scene.application.identity_merge.policy import NamingPolicy
+from scene.application.identity_merge.policy import (
+    NamingPolicy,
+    NamingProvenance,
+    NamingSkipReason,
+    NamingStatus,
+    resolve_naming_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,12 +119,12 @@ def _unambiguous_faces(base: NamingBase, boxes, faces, detected):
     if not groundable:
         # One confirmed person among unnamed people is not a lone-person image.
         if detected_ids - {str(f.identity_id) for f in faces}:
-            return [], boxes
-        return faces, boxes
+            return [], boxes, True
+        return faces, boxes, False
     safe_boxes = [p for p in groundable if sum(p.box.contains_point(*d.box.center) for d in detected) == 1]
     if not safe_boxes:
-        return [], boxes
-    return faces, safe_boxes
+        return [], boxes, True
+    return faces, safe_boxes, False
 
 
 async def project_run_item_names(*, session, tenant_id, items, image_evidence=()) -> dict[int, dict]:
@@ -163,9 +169,23 @@ async def project_run_item_names(*, session, tenant_id, items, image_evidence=()
                 image_width=base.width,
                 image_height=base.height,
             )
-            faces, boxes = _unambiguous_faces(base, boxes, faces, detected)
+            # Policy-ineligible detections must remain ambiguity blockers even
+            # though only eligible names reach the existing realizer.
+            eligible_faces = [face for face in faces if resolve_naming_allowed(face, policy)]
+            had_eligible_faces = bool(eligible_faces)
+            if had_eligible_faces:
+                faces, boxes, blocked = _unambiguous_faces(base, boxes, eligible_faces, detected)
+            else:
+                blocked = False  # preserve the existing disabled/no-eligible reason
             result = merge_identities(caption=base.caption, phrase_boxes=boxes, confirmed_faces=faces, policy=policy)
-            provenance["naming"] = naming._provenance_model(result.provenance).model_dump(mode="json")
+            naming_provenance = result.provenance
+            if blocked and had_eligible_faces:
+                naming_provenance = NamingProvenance(
+                    naming_allowed=False,
+                    reason=NamingSkipReason.AMBIGUOUS_GROUNDING,
+                    status=NamingStatus.AMBIGUOUS_GROUNDING,
+                )
+            provenance["naming"] = naming._provenance_model(naming_provenance).model_dump(mode="json")
             provenance["naming_refresh"] = {"status": "current"}
             updates[item.media_id] = {"alt_text_draft": result.named_draft, "provenance": provenance}
         except (ValidationError, ValueError):

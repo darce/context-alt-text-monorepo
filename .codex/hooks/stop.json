@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "_managed_by": "workbay-bootstrap",
+        "command": "{{consumer_root}}/scripts/hooks/compact-session.py"
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "_managed_by": "workbay-bootstrap",
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"{{consumer_root}}/scripts/hooks/ensure-agent-surfaces.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

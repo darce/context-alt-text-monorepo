@@ -1,5 +1,7 @@
 # APP-1 offline joined-validation evidence receipt
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 Date: 2026-09-22 UTC
 Assessment owner: this file only
 Verification source commit: `30c299fe62ad372fc3aa519f61cf5ea65d808719`
@@ -53,7 +55,7 @@ Earlier per-lane VM snapshots, prerequisites, and receipts are context, not
 evidence for this joined run; their pass counts were not reused.
 
 The successful run is fixture-only evidence for the named portal tests and
-local type/build checks. No live Clerk authentication, Polar provider or
+local type/build checks. No live Clerk authentication, Stripe provider or
 payment, WordPress connection, browser acceptance, PostgreSQL receipt, or
 deployment acceptance is claimed. No adapter-native rerun was performed; if
 one is later needed, it must use the existing VM npm installation.

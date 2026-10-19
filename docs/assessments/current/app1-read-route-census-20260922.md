@@ -1,5 +1,7 @@
 # APP-1 read-route census — `GET /recognition/jobs/{job_id}`
 
+> **Billing authority:** [ADR-014](../../adrs/ADR-014-payment-processor-merchant-of-record-selection.md) selects standard Stripe direct with seller-owned tax. Historical adapter receipts are not Stripe implementation or launch evidence.
+
 Date: 2026-09-22. Lane-owned receipt for the pending P02 FREE-POLL census in
 `app1-offline-residual-scope-20260922.md`. This is contract verification plus
 the minimal handler tenant fence. Not a metering or worker rereview.
@@ -166,12 +168,12 @@ Result: exit 1; **2 failed, 34 passed, 1 warning, 6 errors in 16.52s**.
 This receipt enumerates the GET job-status census, records FREE-POLL /
 no-charge proofs, and closes the handler/auth-boundary HIGH fencing gap on the
 in-memory producer and FakeSession SQL fallback. It does **not** close whole
-`APP1-CONT-P02`. PostgreSQL RLS, Clerk, Polar, and live operations were not
+`APP1-CONT-P02`. PostgreSQL RLS, Clerk, Stripe, and live operations were not
 available.
 
 OPEN-Q topology / suggestions / retention / tenant-naming budgets remain
 policy decisions; no prices are assigned. `POST /roster/curation/sync` remains
 outside the app-host customer allowlist; its API auth/exclusion decision is
-still open. Host `HOST-RV01` and genuine Clerk / Polar / restore V gates remain
+still open. Host `HOST-RV01` and genuine Clerk / Stripe / restore V gates remain
 open. No new UX map. Existing usage admission and terminal settlement fixes
 were not re-opened; no metering change is required for this GET.

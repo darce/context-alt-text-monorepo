@@ -1,5 +1,7 @@
 # AltContext Monorepo
 
+> **Accounts and billing:** [ADR-014](docs/adrs/ADR-014-payment-processor-merchant-of-record-selection.md) is authoritative: standard Stripe direct + Clerk, with AltContext responsible for manual tax calculations. Implementation and paid-launch acceptance are separate.
+
 AI-powered alternative text generation for WordPress media, with facial recognition and roster management.
 
 ![PHP](https://img.shields.io/badge/PHP-8.2%2B-777BB4) ![WordPress](https://img.shields.io/badge/WordPress-6.0%2B-21759B) ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB) ![Node](https://img.shields.io/badge/Node-22%2B-339933)

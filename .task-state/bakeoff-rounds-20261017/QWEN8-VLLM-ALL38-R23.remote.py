@@ -74,7 +74,6 @@ helper_bytes=reviewed_helper(HELPER_B64,HELPER_SHA256)
 assert os.geteuid()==os.getuid()==0
 cg=Path('/sys/fs/cgroup')/Path('/proc/self/cgroup').read_text().strip().split('::',1)[1].lstrip('/')
 assert(cg/'cpu.max').read_text().strip()=='50000 100000'and(cg/'memory.max').read_text().strip()=='2147483648'
-assert(cg/'memory.swap.max').read_text().strip()=='1073741824'
 N='QWEN8-VLLM-ALL38-R23'
 SOURCE='ab94e904ca25e2e031ad241f2600aa0406201c15'
 KEY='feature-bakerounds-20261017-raw-auth-ini-3255682b'

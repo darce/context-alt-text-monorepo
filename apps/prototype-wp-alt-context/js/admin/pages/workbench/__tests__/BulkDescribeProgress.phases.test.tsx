@@ -53,6 +53,21 @@ const progressOf = (overrides: Partial<DescribeRunProgress> = {}): DescribeRunPr
 });
 
 describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
+  it('shows ready drafts when terminal status outlives a warming phase snapshot', () => {
+    render(
+      <BulkDescribeProgress
+        progress={progressOf({
+          run: runResponse({ status: 'completed', phase: 'warming', completed: 12 }),
+          status: 'completed',
+          isTerminal: true,
+        })}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('✔ 12 drafts ready to review')).toBeInTheDocument();
+    expect(screen.queryByText(/first run only/)).not.toBeInTheDocument();
+  });
+
   it('renders Queued… for the queued phase', () => {
     render(
       <BulkDescribeProgress
@@ -79,7 +94,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
       />,
     );
 
-    expect(screen.getByText('Warming GPU (first run only)…')).toBeInTheDocument();
+    expect(screen.getByText('Description service status unavailable')).toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).toBeNull();
     const cancel = screen.getByRole('button', { name: /Cancel/ });
     expect(cancel).toBeEnabled();
@@ -208,7 +223,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
     expect(screen.queryByText('✔ 12 drafts ready to review · 2 failed')).toBeNull();
   });
 
-  it('keeps today\'s failed copy', () => {
+  it("keeps today's failed copy", () => {
     render(
       <BulkDescribeProgress
         progress={progressOf({
@@ -222,10 +237,10 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
     );
 
     expect(screen.getByText('Failed')).toBeInTheDocument();
-    expect(screen.queryByText('Warming GPU (first run only)…')).toBeNull();
+    expect(screen.queryByText('Description service status unavailable')).toBeNull();
   });
 
-  it('keeps today\'s cancelled copy', () => {
+  it("keeps today's cancelled copy", () => {
     render(
       <BulkDescribeProgress
         progress={progressOf({

@@ -490,13 +490,13 @@ describe('resolveActivityStatus', () => {
     },
   );
 
-  it('keeps idle GPU warming presentation without a live run', () => {
+  it('does not turn unrelated GPU warming into an active description run', () => {
     const status = resolveActivityStatus({
       scan: idleScan(),
       describe: idleDescribe(),
       gpu: gpuInput({ gpuState: GPU_STATE.WARMING }),
     });
-    expect(status.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(status.kind).toBe(ACTIVITY_KIND.IDLE);
     expect(status.canCancel).toBe(false);
   });
 

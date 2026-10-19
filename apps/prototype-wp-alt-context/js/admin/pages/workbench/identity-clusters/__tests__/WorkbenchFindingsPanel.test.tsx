@@ -237,16 +237,24 @@ describe('WorkbenchFindingsPanel', () => {
     );
 
     expect(
-      screen.getByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      screen.getByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'View all findings' })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('link', { name: 'Run a scan' }));
+    await userEvent.click(screen.getByRole('link', { name: 'Choose images' }));
 
     expect(window.location.hash).toMatch(/^#\/workbench(?:\?|$)/);
     expect(screen.queryByTestId('dashboard')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Scan' })).toHaveFocus();
+  });
+
+  it('distinguishes an empty recognition queue from description drafts without promising more findings', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(makeViewModel());
+    render(<WorkbenchFindingsPanel />);
+    expect(screen.getByRole('heading', { name: 'No recognition suggestions to review' })).toBeInTheDocument();
+    expect(screen.getByText('Recognized people appear beside each image. Description drafts are separate results in the media library.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Run a scan' })).not.toBeInTheDocument();
   });
 
   // REV2-01 / TEST-15: an assignment-only outage keeps hasAnyData true, so the
@@ -261,7 +269,7 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
-      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      screen.queryByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).not.toBeInTheDocument();
     expect(
       screen.getByText('Face assignments unavailable — this is not an empty backlog.'),
@@ -305,7 +313,7 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
-      screen.getByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      screen.getByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).toBeInTheDocument();
     expect(
       screen.queryByText('Face assignments unavailable — this is not an empty backlog.'),
@@ -407,7 +415,7 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
-      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      screen.queryByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('Could not load recognition findings.')).toBeInTheDocument();
   });
@@ -439,7 +447,7 @@ describe('WorkbenchFindingsPanel', () => {
     const live = screen.getByRole('status');
     expect(live).toHaveAttribute('aria-live', 'polite');
     expect(live).toHaveTextContent(
-      'No findings yet. Run a scan and new findings will appear here automatically.',
+      'No recognition suggestions to review. Description drafts are separate results in the media library.',
     );
   });
 
@@ -1176,7 +1184,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     expect(screen.getByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
     expect(
-      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      screen.queryByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('5 groups elsewhere are missing face data')).toBeInTheDocument();
     expect(screen.queryByText('5 groups missing face data')).not.toBeInTheDocument();
@@ -1281,7 +1289,7 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(
-      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+      screen.queryByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^Resync findings$/ }));

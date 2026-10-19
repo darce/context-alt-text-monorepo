@@ -14,7 +14,7 @@ import {
   type ScanActivitySource,
   type UseActivityStatusResult,
 } from '../../hooks/useActivityStatus';
-import { GPU_STATE_VOCABULARY } from './gpuStatePresentation';
+import { descriptionWaitPresentation, GPU_STATE_VOCABULARY } from './gpuStatePresentation';
 import { SYNC_VOCABULARY } from './syncVocabulary';
 import { useWorkbenchNav } from './WorkbenchNavContext';
 
@@ -52,7 +52,7 @@ const headlineFor = (status: ActivityStatus): string => {
     case ACTIVITY_KIND.SCANNING:
       return SYNC_VOCABULARY.scanningHeadline;
     case ACTIVITY_KIND.WARMING:
-      return __('Warming GPU (first run only)…', 'alt-context');
+      return descriptionWaitPresentation(status.warmingObservation).headline;
     case ACTIVITY_KIND.DESCRIBING:
       return SYNC_VOCABULARY.describingHeadline;
     case ACTIVITY_KIND.DONE:
@@ -119,12 +119,12 @@ export const ActivityStatusStrip = ({ scan }: ActivityStatusStripProps): JSX.Ele
     return () => setDescribeProgressMounted(false);
   }, []);
 
-  const Icon = status.kind === ACTIVITY_KIND.FAILED && status.reason === ACTIVITY_REASON.CANCELLED
-    ? XCircle
-    : KIND_ICON[status.kind];
+  const Icon =
+    status.kind === ACTIVITY_KIND.FAILED && status.reason === ACTIVITY_REASON.CANCELLED
+      ? XCircle
+      : KIND_ICON[status.kind];
   const etaLabel = formatEtaLabel(status.etaSeconds);
-  const percent =
-    status.progress === null ? null : Math.min(100, Math.max(0, Math.round(status.progress * 100)));
+  const percent = status.progress === null ? null : Math.min(100, Math.max(0, Math.round(status.progress * 100)));
   const showWaitChrome =
     status.kind === ACTIVITY_KIND.SCANNING ||
     status.kind === ACTIVITY_KIND.WARMING ||
@@ -132,12 +132,7 @@ export const ActivityStatusStrip = ({ scan }: ActivityStatusStripProps): JSX.Ele
 
   return (
     <div className="acx-activity-status-strip acx-sync-status" data-activity-kind={status.kind}>
-      <div
-        className="acx-activity-status-strip__status"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
+      <div className="acx-activity-status-strip__status" role="status" aria-live="polite" aria-atomic="true">
         <span className="acx-activity-status-strip__headline acx-media-selection__detail-chip">
           <Icon
             className={spinningKind(status.kind) ? 'acx-media-selection__bulk-describe-spin' : undefined}
@@ -146,6 +141,11 @@ export const ActivityStatusStrip = ({ scan }: ActivityStatusStripProps): JSX.Ele
           />
           {headlineFor(status)}
         </span>
+        {status.kind === ACTIVITY_KIND.WARMING ? (
+          <span className="acx-activity-status-strip__wait-detail">
+            {descriptionWaitPresentation(status.warmingObservation).detail}
+          </span>
+        ) : null}
         {percent !== null && showWaitChrome ? (
           <progress
             className="acx-activity-status-strip__progress acx-media-selection__bulk-describe-bar"
@@ -171,7 +171,7 @@ export const ActivityStatusStrip = ({ scan }: ActivityStatusStripProps): JSX.Ele
         ) : null}
         {actions.onRetry !== null ? (
           <button type="button" className="button" onClick={actions.onRetry}>
-            {__('Retry', 'alt-context')}
+            {status.kind === ACTIVITY_KIND.WARMING ? __('Check status', 'alt-context') : __('Retry', 'alt-context')}
           </button>
         ) : null}
         {actions.reviewDraftsHref !== null ? (

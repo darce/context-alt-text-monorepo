@@ -282,6 +282,21 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				),
 			)
 		);
+		// Local accepted-run directory: no inference and no upstream request.
+		register_rest_route(
+			'acx/v1',
+			'/recognition/describe/runs',
+			array(
+				'methods' => 'GET',
+				'callback' => array( $this, 'list_describe_runs_for_media' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args' => array(
+					'media_ids' => array( 'type' => 'array', 'required' => true, 'items' => array( 'type' => 'integer' ) ),
+					'limit' => array( 'type' => 'integer', 'default' => 5, 'minimum' => 1, 'maximum' => 10 ),
+					'offset' => array( 'type' => 'integer', 'default' => 0, 'minimum' => 0 ),
+				),
+			)
+		);
 
 		register_rest_route(
 			'acx/v1',
@@ -492,6 +507,43 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		$max = (int) apply_filters( 'acx_describe_run_max_body_bytes', self::DESCRIBE_RUN_MULTIPART_MAX_BYTES_DEFAULT );
 
 		return max( 1, $max );
+	}
+	/** List locally accepted runs for visible attachments, newest first. Never prunes authorization on read. */
+	public function list_describe_runs_for_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$raw_ids = $request->get_param( 'media_ids' );
+		if ( ! is_array( $raw_ids ) || array() === $raw_ids || count( $raw_ids ) > 100 ) {
+			return new WP_Error( 'invalid_media_ids', 'Provide between 1 and 100 attachment IDs.', array( 'status' => 400 ) );
+		}
+		$wanted = array();
+		foreach ( $raw_ids as $raw_id ) {
+			$id = $this->parse_strict_positive_int( $raw_id );
+			if ( null === $id ) {
+				return new WP_Error( 'invalid_media_ids', 'Attachment IDs must be positive integers.', array( 'status' => 400 ) );
+			}
+			$wanted[] = $id;
+		}
+		$index = get_option( self::RUN_MEDIA_IDS_INDEX_OPTION, array() );
+		$index = is_array( $index ) ? $index : array();
+		arsort( $index, SORT_NUMERIC );
+		$items = array();
+		foreach ( $index as $run_id => $created_at ) {
+			if ( ! is_string( $run_id ) || ! preg_match( '/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/D', $run_id ) || ! is_numeric( $created_at ) ) {
+				continue;
+			}
+			$members = $this->load_run_media_ids( $run_id );
+			$media_ids = array_values( array_intersect( $wanted, $members ?? array() ) );
+			if ( array() !== $media_ids ) {
+				$items[] = array( 'run_id' => $run_id, 'created_at' => (int) $created_at, 'media_ids' => $media_ids );
+			}
+		}
+		$limit = min( 10, max( 1, (int) ( $request->get_param( 'limit' ) ?? 5 ) ) );
+		$offset = max( 0, (int) ( $request->get_param( 'offset' ) ?? 0 ) );
+		$total = count( $items );
+		return new WP_REST_Response( array(
+			'items' => array_slice( $items, $offset, $limit ),
+			'total' => $total,
+			'next_offset' => $offset + $limit < $total ? $offset + $limit : null,
+		), 200 );
 	}
 
 	public function get_describe_run_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {

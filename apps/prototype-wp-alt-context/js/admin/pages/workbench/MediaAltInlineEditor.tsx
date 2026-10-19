@@ -12,6 +12,7 @@ import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 
 export interface MediaAltInlineEditorProps {
   mediaId: number;
+  hasDescriptionDraft?: boolean;
   altText: string | null;
   /**
    * Row media title for the edit control's accessible name so AT element
@@ -63,20 +64,17 @@ export const ALT_COMMIT_CLAIM_REFUSED_MESSAGE = __(
 );
 
 /** Stored meta arrives entity-encoded; decode once at the read boundary (BR-140). */
-const decodeStoredAlt = (stored: string | null): string | null =>
-  stored === null ? null : decodeHtmlEntities(stored);
+const decodeStoredAlt = (stored: string | null): string | null => (stored === null ? null : decodeHtmlEntities(stored));
 
 /** Idle label when the row is deliberately decorative (not "missing alt"). */
-export const DECORATIVE_IDLE_LABEL = __(
-  'Decorative — screen readers will skip this image',
-  'alt-context',
-);
+export const DECORATIVE_IDLE_LABEL = __('Decorative — screen readers will skip this image', 'alt-context');
 
 export const MediaAltInlineEditor = ({
   mediaId,
   altText,
   title,
   isDecorative = false,
+  hasDescriptionDraft = false,
   onPoliteAnnounce,
   onPoliteClear,
   peerCommitPending = false,
@@ -203,9 +201,7 @@ export const MediaAltInlineEditor = ({
           // current_alt_text is stored meta (entity-encoded); decode for display.
           // Fallback to the operator draft (already plain text) when absent.
           const nextAlt =
-            data && typeof data.current_alt_text === 'string'
-              ? decodeHtmlEntities(data.current_alt_text)
-              : draft;
+            data && typeof data.current_alt_text === 'string' ? decodeHtmlEntities(data.current_alt_text) : draft;
           // Acknowledge whatever prop value is current at save time so the
           // exit-edit sync effect won't re-apply a mid-edit prop change over the
           // just-saved value (WBUX-5-S2A-BR-03 companion). useCorrectMediaAlt
@@ -237,7 +233,13 @@ export const MediaAltInlineEditor = ({
     );
   };
 
-  const idleAltLabel = displayAlt ?? (isDecorative ? DECORATIVE_IDLE_LABEL : __('No alt text yet', 'alt-context'));
+  const idleAltLabel =
+    displayAlt ??
+    (isDecorative
+      ? DECORATIVE_IDLE_LABEL
+      : hasDescriptionDraft
+        ? __('No saved alt text — review the draft below.', 'alt-context')
+        : __('No alt text yet', 'alt-context'));
 
   // BR-58 / Suggest BR-17: retire status once it has served its purpose — no
   // timeout. When focus leaves this surface while idle, "Alt text saved." is no
@@ -314,11 +316,7 @@ export const MediaAltInlineEditor = ({
             ref={editButtonRef}
             className="button button-link acx-media-selection__media-alt-edit"
             onClick={enterEditMode}
-            aria-label={
-              title
-                ? sprintf(__('Edit alt text for %s', 'alt-context'), title)
-                : undefined
-            }
+            aria-label={title ? sprintf(__('Edit alt text for %s', 'alt-context'), title) : undefined}
           >
             {__('Edit alt text', 'alt-context')}
           </button>

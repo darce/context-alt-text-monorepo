@@ -110,9 +110,13 @@ def unlock(fds):
  for fd in reversed(fds): fcntl.flock(fd,fcntl.LOCK_UN); os.close(fd)
 
 class Paths:
- def __init__(self,runtime,store,lifecycle,markers,writer_uid=None,writer_gid=None,now=None):
+ def __init__(self,runtime,store,lifecycle,markers,writer_uid=None,writer_gid=None,now=None,*,controller_uid=None,controller_gid=None):
   self.runtime=P(runtime); self.store=P(store); self.lifecycle=P(lifecycle); self.markers=P(markers)
   self.writer_uid=writer_uid; self.writer_gid=writer_gid; self.now=now
+  # Library-only role seam; Production declares ubuntu1001, never CLI input.
+  self.controller_uid=os.geteuid() if controller_uid is None else controller_uid
+  self.controller_gid=os.getegid() if controller_gid is None else controller_gid
+  check(all(type(v) is int and 0<=v<2**32-1 for v in (self.controller_uid,self.controller_gid)),'integer controller UID/GID required')
  @property
  def target(self): return self.runtime/'prod/gpu-intent.json'
  def fences(self,mode):
@@ -502,22 +506,55 @@ def checkpoint_selection(records,v,window):
   check(len(matches)==1,'deferred candidate lacks complete proof'); retained.add(matches[0])
  return previous,sorted(retained)
 
+def _resource_roles(paths,kind):
+ """Runtime publication ownership never grants controller authority."""
+ if kind=='controller': return {(paths.controller_uid,paths.controller_gid)}
+ check(kind=='runtime','unknown resource role')
+ owner=(os.geteuid(),os.getegid()); roles={owner}
+ if paths.writer_gid is not None:
+  roles.add((owner[0],paths.writer_gid))  # Root-created native/API-group fences and private fixtures
+  if paths.writer_uid is not None: roles.add((paths.writer_uid,paths.writer_gid))
+ return roles
+
+def _checkpoint_fence(paths,path,window_lock,s):
+ """Exact role pairs; controller lifecycle is the sole 0600 exception."""
+ owner=(os.geteuid(),os.getegid()); controller=(paths.controller_uid,paths.controller_gid)
+ pair=(s.st_uid,s.st_gid); mode=stat.S_IMODE(s.st_mode); path=P(path)
+ created={owner}
+ if paths.writer_gid is not None: created.add((owner[0],paths.writer_gid))
+ if path==P(window_lock): admitted=pair==owner and mode==0o660
+ elif path==paths.lifecycle: admitted=(pair==controller and mode in (0o600,0o660)) or (pair in created and mode==0o660)
+ elif path==paths.store/'.intent-authority.json.lock': admitted=pair in _resource_roles(paths,'controller')|created and mode==0o660
+ elif path in [paths.runtime/e/'gpu-intent.json.lock' for e in ENVS]:
+  if paths.writer_uid is not None and paths.writer_gid is not None: created.add((paths.writer_uid,paths.writer_gid))
+  admitted=pair in created and mode==0o660
+ else: admitted=False
+ return stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_size==0 and admitted
+
 def checkpoint_view(paths):
  """Fixed topology, held no-follow ancestry and bounded actual resource proof.
 
  This is read-only. Publication/authority acceptance still uses guard(), with
  the same native payloads; no checkpoint receipt substitutes for source state.
  """
- owners={os.geteuid(),paths.writer_uid}; groups={os.getegid(),paths.writer_gid}; system_uid=os.stat('/').st_uid; proofs={}; missing=object()
+ controller_roles=_resource_roles(paths,'controller'); runtime_roles=_resource_roles(paths,'runtime')
+ owner=(os.geteuid(),os.getegid()); root=os.stat('/'); system_role=(root.st_uid,root.st_gid); proofs={}; missing=object()
  def open_dir(path):
   p=P(path); check(p.is_absolute() and '..' not in p.parts,'canonical resource path required')
+  roles=controller_roles|{owner} if p.is_relative_to(paths.store) else runtime_roles
+  current=P('/')
   fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
   try:
    for part in p.parts[1:]:
     nxt=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
     os.close(fd); fd=nxt; s=os.fstat(fd)
-    sticky=s.st_uid==system_uid and stat.S_IMODE(s.st_mode)==0o1777
-    check(s.st_uid in owners|{system_uid} and (sticky or (not s.st_mode&0o002 and (not s.st_mode&0o020 or s.st_gid in groups))),'unsafe current resource directory')
+    current=current/part
+    pair=(s.st_uid,s.st_gid); sticky=pair==system_role and stat.S_IMODE(s.st_mode)==0o1777
+    check(pair in roles|{system_role} and (sticky or not s.st_mode&0o002),'unsafe current resource directory')
+    if current==paths.store:
+     check(pair in controller_roles and stat.S_IMODE(s.st_mode)==0o700,'unsafe current resource directory')
+    elif current.is_relative_to(paths.store):
+     check(pair in controller_roles and stat.S_IMODE(s.st_mode) in (0o700,0o755),'unsafe current resource directory')
    return fd
   except BaseException: os.close(fd); raise
  def read(path,optional=False):
@@ -528,8 +565,10 @@ def checkpoint_view(paths):
     if optional: return missing
     raise
    mode=stat.S_IMODE(s.st_mode)
-   check(s.st_uid in owners and mode in (0o400,0o600,0o640,0o644,0o660) and (not mode&0o020 or s.st_gid in groups),'unsafe current resource file')
+   roles=controller_roles if P(path).is_relative_to(paths.store) else runtime_roles
+   check((s.st_uid,s.st_gid) in roles and mode in (0o400,0o600,0o640,0o644,0o660),'unsafe current resource file')
    raw,proof=proof_file(fd,P(path).name,mode=mode,uid=s.st_uid)
+   check(all(proof[k]==v for k,v in identity(s).items()),'current resource identity changed')
    proofs[str(path)]=proof; return json.loads(raw)
   finally: os.close(fd)
  a=read(paths.store/'intent-authority.json'); pubs={}
@@ -563,9 +602,10 @@ def checkpoint(wfd,paths,window):
   finally: os.close(named)
   window_raw,window_proof=proof_file(wfd,'window.json')
   deadline=time.monotonic()+15
-  for p in [P(window['path'])/'window.lock']+paths.fences('auto'):
+  window_lock=P(window['path'])/'window.lock'
+  for p in [window_lock]+paths.fences('auto'):
    s=os.stat(p,follow_symlinks=False)
-   check(stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid in (os.geteuid(),paths.writer_uid) and s.st_gid in (os.getegid(),paths.writer_gid) and stat.S_IMODE(s.st_mode)==0o660,'unsafe/missing checkpoint fence')
+   check(_checkpoint_fence(paths,p,window_lock,s),'unsafe/missing checkpoint fence')
    fds.append(lock_path(p,deadline,paths.writer_gid,existing=True))
    check(identity(os.fstat(fds[-1]))==identity(s),'checkpoint fence identity changed')
   ops=subdir(wfd,'ops'); active=bounded_names(ops,33,'checkpoint operation budget exhausted (>33)')

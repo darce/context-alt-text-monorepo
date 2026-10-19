@@ -2,6 +2,8 @@
 
 Selected native qualification driver. Crash-injection qualification remains
 separate. No ordinary tests or selected pass certify full recovery safety.
+Controller ownership is provisioned metadata in proven private overlays. The
+pinned lifecycle emulator still executes as Root, not as controller UID1001.
 """
 import argparse
 import fcntl
@@ -19,6 +21,11 @@ import uuid
 
 FLOW_SHA = '369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062'
 NEW_ENVS = ('dev', 'dev-fir', 'prod', 'staging', 'dev-auraface')
+CONTROLLER_UID = CONTROLLER_GID = 1001
+PROPOSAL = 'LOUD18501'
+PROOF_LIMITS = ['Selected private metadata acceptance and native CLI/writer controls only.',
+                'Controller emulator runs as Root; controller UID1001 execution is not qualified.',
+                'No crash-injection or live qualification.']
 ENV = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/root',
        'LANG': 'C', 'LC_ALL': 'C', 'PYTHONDONTWRITEBYTECODE': '1'}
 
@@ -73,6 +80,29 @@ def remaining(deadline, cap):
     return value
 
 
+def file_digest(path, expected):
+    """Bounded no-follow bytes through a still-named, unchanged file identity."""
+    def identity(s):
+        return (s.st_dev, s.st_ino, s.st_uid, s.st_gid, s.st_mode, s.st_nlink,
+                s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        s = os.fstat(fd)
+        require(stat.S_ISREG(s.st_mode) and s.st_size <= 2097152 and
+                identity(s) == identity(expected), 'snapshot file identity/size changed')
+        raw = bytearray()
+        while len(raw) <= 2097152:
+            chunk = os.read(fd, min(65536, 2097153 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        require(len(raw) == s.st_size and identity(os.fstat(fd)) == identity(s) ==
+                identity(os.stat(path, follow_symlinks=False)), 'snapshot bytes/still-named identity changed')
+        return digest(raw)
+    finally:
+        os.close(fd)
+
+
 def snapshot(roots):
     result = {}
     for root in roots:
@@ -82,9 +112,100 @@ def snapshot(roots):
         for p in members:
             s = p.lstat()
             require(stat.S_ISDIR(s.st_mode) or stat.S_ISREG(s.st_mode), 'unexpected fixture link/type')
-            result[str(p)] = [s.st_dev, s.st_ino, s.st_uid, s.st_gid, s.st_mode,
-                              None if p.is_dir() else digest(p.read_bytes())]
+            result[str(p)] = [s.st_dev, s.st_ino, s.st_uid, s.st_gid, s.st_mode, s.st_nlink,
+                              None if stat.S_ISDIR(s.st_mode) else file_digest(p, s)]
     return result
+
+
+def private_role_fd(path, d, overlay_fd):
+    """Never provision metadata outside the sealed fresh /run or /var/lib."""
+    path = Path(path)
+    target = next((p for p in ('/run', '/var/lib') if path.is_relative_to(p)), None)
+    require(target is not None and '..' not in path.parts, 'private role prefix required')
+    overlay = d.sealed_overlay_receipt(overlay_fd)
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in path.parts[1:]:
+            nxt = os.open(part, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                          dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        require(d.descriptor_mount(fd) == overlay['after']['targets'][target]['mount_id'],
+                'role provisioning requires proven private overlay')
+        s = os.fstat(fd)
+        require(stat.S_ISDIR(s.st_mode) or stat.S_ISREG(s.st_mode) and s.st_nlink == 1,
+                'private role directory or single-link regular file required')
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def set_private_role(path, role, d, overlay_fd):
+    fd = private_role_fd(path, d, overlay_fd)
+    try:
+        before = os.fstat(fd)
+        os.fchown(fd, role[0], role[1])
+        os.fchmod(fd, role[2])
+        os.fsync(fd)
+        after = os.fstat(fd)
+        named = os.stat(path, follow_symlinks=False)
+        require((before.st_dev, before.st_ino) == (after.st_dev, after.st_ino) ==
+                (named.st_dev, named.st_ino) and
+                (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) == role,
+                'private role identity/metadata changed')
+    finally:
+        os.close(fd)
+
+
+def native_roles(window):
+    store = Path('/var/lib/acx-gpu')
+    controller = (CONTROLLER_UID, CONTROLLER_GID)
+    roles = {store: (*controller, 0o700),
+             store / 'intents': (*controller, 0o755),
+             store / 'intents/prod': (*controller, 0o755),
+             store / 'lifecycle.lock': (*controller, 0o600),
+             store / '.intent-authority.json.lock': (*controller, 0o660),
+             store / 'intent-authority.json': (*controller, 0o660),
+             store / 'intents/prod/gpu-intent.json': (*controller, 0o660),
+             Path(window) / 'window.lock': (0, 0, 0o660),
+             Path('/run/acx-write/prod/gpu-intent.json'): (10001, 10001, 0o660)}
+    roles.update({Path('/run/acx-write', env, 'gpu-intent.json.lock'): (0, 10001, 0o660)
+                  for env in NEW_ENVS})
+    return roles
+
+
+def role_evidence(window):
+    """Kernel stat evidence, never a substituted UID or controller ACK."""
+    result = {}
+    for path, role in native_roles(window).items():
+        s = path.lstat()
+        require((s.st_uid, s.st_gid, stat.S_IMODE(s.st_mode)) == role,
+                'observed native role mismatch: ' + str(path))
+        require(stat.S_ISDIR(s.st_mode) if path.name in ('acx-gpu', 'intents', 'prod') else
+                stat.S_ISREG(s.st_mode) and s.st_nlink == 1, 'native role type/link mismatch')
+        if path.name.endswith('.lock'):
+            require(s.st_size == 0, 'native fences must remain empty')
+        result[str(path)] = dict(dev=s.st_dev, ino=s.st_ino, uid=s.st_uid, gid=s.st_gid,
+                                 mode=oct(stat.S_IMODE(s.st_mode)), nlink=s.st_nlink,
+                                 size=s.st_size,
+                                 sha256=file_digest(path, s) if stat.S_ISREG(s.st_mode) else None)
+    require(not os.path.lexists('/var/lib/acx-gpu/deferred-stop.json'), 'deferred STOP must be absent')
+    return result
+
+
+def provision_controller_roles(window, d, overlay_fd):
+    """Model observed controller metadata; retain Root emulator honestly."""
+    store = Path('/var/lib/acx-gpu')
+    before = snapshot([store])
+    for path, role in native_roles(window).items():
+        if path == store or store in path.parents:
+            set_private_role(path, role, d, overlay_fd)
+    after = snapshot([store])
+    require(set(before) == set(after) and all(
+        before[p][:2] == after[p][:2] and before[p][5:] == after[p][5:] for p in before),
+        'controller metadata provisioning changed original inodes/links/bytes')
+    return role_evidence(window)
 
 
 def fifth_load(h, demand, revision):
@@ -253,6 +374,12 @@ def namespace(args, base, inputs, h, d, deadline):
         legacy_before = snapshot(legacy)
         provision_fifth(h, d, run, overlay_fd)
         require(snapshot(legacy) == legacy_before, 'fifth fixture setup changed legacy custody/state/fences')
+        # The predecessor remains exact. Only proven private controller objects
+        # are provisioned to match the observed native roles before new checks.
+        metadata = provision_controller_roles(window, d, overlay_fd)
+        h.put(run / 'native-role-fixture.json', dict(proposal=PROPOSAL, roles=metadata,
+              controller_emulator_uid=os.geteuid(), controller_credentials_executed=False,
+              proof_limits=PROOF_LIMITS))
         # Keep the pinned old helper untouched; only the new stage uses five.
         new_custody = module('checkpoint_new_topology', inputs['new-procedure/owner-custody.py'])
         require(new_custody.ENVS == NEW_ENVS, 'new stage requires exact fixed five-environment order')
@@ -330,11 +457,39 @@ def namespace(args, base, inputs, h, d, deadline):
             require(not h.children(), 'negative native child closure')
             h.archive_owned(run)
             h.put(run / 'selected-result.json', dict(status='ROOT_SELECTED_CHECKPOINT_PASS',
-                  case=args.case, full_qualification=False, refusal=stderr, window_id=meta['id']))
+                  case=args.case, full_qualification=False, refusal=stderr, window_id=meta['id'],
+                  controller_metadata_fixture=True, proof_limits=PROOF_LIMITS))
             h.close_held()
             return 0
+        h.put(new / 'procedure-predecessor.json', proof)
+        # Causal metadata controls on the SAME window, all before checkpoint
+        # creation. Restore only our privately provisioned roles after proving
+        # refusal preserved even the damaged metadata, original inodes and bytes.
+        store = Path('/var/lib/acx-gpu')
+        faults = [('lifecycle-owner', store / 'lifecycle.lock', (1002, 1001, 0o600), 'checkpoint fence'),
+                  ('lifecycle-mode', store / 'lifecycle.lock', (1001, 1001, 0o640), 'checkpoint fence'),
+                  ('authority-group', store / '.intent-authority.json.lock', (1001, 1002, 0o660), 'checkpoint fence'),
+                  ('store-owner', store, (1002, 1001, 0o700), 'resource directory'),
+                  ('authority-owner', store / 'intent-authority.json', (10001, 10001, 0o660), 'resource file'),
+                  ('durable-mode', store / 'intents/prod/gpu-intent.json', (1001, 1001, 0o666), 'resource file')]
+        controls = []
+        baseline = snapshot(stable + [new])
+        for name, path, role, reason in faults:
+            set_private_role(path, role, d, overlay_fd)
+            damaged = snapshot(stable + [new])
+            rc, _, stderr = cli(new, 'checkpoint', window, meta['id'])
+            require(rc != 0 and reason in stderr and snapshot(stable + [new]) == damaged,
+                    'metadata control did not refuse before mutation: ' + name)
+            require(not (window / 'checkpoints').exists(), 'metadata refusal created checkpoint history')
+            controls.append(dict(case=name, path=str(path), refused_role=role, refusal=stderr,
+                                 unchanged_inodes_metadata_bytes=True))
+            set_private_role(path, native_roles(window)[path], d, overlay_fd)
+            require(snapshot(stable + [new]) == baseline, 'private metadata restoration changed fixture')
+        h.put(run / 'native-role-refusals.json', controls)
+        require(role_evidence(window) == metadata, 'native role fixture changed before checkpoint')
         before = snapshot(stable)
         # Deliberately invalid, still protected proof. Replace only this private negative-control receipt.
+        os.unlink(new / 'procedure-predecessor.json')
         h.put(new / 'procedure-predecessor.json', dict(proof, window_id='invalid'))
         require(cli(new, 'checkpoint', window, meta['id'])[0] != 0 and snapshot(stable) == before,
                 'invalid protected proof must refuse without mutation')
@@ -351,6 +506,7 @@ def namespace(args, base, inputs, h, d, deadline):
         require(snapshot([stage, window / 'window.json', window / 'writer-source.py',
                           window / 'load-source.py', '/run/acx-write', '/var/lib/acx-gpu']) == immutable,
                 'checkpoint mutated authority/publications/immutable source')
+        require(role_evidence(window) == metadata, 'checkpoint changed observed native roles/identities/bytes')
         # Every original byte must remain represented; relocation is permitted only inside this window.
         from collections import Counter
         afterbytes = Counter(p.read_bytes() for p in window.rglob('*') if p.is_file())
@@ -373,7 +529,11 @@ def namespace(args, base, inputs, h, d, deadline):
                         ('candidate.json', 'writer-started.json', 'writer-stopped.json', 'publication.json'))
                 and not h.children(), 'refused START must never start a publication writer')
         after = snapshot(stable + [new])
-        require({p: v for p, v in after.items() if not Path(p).is_relative_to(refused)} == before,
+        # The one fresh diagnostic directory adds exactly one link to its ops parent.
+        expected = dict(before)
+        ops = str(window / 'ops')
+        expected[ops] = before[ops][:5] + [before[ops][5] + 1] + before[ops][6:]
+        require({p: v for p, v in after.items() if not Path(p).is_relative_to(refused)} == expected,
                 'fifth demand refusal changed state outside its diagnostic operation')
         require(cli(new, 'reconcile', window, meta['id'])[:2] == (0, previous),
                 'demand refusal advanced the predecessor')
@@ -394,10 +554,17 @@ def namespace(args, base, inputs, h, d, deadline):
             oldcurrent = candidate
             previous = op
             lifecycle.tick()
+            # Atomic controller writes come from the pinned Root emulator.
+            # Re-provision only that private output's observed metadata so the
+            # next public operation again sees the actual declared roles.
+            h.put(run / ('native-role-resumed-' + action + '.json'), dict(
+                  roles=provision_controller_roles(window, d, overlay_fd),
+                  controller_emulator_uid=os.geteuid(), controller_credentials_executed=False))
         require(not h.children(), 'all native children reaped')
         h.archive_owned(run)
         h.put(run / 'selected-result.json', dict(status='ROOT_SELECTED_CHECKPOINT_PASS',
               full_qualification=False, case=args.case, remaining_controls=['crash-injection'],
+              proposal=PROPOSAL, controller_metadata_fixture=True, proof_limits=PROOF_LIMITS,
               environments=NEW_ENVS, fifth_demand_refusal=refused.name,
               window_id=meta['id'], predecessor_proof=proof, checkpoint=json.loads(receipt)))
         h.close_held()
@@ -520,6 +687,7 @@ def main():
         results[case] = digest((run / 'selected-result.json').read_bytes())
     h.put(output / 'aggregate.json', dict(status='ROOT_SELECTED_CHECKPOINT_PASS',
           full_qualification=False, remaining_controls=['crash-injection'], cases=results,
+          proposal=PROPOSAL, controller_metadata_fixture=True, proof_limits=PROOF_LIMITS,
           input_manifest_sha256=args.manifest_sha256))
     return 0
 

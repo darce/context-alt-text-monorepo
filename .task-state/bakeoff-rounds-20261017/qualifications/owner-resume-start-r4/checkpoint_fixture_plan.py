@@ -16,6 +16,15 @@ Root:GID10001 mode0660 persistent intent/load fences, and fresh UID/GID10001
 mode0644 zero load. No fifth intent publication is created. Existing history,
 authority, publications and four-environment fences must remain identical.
 New source requires ENVS exactly (dev, dev-fir, prod, staging, dev-auraface).
+Then provision only the proven private controller metadata: UID/GID1001
+store0700, intents/prod0755, lifecycle0600, authority fence/state and durable
+publication0660. Keep window fence Root:Root0660, all five runtime intent fences
+Root:10001/0660, and runtime publication10001:10001/0660. Snapshot after this
+private provisioning; checkpoint must preserve exact roles, inodes and bytes.
+The pinned controller emulator executes as Root. These are actual filesystem
+metadata acceptance controls, not controller-credential execution qualification.
+After resumed lifecycle cycles, provision only their private output metadata
+again before the next public operation; record this explicitly in the evidence.
 
 The predecessor receipt uses EXACTLY the agreed seven fields, generated only
 inside private tmpfs by Root after creating the legacy fixture window. No extra
@@ -35,20 +44,26 @@ FLOW_SHA = '369c120b901b1ee3faeb642d6d498ef2ae0e5b98904c44d0b1a9c64c3a51e062'
 PROOF_FIELDS = ('schema', 'window_id', 'window_path', 'procedure', 'manifest_sha256',
                 'owner_window_sha256', 'owner_custody_sha256')
 PLAN = {
-    'status': 'PLAN_ONLY_ROOT_PENDING', 'budget_seconds': 180,
+    'status': 'PLAN_ONLY_ROOT_PENDING', 'budget_seconds': 180, 'proposal': 'LOUD18501',
     'exit_codes': {'77': 'actual Root required', '65': 'setup refusal',
                    '124': 'UNKNOWN; retain PID1 and all custody'},
     'isolation': ['fresh MNT/PID/NET', 'recursive-private mounts', 'private proc',
                   'fresh tmpfs /run /var/lib /var/log /tmp /opt',
                   'pinned fixture adapters hide /usr/local/bin; no host services'],
     'credentials': 'real ubuntu UID/GID1001 -> sudo; real native writer UID/GID10001',
+    'controller_metadata': {'uid': 1001, 'gid': 1001, 'emulator_uid': 0,
+                            'credential_execution_qualified': False,
+                            'store_mode': '0700', 'intent_directory_mode': '0755',
+                            'lifecycle_mode': '0600', 'authority_and_publication_mode': '0660',
+                            'provisioning': 'proven private overlays only; never existing live fences'},
     'new_environments': ['dev', 'dev-fir', 'prod', 'staging', 'dev-auraface'],
     'fifth_setup': 'After legacy history, before every new-stage case; sealed overlay mount proof, exact private prefix and owner/mode/inode evidence; no existing fence replacement',
     'proof': {'schema': 'acx-owner-procedure-predecessor/v1', 'fields': PROOF_FIELDS,
               'mode': 'Root0400, Root0700 new stage, nofollow ancestry'},
     'cases': ['legacy 32 successful alternating START/AUTO, refused33, reconcile33 RED',
+              'same-window wrong controller owner/group/mode in lifecycle, authority fence, store ancestry, authority state and durable publication refuses before checkpoint directory/history mutation',
               'invalid predecessor receipt refuses checkpoint without mutation',
-              'protected new stage checkpoint SAME window; unchanged authority/publications/source',
+              'protected new stage checkpoint SAME window; unchanged authority/publications/source and exact observed native metadata/inodes/bytes',
               'fifth nonzero demand refuses actual public START with no writer or sequence/publication/authority change; only a diagnostic operation may be added',
               'fifth demand restored to fresh zero; next native START/AUTO keeps same actor and next sequence',
               'next native START/AUTO; all guardians and writers reaped',
@@ -57,6 +72,7 @@ PLAN = {
     'required_remaining_controls': ['crash injection'],
     'limits': ['No privileged result from --plan or AST checks.',
                'Selected Root pass does not establish crash safety or a live qualification.',
+               'Controller roles are provisioned metadata on actual private files; the pinned controller emulator remains Root, so UID1001 controller execution is unqualified.',
                'No live paths; no installed controller changes; no fake ACK.',
                'No crash injection qualification in this selected driver.',
                'Archive checks preserve byte multiplicity and current proof identity; archive manifest schema needs Source A gate.',

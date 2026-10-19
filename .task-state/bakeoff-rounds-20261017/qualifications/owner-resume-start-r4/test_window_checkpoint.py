@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Independent UNIT_ONLY controls; never Root/native qualification.
 
-Run: timeout 45s python3 -B test_window_checkpoint.py [--source DIR]
+Run: timeout 55s python3 -B test_window_checkpoint.py [--source DIR]
 Only checkpoint(wfd, paths, window) is a contracted Python API. Fixtures use
 actual current-UID custody, real filesystem receipts and real private fences.
 No writer, subprocess, installed path or service is used. Procedure positives
 explicitly substitute current-UID ownership for root in directory/proof readers
 on private fixtures only; all other guards and read-only CLI dispatch are real.
 An unsubstituted control requires refusal of the actual unprivileged stage.
+Controller-role units explicitly substitute only UID/GID in kernel stat results
+for tracked private inodes. Modes, links, identity, bytes and still-named checks
+remain real. Native UID1001 metadata is proved only by the separate Root driver.
 """
 import argparse
 import ast
@@ -50,7 +53,7 @@ def inventory(base):
         value = os.readlink(p) if stat.S_ISLNK(s.st_mode) else (
             p.read_bytes() if stat.S_ISREG(s.st_mode) else None)
         result[str(p.relative_to(base))] = (s.st_dev, s.st_ino, s.st_uid,
-                                            s.st_mode, s.st_nlink, value)
+                                            s.st_mode, s.st_nlink, s.st_gid, value)
     return result
 
 
@@ -251,6 +254,121 @@ class Checkpoint(unittest.TestCase):
         # Removing an individual proof must not bypass inventory cap.
         with self.assertRaisesRegex(RuntimeError, 'operation budget exhausted'):
             self.c.known_candidates(self.fd)
+
+    def test_paths_declared_controller_contract(self):
+        values = (self.paths.runtime, self.paths.store, self.paths.lifecycle, self.paths.markers)
+        now = lambda: 123
+        defaults = self.c.Paths(*values, None, None, now)
+        self.assertIs(defaults.now, now, 'existing now positional argument must remain compatible')
+        self.assertEqual((defaults.controller_uid, defaults.controller_gid),
+                         (os.geteuid(), os.getegid()))
+        declared = self.c.Paths(*values, 10001, 10001, now,
+                                controller_uid=1001, controller_gid=1001)
+        self.assertEqual((declared.controller_uid, declared.controller_gid,
+                          declared.writer_uid, declared.writer_gid), (1001, 1001, 10001, 10001))
+        for name in ('controller_uid', 'controller_gid'):
+            for value in (True, '1001', 1001.0):
+                with self.subTest(field=name, value=repr(value)):
+                    with self.assertRaises((RuntimeError, TypeError, ValueError)):
+                        self.c.Paths(*values, **{name: value})
+
+    @contextlib.contextmanager
+    def controller_role_unit_fixture(self):
+        """UNIT_ONLY UID/GID mapping; never a kernel ownership or Root claim."""
+        paths = self.c.Paths(self.paths.runtime, self.paths.store, self.paths.lifecycle,
+                             self.paths.markers, 10001, 10001,
+                             controller_uid=1001, controller_gid=1001)
+        durable = paths.store / 'intents/prod/gpu-intent.json'
+        durable.parent.mkdir(parents=True, mode=0o755)
+        durable.parent.parent.chmod(0o755)
+        durable.parent.chmod(0o755)
+        durable.write_bytes(paths.target.read_bytes())
+        roles = {paths.store: (1001, 1001), durable.parent.parent: (1001, 1001),
+                 durable.parent: (1001, 1001), durable: (1001, 1001),
+                 paths.lifecycle: (1001, 1001),
+                 paths.store / '.intent-authority.json.lock': (1001, 1001),
+                 paths.store / 'intent-authority.json': (1001, 1001)}
+        paths.lifecycle.chmod(0o600)
+        for path in (durable, paths.store / 'intent-authority.json'):
+            path.chmod(0o660)
+        for env in self.c.ENVS:
+            target = paths.runtime / env
+            target.chmod(0o770)
+            roles[target] = (os.geteuid(), 10001)
+            roles[target / 'gpu-intent.json.lock'] = (os.geteuid(), 10001)
+            publication = target / 'gpu-intent.json'
+            if publication.exists():
+                publication.chmod(0o660)
+                roles[publication] = (10001, 10001)
+        native_stat, native_fstat = os.stat, os.fstat
+        mapped = {(s.st_dev, s.st_ino): roles[p] for p in roles for s in [native_stat(p)]}
+
+        class RoleStat:
+            def __init__(self, actual, role):
+                self.actual = actual
+                self.st_uid, self.st_gid = role
+
+            def __getattr__(self, name):
+                return getattr(self.actual, name)
+
+        def substitute(s):
+            role = mapped.get((s.st_dev, s.st_ino))
+            return s if role is None else RoleStat(s, role)
+
+        print('UNIT_ONLY: controller UID/GID stat substitution on private inodes; no Root proof', flush=True)
+        with patch.object(self.c.os, 'stat', side_effect=lambda *a, **k: substitute(native_stat(*a, **k))), \
+                patch.object(self.c.os, 'fstat', side_effect=lambda *a, **k: substitute(native_fstat(*a, **k))):
+            yield paths, mapped, native_stat
+
+    def test_declared_controller_metadata_acceptance_unit_only(self):
+        with self.controller_role_unit_fixture() as (paths, _, _):
+            self.paths = paths
+            self.assertEqual(stat.S_IMODE(paths.lifecycle.stat().st_mode), 0o600)
+            self.assertEqual((paths.lifecycle.stat().st_uid, paths.lifecycle.stat().st_gid), (1001, 1001))
+            self.assert_valid_baseline()
+            resources = inventory(paths.store), inventory(paths.runtime)
+            before = inventory(Path(self.w['path']) / 'ops')
+            state = self.c.view(paths, 'start')
+            self.assert_checkpoint_result(before, state, self.checkpoint())
+            self.assertEqual((inventory(paths.store), inventory(paths.runtime)), resources)
+
+    def test_declared_controller_metadata_refusals_unit_only(self):
+        # First prove the complete positive selection with these exact roles.
+        # Damage one real private mode/link, or one explicitly mapped UID/GID.
+        with self.controller_role_unit_fixture() as (paths, mapped, native_stat):
+            self.paths = paths
+            self.assert_valid_baseline()
+            cases = [('lifecycle-owner', paths.lifecycle, (1003, 1001), None),
+                     ('lifecycle-group', paths.lifecycle, (1001, 1002), None),
+                     ('lifecycle-mode', paths.lifecycle, None, 0o640),
+                     ('authority-fence-owner', paths.store / '.intent-authority.json.lock', (10001, 10001), None),
+                     ('authority-fence-mode', paths.store / '.intent-authority.json.lock', None, 0o600),
+                     ('store-owner', paths.store, (1003, 1001), None),
+                     ('store-mode', paths.store, None, 0o770),
+                     ('authority-state-owner', paths.store / 'intent-authority.json', (10001, 10001), None),
+                     ('authority-state-group', paths.store / 'intent-authority.json', (1001, 10001), None),
+                     ('durable-mode', paths.store / 'intents/prod/gpu-intent.json', None, 0o666),
+                     ('runtime-fence-hardlink', paths.runtime / 'prod/gpu-intent.json.lock', None, None)]
+            for name, path, role, mode in cases:
+                with self.subTest(case=name):
+                    self.assert_valid_baseline()
+                    s = native_stat(path)
+                    key = (s.st_dev, s.st_ino)
+                    original_role = mapped[key]
+                    extra = self.base / 'extra-fence-link'
+                    if role is not None: mapped[key] = role
+                    if mode is not None: path.chmod(mode)
+                    if name == 'runtime-fence-hardlink': os.link(path, extra)
+                    before = inventory(self.base)
+                    try:
+                        with self.assertRaisesRegex(RuntimeError, 'checkpoint fence|resource directory|resource file'):
+                            self.checkpoint()
+                        self.assertEqual(inventory(self.base), before, name+' mutated custody/state')
+                        self.assertFalse((Path(self.w['path']) / 'checkpoints').exists())
+                    finally:
+                        mapped[key] = original_role
+                        if mode is not None: path.chmod(stat.S_IMODE(s.st_mode))
+                        extra.unlink(missing_ok=True)
 
     def test_fixed_fifth_fences_and_start_stop_load_guard(self):
         expected = ('dev', 'dev-fir', 'prod', 'staging', 'dev-auraface')

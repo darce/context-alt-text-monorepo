@@ -47,7 +47,7 @@ class DispatchReached(Exception):
     pass
 
 
-def dispatch(mode, predecessor, *, pending=False, matching_procedure=True):
+def dispatch(mode, predecessor, *, pending=False, matching_procedure=True, paths_calls=None):
     """Execute every byte of the CLI; stop at intent seal, before Popen."""
     c = load_custody()
     raw = (SOURCE / 'owner-window.py').read_bytes()
@@ -62,7 +62,12 @@ def dispatch(mode, predecessor, *, pending=False, matching_procedure=True):
         seams = []
         fake = types.ModuleType('owner_custody')
         fake.check = c.check
-        fake.Paths = c.Paths
+        def paths(*args, **kwargs):
+            if paths_calls is not None:
+                paths_calls.append((args, kwargs))
+            return c.Paths(*args, **kwargs)
+
+        fake.Paths = paths
         fake.directory = lambda *a, **k: os.open(root, os.O_RDONLY | os.O_DIRECTORY)
         fake.read_at = lambda *a, **k: (SOURCE / 'owner-custody.py').read_bytes()
         fake.validate_window = lambda *a: (os.open(root, os.O_RDONLY | os.O_DIRECTORY), window)
@@ -139,6 +144,15 @@ def idle_view(previous):
 
 
 class ResumeControls(unittest.TestCase):
+    def test_cli_fixed_controller_role_without_adoption_flags(self):
+        calls = []
+        self.assertEqual(dispatch('start', PREVIOUS, paths_calls=calls),
+                         dict(outcome='dispatch', action='start', previous=PREVIOUS))
+        self.assertEqual(calls, [(('/run/acx-write', '/var/lib/acx-gpu',
+                                  '/var/lib/acx-gpu/lifecycle.lock', '/run/acx-gpu', 10001, 10001),
+                                 dict(controller_uid=1001, controller_gid=1001))],
+                         'Production must declare fixed controller credentials in source')
+
     def test_first_use_start(self):
         self.assertEqual(dispatch('start', '-'), dict(outcome='dispatch', action='start', previous=None))
 

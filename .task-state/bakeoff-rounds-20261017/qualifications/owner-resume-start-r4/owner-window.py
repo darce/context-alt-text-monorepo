@@ -17,7 +17,7 @@ assert os.geteuid()==0,'normal ubuntu passwordless sudo required'
 # copying them to a fresh root-owned directory beneath root sticky /tmp.
 spec=importlib.util.spec_from_file_location('owner_custody',A/'owner-custody.py'); c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
 afd=c.directory(A,0); c.read_at(afd,'owner-custody.py',0,sealed=True); os.close(afd)
-paths=c.Paths('/run/acx-write','/var/lib/acx-gpu','/var/lib/acx-gpu/lifecycle.lock','/run/acx-gpu',10001,10001)
+paths=c.Paths('/run/acx-write','/var/lib/acx-gpu','/var/lib/acx-gpu/lifecycle.lock','/run/acx-gpu',10001,10001,controller_uid=1001,controller_gid=1001)
 
 def raw_seal(fd,name,b):
  f=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=fd)

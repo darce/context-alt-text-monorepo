@@ -1889,7 +1889,7 @@ def test_a_linked_worktree_whose_git_is_a_file_is_clean_not_a_not_a_directory_er
     assert root['diff_error'] is None and root['diff_rc'] == 0 and root['clean'] is True
 
 
-# M1: the clean check covers staged, unstaged and untracked changes against HEAD; a gitignored file and a stat-only touch stay clean.
+# M1: the clean check covers staged, unstaged and untracked code against HEAD; runtime data and stat-only touches stay clean.
 def preclaim_after(monkeypatch, capsys, tmp_path, edit):
     """Runs the real preclaim over a committed repo after edit(repo) changes it. Returns the root report and the bound source."""
     publish(tmp_path, ('op1', 3, 'auto'))
@@ -1928,7 +1928,7 @@ def test_an_untracked_python_file_that_is_not_ignored_is_not_clean_and_is_refuse
     assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
 
 
-def test_a_file_matched_by_gitignore_stays_clean(monkeypatch, capsys, tmp_path):
+def test_a_log_file_matched_by_gitignore_stays_clean(monkeypatch, capsys, tmp_path):
     def edit(repo):
         (repo/'.gitignore').write_text('*.log\n')
         git_in(repo, 'add', '.gitignore')
@@ -1967,6 +1967,33 @@ def test_an_untracked_import_capable_file_is_not_clean_and_is_refused(monkeypatc
 
     rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
     assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+@pytest.mark.parametrize('filename', ['shadow.py', 'native.so', 'cached.pyc', 'hook.pth'])
+@pytest.mark.parametrize('ignore_directory', [False, True], ids=['ignored-file', 'ignored-directory'])
+def test_ignored_import_capable_code_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, filename, ignore_directory):
+    service = 'apps/prototype-description-service'
+    path = f'{service}/{filename}'
+
+    def edit(repo):
+        (repo/'.gitignore').write_text('apps/\n' if ignore_directory else path + '\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore code fixture')
+        (repo/service).mkdir(parents=True)
+        (repo/path).write_text("MARKER = 'ignored module imported'\n")
+        assert git_in(repo, 'check-ignore', path) == path
+        if filename == 'shadow.py':
+            imported = subprocess.run([sys.executable, '-B', '-c', 'import shadow; print(shadow.MARKER)'],
+                                      cwd=repo/service, capture_output=True, text=True, check=True)
+            assert imported.stdout.strip() == 'ignored module imported'
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    for name in ('repo', 'workspace'):
+        assert rep['source'][name]['diff_rc'] == 0 and rep['source'][name]['diff_error'] is None
+        assert rep['source'][name]['clean'] is False
     with pytest.raises(CA.AdmissionRefusal) as e:
         classify_with_healthy_python(rep, b)
     assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail

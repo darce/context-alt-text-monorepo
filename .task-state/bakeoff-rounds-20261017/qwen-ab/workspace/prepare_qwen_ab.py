@@ -31,19 +31,24 @@ SOURCES = {'gsq': 'QWEN38-GSQ-ALL38-LONG-R20C.execution.remote.py',
 # owned window's AUTO before START, so the fresh publication is the fencing
 # token. Replaces the pinned template line `assert previous=='aa048fdb...'`.
 LATE_BIND_BLOCK = """\
+    safe_withdraw=False
     assert previous!='none' and str(uuid.UUID(previous))==previous,'Owned window operation unknown; retain state and reconcile explicitly'
     def late_sealed(name):
         p=window/'ops'/previous/name;s=p.lstat()
         assert stat.S_ISREG(s.st_mode)and not stat.S_IMODE(s.st_mode)&0o222 and s.st_uid==0,'Unsealed or foreign predecessor evidence'
         return json.loads(p.read_bytes())
+    def late_settled(what):
+        gpu=json.loads(Path('/run/acx/gpu-state.json').read_bytes());assert gpu['state']=='stopped' and gpu.get('lease_expires_at')is None,what
     late_result=late_sealed('result.json');late_publication=late_sealed('publication.json')
     assert late_result.get('operation')==previous and late_result.get('window')==wid and late_result.get('outcome')=='published','Predecessor linkage changed; retain exact window'
     late_action=late_publication.get('action')
     if late_action not in('auto','stop'):raise RuntimeError('Predecessor is not a settled AUTO/STOP publication; retain exact window')
     late_from=previous;refresh_stop=None
+    if late_action=='stop':late_settled('STOP predecessor not settled; retain exact window')
+    safe_withdraw=True
     if late_action=='auto':
         refresh_stop=public(['stop',str(window),previous],'refresh-stop',75);observe(refresh_stop,'stop','refresh-stop-observe',195)
-        refreshed=json.loads(Path('/run/acx/gpu-state.json').read_bytes());assert refreshed['state']=='stopped' and refreshed.get('lease_expires_at')is None,'Refresh STOP did not settle'
+        late_settled('Refresh STOP did not settle')
     previous=public(['withdraw',str(window),wid],'refresh-auto',75)
     assert previous!='none' and str(uuid.UUID(previous))==previous and previous not in(late_from,refresh_stop),'Fresh AUTO not published; retain exact window'
     save('late-bound-predecessor.json',dict(reconciled=late_from,reconciled_action=late_action,refresh_stop=refresh_stop,fresh_auto=previous,binding='late_bound_at_claim_refresh',at=time.time()))

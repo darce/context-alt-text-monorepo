@@ -14,22 +14,23 @@ IO_FULL_AVG60_MAX = 15
 MEM_HEADROOM_MIN = 3*G
 ROOT_USED_PCT_MAX = 90
 CPU_CEILING = 3.25
-GUEST_CPU = 1.5
 HOST_CPUS = 4
-# The guest's 4 GiB sits outside the lane ceiling, host memory is enforced live by MEM_HEADROOM_MIN, and prospective_RAM is informational.
+# aura_runtime is SKIP-listed and charged by this fixed reserve; its 4 GiB sits outside the lane ceiling; host memory is enforced live by MEM_HEADROOM_MIN; and prospective_RAM is informational.
+AURA_RUNTIME_CPU = 1.5
+AURA_RUNTIME_MEMORY = 4*G
 LANE_MEMORY_CEILING = 16*G
-GUEST_MEMORY = 4*G
 HOST = 'ubuntu@acx-backend.tail1a44b8.ts.net'
 ROOT_PROBE = 'raw_auth_source_gate_root_probe.py'
 SKIP = frozenset({'wb', 'Bakeoff', 'aura', 'Canvas', 'aura_runtime'})
 AURA_A_PIN = ('a4fabeb0732a36f1610504eacdca8b457346566b', 'gpt-6.1-sol', 'low', 'standard')
 EVALUATED = ('ledger_state', 'setup_owner', 'expired_owner_lease', 'owned_unit_over_quota', 'co_tenant_unbounded',
              'co_tenant_reserve', 'root_probe', 'disk_projection', 'cpu_pressure', 'io_pressure', 'memory_headroom',
-             'probe_transport')
+             'probe_transport', 'malformed_payload')
 TRANSIENT = frozenset({'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve',
                        'probe_transport'})
 DETERMINISTIC = frozenset({'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
-                           'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled'})
+                           'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled',
+                           'malformed_payload'})
 
 ROOT_NAMED_SCRIPT = """import json,math,subprocess
 units=UNITS;out={}
@@ -161,6 +162,12 @@ def require_bounds(k, cpu, mem):
     require('ledger_state', isinstance(mem, int) and mem > 0, k)
 
 
+def claim_unit(expected, owners, name, row, cap):
+    # Two owner rows naming one unit would overwrite each other's cap, so the second is refused; one row naming it twice is not a duplicate.
+    require('ledger_state', owners.setdefault(name, row) == row, 'duplicate unit key across owner rows: ' + name)
+    expected[name] = cap
+
+
 def parse_expires(value):
     # A lease is compared with an aware clock, so a missing, malformed or naive expiry is no lease at all.
     try:
@@ -175,6 +182,7 @@ def owner_rows(ledger):
     for k, v in ledger.items():
         if k in SKIP or not isinstance(v, dict):
             continue
+        require('ledger_state', not v.get('setup_granted'), 'setup granted: ' + k)
         if not (v.get('remaining_actor_claim') or v.get('reserved_now') or v.get('future_model_claims')):
             continue
         if v.get('aggregate_cpu_cores_max') == 0 and v.get('aggregate_memory_bytes_max') == 0:
@@ -217,11 +225,20 @@ def evaluate(ledger, profile, root, native, now):
     require('setup_owner', owner is None or (isinstance(owner, str) and owner.startswith('Owner-coordinated-next')), 'Actual shared setup owner must return first')
     require('ledger_state', not ledger['aura']['active_models'] and not ledger['aura']['setup_granted'], 'Reconcile new Aura profile before this claim')
     require('ledger_state', not ledger['Canvas']['active_models'] and not ledger['Canvas']['setup_granted'], 'Canvas active or setup granted')
+    # aura_runtime and wb are SKIP-listed, so owner_rows never reads them; they are checked here instead.
+    rt = ledger.get('aura_runtime', {})
+    if rt.get('active'):
+        require('ledger_state', isinstance(rt.get('cpu_cores_aggregate'), (int, float)) and rt['cpu_cores_aggregate'] <= AURA_RUNTIME_CPU
+                and isinstance(rt.get('memory_bytes_aggregate'), int) and rt['memory_bytes_aggregate'] <= AURA_RUNTIME_MEMORY,
+                'aura_runtime exceeds its fixed reserve')
+    wb = ledger.get('wb', {})
+    require('ledger_state', not (wb.get('remaining_actor_claim') and (wb.get('cpu_cores_aggregate') or wb.get('memory_bytes_aggregate'))),
+            'wb row claims resources outside owner_rows')
     rows = owner_rows(ledger)
     aura_a = ledger.get('Aura_WP400_A', {})
     # The .25 is the coordinator's own native budget; 2 GiB is its own memory.
     cpu, memory = .25 + profile['aggregate_cpu_cores_max'], 2*G + profile['aggregate_memory_bytes_max']
-    expected = {}
+    expected, owners = {}, {}
     for k, v in rows.items():
         require('ledger_state', not v.get('setup_granted'), k)
         expires = parse_expires(v.get('expires'))
@@ -229,11 +246,12 @@ def evaluate(ledger, profile, root, native, now):
         require('expired_owner_lease', expires > now, 'Expired owner lease: ' + k)
         cpu += v['aggregate_cpu_cores_max']
         memory += v['aggregate_memory_bytes_max']
+        cap_pair = [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
         if v.get('physical_key'):
-            expected['workbay-lane-' + v['physical_key']] = [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
+            claim_unit(expected, owners, 'workbay-lane-' + v['physical_key'], k, cap_pair)
         for field in ('custody_unit', 'custody_scope'):
             if v.get(field):
-                expected[v[field]] = [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
+                claim_unit(expected, owners, v[field], k, cap_pair)
     # The first source offer predates its row; it is never resurrected after return.
     if not aura_a:
         cpu += .5
@@ -247,7 +265,7 @@ def evaluate(ledger, profile, root, native, now):
     # deterministic failure is never masked by a transient one (NDM-06).
     ceilings = (
         (cpu <= CPU_CEILING, cpu + co_cpu <= CPU_CEILING, 'CPU ceiling'),
-        (cpu + GUEST_CPU <= HOST_CPUS, cpu + co_cpu + GUEST_CPU <= HOST_CPUS, 'host CPU'),
+        (cpu + AURA_RUNTIME_CPU <= HOST_CPUS, cpu + co_cpu + AURA_RUNTIME_CPU <= HOST_CPUS, 'host CPU'),
         (memory <= LANE_MEMORY_CEILING, memory + co_mem <= LANE_MEMORY_CEILING, 'memory ceiling'))
     for plain, _, what in ceilings:
         require('ledger_state', plain, what + ' exceeded without co-tenant reserve')
@@ -271,7 +289,7 @@ def evaluate(ledger, profile, root, native, now):
     headroom = native['physical_mem_available'] if working is None else min(native['physical_mem_available'], working)
     require('memory_headroom', headroom >= MEM_HEADROOM_MIN, f'memory headroom {headroom}')
     return dict(at=now.timestamp(), ledger_sha256=hashlib.sha256(json.dumps(ledger, sort_keys=True).encode()).hexdigest(),
-                prospective_CPU=cpu + co_cpu + GUEST_CPU, prospective_RAM=memory + co_mem + GUEST_MEMORY,
+                prospective_CPU=cpu + co_cpu + AURA_RUNTIME_CPU, prospective_RAM=memory + co_mem + AURA_RUNTIME_MEMORY,
                 projected_root=projected, pending=pending, owned=units['owned'],
                 co_tenant_reserve=dict(cpu=co_cpu, memory=co_mem, units=[c['unit'] for c in co]),
                 classes_checked=list(EVALUATED))
@@ -306,17 +324,22 @@ def guard():
     base = importlib.import_module('run_owner_root_fixture_r6')
     cap = base.cap
     before = cap.LEDGER.read_bytes()
-    ledger = json.loads(before)
-    root_units = {v['native_unit']: [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
-                  for v in owner_rows(ledger).values() if v.get('native_unit')}
-    root_named_units = ssh_json(probe_argv(HOST), ROOT_NAMED_SCRIPT.replace('UNITS', repr(root_units)), 30) if root_units else {}
-    classify_root_named(root_named_units, root_units)
-    root = ssh_json(probe_argv(HOST), (base.P/ROOT_PROBE).read_text() + '\n', 30)
-    native = ssh_json(probe_argv(base.d.HOST), NATIVE_SCRIPT, 30)
-    proof = evaluate(ledger, base.PROFILE, root, native, datetime.now(timezone.utc))
+    try:
+        ledger = json.loads(before)
+        root_units = {v['native_unit']: [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
+                      for v in owner_rows(ledger).values() if v.get('native_unit')}
+        root_named_units = ssh_json(probe_argv(HOST), ROOT_NAMED_SCRIPT.replace('UNITS', repr(root_units)), 30) if root_units else {}
+        classify_root_named(root_named_units, root_units)
+        root = ssh_json(probe_argv(HOST), (base.P/ROOT_PROBE).read_text() + '\n', 30)
+        native = ssh_json(probe_argv(base.d.HOST), NATIVE_SCRIPT, 30)
+        proof = evaluate(ledger, base.PROFILE, root, native, datetime.now(timezone.utc))
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError) as e:
+        # A malformed payload is a labeled refusal, not an unlabeled exit 1. AdmissionRefusal is an AssertionError, so labeled refusals pass through.
+        raise AdmissionRefusal('malformed_payload', f'{type(e).__name__}: {e}') from e
+    # The ledger is re-read before the proof is written, so a refused attempt leaves no passing proof behind.
+    require('ledger_state', cap.LEDGER.read_bytes() == before, 'Owner event changed ledger; remeasure')
     proof.update(root=root, native=native, root_named_units=root_named_units)
     cap.persist(base.P/(base.N + '.operation-capacity.json'), proof)
-    require('ledger_state', cap.LEDGER.read_bytes() == before, 'Owner event changed ledger; remeasure')
     return before, ledger, proof
 
 

@@ -2,6 +2,7 @@
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -15,6 +16,8 @@ HOST = 'ubuntu@acx-backend.tail1a44b8.ts.net'
 PREPARER = '.task-state/bakeoff-rounds-20261017/qwen-ab/workspace/prepare_qwen_ab.py'
 CUSTODY_SOURCE = '22b61b6c7bc3932378dcb7e795a99f3ab288ff58'
 WINDOW = re.compile(r"window=Path\('(/tmp/qwen-owner-window\.[A-Za-z0-9_-]+)'\)")
+RUNNER_MODULES = ('run_selected_root_resume_qualification', 'run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate')
+HELPER_SHA256 = 'f0ca0e59c1bc8db1dd83c99598f82c0fb3665a7dd443f66e44291f44f837a4cd'
 G = 1024**3
 
 
@@ -129,12 +132,28 @@ def main(argv=None):
     a = parse_args(argv)
     sys.path[:0] = [str(HERE), str(BAKEOFF)]
     import cohort_admission as ca
-    import run_selected_root_resume_qualification as runner
-    base, cap = runner.admission, runner.cap
     d = Path(a.dir)
     prepared = json.loads((d/(a.name + '.prepared.json')).read_bytes())
     raw = (d/(a.name + '.remote.py')).read_bytes()
     try:
+        # Every pin is checked before the runner is imported: nothing from BAKEOFF runs unless it matches the reviewed copy.
+        specs = {name: importlib.util.find_spec(name) for name in RUNNER_MODULES}
+        for name in RUNNER_MODULES:
+            need(specs[name] is not None, f'{name} is missing: not found on sys.path')
+        origin = specs['run_selected_root_resume_qualification'].origin
+        reviewed = HERE/'references'/'admission'/'run_selected_root_resume_qualification.py'
+        need(origin is not None and hashlib.sha256(Path(origin).read_bytes()).hexdigest() == hashlib.sha256(reviewed.read_bytes()).hexdigest(),
+             'runner differs from the reviewed reference copy')
+        helper_path = d/'LEXICON-MIMO-40-LAST40-R1.prepared.json'
+        try:
+            helper_raw = helper_path.read_bytes()
+        except FileNotFoundError as e:
+            raise ValueError(f'helper record is missing: {helper_path}') from e
+        need(hashlib.sha256(helper_raw).hexdigest() == HELPER_SHA256, 'helper record sha256 differs from the pinned record')
+        need(helper_raw == (HERE/'references'/'LEXICON-MIMO-40-LAST40-R1.prepared.json').read_bytes(),
+             'helper record differs from the reviewed reference copy')
+        import run_selected_root_resume_qualification as runner
+        base, cap = runner.admission, runner.cap
         need(prepared.get('name') == a.name, f"prepared record is for {prepared.get('name')!r}, not --name {a.name!r}")
         window = verify_prepared(prepared, raw)
         bind_generator(prepared, a.gate_commit, run_git)
@@ -149,7 +168,7 @@ def main(argv=None):
             pilot_sha, pilot_custody = pilot_checks(d, prepared, a.pilot)
     except ValueError as e:
         raise SystemExit(f'preflight refused: {e}')
-    helper = json.loads((d/'LEXICON-MIMO-40-LAST40-R1.prepared.json').read_bytes())
+    helper = json.loads(helper_raw)
     receipt = dict(prepared, source_head=g['source_sha'], gate='QWEN-AB-G2', stage=helper['stage'],
                    manifest_sha256=helper['manifest_sha256'], helper_source_head=helper['source_head'],
                    helper_independent_gate=helper['gate'], remote_orchestration_sha256=prepared['recipe_sha256'],

@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import time
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1031,6 +1032,72 @@ def test_source_binding_refuses_each_unbound_recipe_with_its_message(raw, messag
     assert str(e.value) == message
 
 
+RESULTS = '/home/gate/bakeoff-rounds-20261017-inputs/results'
+# QDSG1-01: a second binding of a bound name, anywhere in the module, is refused even when the text checks each see exactly one line.
+REBINDS = [
+    pytest.param(swapped(WORKSPACE_LINE, WORKSPACE_LINE + b";workspace=Path('/tmp/unchecked-workspace')"), 'workspace', id='same-line'),
+    pytest.param(RECIPE + b"workspace=Path('/tmp/unchecked-workspace')\n", 'workspace', id='later-line'),
+    pytest.param(RECIPE + b"for workspace in ['/tmp/unchecked']:\n    pass\n", 'workspace', id='for-target'),
+    pytest.param(RECIPE + b'import os as workspace\n', 'workspace', id='import-as'),
+    pytest.param(RECIPE + b'def repo():\n    pass\n', 'repo', id='def'),
+    pytest.param(RECIPE + b'class python:\n    pass\n', 'python', id='class'),
+    pytest.param(RECIPE + b"python += 'x'\n", 'python', id='augassign'),
+    pytest.param(RECIPE + b'f = lambda SOURCE: 0\n', 'SOURCE', id='lambda-arg'),
+    pytest.param(RECIPE + b'def f():\n    global SOURCE\n', 'SOURCE', id='global'),
+    pytest.param(RECIPE + b'try:\n    pass\nexcept Exception as repo:\n    pass\n', 'repo', id='except-as'),
+]
+
+
+@pytest.mark.parametrize('raw,name', REBINDS)
+def test_source_binding_refuses_any_second_binding_of_a_bound_name(raw, name):
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == f'{name} must be bound exactly once, found 2 bindings'
+
+
+def test_source_binding_refuses_a_sha_line_that_only_sits_inside_a_string():
+    raw = swapped(SOURCE_LINE, b'"""\n' + SOURCE_LINE + b'\n"""')
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == 'SOURCE must be bound exactly once, found 0 bindings'
+
+
+def test_source_binding_refuses_a_bound_name_that_is_not_a_module_level_assignment():
+    # The repo line survives only inside a string, and the one real binding of repo is a for target: the text check sees one line, the module has one binding that is not an assignment.
+    raw = swapped(REPO_LINE, b'"""\n' + REPO_LINE + b'\n"""\nfor repo in []:\n    pass')
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == 'repo is bound outside a module-level single-target assignment, found 1 binding'
+
+
+def test_source_binding_refuses_a_star_import_that_could_rebind_any_name():
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(RECIPE + b'from os.path import *\n')
+    assert str(e.value) == 'recipe imports * and could rebind a bound name'
+
+
+def test_source_binding_refuses_a_recipe_that_does_not_parse():
+    with pytest.raises(ValueError, match='^recipe does not parse'):
+        RUN.source_binding(RECIPE + b'def (:\n')
+
+
+# QDSG1-02: the workspace is exactly <results root>/<NAME>/workspace; '..', '.', '//' and a trailing slash are refused, not normalised.
+@pytest.mark.parametrize('tail', ['../workspace', './workspace', 'a/../b/workspace', '/x/workspace', 'n-1/workspace/',
+                                  '.hidden/workspace', 'n-1/ws'])
+def test_source_binding_refuses_a_workspace_that_is_not_a_direct_child_of_results(tail):
+    bad = f'{RESULTS}/{tail}'
+    raw = swapped(WORKSPACE_LINE, f"workspace=Path('{bad}')".encode())
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == f'workspace must be {RESULTS}/<NAME>/workspace, got {bad!r}'
+
+
+@pytest.mark.parametrize('name', ['n-1', 'a.b_c-9', 'A'])
+def test_source_binding_accepts_each_well_formed_result_name(name):
+    workspace = f'{RESULTS}/{name}/workspace'
+    assert RUN.source_binding(swapped(WORKSPACE_LINE, f"workspace=Path('{workspace}')".encode()))['workspace'] == workspace
+
+
 # --- runner v2: bind_generator ------------------------------------------------------------------
 
 class FakeGit:
@@ -1415,7 +1482,8 @@ def test_classify_preclaim_source_detail_names_the_root_expected_and_observed():
     src['workspace']['head'] = ZERO
     with pytest.raises(CA.AdmissionRefusal) as e:
         RUN.classify_preclaim(report(source=src), BINDING)
-    assert e.value.detail == (f'workspace {WORKSPACE}: expected HEAD {SHA} and clean, observed HEAD {ZERO} clean True; '
+    assert e.value.detail == (f"workspace {WORKSPACE}: expected HEAD {SHA} clean True rc 0 no error; observed head '{ZERO}' clean True "
+                              "head_rc 0 head_error None diff_rc 0 diff_error None; "
                               'rebuild: qwen-latebind/durable-source/build_durable_source.py')
 
 
@@ -1435,6 +1503,48 @@ def test_classify_preclaim_refuses_a_report_without_a_source_mapping_as_malforme
     assert e.value.cls == 'malformed_payload'
 
 
+# QDSG1-03: every child status is checked, not only head and clean; each row flips one field of the all-healthy report.
+ROOT_FIELDS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error')
+PY_FIELDS = ('executable', 'import_ok', 'error', 'stderr_tail')
+ROOT_FLIPS = [(owner, field, value) for owner in ('repo', 'workspace') for field, value in
+              [('head_rc', 128), ('diff_rc', 128), ('diff_rc', 1), ('head_error', 'OSError: denied'),
+               ('diff_error', 'TimeoutExpired: 15'), ('clean', 1), ('head', None)]]
+PYTHON_FLIPS = [('python', 'executable', False), ('python', 'import_ok', None), ('python', 'error', 'OSError: denied')]
+
+
+@pytest.mark.parametrize('owner,field,value', ROOT_FLIPS + PYTHON_FLIPS)
+def test_classify_preclaim_refuses_each_flipped_field_and_names_every_observed_field(owner, field, value):
+    src = source_report()
+    src[owner][field] = value
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+    assert e.value.detail.startswith(f'{owner} {BINDING[owner]}:')
+    observed = PY_FIELDS if owner == 'python' else ROOT_FIELDS
+    assert all(f' {key} ' in e.value.detail for key in observed), e.value.detail
+
+
+SOURCE_SHAPES = {
+    'repo missing': lambda s: s.pop('repo'),
+    'repo not a mapping': lambda s: s.update(repo='ok'),
+    'workspace null': lambda s: s.update(workspace=None),
+    'python not a mapping': lambda s: s.update(python=[]),
+    'root key missing': lambda s: s['repo'].pop('head_rc'),
+    'root error key missing': lambda s: s['workspace'].pop('diff_error'),
+    'python key missing': lambda s: s['python'].pop('import_ok'),
+    'python stderr_tail missing': lambda s: s['python'].pop('stderr_tail'),
+}
+
+
+@pytest.mark.parametrize('label', list(SOURCE_SHAPES))
+def test_classify_preclaim_refuses_a_missing_or_ill_typed_source_mapping_as_malformed(label):
+    src = source_report()
+    SOURCE_SHAPES[label](src)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'malformed_payload'
+
+
 def test_preclaim_script_has_no_ttl_check_and_compiles():
     src = RUN.preclaim_script('/tmp/qwen-owner-window.abc123', BINDING)
     compile(src, 'preclaim', 'exec')
@@ -1443,7 +1553,6 @@ def test_preclaim_script_has_no_ttl_check_and_compiles():
 
 PRECLAIM_ENV = dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME='/home/gate', LANG='C.UTF-8', PYTHONDONTWRITEBYTECODE='1',
                     OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
-PY_CWD = f'{WORKSPACE}/apps/prototype-description-service'
 
 
 def completed(stdout='', stderr='', returncode=0):
@@ -1463,23 +1572,89 @@ def publish(tmp_path, *ops):
         (tmp_path/'w'/'ops'/op/'publication.json').write_text(json.dumps(dict(action=action, expires_at='2001-01-01T00:00:00Z', sequence=seq)))
 
 
-def run_preclaim(monkeypatch, capsys, tmp_path, answer=healthy_child, executable=True):
-    """Execs the generated preclaim text with subprocess replaced by a recorder and os.access fixed. Returns the calls and the printed reply."""
+class FakeClock:
+    """Stands in for time.monotonic. It moves only when a fake child is charged time, so the deadline is observable without sleeping."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+
+def roots(tmp_path):
+    """BINDING with repo and workspace as real directories holding a .git/index, so the preclaim's index copy has bytes to copy."""
+    b = dict(BINDING)
+    for name in ('repo', 'workspace'):
+        (tmp_path/name/'.git').mkdir(parents=True, exist_ok=True)
+        (tmp_path/name/'.git'/'index').write_bytes(b'DIRC')
+        b[name] = str(tmp_path/name)
+    return b
+
+
+def run_preclaim(monkeypatch, capsys, tmp_path, answer=healthy_child, executable=True, cost=lambda argv: 0.0):
+    """Execs the generated preclaim text with subprocess replaced by a recorder, os.access fixed, os.chown a no-op and time.monotonic faked.
+    cost(argv) is how long a fake child runs; a child that runs to its timeout raises TimeoutExpired and is charged that timeout.
+    Returns the calls and the printed reply."""
     gpu = tmp_path/'gpu.json'
     gpu.write_text(json.dumps(dict(state='stopped', lease_expires_at=None)))
-    src = RUN.preclaim_script(str(tmp_path/'w'), BINDING).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
-    calls = []
+    src = RUN.preclaim_script(str(tmp_path/'w'), roots(tmp_path)).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
+    clock, calls = FakeClock(), []
     recorder = types.ModuleType('subprocess')
 
     def run(argv, **kwargs):
         calls.append((argv, kwargs))
+        took = cost(argv)
+        clock.now += min(took, kwargs['timeout'])
+        if took >= kwargs['timeout']:
+            raise subprocess.TimeoutExpired(argv, kwargs['timeout'])
         return answer(argv)
 
     recorder.run, recorder.TimeoutExpired = run, subprocess.TimeoutExpired
     monkeypatch.setitem(sys.modules, 'subprocess', recorder)
     monkeypatch.setattr(os, 'access', lambda path, mode: executable)
+    monkeypatch.setattr(os, 'chown', lambda path, uid, gid: None)
+    monkeypatch.setattr(time, 'monotonic', clock.monotonic)
     exec(compile(src, 'preclaim', 'exec'), {'__name__': 'preclaim'})
     return calls, json.loads(capsys.readouterr().out)
+
+
+def run_local(monkeypatch, capsys, tmp_path, b):
+    """Execs the generated preclaim text against the real git as the local uid: the uid 1002 switch is dropped, and os.chown is recorded
+    (path, uid, gid, mode at the time of the call) instead of applied. Returns the printed reply, every child's (argv, kwargs) and the chowns."""
+    gpu = tmp_path/'gpu.json'
+    gpu.write_text(json.dumps(dict(state='stopped', lease_expires_at=None)))
+    src = RUN.preclaim_script(str(tmp_path/'w'), b).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
+    real, calls, chowns = subprocess, [], []
+    local = types.ModuleType('subprocess')
+
+    def run(argv, **kwargs):
+        calls.append((argv, dict(kwargs)))
+        for key in ('user', 'group', 'extra_groups'):
+            kwargs.pop(key)
+        return real.run(argv, **kwargs)
+
+    local.run, local.TimeoutExpired = run, real.TimeoutExpired
+    monkeypatch.setitem(sys.modules, 'subprocess', local)
+    monkeypatch.setattr(os, 'chown', lambda path, uid, gid: chowns.append((str(path), uid, gid, os.stat(path).st_mode & 0o777)))
+    exec(compile(src, 'preclaim', 'exec'), {'__name__': 'preclaim'})
+    return json.loads(capsys.readouterr().out), calls, chowns
+
+
+def git_in(path, *args):
+    return subprocess.run(['git', '-C', str(path), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def committed_repo(path):
+    """A real repo with one committed file, then stat-only drift on it: the same bytes under an older mtime."""
+    path.mkdir(parents=True)
+    git_in(path, 'init', '-q')
+    (path/'a.txt').write_text('hello\n')
+    git_in(path, 'add', 'a.txt')
+    git_in(path, 'commit', '-qm', 'init')
+    os.utime(path/'a.txt', (946684800, 946684800))
+    return path
 
 
 def test_preclaim_script_reports_the_highest_sequence_publication(monkeypatch, capsys, tmp_path):
@@ -1491,40 +1666,139 @@ def test_preclaim_script_reports_the_highest_sequence_publication(monkeypatch, c
 
 def test_preclaim_script_composes_the_five_source_children_exactly(monkeypatch, capsys, tmp_path):
     publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
     calls, rep = run_preclaim(monkeypatch, capsys, tmp_path)
     assert [argv for argv, _ in calls] == [
-        ['git', '-C', BINDING['repo'], 'rev-parse', 'HEAD'],
-        ['git', '-C', BINDING['repo'], 'diff', '--name-only'],
-        ['git', '-C', BINDING['workspace'], 'rev-parse', 'HEAD'],
-        ['git', '-C', BINDING['workspace'], 'diff', '--name-only'],
-        [BINDING['python'], '-B', '-c', 'import httpx,scripts.eval_harness.bakeoff'],
+        ['git', '-C', b['repo'], 'rev-parse', 'HEAD'],
+        ['git', '-C', b['repo'], 'diff', '--name-only'],
+        ['git', '-C', b['workspace'], 'rev-parse', 'HEAD'],
+        ['git', '-C', b['workspace'], 'diff', '--name-only'],
+        [b['python'], '-B', '-c', 'import httpx,scripts.eval_harness.bakeoff'],
     ]
     for (argv, kw), timeout in zip(calls, [10, 15, 10, 15, 20]):
         assert kw['timeout'] == timeout, argv
         assert kw['user'] == 1002 and kw['group'] == 1002 and kw['extra_groups'] == [], argv
-        assert kw['env'] == PRECLAIM_ENV and kw['capture_output'] is True and kw['text'] is True, argv
-        assert kw.get('cwd') == (PY_CWD if argv[0] == BINDING['python'] else None), argv
+        assert kw['capture_output'] is True and kw['text'] is True, argv
+        assert kw.get('cwd') == (f"{b['workspace']}/apps/prototype-description-service" if argv[0] == b['python'] else None), argv
+        env = dict(kw['env'])
+        if argv[0] == 'git' and argv[3] == 'diff':
+            assert env.pop('GIT_OPTIONAL_LOCKS') == '0' and env.pop('GIT_INDEX_FILE'), argv
+        assert env == PRECLAIM_ENV, argv
     assert rep['source'] == source_report()
-    assert RUN.classify_preclaim(rep, BINDING) == rep
+    assert RUN.classify_preclaim(rep, b) == rep
 
 
 @pytest.mark.parametrize('target,path,fail', [
-    (['git', '-C', BINDING['repo'], 'rev-parse'], ('repo', 'head_error'), lambda argv: OSError('denied')),
-    (['git', '-C', BINDING['workspace'], 'diff'], ('workspace', 'diff_error'), lambda argv: subprocess.TimeoutExpired(argv, 15)),
-    ([BINDING['python']], ('python', 'error'), lambda argv: FileNotFoundError(2, 'No such file or directory')),
+    (lambda b: ['git', '-C', b['repo'], 'rev-parse'], ('repo', 'head_error'), lambda argv: OSError('denied')),
+    (lambda b: ['git', '-C', b['workspace'], 'diff'], ('workspace', 'diff_error'), lambda argv: subprocess.TimeoutExpired(argv, 15)),
+    (lambda b: [b['python']], ('python', 'error'), lambda argv: FileNotFoundError(2, 'No such file or directory')),
 ], ids=['repo-rev-parse-oserror', 'workspace-diff-timeout', 'python-missing'])
 def test_a_source_child_that_cannot_run_is_recorded_and_refused_without_reraising(monkeypatch, capsys, tmp_path, target, path, fail):
     publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+    prefix = target(b)
 
     def answer(argv):
-        if argv[:len(target)] == target:
+        if argv[:len(prefix)] == prefix:
             raise fail(argv)
         return healthy_child(argv)
 
     _, rep = run_preclaim(monkeypatch, capsys, tmp_path, answer=answer)
     assert rep['source'][path[0]][path[1]] is not None
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(rep, BINDING)
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+# QDSG1-04: the children share one 20 s deadline inside the 30 s ssh, and the JSON is printed whatever each child does.
+def test_hung_children_share_one_twenty_second_deadline_and_the_rest_are_skipped(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+    calls, rep = run_preclaim(monkeypatch, capsys, tmp_path, cost=lambda argv: float('inf'))
+    assert [kw['timeout'] for _, kw in calls] == [10, 10]
+    assert sum(kw['timeout'] for _, kw in calls) <= 20
+    src = rep['source']
+    assert src['repo']['head_error'].startswith('TimeoutExpired') and src['repo']['diff_error'].startswith('TimeoutExpired')
+    assert src['workspace']['head_error'] == 'deadline_exhausted' and src['workspace']['diff_error'] == 'deadline_exhausted'
+    assert src['python']['error'] == 'deadline_exhausted'
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+
+
+def test_a_slow_child_leaves_the_next_child_only_the_rest_of_the_deadline(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+
+    def cost(argv):
+        if argv[:4] == ['git', '-C', b['repo'], 'rev-parse']:
+            return 9.5
+        return float('inf') if argv[:4] == ['git', '-C', b['repo'], 'diff'] else 0.0
+
+    calls, rep = run_preclaim(monkeypatch, capsys, tmp_path, cost=cost)
+    assert [kw['timeout'] for _, kw in calls] == [10, 20 - 9.5]
+    assert rep['source']['repo']['head'] == SHA and rep['source']['repo']['diff_error'].startswith('TimeoutExpired')
+    assert rep['source']['workspace']['head_error'] == 'deadline_exhausted'
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+# QDSG1-05: the read-only preclaim must not rewrite .git/index; the diff child reads a private copy, as uid 1002, and the copy is removed.
+def git_index_probe(tmp_path, damage=None):
+    repo = committed_repo(tmp_path/'repo')
+    if damage == 'missing':
+        (repo/'.git'/'index').unlink()
+    if damage == 'unreadable':
+        (repo/'.git'/'index').chmod(0)
+    b = dict(BINDING, source=git_in(repo, 'rev-parse', 'HEAD'), repo=str(repo), workspace=str(repo), python=str(tmp_path/'no-python'))
+    return repo, b
+
+
+def test_plain_git_diff_rewrites_the_index_on_stat_only_drift(tmp_path):
+    """The hazard the copy removes, shown on this git: a plain diff rewrites .git/index after stat-only drift, so the next test is not vacuous."""
+    repo = committed_repo(tmp_path/'repo')
+    index = repo/'.git'/'index'
+    before = index.read_bytes()
+    assert git_in(repo, 'diff', '--name-only') == ''
+    assert index.read_bytes() != before
+
+
+def test_preclaim_diff_leaves_the_repo_index_bytes_and_mtime_untouched_on_stat_only_drift(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    index = repo/'.git'/'index'
+    before = (index.read_bytes(), index.stat().st_mtime_ns)
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    for name in ('repo', 'workspace'):
+        assert rep['source'][name]['diff_rc'] == 0 and rep['source'][name]['diff_error'] is None
+        assert rep['source'][name]['clean'] is True
+    assert (index.read_bytes(), index.stat().st_mtime_ns) == before
+
+
+def test_the_diff_child_reads_a_private_index_copy_owned_by_1002_and_removes_it(monkeypatch, capsys, tmp_path):
+    repo, b = git_index_probe(tmp_path)
+    _, calls, chowns = run_local(monkeypatch, capsys, tmp_path, b)
+    diffs = [kw for argv, kw in calls if argv[0] == 'git' and argv[3] == 'diff']
+    assert len(diffs) == 2
+    for kw in diffs:
+        env = kw['env']
+        assert env['GIT_OPTIONAL_LOCKS'] == '0' and env['GIT_INDEX_FILE'] != str(repo/'.git'/'index')
+        copy = Path(env['GIT_INDEX_FILE'])
+        assert not copy.exists() and not copy.parent.exists()
+        assert (str(copy.parent), 1002, 1002, 0o700) in chowns
+        assert any(c[:3] == (str(copy), 1002, 1002) for c in chowns)
+
+
+@pytest.mark.parametrize('damage', ['missing', pytest.param('unreadable', marks=pytest.mark.skipif(os.geteuid() == 0, reason='root reads any file'))])
+def test_a_missing_or_unreadable_repo_index_is_a_diff_error_and_never_clean(monkeypatch, capsys, tmp_path, damage):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    _, b = git_index_probe(tmp_path, damage=damage)
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    root = rep['source']['repo']
+    assert root['diff_error'] is not None and root['clean'] is False and root['diff_rc'] is None
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
     assert e.value.cls == 'source_unavailable'
 
 

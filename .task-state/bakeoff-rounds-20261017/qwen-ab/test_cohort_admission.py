@@ -1920,12 +1920,12 @@ def test_an_unstaged_modification_is_not_clean_and_is_refused(monkeypatch, capsy
     assert e.value.cls == 'source_unavailable'
 
 
-def test_an_untracked_file_that_is_not_ignored_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+def test_an_untracked_python_file_that_is_not_ignored_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
     rep, b = preclaim_after(monkeypatch, capsys, tmp_path, lambda repo: (repo/'new.py').write_text('x = 1\n'))
     assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(rep, b)
-    assert e.value.cls == 'source_unavailable'
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
 
 
 def test_a_file_matched_by_gitignore_stays_clean(monkeypatch, capsys, tmp_path):
@@ -1938,6 +1938,38 @@ def test_a_file_matched_by_gitignore_stays_clean(monkeypatch, capsys, tmp_path):
     rep, _ = preclaim_after(monkeypatch, capsys, tmp_path, edit)
     assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
     assert rep['source']['repo']['clean'] is True
+
+
+# M2, TEST-20: the shared evidence workspace collects runtime data files, so only import-capable untracked files refuse the clean check.
+def classify_with_healthy_python(rep, b):
+    """Judges the source roots alone: these fixtures bind no interpreter, so its child is set healthy before the verdict."""
+    rep['source']['python'] = dict(executable=True, import_ok=True, stderr_tail='', error=None)
+    return RUN.classify_preclaim(rep, b)
+
+
+def test_an_untracked_ses_runtime_file_that_is_not_ignored_stays_clean(monkeypatch, capsys, tmp_path):
+    """The known-good evidence workspace: its only untracked path is a SQLite artifact from an earlier run."""
+    def edit(repo):
+        (repo/'apps'/'prototype-description-service').mkdir(parents=True)
+        (repo/'apps'/'prototype-description-service'/':memory:.ses').write_bytes(b'SQLite format 3\x00')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is True
+    assert classify_with_healthy_python(rep, b)['source']['repo']['clean'] is True
+
+
+@pytest.mark.parametrize('path', ['apps/prototype-description-service/shadow.py', 'pkg/native.so', 'pkg/hook.pth', 'pkg/cached.pyc'])
+def test_an_untracked_import_capable_file_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, path):
+    def edit(repo):
+        (repo/path).parent.mkdir(parents=True, exist_ok=True)
+        (repo/path).write_bytes(b'x = 1\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
 
 
 # --- runner v2: bootstrap -----------------------------------------------------------------------

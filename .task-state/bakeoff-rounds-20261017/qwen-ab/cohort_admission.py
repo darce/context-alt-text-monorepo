@@ -27,24 +27,31 @@ TRANSIENT = frozenset({'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_p
 DETERMINISTIC = frozenset({'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
                            'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled'})
 
-ROOT_NAMED_SCRIPT = """import json,subprocess
+ROOT_NAMED_SCRIPT = """import json,math,subprocess
 units=UNITS;out={}
-for n,(c,m)in units.items():
- out[n]={};total_cpu=0.;total_memory=0
+def cores(x):
+ for suffix,factor in [('us',1e-6),('ms',1e-3),('s',1.)]:
+  if x.endswith(suffix):
+   try:y=float(x[:-len(suffix)])*factor
+   except ValueError:return None
+   return y if math.isfinite(y)else None
+ return None
+def bytes_max(x):
+ try:return int(x)
+ except ValueError:return None
+for n in units:
+ out[n]={};total_cpu=0.;total_memory=0;invalid=[]
  commands={'system':['systemctl'],'gate-user':['sudo','-n','-H','-u','gate','env','XDG_RUNTIME_DIR=/run/user/1002','DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1002/bus','systemctl','--user']}
  for namespace,prefix in commands.items():
   q=subprocess.check_output(prefix+['show',n,'-p','LoadState','-p','ActiveState','-p','ControlGroup','-p','MainPID','-p','CPUQuotaPerSecUSec','-p','MemoryMax'],text=True,timeout=6)
   v=dict(l.split('=',1)for l in q.splitlines()if '='in l);out[n][namespace]=v
-  if v['LoadState']=='not-found':
-   assert v['ActiveState']=='inactive'and not v['ControlGroup'],(n,namespace,v)
-   if 'MainPID'in v:assert v['MainPID']=='0',(n,namespace,v)
+  if v.get('LoadState')=='not-found':
+   if v.get('ActiveState')!='inactive'or v.get('ControlGroup')or v.get('MainPID','0')!='0':invalid.append(namespace)
    continue
-  cpu=v['CPUQuotaPerSecUSec']
-  for suffix,factor in [('us',1e-6),('ms',1e-3),('s',1.)]:
-   if cpu.endswith(suffix):actual=float(cpu[:-len(suffix)])*factor;break
-  else:raise AssertionError('Unbounded existing native CPU')
-  total_cpu+=actual;total_memory+=int(v['MemoryMax'])
- assert total_cpu<=c+1e-8 and total_memory<=m,(n,out[n])
+  cpu=cores(v.get('CPUQuotaPerSecUSec',''));memory=bytes_max(v.get('MemoryMax',''))
+  total_cpu=None if cpu is None or total_cpu is None else total_cpu+cpu
+  total_memory=None if memory is None or total_memory is None else total_memory+memory
+ out[n].update(total_cpu=total_cpu,total_memory=total_memory,invalid_not_found=invalid)
 print(json.dumps(out))
 """
 
@@ -117,10 +124,26 @@ def classify_native_units(units, expected):
     return dict(owned=owned, co_tenant=co_tenant, refusals=[])
 
 
-def avg60(text, pattern):
-    m = re.search(pattern, text)
+def classify_root_named(out, units):
+    # The remote probe only reports; the verdict is made here, so an unbounded or unparseable total is refused by label.
+    for n, (cpu, mem) in units.items():
+        require('root_probe', n in out, 'no named-unit probe row: ' + n)
+        row = out[n]
+        require('root_probe', not row['invalid_not_found'], f"named unit not as expected for {n}: {row['invalid_not_found']}")
+        require('owned_unit_over_quota', row['total_cpu'] is not None and row['total_cpu'] <= cpu + 1e-8,
+                f"{n}: total cpu {row['total_cpu']} over cap {cpu} or unbounded")
+        require('owned_unit_over_quota', row['total_memory'] is not None and row['total_memory'] <= mem,
+                f"{n}: total memory {row['total_memory']} over cap {mem} or unbounded")
+
+
+def avg60(text, row):
+    # The row is picked by its leading word, and the whole avg60 token must match: a malformed token is never read as its prefix.
+    tokens = [t for line in text.splitlines() if line.split()[:1] == [row] for t in line.split() if t.startswith('avg60=')]
     # An unreadable PSI line is treated as over the limit: no value means no admission.
-    return float(m.group(1)) if m else float('inf')
+    if len(tokens) != 1 or not re.fullmatch(r'avg60=[0-9]+(\.[0-9]+)?', tokens[0]):
+        return float('inf')
+    value = float(tokens[0][len('avg60='):])
+    return value if math.isfinite(value) and value >= 0 else float('inf')
 
 
 def owner_rows(ledger):
@@ -193,12 +216,15 @@ def evaluate(ledger, profile, root, native, now):
     co_cpu = sum(c['cpu'] for c in co)
     co_mem = sum(c['memory'] for c in co)
     # RES-35: the co-tenant reserve counts in every ceiling. A ceiling that fails without the reserve is ledger_state;
-    # one that fails only with it is transient, because the co-tenant may finish.
-    for plain, reserved, what in (
-            (cpu <= CPU_CEILING, cpu + co_cpu <= CPU_CEILING, 'CPU ceiling'),
-            (cpu + GUEST_CPU <= HOST_CPUS, cpu + co_cpu + GUEST_CPU <= HOST_CPUS, 'host CPU'),
-            (memory <= MEMORY_CEILING, memory + co_mem <= MEMORY_CEILING, 'memory ceiling')):
+    # one that fails only with it is transient, because the co-tenant may finish. Plain ceilings go first, so a
+    # deterministic failure is never masked by a transient one (NDM-06).
+    ceilings = (
+        (cpu <= CPU_CEILING, cpu + co_cpu <= CPU_CEILING, 'CPU ceiling'),
+        (cpu + GUEST_CPU <= HOST_CPUS, cpu + co_cpu + GUEST_CPU <= HOST_CPUS, 'host CPU'),
+        (memory <= MEMORY_CEILING, memory + co_mem <= MEMORY_CEILING, 'memory ceiling'))
+    for plain, _, what in ceilings:
         require('ledger_state', plain, what + ' exceeded without co-tenant reserve')
+    for _, reserved, what in ceilings:
         require('co_tenant_reserve', reserved, what + ' exceeded only with co-tenant reserve')
     require('ledger_state', ledger['runtime_reserve_bytes'] == 3*G and ledger['emergency_reserve_bytes'] == 1400000000, 'reserve sizes changed')
     require('root_probe', root['euid'] == 0 and not root['hits'] and not root['unknown'] and root['pg_all_healthy'], 'root probe not clean')
@@ -209,9 +235,9 @@ def evaluate(ledger, profile, root, native, now):
     used, free = int(a[2])*1024, int(a[3])*1024
     projected = math.ceil((used+pending)/(used+free)*100)
     require('disk_projection', int(a[4].strip('%')) < ROOT_USED_PCT_MAX and projected < ROOT_USED_PCT_MAX, f'root used {a[4]}, projected {projected}%')
-    cpu_avg = avg60(native['cpu'], r'avg60=([0-9.]+)')
+    cpu_avg = avg60(native['cpu'], 'some')
     require('cpu_pressure', cpu_avg < CPU_AVG60_MAX, f'PSI cpu avg60 {cpu_avg}')
-    io_full = avg60(native['io'], r'full avg10=[^ ]+ avg60=([0-9.]+)')
+    io_full = avg60(native['io'], 'full')
     require('io_pressure', io_full <= IO_FULL_AVG60_MAX, f'PSI io full avg60 {io_full}')
     headroom = min(native['physical_mem_available'], native['working_headroom'])
     require('memory_headroom', headroom >= MEM_HEADROOM_MIN, f'memory headroom {headroom}')
@@ -231,6 +257,7 @@ def guard():
     root_units = {v['native_unit']: [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
                   for v in owner_rows(ledger).values() if v.get('native_unit')}
     root_named_units = base.ssh(HOST, ROOT_NAMED_SCRIPT.replace('UNITS', repr(root_units))) if root_units else {}
+    classify_root_named(root_named_units, root_units)
     root = base.ssh(HOST, (base.P/ROOT_PROBE).read_text() + '\n')
     native = base.ssh(base.d.HOST, NATIVE_SCRIPT)
     proof = evaluate(ledger, base.PROFILE, root, native, datetime.now(timezone.utc))

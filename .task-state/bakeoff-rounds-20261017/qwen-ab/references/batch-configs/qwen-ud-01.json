@@ -1,0 +1,132 @@
+{
+  "service_dir": "/home/gate/bakeoff-rounds-20261017-inputs/results/RAW-INCUMBENT-OBSERVATION-R1-0c2012a4be0649188b54942696474aa6/workspace/apps/prototype-description-service",
+  "loader_override": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/depiction_lexicon.py",
+  "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+  "canon_root": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon",
+  "canon_sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+  "endpoint": "http://10.0.1.9:8000",
+  "model_version": "Qwen3.8-27B-UD-Q4_K_XL",
+  "model_revision": "sha256:bee238bbeb3dc0a34bde4d0dedbaee1f98c009e8bb4226f03070054c12fb1372",
+  "images": [
+    {
+      "image_id": "c001",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c001.jpg",
+      "sha256": "b9ef5a24782441b2aee83fffc8a75601d2da49a6b1b421914161b76f81852720",
+      "source_cluster": "c001"
+    },
+    {
+      "image_id": "c002",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c002.jpg",
+      "sha256": "bdee95bc27941d890c7831101a2a695c4ae159d0624a70f035bc623a765b440b",
+      "source_cluster": "c002"
+    },
+    {
+      "image_id": "c003",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c003.jpg",
+      "sha256": "2d4180296e8d8e76ec4140dc46216a109dbb655073d6aa64922afe2924c86d8a",
+      "source_cluster": "c003"
+    },
+    {
+      "image_id": "c004",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c004.jpg",
+      "sha256": "cea6e6bc4c0302c752508249f006bf554c7c941b72bbd0af8968555bdec4a16d",
+      "source_cluster": "c004"
+    },
+    {
+      "image_id": "c006",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c006.jpg",
+      "sha256": "5fec90ad8e04bf0ec9dfa0d0f634d6448022aabe5cda8be74192c87461ca1274",
+      "source_cluster": "c006"
+    },
+    {
+      "image_id": "c007",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c007.jpg",
+      "sha256": "2edc158e1d9130672d4d6ba5ed14a450d1d4ed4e4893786b6c6b7d8a0c9a7454",
+      "source_cluster": "c007"
+    },
+    {
+      "image_id": "c008",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c008.jpg",
+      "sha256": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6",
+      "source_cluster": "c008"
+    },
+    {
+      "image_id": "c009",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c009.jpg",
+      "sha256": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491",
+      "source_cluster": "c009"
+    },
+    {
+      "image_id": "c010",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c010.jpg",
+      "sha256": "df414b5e4c1f19d808bab79e13b11c2ad66487b7e7f9333ec36abc5a66ca8617",
+      "source_cluster": "c010"
+    },
+    {
+      "image_id": "c011",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c011.jpg",
+      "sha256": "53e124dd00aed0d5c6e15094d165c046d184bc3ca5457550e5bad33b889a0087",
+      "source_cluster": "c011"
+    },
+    {
+      "image_id": "c018",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c018.jpg",
+      "sha256": "247ab1602d74aed39f1ee2a65d275121ab85517fa22575dac1823dac1c5aa0ca",
+      "source_cluster": "c018"
+    },
+    {
+      "image_id": "c019",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c019.jpg",
+      "sha256": "7f314d47b8b10bc8dd70e5973d1e31db3ecb7fe22390e6d350fa494faaae4e1b",
+      "source_cluster": "c019"
+    },
+    {
+      "image_id": "c020",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c020.png",
+      "sha256": "1b73682b86366461dcaef3cbf7ee593f375398529daf9d941591b1e8ea166f94",
+      "source_cluster": "c020"
+    },
+    {
+      "image_id": "c025",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c025.jpg",
+      "sha256": "afe674f0dcf9a649590d8c0ba316d3651b704e5cccaae68a1eb22e32481848ee",
+      "source_cluster": "c025"
+    },
+    {
+      "image_id": "c026",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c026.jpg",
+      "sha256": "75b524d9b0bad7b0b5a2a217ac2f070f3a4522fc4b80280dd84111b411599a04",
+      "source_cluster": "c026"
+    },
+    {
+      "image_id": "c029",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c029.png",
+      "sha256": "895af07ac94a378e8a7c7960acc078ceac93623a95e6cf2e62974df5a823b487",
+      "source_cluster": "c029"
+    },
+    {
+      "image_id": "c031",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c031.jpg",
+      "sha256": "c774d7c38ddb7b7590d5cf1281c9f819c84e60a549ffd1aaa67df6afd244da99",
+      "source_cluster": "c031"
+    },
+    {
+      "image_id": "c035",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c035.jpg",
+      "sha256": "fbed64b436052c3f61142341ebc1088df9e7d1bcb9df7969e7271fbc494df085",
+      "source_cluster": "c035"
+    },
+    {
+      "image_id": "c036",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c036.jpg",
+      "sha256": "febc06e57385c7ecbbc16b087d3d62bb18aad91190fe4f617fee7e0fa875aa4c",
+      "source_cluster": "c036"
+    },
+    {
+      "image_id": "c037",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c037.jpg",
+      "sha256": "6e7cd705dce3c45687af01fd17ecbda54f470ffa017952c4d20ef07a2c36e5bd",
+      "source_cluster": "c037"
+    }
+  ]
+}

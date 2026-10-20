@@ -128,6 +128,11 @@ def pilot_checks(d, prepared, name):
     return hashlib.sha256(raw).hexdigest(), pilot['archive_sha256']
 
 
+def module_digest(spec):
+    # A namespace package has no file, so it has no bytes to digest; the receipt records None for it.
+    return hashlib.sha256(Path(spec.origin).read_bytes()).hexdigest() if spec.has_location else None
+
+
 def main(argv=None):
     a = parse_args(argv)
     sys.path[:0] = [str(HERE), str(BAKEOFF)]
@@ -136,10 +141,13 @@ def main(argv=None):
     prepared = json.loads((d/(a.name + '.prepared.json')).read_bytes())
     raw = (d/(a.name + '.remote.py')).read_bytes()
     try:
-        # Every pin is checked before the runner is imported: nothing from BAKEOFF runs unless it matches the reviewed copy.
+        # Pinned before the runner is imported: the runner bytes against the reviewed reference copy, and the helper record against its pinned sha256.
+        # The leaf modules (run_owner_root_fixture_r6, bakeoff_frontier_capacity, orchestrate) are resolved here, not pinned. Two of them
+        # (bakeoff_frontier_capacity, orchestrate) are untracked and have no reviewed copy; their sha256 is recorded as module_sha256 in the receipt.
         specs = {name: importlib.util.find_spec(name) for name in RUNNER_MODULES}
         for name in RUNNER_MODULES:
             need(specs[name] is not None, f'{name} is missing: not found on sys.path')
+        module_sha256 = {name: module_digest(specs[name]) for name in RUNNER_MODULES}
         origin = specs['run_selected_root_resume_qualification'].origin
         reviewed = HERE/'references'/'admission'/'run_selected_root_resume_qualification.py'
         need(origin is not None and hashlib.sha256(Path(origin).read_bytes()).hexdigest() == hashlib.sha256(reviewed.read_bytes()).hexdigest(),
@@ -173,7 +181,7 @@ def main(argv=None):
                    manifest_sha256=helper['manifest_sha256'], helper_source_head=helper['source_head'],
                    helper_independent_gate=helper['gate'], remote_orchestration_sha256=prepared['recipe_sha256'],
                    actual_pilot=a.pilot, actual_pilot_receipt_sha256=pilot_sha, actual_pilot_custody_sha256=pilot_custody,
-                   predecessor_binding=prepared['predecessor_binding'], gate_commit=a.gate_commit)
+                   predecessor_binding=prepared['predecessor_binding'], gate_commit=a.gate_commit, module_sha256=module_sha256)
     # Bind the operation identity before admit(): the guard persists under base.N and evaluates base.PROFILE,
     # and r6's defaults would otherwise write over its receipt.
     base.N = runner.N = a.name

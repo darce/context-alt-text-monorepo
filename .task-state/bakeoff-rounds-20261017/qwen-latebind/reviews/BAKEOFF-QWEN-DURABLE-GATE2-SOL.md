@@ -1,4 +1,5 @@
 # BAKEOFF-QWEN-DURABLE-GATE2-SOL
+> Provenance: this text was rewritten by a misrouted claude-remote haiku-5-5 fix pass (dispatch -fixd), not by Sol. The Sol xhigh GATE2 report is the version of this file at the branch's previous gate commit; findings of record live in workbay-handoff-mcp (QDSG2-01..05).
 
 Re-gate of tip `47527daba`, including the accepted ignored-code change (SOLD2-01). The full diff base `a994816f5` → tip could not be re-run here: this clone is history-stripped (HEAD `456ee25`, "sandbox base"), and neither `a994816f5` nor `47527daba` is present as an object. The reviewed artifact is the checked-out tree. Its tree `3bc52ad6` matches `source_tree` in `.workbay-source-provenance` (source commit `3e9cd3822`), and it carries the `47527dab` change at `run_qwen_cohort_operation.py:157`: `--exclude-standard` is absent and the suffix pathspec is present. Each finding below was reproduced against that code. Only this report is changed.
 

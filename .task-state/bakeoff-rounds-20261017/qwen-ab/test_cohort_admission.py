@@ -1646,10 +1646,10 @@ def run_preclaim(monkeypatch, capsys, tmp_path, answer=healthy_child, executable
     return calls, json.loads(capsys.readouterr().out)
 
 
-def run_local(monkeypatch, capsys, tmp_path, b, scratch=None):
+def run_local(monkeypatch, capsys, tmp_path, b, scratch=None, home=None):
     """Execs the generated preclaim text against the real git as the local uid: the uid 1002 switch is dropped, and os.chown is recorded
     (path, uid, gid, mode at the time of the call) instead of applied. Returns the printed reply, every child's (argv, kwargs) and the chowns.
-    scratch, when given, is the child's TMPDIR, so a test can see what the child leaves behind."""
+    scratch, when given, is the child's TMPDIR, so a test can see what the child leaves behind. home, when given, is the child's HOME."""
     gpu = tmp_path/'gpu.json'
     gpu.write_text(json.dumps(dict(state='stopped', lease_expires_at=None)))
     src = RUN.preclaim_script(str(tmp_path/'w'), b).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
@@ -1662,6 +1662,8 @@ def run_local(monkeypatch, capsys, tmp_path, b, scratch=None):
             kwargs.pop(key)
         if scratch is not None:
             kwargs['env'] = dict(kwargs['env'], TMPDIR=str(scratch))
+        if home is not None:
+            kwargs['env'] = dict(kwargs['env'], HOME=str(home))
         return real.run(argv, **kwargs)
 
     local.run, local.TimeoutExpired = run, real.TimeoutExpired
@@ -1928,16 +1930,20 @@ def test_an_untracked_python_file_that_is_not_ignored_is_not_clean_and_is_refuse
     assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
 
 
-def test_a_log_file_matched_by_gitignore_stays_clean(monkeypatch, capsys, tmp_path):
+def test_an_ignored_log_file_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    """QDSG2-03: no log exists in either live root, so the exact allowlist refuses an ignored log like any other untracked entry."""
     def edit(repo):
         (repo/'.gitignore').write_text('*.log\n')
         git_in(repo, 'add', '.gitignore')
         git_in(repo, 'commit', '-qm', 'ignore logs')
         (repo/'build.log').write_text('ignored\n')
 
-    rep, _ = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
     assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
-    assert rep['source']['repo']['clean'] is True
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
 
 
 # M2, TEST-20: the shared evidence workspace collects runtime data files, so only import-capable untracked files refuse the clean check.
@@ -1950,7 +1956,7 @@ def classify_with_healthy_python(rep, b):
 def test_an_untracked_ses_runtime_file_that_is_not_ignored_stays_clean(monkeypatch, capsys, tmp_path):
     """The known-good evidence workspace: its only untracked path is a SQLite artifact from an earlier run."""
     def edit(repo):
-        (repo/'apps'/'prototype-description-service').mkdir(parents=True)
+        track_service(repo)
         (repo/'apps'/'prototype-description-service'/':memory:.ses').write_bytes(b'SQLite format 3\x00')
 
     rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
@@ -1997,6 +2003,235 @@ def test_ignored_import_capable_code_is_not_clean_and_is_refused(monkeypatch, ca
     with pytest.raises(CA.AdmissionRefusal) as e:
         classify_with_healthy_python(rep, b)
     assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+# QDSG2-02..04, repo config, tracked symlinks (FIXD2): the clean check passes only exact known-good local config keys and untracked entries.
+SERVICE = 'apps/prototype-description-service'
+
+
+def track_service(repo):
+    """The live service directory holds tracked code. Without a tracked file in it, --directory collapses the whole directory into one apps/ line."""
+    (repo/SERVICE).mkdir(parents=True, exist_ok=True)
+    (repo/SERVICE/'app.py').write_text('APP = 1\n')
+    git_in(repo, 'add', f'{SERVICE}/app.py')
+    git_in(repo, 'commit', '-qm', 'service code')
+
+
+def marker_script(path, marker, tail=''):
+    """An executable shell script that creates marker when git runs it. tail is any further body, such as cat for a clean filter."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\ntouch '{marker}'\n{tail}")
+    path.chmod(0o755)
+    return path
+
+
+def commit_filtered_module(repo):
+    """Commits .gitattributes and a module under filter=probe before any driver is configured, so the fixture never runs the filter itself."""
+    (repo/'.gitattributes').write_text('*.py filter=probe\n')
+    (repo/SERVICE).mkdir(parents=True, exist_ok=True)
+    (repo/SERVICE/'shadow.py').write_text("MARKER = 'reviewed'\n")
+    git_in(repo, 'add', '.gitattributes', f'{SERVICE}/shadow.py')
+    git_in(repo, 'commit', '-qm', 'filtered module')
+    os.utime(repo/SERVICE/'shadow.py', (946684800, 946684800))
+
+
+def test_the_fixture_repo_has_exactly_the_four_allowlisted_local_keys(tmp_path):
+    repo = committed_repo(tmp_path/'repo')
+    keys = git_in(repo, 'config', '--local', '--no-includes', '--name-only', '--list').split()
+    assert sorted(keys) == sorted(['core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates'])
+
+
+@pytest.mark.parametrize('flag', ['--assume-unchanged', '--skip-worktree'])
+@pytest.mark.parametrize('changed', [True, False], ids=['changed-content', 'flag-alone'])
+def test_an_index_flag_that_hides_a_tracked_module_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, flag, changed):
+    module = f'{SERVICE}/shadow.py'
+
+    def edit(repo):
+        (repo/SERVICE).mkdir(parents=True)
+        (repo/module).write_text("MARKER = 'reviewed'\n")
+        git_in(repo, 'add', module)
+        git_in(repo, 'commit', '-qm', 'tracked module')
+        git_in(repo, 'update-index', flag, module)
+        if changed:
+            (repo/module).write_text("MARKER = 'changed'\n")
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_a_stage_restored_to_head_in_the_worktree_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    """QDSG2-04: the worktree equals HEAD (A) but the index holds B. The recipe's own post-claim diff refuses this state, so preclaim must too."""
+    def edit(repo):
+        (repo/'a.txt').write_text('staged\n')
+        git_in(repo, 'add', 'a.txt')
+        (repo/'a.txt').write_text('hello\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_an_untracked_nested_repo_under_the_service_dir_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    def edit(repo):
+        track_service(repo)
+        child = repo/SERVICE/'untracked_namespace'
+        child.mkdir()
+        git_in(child, 'init', '-q')
+        (child/'child.py').write_text("MARKER = 'nested'\n")
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_an_extensionless_symlink_to_a_package_under_the_service_dir_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    pkg = tmp_path/'pkg'
+    pkg.mkdir()
+    (pkg/'__init__.py').write_text("MARKER = 'linked'\n")
+
+    def edit(repo):
+        track_service(repo)
+        os.symlink(pkg, repo/SERVICE/'untracked_link')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+@pytest.mark.parametrize('name', ['mod.cpython-312.pyc', 'state.json'], ids=['pyc', 'non-import-file'])
+def test_an_ignored_pycache_directory_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, name):
+    """The .pyc is caught by the old suffix list too. The non-suffix file is the case only the exact allowlist refuses."""
+    def edit(repo):
+        track_service(repo)
+        (repo/'.gitignore').write_text('__pycache__/\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore caches')
+        cache = repo/SERVICE/'__pycache__'
+        cache.mkdir()
+        (cache/name).write_bytes(b'cached\n')
+        assert git_in(repo, 'check-ignore', f'{SERVICE}/__pycache__/{name}') == f'{SERVICE}/__pycache__/{name}'
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_a_repo_fsmonitor_hook_refuses_and_never_runs(monkeypatch, capsys, tmp_path):
+    marker = tmp_path/'fsmonitor.marker'
+    script = marker_script(tmp_path/'fsmonitor.sh', marker)
+
+    def edit(repo):
+        git_in(repo, 'config', 'core.fsmonitor', str(script))
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert not marker.exists()
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_a_repo_clean_filter_driven_by_gitattributes_refuses_and_never_runs(monkeypatch, capsys, tmp_path):
+    marker = tmp_path/'filter.marker'
+    script = marker_script(tmp_path/'filter.sh', marker, tail='cat\n')
+
+    def edit(repo):
+        commit_filtered_module(repo)
+        git_in(repo, 'config', 'filter.probe.clean', str(script))
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert not marker.exists()
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_a_global_clean_filter_under_the_child_home_never_runs(monkeypatch, capsys, tmp_path):
+    """The child reads no global config: its HOME gets a .gitconfig with a clean filter, and the stat-dirty module is clean with the filter unrun."""
+    marker = tmp_path/'global.marker'
+    script = marker_script(tmp_path/'global.sh', marker, tail='cat\n')
+    home = tmp_path/'home'
+    home.mkdir()
+    (home/'.gitconfig').write_text(f'[filter "probe"]\n\tclean = {script}\n')
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    commit_filtered_module(repo)
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b, home=home)
+    assert not marker.exists()
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is True
+
+
+def test_a_repo_post_index_change_hook_never_runs(monkeypatch, capsys, tmp_path):
+    """git writes the child's private index copy during the diff. A repo hook in .git/hooks must not run then (hooksPath is pinned)."""
+    marker = tmp_path/'hook.marker'
+
+    def edit(repo):
+        marker_script(repo/'.git'/'hooks'/'post-index-change', marker)
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert not marker.exists()
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is True
+
+
+@pytest.mark.parametrize('key,value', [('include.path', 'extra.cfg'), ('core.hooksPath', 'hooks')], ids=['include-path', 'hooks-path'])
+def test_an_extra_local_config_key_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, key, value):
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, lambda repo: git_in(repo, 'config', key, value))
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+@pytest.mark.parametrize('path,clean', [(f'{SERVICE}/lnk', False), ('apps/other/lnk', True)], ids=['under-service', 'outside-service'])
+def test_a_committed_symlink_is_judged_by_its_location(monkeypatch, capsys, tmp_path, path, clean):
+    """A tracked symlink under the service directory refuses. One outside that directory does not: the check is scoped to the service tree."""
+    outside = tmp_path/'outside'
+    outside.mkdir()
+
+    def edit(repo):
+        (repo/path).parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(outside, repo/path)
+        git_in(repo, 'add', path)
+        git_in(repo, 'commit', '-qm', 'symlink')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is clean
+
+
+def test_both_known_runtime_entries_together_stay_clean_and_classify_accepts(monkeypatch, capsys, tmp_path):
+    def edit(repo):
+        track_service(repo)
+        (repo/SERVICE/':memory:.ses').write_bytes(b'SQLite format 3\x00')
+        egg = repo/SERVICE/'prototype_description_service.egg-info'
+        egg.mkdir()
+        (egg/'PKG-INFO').write_text('Metadata-Version: 2.1\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is True
+    assert classify_with_healthy_python(rep, b)['source']['repo']['clean'] is True
+
+
+@pytest.mark.parametrize('entry', ["it's", 'line\nbreak'], ids=['quote', 'newline'])
+def test_an_allowlist_entry_that_cannot_be_quoted_stops_the_import(entry):
+    src = (QWEN_AB/'run_qwen_cohort_operation.py').read_text()
+    bad = src.replace('KNOWN_RUNTIME_ENTRIES = (', 'KNOWN_RUNTIME_ENTRIES = (' + repr(entry) + ', ', 1)
+    assert bad != src
+    with pytest.raises(ValueError, match='cannot be quoted'):
+        exec(compile(bad, 'bad', 'exec'), {'__name__': 'bad', '__file__': str(QWEN_AB/'run_qwen_cohort_operation.py')})
 
 
 # --- runner v2: bootstrap -----------------------------------------------------------------------

@@ -474,6 +474,10 @@ class LateBindBlockTests(unittest.TestCase):
     NEW = '33333333-3333-4333-8333-333333333333'
     STOP = '44444444-4444-4444-8444-444444444444'
     WID = '55555555-5555-4555-8555-555555555555'
+    STOP2 = '66666666-6666-4666-8666-666666666666'
+    NEW2 = '77777777-7777-4777-8777-777777777777'
+    # Replies for refresh-auto, actual reconcile, before-lease-close, close STOP, final withdraw.
+    COMPOSED_REPLIES = [NEW, NEW, NEW, STOP2, NEW2]
 
     class Window:
         """Fake window; evidence maps ('ops', op, name) to (raw, mode, uid)."""
@@ -490,7 +494,7 @@ class LateBindBlockTests(unittest.TestCase):
         def read_bytes(self):
             return self.evidence[self.parts][0]
 
-    def exec_block(self, replies, events, saves, action='auto', previous=OLD, mode=0o444, uid=0, state=None):
+    def fake_ns(self, replies, events, saves, action='auto', previous=OLD, mode=0o444, uid=0, state=None):
         published = dict(operation=self.OLD, window=self.WID, outcome='published')
         evidence = {
             ('ops', self.OLD, 'result.json'): (json.dumps(published).encode(), mode, uid),
@@ -509,8 +513,31 @@ class LateBindBlockTests(unittest.TestCase):
         ns = dict(public=public, observe=observe, save=save, window=self.Window(evidence),
                   wid=self.WID, json=json, uuid=uuid, stat=stat, time=time, previous=previous,
                   Path=lambda path: types.SimpleNamespace(read_bytes=lambda: json.dumps(gpu_state).encode()))
+        return ns
+
+    def exec_block(self, replies, events, saves, **kwargs):
+        ns = self.fake_ns(replies, events, saves, **kwargs)
         exec(textwrap.dedent(p.LATE_BIND_BLOCK), ns)
         return ns
+
+    def exec_composed(self, replies, events, saves, **kwargs):
+        """LATE_BIND_BLOCK inside the template's try, with the template's real cleanup tail as finally."""
+        lines = (REF / p.SOURCES['gsq']).read_text().splitlines()
+        starts = [i for i, line in enumerate(lines) if line.strip() == 'if safe_withdraw:']
+        ends = [i for i, line in enumerate(lines)
+                if line.strip().startswith("else:raise RuntimeError('Qwen restoration unknown")]
+        self.assertEqual((len(starts), len(ends)), (1, 1))
+        tail = textwrap.indent(textwrap.dedent('\n'.join(lines[starts[0]:ends[0] + 1]) + '\n'), '    ')
+        program = 'safe_withdraw=True\ntry:\n' + p.LATE_BIND_BLOCK + 'finally:\n' + tail
+        ns = self.fake_ns(replies, events, saves, **kwargs)
+        exec(compile(program, '<composed-late-bind>', 'exec'), ns)
+        return ns
+
+    @staticmethod
+    def chain(exc):
+        while exc is not None:
+            yield exc
+            exc = exc.__context__
 
     def test_late_bound_block_behaviour_latest_auto(self):
         events, saves = [], []
@@ -524,6 +551,7 @@ class LateBindBlockTests(unittest.TestCase):
             ('public', ['reconcile', '/fake/window', self.WID], 'actual-previous-auto-reconcile'),
         ])
         self.assertEqual(ns['previous'], self.NEW)
+        self.assertTrue(ns['safe_withdraw'])
         self.assertEqual(len(saves), 1)
         self.assertEqual(saves[0]['reconciled'], self.OLD)
         self.assertEqual(saves[0]['reconciled_action'], 'auto')
@@ -541,6 +569,7 @@ class LateBindBlockTests(unittest.TestCase):
             ('public', ['reconcile', '/fake/window', self.WID], 'actual-previous-auto-reconcile'),
         ])
         self.assertEqual(ns['previous'], self.NEW)
+        self.assertTrue(ns['safe_withdraw'])
         self.assertEqual(saves[0]['reconciled_action'], 'stop')
         self.assertIsNone(saves[0]['refresh_stop'])
 
@@ -585,6 +614,52 @@ class LateBindBlockTests(unittest.TestCase):
             self.exec_block([self.STOP, self.NEW, self.STOP], events, saves)
         self.assertEqual(events[-1], ('public', ['reconcile', '/fake/window', self.WID],
                                       'actual-previous-auto-reconcile'))
+
+    def test_late_bound_block_behaviour_stop_unsettled(self):
+        events, saves = [], []
+        with self.assertRaisesRegex(AssertionError, 'STOP predecessor not settled'):
+            self.exec_block(self.COMPOSED_REPLIES, events, saves, action='stop',
+                            state=dict(state='running', lease_expires_at=None))
+        self.assertEqual(events, [])
+        self.assertEqual(saves, [])
+
+    def test_composed_refusal_before_mutation_retains_exact_window(self):
+        refusals = {'start': dict(action='start'), 'previous-none': dict(previous='none'),
+                    'unsealed': dict(mode=0o666), 'foreign-uid': dict(uid=1000)}
+        for name, kwargs in refusals.items():
+            with self.subTest(refusal=name):
+                events, saves = [], []
+                with self.assertRaises(Exception) as cm:
+                    self.exec_composed(self.COMPOSED_REPLIES, events, saves, **kwargs)
+                self.assertEqual([e for e in events if e[0] == 'public'], [])
+                self.assertTrue(any(isinstance(e, RuntimeError) and 'Qwen restoration unknown' in str(e)
+                                    for e in self.chain(cm.exception)))
+
+    def test_composed_valid_stop_predecessor_reaches_cleanup(self):
+        events, saves = [], []
+        self.exec_composed(self.COMPOSED_REPLIES, events, saves, action='stop')
+        self.assertEqual(events[:4], [
+            ('public', ['withdraw', '/fake/window', self.WID], 'refresh-auto'),
+            ('save', 'late-bound-predecessor.json'),
+            ('observe', self.NEW, 'auto', 'actual-previous-auto-observe'),
+            ('public', ['reconcile', '/fake/window', self.WID], 'actual-previous-auto-reconcile'),
+        ])
+        self.assertIn(('public', ['reconcile', '/fake/window', self.WID], 'before-lease-close'), events[4:])
+        self.assertEqual(saves[-1]['operation'], self.NEW2)
+
+    def test_composed_stop_predecessor_with_live_gpu_refuses_before_mutation(self):
+        for state in [dict(state='running', lease_expires_at=None),
+                      dict(state='stopped', lease_expires_at=1790000000)]:
+            with self.subTest(state=state):
+                events, saves = [], []
+                with self.assertRaises(Exception) as cm:
+                    self.exec_composed(self.COMPOSED_REPLIES, events, saves, action='stop', state=state)
+                self.assertEqual([e for e in events if e[0] == 'public'], [])
+                chain = list(self.chain(cm.exception))
+                self.assertTrue(any(isinstance(e, RuntimeError) and 'Qwen restoration unknown' in str(e)
+                                    for e in chain))
+                self.assertTrue(any(isinstance(e, AssertionError) and 'STOP predecessor not settled' in str(e)
+                                    for e in chain))
 
 
 if __name__ == '__main__':

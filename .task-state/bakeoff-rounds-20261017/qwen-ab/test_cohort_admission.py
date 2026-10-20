@@ -18,7 +18,7 @@ G = 1024**3
 NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
 CUSTODY_SOURCE = '22b61b6c7bc3932378dcb7e795a99f3ab288ff58'
 BANNED = ['run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate', 'run_selected_root_resume_qualification']
-TRANSIENT = {'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve'}
+TRANSIENT = {'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve', 'probe_transport'}
 DETERMINISTIC = {'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
                  'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled'}
 
@@ -159,7 +159,7 @@ def test_avg60_is_infinite_for_any_malformed_or_absent_reading(text, row):
 # --- classify_native_units ----------------------------------------------------------------------
 
 def test_classify_owned_unit_within_caps_passes():
-    out = CA.classify_native_units([dict(unit='workbay-lane-own-x.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))],
+    out = CA.classify_native_units([dict(unit='workbay-lane-own-r3.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))],
                                    {'workbay-lane-own': [.5, 2*G]})
     assert out['owned']['workbay-lane-own'][0] == pytest.approx(.25)
     assert out['owned']['workbay-lane-own'][1] == G
@@ -168,14 +168,14 @@ def test_classify_owned_unit_within_caps_passes():
 
 def test_classify_owned_unit_over_caps_raises():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        CA.classify_native_units([dict(unit='workbay-lane-own-x.scope', CPUQuotaPerSecUSec='1s', MemoryMax=str(G))],
+        CA.classify_native_units([dict(unit='workbay-lane-own-r3.scope', CPUQuotaPerSecUSec='1s', MemoryMax=str(G))],
                                  {'workbay-lane-own': [.5, 2*G]})
     assert e.value.cls == 'owned_unit_over_quota'
 
 
 def test_classify_owned_unit_without_bounds_raises():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        CA.classify_native_units([dict(unit='workbay-lane-own-x.scope', CPUQuotaPerSecUSec='infinity', MemoryMax=str(G))],
+        CA.classify_native_units([dict(unit='workbay-lane-own-r3.scope', CPUQuotaPerSecUSec='infinity', MemoryMax=str(G))],
                                  {'workbay-lane-own': [.5, 2*G]})
     assert e.value.cls == 'owned_unit_over_quota'
 
@@ -193,9 +193,32 @@ def test_classify_unbounded_co_tenant_names_the_unit(cpu, mem):
     assert 'workbay-lane-other-abc.scope' in e.value.detail
 
 
+OWN = {'workbay-lane-own': [.5, 2*G]}
+
+
+def test_classify_foreign_unit_sharing_the_key_prefix_is_a_co_tenant():
+    out = CA.classify_native_units([dict(unit='workbay-lane-owner.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))], OWN)
+    assert out['owned']['workbay-lane-own'] == [0., 0]
+    assert [c['unit'] for c in out['co_tenant']] == ['workbay-lane-owner.scope']
+
+
+@pytest.mark.parametrize('unit', ['workbay-lane-own.scope', 'workbay-lane-own-sv.scope', 'workbay-lane-own-r3.scope',
+                                  'workbay-lane-own-r3-sv.service'])
+def test_classify_the_orchestrator_unit_forms_are_owned(unit):
+    out = CA.classify_native_units([dict(unit=unit, CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))], OWN)
+    assert out['owned']['workbay-lane-own'][0] == pytest.approx(.25)
+    assert out['owned']['workbay-lane-own'][1] == G and out['co_tenant'] == []
+
+
+def test_classify_an_exact_custody_unit_name_is_owned():
+    out = CA.classify_native_units([dict(unit='workbay-custody-abc.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))],
+                                   {'workbay-custody-abc.scope': [.5, 2*G]})
+    assert out['owned']['workbay-custody-abc.scope'][1] == G and out['co_tenant'] == []
+
+
 # --- root named units: the remote probe reports, and the verdict is classified here -------------
 
-ROOT_UNIT = 'workbay-lane-own-x.scope'
+ROOT_UNIT = 'workbay-lane-own-r3.scope'
 ROOT_CAPS = {ROOT_UNIT: [.5, 2*G]}
 NOT_FOUND = dict(LoadState='not-found', ActiveState='inactive', ControlGroup='', MainPID='0',
                  CPUQuotaPerSecUSec='infinity', MemoryMax='infinity')
@@ -290,6 +313,36 @@ def test_root_named_script_has_no_assert_or_raise():
     assert [n for n in ast.walk(tree) if isinstance(n, (ast.Assert, ast.Raise))] == []
 
 
+# --- native probe: the real NATIVE_SCRIPT text, run against a fake cgroup and proc tree ------------
+
+NATIVE_NEEDLES = ("/sys/fs/cgroup/user.slice/user-'+str(os.getuid())+'.slice", "'/proc/meminfo'", "'/proc/pressure/cpu'")
+
+
+def run_native_script(monkeypatch, capsys, tmp_path, memory_max):
+    cg, meminfo, pressure = tmp_path/'cg', tmp_path/'meminfo', tmp_path/'pressure'
+    cg.mkdir()
+    (cg/'memory.max').write_text(memory_max + '\n')
+    (cg/'memory.current').write_text(str(G) + '\n')
+    (cg/'memory.stat').write_text('inactive_file 0\n')
+    (cg/'io.pressure').write_text('full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n')
+    meminfo.write_text('MemTotal: 16777216 kB\nMemAvailable: 8388608 kB\n')
+    pressure.write_text('some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n')
+    src = CA.NATIVE_SCRIPT
+    for needle, value in zip(NATIVE_NEEDLES, (str(cg), repr(str(meminfo)), repr(str(pressure)))):
+        assert src.count(needle) == 1, needle
+        src = src.replace(needle, value)
+    monkeypatch.setattr(subprocess, 'check_output', lambda *a, **k: '')
+    exec(compile(src, 'native', 'exec'), {})
+    return json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize('memory_max,headroom', [('4294967296', 3*G), ('max', None)], ids=['numeric limit', 'systemd max'])
+def test_native_script_reports_working_headroom_or_null(monkeypatch, capsys, tmp_path, memory_max, headroom):
+    out = run_native_script(monkeypatch, capsys, tmp_path, memory_max)
+    assert out['working_headroom'] == headroom
+    assert out['physical_mem_available'] == 8*G and out['units'] == []
+
+
 # --- evaluate -----------------------------------------------------------------------------------
 
 def test_evaluate_passes_healthy_fixture_with_proof_fields():
@@ -303,7 +356,7 @@ def test_evaluate_passes_healthy_fixture_with_proof_fields():
 
 def test_evaluate_owned_unit_within_quota_passes():
     proof = healthy(ledger=ledger(OWN=owner_row()),
-                    native=native(units=[dict(unit='workbay-lane-own-x.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))]))
+                    native=native(units=[dict(unit='workbay-lane-own-r3.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))]))
     assert proof['owned']['workbay-lane-own'][1] == G
 
 
@@ -326,7 +379,7 @@ REFUSALS = [
     ('two co-tenants over CPU ceiling', dict(native=native(units=[co('a', '1500ms'), co('b', '1500ms')])), 'co_tenant_reserve'),
     ('unbounded co-tenant', dict(native=native(units=[co('a', cpu='infinity')])), 'co_tenant_unbounded'),
     ('owned unit over quota', dict(ledger=ledger(OWN=owner_row()),
-                                   native=native(units=[dict(unit='workbay-lane-own-x.scope', CPUQuotaPerSecUSec='1s', MemoryMax=str(G))])),
+                                   native=native(units=[dict(unit='workbay-lane-own-r3.scope', CPUQuotaPerSecUSec='1s', MemoryMax=str(G))])),
      'owned_unit_over_quota'),
 ]
 
@@ -336,6 +389,89 @@ def test_evaluate_labels_each_refusal_class(label, over, cls):
     with pytest.raises(CA.AdmissionRefusal) as e:
         healthy(**over)
     assert e.value.cls == cls
+
+
+def wb_row(drop=(), **over):
+    row = dict(remaining_actor_claim=1, cpu_cores_aggregate=.25, memory_bytes_aggregate=G, physical_key='wb-key',
+               expires='2026-10-20T13:00:00+00:00', setup_granted=False)
+    row.update(over)
+    for field in drop:
+        del row[field]
+    return row
+
+
+WB_VIOLATIONS = [
+    ('negative cpu', dict(cpu_cores_aggregate=-3.0)),
+    ('zero cpu', dict(cpu_cores_aggregate=0)),
+    ('missing cpu', dict(drop=('cpu_cores_aggregate',))),
+    ('missing memory', dict(drop=('memory_bytes_aggregate',))),
+    ('missing physical key', dict(drop=('physical_key',))),
+    ('missing expires', dict(drop=('expires',))),
+    ('malformed expires', dict(expires='next tuesday')),
+    ('naive expires', dict(expires='2026-10-20T13:00:00')),
+]
+
+
+@pytest.mark.parametrize('label,over', WB_VIOLATIONS, ids=[w[0] for w in WB_VIOLATIONS])
+def test_wb_operations_row_is_checked_like_every_other_owner_row(label, over):
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(WB_operations=dict(WB1=wb_row(**over))))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_a_valid_wb_operations_row_is_admitted_and_its_unit_is_owned():
+    proof = healthy(ledger=ledger(WB_operations=dict(WB1=wb_row())),
+                    native=native(units=[dict(unit='workbay-lane-wb-key.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))]))
+    assert proof['owned']['workbay-lane-wb-key'][1] == G
+
+
+def test_a_wb_row_keyed_by_expected_physical_key_is_admitted():
+    row = wb_row(drop=('physical_key',), expected_physical_key='wb-key')
+    proof = healthy(ledger=ledger(WB_operations=dict(WB1=row)),
+                    native=native(units=[dict(unit='workbay-lane-wb-key.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))]))
+    assert proof['owned']['workbay-lane-wb-key'] == pytest.approx([.25, G])
+
+
+def test_an_owner_row_without_expires_is_a_labeled_refusal():
+    row = owner_row()
+    del row['expires']
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(OWN=row))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_lane_memory_ceiling_is_named_for_its_lane_scope():
+    assert CA.LANE_MEMORY_CEILING == 16*G and not hasattr(CA, 'MEMORY_CEILING')
+
+
+# The lane total is 2 GiB (coordinator) + the profile + 4 GiB (no Aura row yet), so 10 GiB of profile is exactly the ceiling.
+AT_MEMORY_CEILING = dict(aggregate_cpu_cores_max=.5, aggregate_memory_bytes_max=10*G)
+
+
+def test_lane_memory_exactly_at_the_ceiling_is_admitted():
+    healthy(profile=AT_MEMORY_CEILING)
+
+
+def test_lane_memory_one_byte_over_the_ceiling_is_refused_as_ledger_state():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(profile=dict(AT_MEMORY_CEILING, aggregate_memory_bytes_max=10*G + 1))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_lane_memory_at_the_ceiling_with_a_co_tenant_is_refused_as_co_tenant_reserve():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(profile=AT_MEMORY_CEILING, native=native(units=[co('abc', cpu='250ms', mem=str(G))]))
+    assert e.value.cls == 'co_tenant_reserve'
+
+
+def test_headroom_of_none_uses_physical_memory_alone():
+    healthy(native=native(headroom=None))
+
+
+def test_headroom_of_none_still_refuses_low_physical_memory():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(native=native(headroom=None, avail=2*G))
+    assert e.value.cls == 'memory_headroom'
 
 
 def test_plain_ceiling_refusal_is_not_masked_by_an_earlier_reserved_one():
@@ -433,39 +569,67 @@ def test_admit_propagates_non_refusal_exceptions_unchanged():
 
 # --- guard (IO shape, with r6 faked; no ssh) ----------------------------------------------------
 
-def fake_r6(monkeypatch, tmp_path, led, ssh):
+def fake_r6(monkeypatch, tmp_path, led):
     (tmp_path/'raw_auth_source_gate_root_probe.py').write_text('print(1)\n')
     persisted = []
     fake = types.ModuleType('run_owner_root_fixture_r6')
     fake.cap = types.SimpleNamespace(LEDGER=led, persist=lambda path, obj: persisted.append((path, obj)))
     fake.P, fake.N, fake.PROFILE = tmp_path, 'QWEN-TEST', PROFILE
     fake.d = types.SimpleNamespace(HOST='native-host')
-    fake.ssh = ssh
     monkeypatch.setitem(sys.modules, 'run_owner_root_fixture_r6', fake)
     return persisted
+
+
+def probe_argv(host):
+    return ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, 'sudo -n python3 -' if host.startswith('ubuntu@') else 'python3 -']
+
+
+def ssh_reply(obj=None, rc=0, stdout=None, stderr=''):
+    return types.SimpleNamespace(returncode=rc, stdout=json.dumps(obj) if stdout is None else stdout, stderr=stderr)
+
+
+def fake_ssh(monkeypatch, handle):
+    """Stands in for subprocess.run. handle(argv, script) returns a reply, or an exception to raise; every call is recorded."""
+    calls = []
+
+    def run(argv, input=None, capture_output=None, text=None, timeout=None):
+        calls.append(dict(argv=argv, script=input, timeout=timeout))
+        out = handle(argv, input)
+        if isinstance(out, BaseException):
+            raise out
+        return out
+    monkeypatch.setattr(subprocess, 'run', run)
+    return calls
+
+
+def in_order(*outs):
+    it = iter(outs)
+    return lambda argv, script: next(it)
 
 
 def test_guard_probes_then_delegates_to_evaluate(tmp_path, monkeypatch):
     led = tmp_path/'ledger.json'
     led.write_text(json.dumps(ledger()))
-    persisted = fake_r6(monkeypatch, tmp_path, led,
-                        lambda host, script, timeout=30: native() if host == 'native-host' else root())
+    persisted = fake_r6(monkeypatch, tmp_path, led)
+    calls = fake_ssh(monkeypatch, lambda argv, script: ssh_reply(native() if argv[5] == 'native-host' else root()))
     before, got, proof = CA.guard()
     assert before == led.read_bytes() and got == ledger()
     assert persisted == [(tmp_path/'QWEN-TEST.operation-capacity.json', proof)]
     assert proof['root']['euid'] == 0 and proof['native']['units'] == []
+    assert [(c['argv'], c['timeout']) for c in calls] == [(probe_argv(CA.HOST), 30), (probe_argv('native-host'), 30)]
 
 
 def test_guard_refuses_when_ledger_changes_during_probe(tmp_path, monkeypatch):
     led = tmp_path/'ledger.json'
     led.write_text(json.dumps(ledger()))
 
-    def ssh(host, script, timeout=30):
-        if host == 'native-host':
+    def handle(argv, script):
+        if argv[5] == 'native-host':
             led.write_text(json.dumps(ledger(note='moved')))
-            return native()
-        return root()
-    fake_r6(monkeypatch, tmp_path, led, ssh)
+            return ssh_reply(native())
+        return ssh_reply(root())
+    fake_r6(monkeypatch, tmp_path, led)
+    fake_ssh(monkeypatch, handle)
     with pytest.raises(CA.AdmissionRefusal) as e:
         CA.guard()
     assert e.value.cls == 'ledger_state'
@@ -476,15 +640,82 @@ def test_guard_refuses_an_owned_unit_over_quota_before_evaluating(tmp_path, monk
     led.write_text(json.dumps(ledger(OWN=dict(owner_row(), native_unit=ROOT_UNIT))))
     probe = dict(system=dict(LoadState='loaded'), total_cpu=1., total_memory=G, invalid_not_found=[])
 
-    def ssh(host, script, timeout=30):
-        if host == CA.HOST and 'LoadState' in script:
-            return {ROOT_UNIT: probe}
-        return native() if host == 'native-host' else root()
-    persisted = fake_r6(monkeypatch, tmp_path, led, ssh)
+    def handle(argv, script):
+        if argv[5] == CA.HOST and 'LoadState' in script:
+            return ssh_reply({ROOT_UNIT: probe})
+        return ssh_reply(native() if argv[5] == 'native-host' else root())
+    persisted = fake_r6(monkeypatch, tmp_path, led)
+    fake_ssh(monkeypatch, handle)
     with pytest.raises(CA.AdmissionRefusal) as e:
         CA.guard()
     assert e.value.cls == 'owned_unit_over_quota'
     assert persisted == []
+
+
+def test_guard_labels_a_probe_transport_failure_as_transient(tmp_path, monkeypatch):
+    led = tmp_path/'ledger.json'
+    led.write_text(json.dumps(ledger()))
+    persisted = fake_r6(monkeypatch, tmp_path, led)
+    fake_ssh(monkeypatch, lambda argv, script: subprocess.TimeoutExpired(argv, 30))
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.guard()
+    assert e.value.cls == 'probe_transport' and e.value.transient
+    assert persisted == []
+
+
+# --- ssh_json: transport failures are transient, a probe that ran and failed or replied badly is deterministic ---
+
+@pytest.mark.parametrize('exc', [subprocess.TimeoutExpired(['ssh'], 30), OSError('no ssh binary')], ids=['timeout', 'oserror'])
+def test_ssh_json_timeout_and_oserror_are_transient_probe_transport(monkeypatch, exc):
+    fake_ssh(monkeypatch, lambda argv, script: exc)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.ssh_json(probe_argv(CA.HOST), 'x', 30)
+    assert e.value.cls == 'probe_transport' and e.value.transient
+
+
+def test_ssh_json_exit_255_is_ssh_own_failure_and_transient(monkeypatch):
+    fake_ssh(monkeypatch, lambda argv, script: ssh_reply(rc=255, stdout='', stderr='Connection timed out'))
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.ssh_json(probe_argv(CA.HOST), 'x', 30)
+    assert e.value.cls == 'probe_transport' and e.value.transient
+
+
+def test_ssh_json_other_nonzero_exit_is_deterministic_root_probe_with_stderr(monkeypatch):
+    fake_ssh(monkeypatch, lambda argv, script: ssh_reply(rc=1, stdout='', stderr='sudo: a password is required'))
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.ssh_json(probe_argv(CA.HOST), 'x', 30)
+    assert e.value.cls == 'root_probe' and not e.value.transient
+    assert 'a password is required' in e.value.detail
+
+
+@pytest.mark.parametrize('stdout', ['not json', '', '[1, 2]'], ids=['text', 'empty', 'not an object'])
+def test_ssh_json_malformed_reply_is_deterministic_root_probe(monkeypatch, stdout):
+    fake_ssh(monkeypatch, lambda argv, script: ssh_reply(stdout=stdout))
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.ssh_json(probe_argv(CA.HOST), 'x', 30)
+    assert e.value.cls == 'root_probe' and not e.value.transient
+
+
+def test_ssh_json_passes_the_script_on_stdin_and_returns_the_object(monkeypatch):
+    calls = fake_ssh(monkeypatch, lambda argv, script: ssh_reply(dict(ok=1)))
+    assert CA.ssh_json(probe_argv('native-host'), 'print(1)', 30) == dict(ok=1)
+    assert calls == [dict(argv=probe_argv('native-host'), script='print(1)', timeout=30)]
+
+
+def test_admit_retries_one_transport_failure_then_returns_the_probe(monkeypatch):
+    fake_ssh(monkeypatch, in_order(subprocess.TimeoutExpired(['ssh'], 30), ssh_reply(dict(ok=1))))
+    slept = []
+    assert CA.admit(lambda: CA.ssh_json(probe_argv(CA.HOST), 'x', 30), attempts=2, sleep=slept.append) == dict(ok=1)
+    assert slept == [60]
+
+
+def test_admit_stops_after_one_deterministic_probe_refusal(monkeypatch):
+    calls = fake_ssh(monkeypatch, in_order(ssh_reply(rc=1, stdout='', stderr='boom')))
+    slept = []
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.admit(lambda: CA.ssh_json(probe_argv(CA.HOST), 'x', 30), attempts=6, sleep=slept.append)
+    assert e.value.cls == 'root_probe'
+    assert len(calls) == 1 and slept == []
 
 
 # --- runner v2: CLI -----------------------------------------------------------------------------
@@ -652,6 +883,39 @@ def test_main_maps_admission_refusal_to_exit_code_without_running(stubbed_main, 
     assert status == dict(status='ADMISSION_REFUSED', refusal=f'refusal:{cls}: x', transient=code == 75)
 
 
+def times_out(argv, **kwargs):
+    raise subprocess.TimeoutExpired(argv, kwargs['timeout'])
+
+
+def test_main_preclaim_transport_failure_exits_75_without_running(stubbed_main, capsys):
+    m = stubbed_main
+    m['monkeypatch'].setattr(RUN.subprocess, 'run', times_out)
+    assert RUN.main(m['argv']) == 75
+    assert m['runs'] == []
+    status = json.loads(capsys.readouterr().out)
+    assert status['status'] == 'ADMISSION_REFUSED' and status['refusal'].startswith('refusal:probe_transport:')
+    assert status['transient'] is True
+
+
+def test_main_malformed_preclaim_reply_exits_3_without_running(stubbed_main, capsys):
+    m = stubbed_main
+    m['monkeypatch'].setattr(RUN.subprocess, 'run', lambda *a, **k: types.SimpleNamespace(returncode=0, stdout='{"gpu": ', stderr=''))
+    assert RUN.main(m['argv']) == 3
+    assert m['runs'] == []
+    status = json.loads(capsys.readouterr().out)
+    assert status['refusal'].startswith('refusal:root_probe:') and status['transient'] is False
+
+
+def test_main_preclaim_probe_is_run_with_the_ssh_argv_and_timeout(stubbed_main):
+    m = stubbed_main
+    seen = []
+    m['monkeypatch'].setattr(RUN.subprocess, 'run', lambda argv, **k: seen.append((argv, k['timeout'])) or
+                             types.SimpleNamespace(returncode=0, stdout=json.dumps(report()), stderr=''))
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
+    RUN.main(m['argv'])
+    assert seen == [(['ssh', '-oBatchMode=yes', RUN.HOST, 'sudo -n /usr/bin/python3 -I -B -'], 30)]
+
+
 def test_main_refuses_a_prepared_record_bound_to_another_name(stubbed_main):
     m = stubbed_main
     for p in m['d'].glob('n.*'):
@@ -668,7 +932,8 @@ def test_main_refuses_a_prepared_record_bound_to_another_name(stubbed_main):
 
 FROZEN = dict(candidate='qwen', asset_spec_sha256='a' * 64, model_contract=dict(wire_model_id='wire-1', model_revision='rev-1'),
               sources=['src-1'], immutable_candidate_configs=dict(cfg='c1'))
-FULL = dict(FROZEN, mode='full')
+FULL = dict(FROZEN, mode='full', preparer_sha256=hashlib.sha256(SRC).hexdigest())
+PILOT = dict(FROZEN, mode='pilot', predecessor_binding='late_bound_at_claim_refresh', preparer_sha256=hashlib.sha256(SRC).hexdigest())
 PILOT_CAPACITY = dict(remaining_actor_claim=0, native=dict(GPU_stopped=True, UID0_hits=0, UID0_errors=0),
                       execution_evidence=dict(persisted_image_rows=2, contract_valid_pairs=2, recorded_completion_POST_attempts=6))
 PILOT_RESULT = dict(complete=True, evaluated_images=2, item_errors=0, raw_passes=6)
@@ -683,9 +948,11 @@ PILOT_VIOLATIONS = {
     'archive sha256 mismatch': dict(archive_sha256='0' * 64),
     'two raw records': dict(records=(PILOT_RAW, PILOT_RAW)),
     'model id mismatch': dict(records=(dict(PILOT_RAW, model_id='other'),)),
-    'pilot mode is full': dict(pilot=dict(FROZEN, mode='full')),
-    'pilot candidate differs': dict(pilot=dict(FROZEN, mode='pilot', candidate='other')),
-    'pilot immutable config differs': dict(pilot=dict(FROZEN, mode='pilot', immutable_candidate_configs=dict(cfg='c2'))),
+    'pilot mode is full': dict(pilot=dict(PILOT, mode='full')),
+    'pilot candidate differs': dict(pilot=dict(PILOT, candidate='other')),
+    'pilot immutable config differs': dict(pilot=dict(PILOT, immutable_candidate_configs=dict(cfg='c2'))),
+    'pilot predates late binding': dict(pilot={k: v for k, v in PILOT.items() if k != 'predecessor_binding'}),
+    'pilot preparer differs': dict(pilot=dict(PILOT, preparer_sha256='f' * 64)),
     'candidate result incomplete': dict(result=dict(PILOT_RESULT, complete=False)),
 }
 
@@ -705,7 +972,7 @@ def pilot_dirs(tmp_path, monkeypatch):
     return bakeoff, d
 
 
-def write_pilot(bakeoff, d, capacity=PILOT_CAPACITY, pilot=dict(FROZEN, mode='pilot'), result=PILOT_RESULT,
+def write_pilot(bakeoff, d, capacity=PILOT_CAPACITY, pilot=PILOT, result=PILOT_RESULT,
                 records=(PILOT_RAW,), archive_sha256=None):
     """Writes a pilot named p. Each keyword replaces one part, so a case breaks one condition and nothing else."""
     archive = d/'p.archive.tar'

@@ -4,6 +4,7 @@ import importlib
 import json
 import math
 import re
+import subprocess
 import time
 from datetime import datetime, timezone
 
@@ -15,15 +16,18 @@ ROOT_USED_PCT_MAX = 90
 CPU_CEILING = 3.25
 GUEST_CPU = 1.5
 HOST_CPUS = 4
-MEMORY_CEILING = 16*G
+# The guest's 4 GiB sits outside the lane ceiling, host memory is enforced live by MEM_HEADROOM_MIN, and prospective_RAM is informational.
+LANE_MEMORY_CEILING = 16*G
 GUEST_MEMORY = 4*G
 HOST = 'ubuntu@acx-backend.tail1a44b8.ts.net'
 ROOT_PROBE = 'raw_auth_source_gate_root_probe.py'
 SKIP = frozenset({'wb', 'Bakeoff', 'aura', 'Canvas', 'aura_runtime'})
 AURA_A_PIN = ('a4fabeb0732a36f1610504eacdca8b457346566b', 'gpt-6.1-sol', 'low', 'standard')
 EVALUATED = ('ledger_state', 'setup_owner', 'expired_owner_lease', 'owned_unit_over_quota', 'co_tenant_unbounded',
-             'co_tenant_reserve', 'root_probe', 'disk_projection', 'cpu_pressure', 'io_pressure', 'memory_headroom')
-TRANSIENT = frozenset({'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve'})
+             'co_tenant_reserve', 'root_probe', 'disk_projection', 'cpu_pressure', 'io_pressure', 'memory_headroom',
+             'probe_transport')
+TRANSIENT = frozenset({'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve',
+                       'probe_transport'})
 DETERMINISTIC = frozenset({'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
                            'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled'})
 
@@ -62,7 +66,8 @@ units=[]
 for line in q('systemctl','--user','list-units','--state=running','--no-legend','--plain','workbay-lane-*.scope','workbay-lane-*.service','workbay-custody-*.scope','workbay-custody-*.service').splitlines():
  n=line.split()[0];r=dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','CPUQuotaPerSecUSec','-p','MemoryMax').splitlines()if '='in x);r['unit']=n;units.append(r)
 i=dict(l.split(':',1)for l in pathlib.Path('/proc/meminfo').read_text().splitlines());s=dict(l.split()for l in (b/'memory.stat').read_text().splitlines())
-print(json.dumps({'at':time.time(),'units':units,'cpu':pathlib.Path('/proc/pressure/cpu').read_text(),'io':(b/'io.pressure').read_text(),'physical_mem_available':int(i['MemAvailable'].split()[0])*1024,'working_headroom':int((b/'memory.max').read_text())-max(0,int((b/'memory.current').read_text())-int(s.get('inactive_file',0)))}))
+mx=(b/'memory.max').read_text().strip();w=None if mx=='max' else int(mx)-max(0,int((b/'memory.current').read_text())-int(s.get('inactive_file',0)))
+print(json.dumps({'at':time.time(),'units':units,'cpu':pathlib.Path('/proc/pressure/cpu').read_text(),'io':(b/'io.pressure').read_text(),'physical_mem_available':int(i['MemAvailable'].split()[0])*1024,'working_headroom':w}))
 '''
 
 
@@ -102,13 +107,18 @@ def physical_key(branch):
     return re.sub('[^A-Za-z0-9._-]', '-', branch)[:40] + '-' + hashlib.sha256(branch.encode()).hexdigest()[:8]
 
 
+def owns(unit, key):
+    # The orchestrator names a lane's units key, key-sv, key-rN or key-rN-sv; a bare prefix would also claim a sibling lane.
+    return unit == key or re.fullmatch(re.escape(key) + r'(-r[0-9]+)?(-sv)?\.(scope|service)', unit) is not None
+
+
 def classify_native_units(units, expected):
     owned = {k: [0., 0] for k in expected}
     co_tenant = []
     for row in units:
         unit = row['unit']
         cpu, mem = parse_cpu_quota(row['CPUQuotaPerSecUSec']), parse_memory_max(row['MemoryMax'])
-        matches = [k for k in expected if unit.startswith(k)]
+        matches = [k for k in expected if owns(unit, k)]
         if matches:
             require('owned_unit_over_quota', cpu is not None and mem is not None, 'unbounded owned native unit: ' + unit)
             k = max(matches, key=len)
@@ -146,6 +156,20 @@ def avg60(text, row):
     return value if math.isfinite(value) and value >= 0 else float('inf')
 
 
+def require_bounds(k, cpu, mem):
+    require('ledger_state', isinstance(cpu, (int, float)) and 0 < cpu <= 4, k)
+    require('ledger_state', isinstance(mem, int) and mem > 0, k)
+
+
+def parse_expires(value):
+    # A lease is compared with an aware clock, so a missing, malformed or naive expiry is no lease at all.
+    try:
+        when = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo is not None else None
+
+
 def owner_rows(ledger):
     rows = {}
     for k, v in ledger.items():
@@ -162,9 +186,7 @@ def owner_rows(ledger):
             require('ledger_state', phase.get('remaining_VM_actor_claim') == 0 and phase.get('remaining_retention_claim') == 1, k)
             # Disk remains charged in pending_reservations; this phase has no VM execution.
             continue
-        cpu, mem = v.get('aggregate_cpu_cores_max'), v.get('aggregate_memory_bytes_max')
-        require('ledger_state', isinstance(cpu, (int, float)) and 0 < cpu <= 4, k)
-        require('ledger_state', isinstance(mem, int) and mem > 0, k)
+        require_bounds(k, v.get('aggregate_cpu_cores_max'), v.get('aggregate_memory_bytes_max'))
         require('ledger_state', v.get('physical_key') or v.get('expected_physical_key') or v.get('branch') or v.get('custody_unit') or v.get('native_unit'), k)
         row = dict(v)
         if not row.get('physical_key') and row.get('expected_physical_key'):
@@ -174,8 +196,11 @@ def owner_rows(ledger):
         rows[k] = row
     for k, v in ledger['WB_operations'].items():
         if v.get('remaining_actor_claim'):
-            rows[k] = dict(v, physical_key=v.get('physical_key') or v.get('expected_physical_key'),
-                           aggregate_cpu_cores_max=v['cpu_cores_aggregate'], aggregate_memory_bytes_max=v['memory_bytes_aggregate'])
+            cpu, mem = v.get('cpu_cores_aggregate'), v.get('memory_bytes_aggregate')
+            key = v.get('physical_key') or v.get('expected_physical_key')
+            require_bounds(k, cpu, mem)
+            require('ledger_state', key, k)
+            rows[k] = dict(v, physical_key=key, aggregate_cpu_cores_max=cpu, aggregate_memory_bytes_max=mem)
     aura_a = ledger.get('Aura_WP400_A', {})
     if aura_a.get('remaining_actor_claim'):
         require('ledger_state', (aura_a['source_commit'], aura_a['model'], aura_a['effort'], aura_a['speed']) == AURA_A_PIN, 'Aura_WP400_A pin changed')
@@ -199,7 +224,9 @@ def evaluate(ledger, profile, root, native, now):
     expected = {}
     for k, v in rows.items():
         require('ledger_state', not v.get('setup_granted'), k)
-        require('expired_owner_lease', datetime.fromisoformat(v['expires']) > now, 'Expired owner lease: ' + k)
+        expires = parse_expires(v.get('expires'))
+        require('ledger_state', expires is not None, 'owner lease expires missing, malformed or naive: ' + k)
+        require('expired_owner_lease', expires > now, 'Expired owner lease: ' + k)
         cpu += v['aggregate_cpu_cores_max']
         memory += v['aggregate_memory_bytes_max']
         if v.get('physical_key'):
@@ -221,7 +248,7 @@ def evaluate(ledger, profile, root, native, now):
     ceilings = (
         (cpu <= CPU_CEILING, cpu + co_cpu <= CPU_CEILING, 'CPU ceiling'),
         (cpu + GUEST_CPU <= HOST_CPUS, cpu + co_cpu + GUEST_CPU <= HOST_CPUS, 'host CPU'),
-        (memory <= MEMORY_CEILING, memory + co_mem <= MEMORY_CEILING, 'memory ceiling'))
+        (memory <= LANE_MEMORY_CEILING, memory + co_mem <= LANE_MEMORY_CEILING, 'memory ceiling'))
     for plain, _, what in ceilings:
         require('ledger_state', plain, what + ' exceeded without co-tenant reserve')
     for _, reserved, what in ceilings:
@@ -239,13 +266,39 @@ def evaluate(ledger, profile, root, native, now):
     require('cpu_pressure', cpu_avg < CPU_AVG60_MAX, f'PSI cpu avg60 {cpu_avg}')
     io_full = avg60(native['io'], 'full')
     require('io_pressure', io_full <= IO_FULL_AVG60_MAX, f'PSI io full avg60 {io_full}')
-    headroom = min(native['physical_mem_available'], native['working_headroom'])
+    # working_headroom is None when the cgroup has no memory.max; the physical reading then bounds the headroom alone.
+    working = native['working_headroom']
+    headroom = native['physical_mem_available'] if working is None else min(native['physical_mem_available'], working)
     require('memory_headroom', headroom >= MEM_HEADROOM_MIN, f'memory headroom {headroom}')
     return dict(at=now.timestamp(), ledger_sha256=hashlib.sha256(json.dumps(ledger, sort_keys=True).encode()).hexdigest(),
                 prospective_CPU=cpu + co_cpu + GUEST_CPU, prospective_RAM=memory + co_mem + GUEST_MEMORY,
                 projected_root=projected, pending=pending, owned=units['owned'],
                 co_tenant_reserve=dict(cpu=co_cpu, memory=co_mem, units=[c['unit'] for c in co]),
                 classes_checked=list(EVALUATED))
+
+
+def probe_argv(host):
+    # The argv r6 ssh() builds, so the bulkhead reaches each host the same way the r6 guard did.
+    return ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, 'sudo -n python3 -' if host.startswith('ubuntu@') else 'python3 -']
+
+
+def ssh_json(argv, script, timeout):
+    # Transport faults are transient (75). A probe that ran and failed, or replied with something other than a JSON object, is deterministic (3).
+    try:
+        probe = subprocess.run(argv, input=script, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise AdmissionRefusal('probe_transport', f'{type(e).__name__}: {e}') from e
+    if probe.returncode == 255:
+        raise AdmissionRefusal('probe_transport', f'ssh exited 255: {(probe.stderr or "").strip()[-300:]}')
+    if probe.returncode:
+        raise AdmissionRefusal('root_probe', f'probe exited {probe.returncode}: {(probe.stderr or "").strip()[-300:]}')
+    try:
+        reply = json.loads(probe.stdout)
+    except json.JSONDecodeError as e:
+        raise AdmissionRefusal('root_probe', f'probe reply is not JSON: {e}') from e
+    if not isinstance(reply, dict):
+        raise AdmissionRefusal('root_probe', 'probe reply is not a JSON object')
+    return reply
 
 
 def guard():
@@ -256,10 +309,10 @@ def guard():
     ledger = json.loads(before)
     root_units = {v['native_unit']: [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
                   for v in owner_rows(ledger).values() if v.get('native_unit')}
-    root_named_units = base.ssh(HOST, ROOT_NAMED_SCRIPT.replace('UNITS', repr(root_units))) if root_units else {}
+    root_named_units = ssh_json(probe_argv(HOST), ROOT_NAMED_SCRIPT.replace('UNITS', repr(root_units)), 30) if root_units else {}
     classify_root_named(root_named_units, root_units)
-    root = base.ssh(HOST, (base.P/ROOT_PROBE).read_text() + '\n')
-    native = base.ssh(base.d.HOST, NATIVE_SCRIPT)
+    root = ssh_json(probe_argv(HOST), (base.P/ROOT_PROBE).read_text() + '\n', 30)
+    native = ssh_json(probe_argv(base.d.HOST), NATIVE_SCRIPT, 30)
     proof = evaluate(ledger, base.PROFILE, root, native, datetime.now(timezone.utc))
     proof.update(root=root, native=native, root_named_units=root_named_units)
     cap.persist(base.P/(base.N + '.operation-capacity.json'), proof)

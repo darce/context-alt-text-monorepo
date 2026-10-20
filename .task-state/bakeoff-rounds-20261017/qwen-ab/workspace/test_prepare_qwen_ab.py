@@ -91,6 +91,28 @@ def command_resource_contracts(recipe):
         guest_cleanup=dict(scope='guest', phase='cleanup', **properties(outer['cleanup'])))
 
 
+def initial_flag_nodes(source):
+    """Top-level safe_withdraw assignments that run before the outer try."""
+    tree = ast.parse(source)
+    outer = next(n for n in tree.body if isinstance(n, ast.Try))
+    return [n for n in tree.body if isinstance(n, ast.Assign) and n.lineno < outer.lineno
+            and any(isinstance(t, ast.Name) and t.id == 'safe_withdraw' for t in n.targets)]
+
+
+def initial_state_line(recipe):
+    """The generated recipe's line that binds safe_withdraw before its outer try, with its newline."""
+    nodes = initial_flag_nodes(recipe)
+    assert len(nodes) == 1
+    return recipe.split('\n')[nodes[0].lineno - 1] + '\n'
+
+
+def generated_line(source, prefix):
+    """The one line of the generated source that starts with prefix, with its newline."""
+    lines = [line for line in source.split('\n') if line.strip().startswith(prefix)]
+    assert len(lines) == 1, prefix
+    return lines[0] + '\n'
+
+
 class PreparationTests(unittest.TestCase):
     def test_resource_contracts_match_actual_commands(self):
         for candidate in ('gsq', 'ud'):
@@ -197,6 +219,12 @@ class PreparationTests(unittest.TestCase):
         candidate_finally = next(n for n in ast.parse(recipe).body if isinstance(n, ast.Try)).finalbody
         self.assertEqual(ast.dump(ast.Module(body=original_finally, type_ignores=[])),
                          ast.dump(ast.Module(body=candidate_finally, type_ignores=[])))
+
+    def test_generated_recipe_starts_with_safe_withdraw_false(self):
+        recipe, _ = make()
+        self.assertEqual([n.value.value for n in initial_flag_nodes(recipe)], [False])
+        template = (REF / 'LEXICON-MIMO-40-LAST40-R1.remote.py').read_text()
+        self.assertEqual([n.value.value for n in initial_flag_nodes(template)], [True])
 
     def test_late_bound_predecessor_contract(self):
         for candidate in ('gsq', 'ud'):
@@ -520,15 +548,17 @@ class LateBindBlockTests(unittest.TestCase):
         exec(textwrap.dedent(p.LATE_BIND_BLOCK), ns)
         return ns
 
-    def exec_composed(self, replies, events, saves, **kwargs):
-        """LATE_BIND_BLOCK inside the template's try, with the template's real cleanup tail as finally."""
+    def exec_composed(self, replies, events, saves, with_prior_state=False, **kwargs):
+        """The generated initial state, then LATE_BIND_BLOCK inside the template's try, with the template's real cleanup tail as finally."""
+        recipe, _ = make()
         lines = (REF / p.SOURCES['gsq']).read_text().splitlines()
         starts = [i for i, line in enumerate(lines) if line.strip() == 'if safe_withdraw:']
         ends = [i for i, line in enumerate(lines)
                 if line.strip().startswith("else:raise RuntimeError('Qwen restoration unknown")]
         self.assertEqual((len(starts), len(ends)), (1, 1))
         tail = textwrap.indent(textwrap.dedent('\n'.join(lines[starts[0]:ends[0] + 1]) + '\n'), '    ')
-        program = 'safe_withdraw=True\ntry:\n' + p.LATE_BIND_BLOCK + 'finally:\n' + tail
+        preflight = generated_line(recipe, 'prior_state=json.loads(') if with_prior_state else ''
+        program = initial_state_line(recipe) + 'try:\n' + preflight + p.LATE_BIND_BLOCK + 'finally:\n' + tail
         ns = self.fake_ns(replies, events, saves, **kwargs)
         exec(compile(program, '<composed-late-bind>', 'exec'), ns)
         return ns
@@ -660,6 +690,17 @@ class LateBindBlockTests(unittest.TestCase):
                                     for e in chain))
                 self.assertTrue(any(isinstance(e, AssertionError) and 'STOP predecessor not settled' in str(e)
                                     for e in chain))
+
+    def test_generated_recipe_refuses_a_running_gpu_at_prior_state_before_any_effect(self):
+        # A refused preflight must not reach the finally with safe_withdraw True: that would reconcile and STOP a predecessor this run never owned.
+        events, saves = [], []
+        with self.assertRaisesRegex(RuntimeError, 'Qwen restoration unknown') as cm:
+            self.exec_composed(self.COMPOSED_REPLIES, events, saves, with_prior_state=True,
+                               state=dict(state='running', lease_expires_at=1790000000))
+        self.assertEqual(events, [])
+        self.assertEqual(saves, [])
+        self.assertTrue(any(isinstance(e, AssertionError) and 'Prior physical GPU lease must close' in str(e)
+                            for e in self.chain(cm.exception)))
 
 
 if __name__ == '__main__':

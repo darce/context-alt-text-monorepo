@@ -209,9 +209,15 @@ def main(argv=None):
         runner.inputs = inputs
         runner.bootstrap = lambda files, rc: bootstrap_source(raw, a.name, prepared['gate_token'], pilot_sha)
         runner.run(receipt['source_head'], receipt['gate'])
+        # The shared runner returns None; the remote exit code exists only in the terminal record it writes before returning.
+        terminal = json.loads((runner.P/(runner.N + '.transport-terminal.json')).read_bytes())
     except ca.AdmissionRefusal as e:
         print(json.dumps(dict(status='ADMISSION_REFUSED', refusal=str(e), transient=e.transient)))
         return 75 if e.transient else 3
+    if terminal['exit_code'] == 0:
+        return 0
+    print(json.dumps(dict(status='ROOT_TRANSPORT_FAILED', exit_code=terminal['exit_code'])))
+    return 4
 
 
 if __name__ == '__main__':

@@ -191,7 +191,7 @@ kw=dict(user=1002,group=1002,extra_groups=[],env=dict(PATH='/usr/local/bin:/usr/
 deadline=time.monotonic()+20
 def left(own):return min(own,max(0.0,deadline-time.monotonic()))
 def tree(root):
- s=dict(head=None,clean=False,head_rc=None,diff_rc=None,head_error=None,diff_error=None)
+ s=dict(head=None,clean=False,head_rc=None,diff_rc=None,head_error=None,diff_error=None,dirty=None,diff_stderr_tail=None)
  t=left(10)
  if t<=0:s['head_error']='deadline_exhausted'
  else:
@@ -200,7 +200,7 @@ def tree(root):
  t=left(15)
  if t<=0:s['diff_error']='deadline_exhausted'
  else:
-  try:d=subprocess.run(['/bin/sh','-c',DIFF,'sh',root],timeout=t,**kw);s.update(diff_rc=d.returncode,clean=d.returncode==0 and not d.stdout.strip())
+  try:d=subprocess.run(['/bin/sh','-c',DIFF,'sh',root],timeout=t,**kw);s.update(diff_rc=d.returncode,clean=d.returncode==0 and not d.stdout.strip(),dirty=[l[:200]for l in d.stdout.splitlines()if l.strip()][:5],diff_stderr_tail=d.stderr[-300:])
   except(OSError,subprocess.TimeoutExpired)as e:s['diff_error']=type(e).__name__+': '+str(e)
  return s
 repo=tree(b['repo']);workspace=tree(b['workspace'])
@@ -218,7 +218,7 @@ print(json.dumps(dict(gpu=dict(state=gpu.get('state'),lease_expires_at=gpu.get('
         'ENTRY_ARGS', ' '.join(f"-e '{e}'" for e in KNOWN_RUNTIME_ENTRIES))
 
 
-ROOT_KEYS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error')
+ROOT_KEYS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error', 'dirty', 'diff_stderr_tail')
 PYTHON_KEYS = ('executable', 'import_ok', 'stderr_tail', 'error')
 
 
@@ -242,10 +242,11 @@ def classify_preclaim(report, binding):
             raise ca.AdmissionRefusal('malformed_payload', f"preclaim source.{name} is not a mapping with {', '.join(keys)}")
     # NDM-06: a child that failed, timed out or was skipped reports an rc, an error or an unset field; each one refuses.
     # AGT-10, DIAG-07: an error is environmental until shown otherwise, so it names the field and the child where the fault stops and asks for a re-run.
+    # FIXE: dirty holds the entries the DIFF child printed (at most 5, 200 characters each), so the refusal names the one that blocked the root.
     for name in ('repo', 'workspace'):
         r = src[name]
         observed = (f"observed head {r['head']!r} clean {r['clean']!r} head_rc {r['head_rc']!r} head_error {r['head_error']!r} "
-                    f"diff_rc {r['diff_rc']!r} diff_error {r['diff_error']!r}")
+                    f"diff_rc {r['diff_rc']!r} diff_error {r['diff_error']!r} dirty {r['dirty']!r} diff_stderr_tail {r['diff_stderr_tail']!r}")
         stops = [f"{field} {r[field]!r} stopped at {where}" for field, where in
                  (('head_error', 'git rev-parse HEAD'), ('diff_error', 'the diff child')) if r[field] is not None]
         if stops:

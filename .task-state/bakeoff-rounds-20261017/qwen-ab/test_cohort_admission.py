@@ -516,6 +516,36 @@ def test_row_without_setup_granted_or_a_claim_is_still_skipped():
     healthy(ledger=ledger(OWN=dict(setup_granted=False, aggregate_cpu_cores_max=2., aggregate_memory_bytes_max=8*G)))
 
 
+OUTSIDE_OWNER_ROWS = [('remaining_actor_claim', 1), ('reserved_now', True), ('future_model_claims', 1),
+                      ('aggregate_cpu_cores_max', .5), ('aggregate_memory_bytes_max', G)]
+
+
+@pytest.mark.parametrize('field,value', OUTSIDE_OWNER_ROWS, ids=[f for f, _ in OUTSIDE_OWNER_ROWS])
+@pytest.mark.parametrize('name', ['aura', 'Canvas'])
+def test_aura_and_canvas_holding_a_claim_or_reservation_are_refused_as_ledger_state(name, field, value):
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(**{name: dict(active_models=[], setup_granted=False, **{field: value})}))
+    assert e.value.cls == 'ledger_state'
+    assert e.value.detail == f'{name} holds a claim or reservation outside owner_rows'
+
+
+def test_aura_and_canvas_at_their_live_no_claim_shape_are_admitted():
+    healthy(ledger=ledger(aura=dict(active_models=[], setup_granted=False, remaining_actor_claim=None, reserved_now=None,
+                                    future_model_claims=None, aggregate_cpu_cores_max=None, aggregate_memory_bytes_max=None),
+                          Canvas=dict(active_models=[], setup_granted=False, future_model_claims=0,
+                                      aggregate_cpu_cores_max=0, aggregate_memory_bytes_max=0)))
+
+
+def test_wb_row_with_setup_granted_and_no_claim_is_refused_as_ledger_state():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(WB_operations=dict(WB1=wb_row(remaining_actor_claim=0, setup_granted=True))))
+    assert e.value.cls == 'ledger_state' and e.value.detail == 'setup granted: WB1'
+
+
+def test_wb_row_with_no_claim_and_no_setup_is_still_skipped():
+    healthy(ledger=ledger(WB_operations=dict(WB1=wb_row(remaining_actor_claim=0))))
+
+
 # The lane total is 2 GiB (coordinator) + the profile + 4 GiB (no Aura row yet), so 10 GiB of profile is exactly the ceiling.
 AT_MEMORY_CEILING = dict(aggregate_cpu_cores_max=.5, aggregate_memory_bytes_max=10*G)
 
@@ -738,6 +768,24 @@ def test_guard_labels_a_probe_transport_failure_as_transient(tmp_path, monkeypat
     assert persisted == []
 
 
+def test_guard_refuses_two_owner_rows_sharing_a_native_unit_before_any_probe(tmp_path, monkeypatch):
+    led = tmp_path/'ledger.json'
+    led.write_text(json.dumps(ledger(A=dict(owner_row('a'), native_unit=ROOT_UNIT), B=dict(owner_row('b'), native_unit=ROOT_UNIT))))
+    persisted = fake_r6(monkeypatch, tmp_path, led)
+    calls = fake_ssh(monkeypatch, lambda argv, script: ssh_reply(root()))
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.guard()
+    assert e.value.cls == 'ledger_state' and e.value.detail == 'duplicate native unit across owner rows: B'
+    assert calls == [] and persisted == []
+
+
+def test_native_units_keeps_each_distinct_unit_with_its_own_cap():
+    rows = dict(A=dict(native_unit='u1', aggregate_cpu_cores_max=.25, aggregate_memory_bytes_max=G),
+                B=dict(native_unit='u2', aggregate_cpu_cores_max=.5, aggregate_memory_bytes_max=2*G),
+                C=dict(aggregate_cpu_cores_max=.5, aggregate_memory_bytes_max=G))
+    assert CA.native_units(rows) == {'u1': [.25, G], 'u2': [.5, 2*G]}
+
+
 def guard_under(monkeypatch, tmp_path, ledger_text=None, root_reply=None, native_reply=None):
     """Sets up CA.guard() over fakes: the ledger text and each probe's reply. Unset arguments are the healthy fixture."""
     led = tmp_path/'ledger.json'
@@ -944,7 +992,7 @@ def operator_bakeoff(bakeoff, runner_bytes):
     bakeoff.mkdir(exist_ok=True)
     (bakeoff/(RUNNER_NAME + '.py')).write_bytes(runner_bytes)
     for name in LEAVES:
-        (bakeoff/(name + '.py')).write_text('# stand-in: located by find_spec, never executed by the preflight\n')
+        (bakeoff/(name + '.py')).write_text(f'# stand-in {name}: located by find_spec, never executed by the preflight\n')
 
 
 def one_byte_changed(raw):
@@ -1359,3 +1407,16 @@ def test_main_passes_the_helper_check_with_the_pinned_bytes(stubbed_main):
     m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
     assert RUN.main(m['argv']) is None
     assert m['runs'] == [(CUSTODY_SOURCE, 'QWEN-AB-G2')]
+
+
+def test_main_receipt_records_the_sha256_of_each_runner_module_it_resolved(stubbed_main):
+    m = stubbed_main
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
+    assert RUN.main(m['argv']) is None
+    _, receipt = m['runner'].inputs(CUSTODY_SOURCE, 'QWEN-AB-G2')
+    origins = {RUNNER_NAME: m['bakeoff']/(RUNNER_NAME + '.py'), **{name: m['bakeoff']/(name + '.py') for name in LEAVES}}
+    assert set(receipt['module_sha256']) == {RUNNER_NAME, *LEAVES}
+    # The four stand-ins hold distinct bytes, so a digest taken from the wrong origin cannot match by accident.
+    assert len({hashlib.sha256(p.read_bytes()).hexdigest() for p in origins.values()}) == 4
+    for name, path in origins.items():
+        assert receipt['module_sha256'][name] == hashlib.sha256(path.read_bytes()).hexdigest()

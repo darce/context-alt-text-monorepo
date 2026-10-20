@@ -203,6 +203,7 @@ def owner_rows(ledger):
             row['physical_key'] = physical_key(row['branch'])
         rows[k] = row
     for k, v in ledger['WB_operations'].items():
+        require('ledger_state', not v.get('setup_granted'), 'setup granted: ' + k)
         if v.get('remaining_actor_claim'):
             cpu, mem = v.get('cpu_cores_aggregate'), v.get('memory_bytes_aggregate')
             key = v.get('physical_key') or v.get('expected_physical_key')
@@ -225,6 +226,11 @@ def evaluate(ledger, profile, root, native, now):
     require('setup_owner', owner is None or (isinstance(owner, str) and owner.startswith('Owner-coordinated-next')), 'Actual shared setup owner must return first')
     require('ledger_state', not ledger['aura']['active_models'] and not ledger['aura']['setup_granted'], 'Reconcile new Aura profile before this claim')
     require('ledger_state', not ledger['Canvas']['active_models'] and not ledger['Canvas']['setup_granted'], 'Canvas active or setup granted')
+    # aura and Canvas are SKIP-listed, so owner_rows never charges them; a claim or reservation on either is refused here.
+    for name in ('aura', 'Canvas'):
+        held = any(ledger[name].get(f) for f in ('remaining_actor_claim', 'reserved_now', 'future_model_claims',
+                                                 'aggregate_cpu_cores_max', 'aggregate_memory_bytes_max'))
+        require('ledger_state', not held, f'{name} holds a claim or reservation outside owner_rows')
     # aura_runtime and wb are SKIP-listed, so owner_rows never reads them; they are checked here instead.
     rt = ledger.get('aura_runtime', {})
     if rt.get('active'):
@@ -319,6 +325,16 @@ def ssh_json(argv, script, timeout):
     return reply
 
 
+def native_units(rows):
+    # A dict keyed by native_unit keeps only the later row's cap, so a second row naming the same unit is refused before any probe.
+    units = {}
+    for name, v in rows.items():
+        if v.get('native_unit'):
+            require('ledger_state', v['native_unit'] not in units, 'duplicate native unit across owner rows: ' + name)
+            units[v['native_unit']] = [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
+    return units
+
+
 def guard():
     # r6 pulls in the orchestration stack, so it is imported only when a live probe runs.
     base = importlib.import_module('run_owner_root_fixture_r6')
@@ -326,8 +342,7 @@ def guard():
     before = cap.LEDGER.read_bytes()
     try:
         ledger = json.loads(before)
-        root_units = {v['native_unit']: [v['aggregate_cpu_cores_max'], v['aggregate_memory_bytes_max']]
-                      for v in owner_rows(ledger).values() if v.get('native_unit')}
+        root_units = native_units(owner_rows(ledger))
         root_named_units = ssh_json(probe_argv(HOST), ROOT_NAMED_SCRIPT.replace('UNITS', repr(root_units)), 30) if root_units else {}
         classify_root_named(root_named_units, root_units)
         root = ssh_json(probe_argv(HOST), (base.P/ROOT_PROBE).read_text() + '\n', 30)

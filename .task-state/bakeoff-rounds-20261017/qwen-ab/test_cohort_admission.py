@@ -1519,9 +1519,36 @@ def test_classify_preclaim_refuses_each_flipped_field_and_names_every_observed_f
     with pytest.raises(CA.AdmissionRefusal) as e:
         RUN.classify_preclaim(report(source=src), BINDING)
     assert e.value.cls == 'source_unavailable' and e.value.transient is False
-    assert e.value.detail.startswith(f'{owner} {BINDING[owner]}:')
+    environmental = field in ('head_error', 'diff_error', 'error')
+    assert e.value.detail.startswith('environmental: ' if environmental else f'{owner} {BINDING[owner]}:')
     observed = PY_FIELDS if owner == 'python' else ROOT_FIELDS
     assert all(f' {key} ' in e.value.detail for key in observed), e.value.detail
+
+
+# M2: an environmental error (a timeout, OSError, or a skipped child) names the field and the child where the fault stops, and asks for a re-run.
+@pytest.mark.parametrize('owner,field,value', [('repo', 'head_error', 'OSError: denied'), ('workspace', 'diff_error', 'TimeoutExpired: 15'),
+                                               ('python', 'error', 'deadline_exhausted')])
+def test_classify_preclaim_names_an_environmental_error_and_asks_for_a_rerun_not_a_rebuild(owner, field, value):
+    src = source_report()
+    src[owner][field] = value
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+    assert e.value.detail.startswith('environmental: ')
+    assert f'{field} {value!r}' in e.value.detail
+    assert 're-run after checking VM load; rebuild only if it recurs' in e.value.detail
+    assert RUN.REBUILD not in e.value.detail
+
+
+# M2: a pure mismatch (wrong HEAD, dirty tree, failed import with no error) keeps the REBUILD hint.
+@pytest.mark.parametrize('label', list(SOURCE_BREAKS))
+def test_classify_preclaim_keeps_the_rebuild_hint_for_a_pure_mismatch(label):
+    src = source_report()
+    SOURCE_BREAKS[label](src)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and not e.value.detail.startswith('environmental:')
+    assert e.value.detail.endswith(RUN.REBUILD)
 
 
 SOURCE_SHAPES = {
@@ -1619,9 +1646,10 @@ def run_preclaim(monkeypatch, capsys, tmp_path, answer=healthy_child, executable
     return calls, json.loads(capsys.readouterr().out)
 
 
-def run_local(monkeypatch, capsys, tmp_path, b):
+def run_local(monkeypatch, capsys, tmp_path, b, scratch=None):
     """Execs the generated preclaim text against the real git as the local uid: the uid 1002 switch is dropped, and os.chown is recorded
-    (path, uid, gid, mode at the time of the call) instead of applied. Returns the printed reply, every child's (argv, kwargs) and the chowns."""
+    (path, uid, gid, mode at the time of the call) instead of applied. Returns the printed reply, every child's (argv, kwargs) and the chowns.
+    scratch, when given, is the child's TMPDIR, so a test can see what the child leaves behind."""
     gpu = tmp_path/'gpu.json'
     gpu.write_text(json.dumps(dict(state='stopped', lease_expires_at=None)))
     src = RUN.preclaim_script(str(tmp_path/'w'), b).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
@@ -1632,6 +1660,8 @@ def run_local(monkeypatch, capsys, tmp_path, b):
         calls.append((argv, dict(kwargs)))
         for key in ('user', 'group', 'extra_groups'):
             kwargs.pop(key)
+        if scratch is not None:
+            kwargs['env'] = dict(kwargs['env'], TMPDIR=str(scratch))
         return real.run(argv, **kwargs)
 
     local.run, local.TimeoutExpired = run, real.TimeoutExpired
@@ -1657,6 +1687,26 @@ def committed_repo(path):
     return path
 
 
+# Audit hooks cannot be removed, so one hook is installed for the session and records only while a test turns AUDIT['on'] on.
+AUDIT = dict(on=False, opened=[])
+
+
+def _record_open(event, args):
+    if event == 'open' and AUDIT['on'] and isinstance(args[0], (str, bytes, os.PathLike)):
+        AUDIT['opened'].append(os.fsdecode(args[0]))
+
+
+sys.addaudithook(_record_open)
+
+
+@pytest.fixture
+def opened_paths():
+    """Every path this process opens while the test runs. The preclaim's own file access is what these tests bound; children are separate processes."""
+    AUDIT.update(on=True, opened=[])
+    yield AUDIT['opened']
+    AUDIT.update(on=False)
+
+
 def test_preclaim_script_reports_the_highest_sequence_publication(monkeypatch, capsys, tmp_path):
     publish(tmp_path, ('a', 1, 'start'), ('b', 2, 'auto'))
     _, rep = run_preclaim(monkeypatch, capsys, tmp_path)
@@ -1668,38 +1718,40 @@ def test_preclaim_script_composes_the_five_source_children_exactly(monkeypatch, 
     publish(tmp_path, ('op1', 3, 'auto'))
     b = roots(tmp_path)
     calls, rep = run_preclaim(monkeypatch, capsys, tmp_path)
-    assert [argv for argv, _ in calls] == [
-        ['git', '-C', b['repo'], 'rev-parse', 'HEAD'],
-        ['git', '-C', b['repo'], 'diff', '--name-only'],
-        ['git', '-C', b['workspace'], 'rev-parse', 'HEAD'],
-        ['git', '-C', b['workspace'], 'diff', '--name-only'],
-        [b['python'], '-B', '-c', 'import httpx,scripts.eval_harness.bakeoff'],
-    ]
+    argvs = [argv for argv, _ in calls]
+    assert argvs[0] == ['git', '-C', b['repo'], 'rev-parse', 'HEAD']
+    assert argvs[2] == ['git', '-C', b['workspace'], 'rev-parse', 'HEAD']
+    assert argvs[4] == [b['python'], '-B', '-c', 'import httpx,scripts.eval_harness.bakeoff']
+    # The diff child is one uid-1002 shell: it copies .git/index itself and diffs the copy, so the parent passes it only the root.
+    for i, root in ((1, b['repo']), (3, b['workspace'])):
+        assert argvs[i][:2] == ['/bin/sh', '-c'] and argvs[i][3:] == ['sh', root], argvs[i]
     for (argv, kw), timeout in zip(calls, [10, 15, 10, 15, 20]):
         assert kw['timeout'] == timeout, argv
         assert kw['user'] == 1002 and kw['group'] == 1002 and kw['extra_groups'] == [], argv
         assert kw['capture_output'] is True and kw['text'] is True, argv
         assert kw.get('cwd') == (f"{b['workspace']}/apps/prototype-description-service" if argv[0] == b['python'] else None), argv
-        env = dict(kw['env'])
-        if argv[0] == 'git' and argv[3] == 'diff':
-            assert env.pop('GIT_OPTIONAL_LOCKS') == '0' and env.pop('GIT_INDEX_FILE'), argv
-        assert env == PRECLAIM_ENV, argv
+        assert kw['env'] == PRECLAIM_ENV, argv
     assert rep['source'] == source_report()
     assert RUN.classify_preclaim(rep, b) == rep
 
 
+def diff_child_of(root):
+    """Matches the uid-1002 diff child of one root: /bin/sh -c DIFF sh <root>."""
+    return lambda argv: argv[:2] == ['/bin/sh', '-c'] and argv[3:] == ['sh', root]
+
+
 @pytest.mark.parametrize('target,path,fail', [
-    (lambda b: ['git', '-C', b['repo'], 'rev-parse'], ('repo', 'head_error'), lambda argv: OSError('denied')),
-    (lambda b: ['git', '-C', b['workspace'], 'diff'], ('workspace', 'diff_error'), lambda argv: subprocess.TimeoutExpired(argv, 15)),
-    (lambda b: [b['python']], ('python', 'error'), lambda argv: FileNotFoundError(2, 'No such file or directory')),
+    (lambda b: lambda argv: argv[:4] == ['git', '-C', b['repo'], 'rev-parse'], ('repo', 'head_error'), lambda argv: OSError('denied')),
+    (lambda b: diff_child_of(b['workspace']), ('workspace', 'diff_error'), lambda argv: subprocess.TimeoutExpired(argv, 15)),
+    (lambda b: lambda argv: argv[0] == b['python'], ('python', 'error'), lambda argv: FileNotFoundError(2, 'No such file or directory')),
 ], ids=['repo-rev-parse-oserror', 'workspace-diff-timeout', 'python-missing'])
 def test_a_source_child_that_cannot_run_is_recorded_and_refused_without_reraising(monkeypatch, capsys, tmp_path, target, path, fail):
     publish(tmp_path, ('op1', 3, 'auto'))
     b = roots(tmp_path)
-    prefix = target(b)
+    is_target = target(b)
 
     def answer(argv):
-        if argv[:len(prefix)] == prefix:
+        if is_target(argv):
             raise fail(argv)
         return healthy_child(argv)
 
@@ -1733,7 +1785,7 @@ def test_a_slow_child_leaves_the_next_child_only_the_rest_of_the_deadline(monkey
     def cost(argv):
         if argv[:4] == ['git', '-C', b['repo'], 'rev-parse']:
             return 9.5
-        return float('inf') if argv[:4] == ['git', '-C', b['repo'], 'diff'] else 0.0
+        return float('inf') if diff_child_of(b['repo'])(argv) else 0.0
 
     calls, rep = run_preclaim(monkeypatch, capsys, tmp_path, cost=cost)
     assert [kw['timeout'] for _, kw in calls] == [10, 20 - 9.5]
@@ -1776,30 +1828,116 @@ def test_preclaim_diff_leaves_the_repo_index_bytes_and_mtime_untouched_on_stat_o
     assert (index.read_bytes(), index.stat().st_mtime_ns) == before
 
 
-def test_the_diff_child_reads_a_private_index_copy_owned_by_1002_and_removes_it(monkeypatch, capsys, tmp_path):
+def test_root_opens_nothing_under_the_repo_git_and_chowns_nothing(monkeypatch, capsys, tmp_path, opened_paths):
+    """H1/H2: the parent never opens, creates or chowns a path under a source tree; the uid-1002 diff child copies the index itself."""
+    publish(tmp_path, ('op1', 3, 'auto'))
     repo, b = git_index_probe(tmp_path)
-    _, calls, chowns = run_local(monkeypatch, capsys, tmp_path, b)
-    diffs = [kw for argv, kw in calls if argv[0] == 'git' and argv[3] == 'diff']
-    assert len(diffs) == 2
-    for kw in diffs:
-        env = kw['env']
-        assert env['GIT_OPTIONAL_LOCKS'] == '0' and env['GIT_INDEX_FILE'] != str(repo/'.git'/'index')
-        copy = Path(env['GIT_INDEX_FILE'])
-        assert not copy.exists() and not copy.parent.exists()
-        assert (str(copy.parent), 1002, 1002, 0o700) in chowns
-        assert any(c[:3] == (str(copy), 1002, 1002) for c in chowns)
+    opened_paths.clear()
+    rep, _, chowns = run_local(monkeypatch, capsys, tmp_path, b)
+    assert [p for p in opened_paths if p.startswith(str(repo/'.git'))] == []
+    assert chowns == []
+    assert rep['source']['repo']['clean'] is True and rep['source']['workspace']['clean'] is True
+
+
+def test_root_never_reads_an_index_that_is_a_symlink_to_a_file_outside_the_repo(monkeypatch, capsys, tmp_path, opened_paths):
+    """H2: a .git/index replaced by a symlink to a root-readable file is never followed by the parent."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    sentinel = tmp_path/'sentinel'
+    sentinel.write_bytes(b'SENTINEL\n')
+    (repo/'.git'/'index').unlink()
+    (repo/'.git'/'index').symlink_to(sentinel)
+    opened_paths.clear()
+    run_local(monkeypatch, capsys, tmp_path, b)
+    target = os.path.realpath(sentinel)
+    assert [p for p in opened_paths if os.path.realpath(p) == target or p.startswith(str(repo/'.git'))] == []
+
+
+def test_the_diff_child_removes_its_private_index_copy(monkeypatch, capsys, tmp_path):
+    """The copy lives in a directory the child makes and its EXIT trap removes; the scratch TMPDIR is empty afterwards."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    _, b = git_index_probe(tmp_path)
+    scratch = tmp_path/'scratch'
+    scratch.mkdir()
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b, scratch=scratch)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is True
+    assert list(scratch.iterdir()) == []
 
 
 @pytest.mark.parametrize('damage', ['missing', pytest.param('unreadable', marks=pytest.mark.skipif(os.geteuid() == 0, reason='root reads any file'))])
-def test_a_missing_or_unreadable_repo_index_is_a_diff_error_and_never_clean(monkeypatch, capsys, tmp_path, damage):
+def test_a_missing_or_unreadable_repo_index_fails_the_diff_child_and_is_never_clean(monkeypatch, capsys, tmp_path, damage):
     publish(tmp_path, ('op1', 3, 'auto'))
     _, b = git_index_probe(tmp_path, damage=damage)
     rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
     root = rep['source']['repo']
-    assert root['diff_error'] is not None and root['clean'] is False and root['diff_rc'] is None
+    assert root['diff_error'] is None and root['clean'] is False and root['diff_rc'] not in (None, 0)
     with pytest.raises(CA.AdmissionRefusal) as e:
         RUN.classify_preclaim(rep, b)
     assert e.value.cls == 'source_unavailable'
+
+
+def test_a_linked_worktree_whose_git_is_a_file_is_clean_not_a_not_a_directory_error(monkeypatch, capsys, tmp_path):
+    """L1: in a linked worktree .git is a file, so the index is found through git, not by joining .git/index onto the root."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, _ = git_index_probe(tmp_path)
+    wt = tmp_path/'wt'
+    git_in(repo, 'worktree', 'add', '-q', str(wt))
+    assert (wt/'.git').is_file()
+    b = dict(BINDING, source=git_in(wt, 'rev-parse', 'HEAD'), repo=str(wt), workspace=str(wt), python=str(tmp_path/'no-python'))
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    root = rep['source']['repo']
+    assert root['diff_error'] is None and root['diff_rc'] == 0 and root['clean'] is True
+
+
+# M1: the clean check covers staged, unstaged and untracked changes against HEAD; a gitignored file and a stat-only touch stay clean.
+def preclaim_after(monkeypatch, capsys, tmp_path, edit):
+    """Runs the real preclaim over a committed repo after edit(repo) changes it. Returns the root report and the bound source."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    edit(repo)
+    b = dict(b, source=git_in(repo, 'rev-parse', 'HEAD'))
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    return rep, b
+
+
+def test_a_staged_modification_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    def edit(repo):
+        (repo/'a.txt').write_text('staged\n')
+        git_in(repo, 'add', 'a.txt')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_an_unstaged_modification_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, lambda repo: (repo/'a.txt').write_text('unstaged\n'))
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_an_untracked_file_that_is_not_ignored_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, lambda repo: (repo/'new.py').write_text('x = 1\n'))
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_a_file_matched_by_gitignore_stays_clean(monkeypatch, capsys, tmp_path):
+    def edit(repo):
+        (repo/'.gitignore').write_text('*.log\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore logs')
+        (repo/'build.log').write_text('ignored\n')
+
+    rep, _ = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is True
 
 
 # --- runner v2: bootstrap -----------------------------------------------------------------------

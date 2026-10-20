@@ -22,6 +22,7 @@ HELPER_SHA256 = 'f0ca0e59c1bc8db1dd83c99598f82c0fb3665a7dd443f66e44291f44f837a4c
 SOURCE_ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/source'
 RESULTS_ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/results'
 REBUILD = 'rebuild: qwen-latebind/durable-source/build_durable_source.py'
+RERUN = 're-run after checking VM load; rebuild only if it recurs'
 SOURCE_LINES = dict(
     SOURCE=re.compile(r"^SOURCE='([0-9a-f]{40})'$", re.MULTILINE),
     repo=re.compile(r"^repo=Path\('" + re.escape(SOURCE_ROOT) + r"'\)/SOURCE$", re.MULTILINE),
@@ -75,8 +76,9 @@ def workspace_ok(p):
 
 
 def bound_names(node):
-    # Every name a node binds, wherever it sits: stores and deletes, parameters, import aliases, global and nonlocal, and any node that
-    # carries a name (defs, classes, except-as, match captures, type parameters, a mapping's **rest).
+    # Static AST coverage only: every name a node binds in the text, wherever it sits (stores and deletes, parameters, import aliases,
+    # global and nonlocal, and any node that carries a name: defs, classes, except-as, match captures, type parameters, a mapping's **rest).
+    # Runtime rebinding (globals(), exec, setattr on sys.modules) is out of scope: the recipe is generated and its sha256 is pinned.
     if isinstance(node, ast.Name):
         return [node.id] if isinstance(node.ctx, (ast.Store, ast.Del)) else []
     if isinstance(node, ast.arg):
@@ -99,7 +101,8 @@ def source_binding(raw):
         need(len(found) == 1, f'{name} line must appear exactly once, found {len(found)}')
     sha, workspace = hits['SOURCE'][0], hits['workspace'][0]
     need(workspace_ok(workspace), f'workspace must be {RESULTS_ROOT}/<NAME>/workspace, got {workspace!r}')
-    # The line checks above can be fooled (a second binding on the same line, a match inside a string), so the module itself is counted too.
+    # Static AST coverage only. The line checks above can be fooled (a second binding on the same line, a match inside a string), so the
+    # module itself is counted too; runtime rebinding is out of scope (see bound_names).
     try:
         tree = ast.parse(text)
     except SyntaxError as e:
@@ -146,8 +149,10 @@ def run_git(*args):
 
 def preclaim_script(window, binding):
     # Read-only. Reports the GPU state, the newest publication, and the source roots as the recipe's uid 1002 children see them; no TTL is judged here, because the recipe refreshes AUTO.
-    # The children share one 20 s deadline inside the caller's 30 s ssh, and the diff reads a private copy of .git/index, never the repo's own.
-    return '''import glob,json,os,pathlib,shutil,subprocess,tempfile,time
+    # The children share one 20 s deadline inside the caller's 30 s ssh. Root opens and creates nothing under a source tree: the diff child runs as
+    # uid 1002, copies .git/index into its own private directory, and diffs that copy against HEAD and lists the untracked files.
+    return '''import glob,json,os,pathlib,subprocess,time
+DIFF="""set -e; idx=$(git -C "$1" rev-parse --path-format=absolute --git-path index); d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; cp -- "$idx" "$d/index"; export GIT_INDEX_FILE="$d/index" GIT_OPTIONAL_LOCKS=0; git -C "$1" diff HEAD --name-only; git -C "$1" ls-files --others --exclude-standard"""
 w=pathlib.Path(WINDOW);b=BINDING
 gpu=json.loads(pathlib.Path('/run/acx/gpu-state.json').read_bytes())
 pubs=[]
@@ -163,16 +168,11 @@ def tree(root):
  else:
   try:h=subprocess.run(['git','-C',root,'rev-parse','HEAD'],timeout=t,**kw);s.update(head_rc=h.returncode,head=h.stdout.strip()if h.returncode==0 else None)
   except(OSError,subprocess.TimeoutExpired)as e:s['head_error']=type(e).__name__+': '+str(e)
- t=left(15);tmp=None
+ t=left(15)
  if t<=0:s['diff_error']='deadline_exhausted'
  else:
-  try:
-   tmp=tempfile.mkdtemp(prefix='preclaim-index-');os.chown(tmp,1002,1002)
-   idx=os.path.join(tmp,'index');shutil.copyfile(os.path.join(root,'.git','index'),idx);os.chown(idx,1002,1002)
-   d=subprocess.run(['git','-C',root,'diff','--name-only'],timeout=t,**dict(kw,env=dict(kw['env'],GIT_INDEX_FILE=idx,GIT_OPTIONAL_LOCKS='0')));s.update(diff_rc=d.returncode,clean=d.returncode==0 and not d.stdout.strip())
+  try:d=subprocess.run(['/bin/sh','-c',DIFF,'sh',root],timeout=t,**kw);s.update(diff_rc=d.returncode,clean=d.returncode==0 and not d.stdout.strip())
   except(OSError,subprocess.TimeoutExpired)as e:s['diff_error']=type(e).__name__+': '+str(e)
-  finally:
-   if tmp:shutil.rmtree(tmp)
  return s
 repo=tree(b['repo']);workspace=tree(b['workspace'])
 py=dict(executable=os.access(b['python'],os.X_OK),import_ok=None,stderr_tail=None,error=None)
@@ -210,15 +210,24 @@ def classify_preclaim(report, binding):
         if not isinstance(m, dict) or any(k not in m for k in keys):
             raise ca.AdmissionRefusal('malformed_payload', f"preclaim source.{name} is not a mapping with {', '.join(keys)}")
     # NDM-06: a child that failed, timed out or was skipped reports an rc, an error or an unset field; each one refuses.
+    # AGT-10, DIAG-07: an error is environmental until shown otherwise, so it names the field and the child where the fault stops and asks for a re-run.
     for name in ('repo', 'workspace'):
         r = src[name]
-        if not (r['head_error'] is None and r['diff_error'] is None and r['head_rc'] == 0 and r['diff_rc'] == 0
-                and r['head'] == binding['source'] and r['clean'] is True):
+        observed = (f"observed head {r['head']!r} clean {r['clean']!r} head_rc {r['head_rc']!r} head_error {r['head_error']!r} "
+                    f"diff_rc {r['diff_rc']!r} diff_error {r['diff_error']!r}")
+        stops = [f"{field} {r[field]!r} stopped at {where}" for field, where in
+                 (('head_error', 'git rev-parse HEAD'), ('diff_error', 'the diff child')) if r[field] is not None]
+        if stops:
+            raise ca.AdmissionRefusal('source_unavailable', f"environmental: {name} {binding[name]}: {'; '.join(stops)}; {observed}; {RERUN}")
+        if not (r['head_rc'] == 0 and r['diff_rc'] == 0 and r['head'] == binding['source'] and r['clean'] is True):
             raise ca.AdmissionRefusal('source_unavailable', f"{name} {binding[name]}: expected HEAD {binding['source']} clean True rc 0 no error; "
-                                      f"observed head {r['head']!r} clean {r['clean']!r} head_rc {r['head_rc']!r} head_error {r['head_error']!r} "
-                                      f"diff_rc {r['diff_rc']!r} diff_error {r['diff_error']!r}; {REBUILD}")
+                                      f"{observed}; {REBUILD}")
     py = src['python']
-    if not (py['error'] is None and py['executable'] is True and py['import_ok'] is True):
+    if py['error'] is not None:
+        raise ca.AdmissionRefusal('source_unavailable', f"environmental: python {binding['python']}: error {py['error']!r} stopped at the import child; "
+                                  f"observed executable {py['executable']!r} import_ok {py['import_ok']!r} error {py['error']!r} "
+                                  f"stderr_tail {py['stderr_tail']!r}; {RERUN}")
+    if not (py['executable'] is True and py['import_ok'] is True):
         raise ca.AdmissionRefusal('source_unavailable', f"python {binding['python']}: expected executable True import_ok True no error; "
                                   f"observed executable {py['executable']!r} import_ok {py['import_ok']!r} error {py['error']!r} "
                                   f"stderr_tail {py['stderr_tail']!r}; {REBUILD}")

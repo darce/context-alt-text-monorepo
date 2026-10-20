@@ -4,11 +4,12 @@ import ast
 import hashlib
 import importlib.util
 import json
+import posixpath
 import re
 import subprocess
 import sys
 import tarfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 BAKEOFF = HERE.parent
@@ -19,13 +20,18 @@ WINDOW = re.compile(r"window=Path\('(/tmp/qwen-owner-window\.[A-Za-z0-9_-]+)'\)"
 RUNNER_MODULES = ('run_selected_root_resume_qualification', 'run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate')
 HELPER_SHA256 = 'f0ca0e59c1bc8db1dd83c99598f82c0fb3665a7dd443f66e44291f44f837a4cd'
 SOURCE_ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/source'
+RESULTS_ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/results'
 REBUILD = 'rebuild: qwen-latebind/durable-source/build_durable_source.py'
 SOURCE_LINES = dict(
     SOURCE=re.compile(r"^SOURCE='([0-9a-f]{40})'$", re.MULTILINE),
     repo=re.compile(r"^repo=Path\('" + re.escape(SOURCE_ROOT) + r"'\)/SOURCE$", re.MULTILINE),
     python=re.compile(r"^python=repo\.parent/\(SOURCE\+'\.venv'\)/'bin/python'$", re.MULTILINE),
-    workspace=re.compile(r"^workspace=Path\('(/home/gate/bakeoff-rounds-20261017-inputs/results/[A-Za-z0-9_.-]+/workspace)'\);", re.MULTILINE),
+    workspace=re.compile(r"^workspace=Path\('(" + re.escape(RESULTS_ROOT) + r"/[^'\n]+)'\);", re.MULTILINE),
 )
+BOUND = ('SOURCE', 'repo', 'python', 'workspace')
+REPO_EXPR = ast.dump(ast.parse(f"Path('{SOURCE_ROOT}')/SOURCE", mode='eval').body)
+PYTHON_EXPR = ast.dump(ast.parse("repo.parent/(SOURCE+'.venv')/'bin/python'", mode='eval').body)
+RESULT_NAME = re.compile(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*')
 G = 1024**3
 
 
@@ -57,6 +63,32 @@ def verify_prepared(prepared, raw):
     return windows[0]
 
 
+def workspace_ok(p):
+    # RLSE-33: the workspace is exactly <results root>/<NAME>/workspace. RESULT_NAME cannot start with '.', so '.' and '..' fail it;
+    # normpath catches '//' and a trailing slash, which PurePosixPath would otherwise drop without a trace.
+    parts = PurePosixPath(p).parts
+    if len(parts) != 7:
+        return False
+    name = parts[5]
+    return (parts == ('/', 'home', 'gate', 'bakeoff-rounds-20261017-inputs', 'results', name, 'workspace')
+            and RESULT_NAME.fullmatch(name) is not None and posixpath.normpath(p) == p)
+
+
+def bound_names(node):
+    # Every name a node binds, wherever it sits: stores and deletes, parameters, import aliases, global and nonlocal, and any node that
+    # carries a name (defs, classes, except-as, match captures, type parameters, a mapping's **rest).
+    if isinstance(node, ast.Name):
+        return [node.id] if isinstance(node.ctx, (ast.Store, ast.Del)) else []
+    if isinstance(node, ast.arg):
+        return [node.arg]
+    if isinstance(node, ast.alias):
+        return [node.asname or node.name.split('.')[0]]
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return list(node.names)
+    name = getattr(node, 'name', None) or getattr(node, 'rest', None)
+    return [name] if isinstance(name, str) else []
+
+
 def source_binding(raw):
     # RLSE-31/STOR-13: the recipe binds only the durable source root; a reaped lane sandbox is refused before any ssh.
     text = raw.decode()
@@ -65,8 +97,35 @@ def source_binding(raw):
     hits = {name: pattern.findall(text) for name, pattern in SOURCE_LINES.items()}
     for name, found in hits.items():
         need(len(found) == 1, f'{name} line must appear exactly once, found {len(found)}')
-    sha = hits['SOURCE'][0]
-    return dict(source=sha, repo=f'{SOURCE_ROOT}/{sha}', python=f'{SOURCE_ROOT}/{sha}.venv/bin/python', workspace=hits['workspace'][0])
+    sha, workspace = hits['SOURCE'][0], hits['workspace'][0]
+    need(workspace_ok(workspace), f'workspace must be {RESULTS_ROOT}/<NAME>/workspace, got {workspace!r}')
+    # The line checks above can be fooled (a second binding on the same line, a match inside a string), so the module itself is counted too.
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as e:
+        raise ValueError(f'recipe does not parse: {e}') from e
+    need(not any(isinstance(n, ast.ImportFrom) and any(a.name == '*' for a in n.names) for n in ast.walk(tree)),
+         'recipe imports * and could rebind a bound name')
+    counts = dict.fromkeys(BOUND, 0)
+    for node in ast.walk(tree):
+        for name in bound_names(node):
+            if name in counts:
+                counts[name] += 1
+    assigned = {stmt.targets[0].id: stmt.value for stmt in tree.body
+                if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)}
+    for name in BOUND:
+        need(counts[name] == 1, f'{name} must be bound exactly once, found {counts[name]} bindings')
+        need(name in assigned, f'{name} is bound outside a module-level single-target assignment, found {counts[name]} binding')
+    value = assigned['SOURCE']
+    need(isinstance(value, ast.Constant) and isinstance(value.value, str) and re.fullmatch(r'[0-9a-f]{40}', value.value) is not None,
+         'SOURCE must be a 40-hex str constant')
+    need(ast.dump(assigned['repo']) == REPO_EXPR, 'repo must be exactly Path(<source root>)/SOURCE')
+    need(ast.dump(assigned['python']) == PYTHON_EXPR, "python must be exactly repo.parent/(SOURCE+'.venv')/'bin/python'")
+    ws = assigned['workspace']
+    need(isinstance(ws, ast.Call) and isinstance(ws.func, ast.Name) and ws.func.id == 'Path' and len(ws.args) == 1 and not ws.keywords
+         and isinstance(ws.args[0], ast.Constant) and isinstance(ws.args[0].value, str), 'workspace must be Path(<str constant>)')
+    need(value.value == sha and ws.args[0].value == workspace, 'AST-derived SOURCE and workspace differ from the text-derived ones')
+    return dict(source=sha, repo=f'{SOURCE_ROOT}/{sha}', python=f'{SOURCE_ROOT}/{sha}.venv/bin/python', workspace=workspace)
 
 
 def bind_generator(prepared, gate_commit, git):
@@ -87,28 +146,49 @@ def run_git(*args):
 
 def preclaim_script(window, binding):
     # Read-only. Reports the GPU state, the newest publication, and the source roots as the recipe's uid 1002 children see them; no TTL is judged here, because the recipe refreshes AUTO.
-    return '''import glob,json,os,pathlib,subprocess
+    # The children share one 20 s deadline inside the caller's 30 s ssh, and the diff reads a private copy of .git/index, never the repo's own.
+    return '''import glob,json,os,pathlib,shutil,subprocess,tempfile,time
 w=pathlib.Path(WINDOW);b=BINDING
 gpu=json.loads(pathlib.Path('/run/acx/gpu-state.json').read_bytes())
 pubs=[]
 for p in glob.glob(str(w/'ops'/'*'/'publication.json')):
  d=json.loads(pathlib.Path(p).read_bytes());pubs.append(dict(op=pathlib.Path(p).parent.name,action=d.get('action'),expires_at=d.get('expires_at'),sequence=d.get('sequence',-1)))
 kw=dict(user=1002,group=1002,extra_groups=[],env=dict(PATH='/usr/local/bin:/usr/bin:/bin',HOME='/home/gate',LANG='C.UTF-8',PYTHONDONTWRITEBYTECODE='1',OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1'),capture_output=True,text=True)
+deadline=time.monotonic()+20
+def left(own):return min(own,max(0.0,deadline-time.monotonic()))
 def tree(root):
  s=dict(head=None,clean=False,head_rc=None,diff_rc=None,head_error=None,diff_error=None)
- try:h=subprocess.run(['git','-C',root,'rev-parse','HEAD'],timeout=10,**kw);s.update(head_rc=h.returncode,head=h.stdout.strip()if h.returncode==0 else None)
- except(OSError,subprocess.TimeoutExpired)as e:s['head_error']=type(e).__name__+': '+str(e)
- try:d=subprocess.run(['git','-C',root,'diff','--name-only'],timeout=15,**kw);s.update(diff_rc=d.returncode,clean=d.returncode==0 and not d.stdout.strip())
- except(OSError,subprocess.TimeoutExpired)as e:s['diff_error']=type(e).__name__+': '+str(e)
+ t=left(10)
+ if t<=0:s['head_error']='deadline_exhausted'
+ else:
+  try:h=subprocess.run(['git','-C',root,'rev-parse','HEAD'],timeout=t,**kw);s.update(head_rc=h.returncode,head=h.stdout.strip()if h.returncode==0 else None)
+  except(OSError,subprocess.TimeoutExpired)as e:s['head_error']=type(e).__name__+': '+str(e)
+ t=left(15);tmp=None
+ if t<=0:s['diff_error']='deadline_exhausted'
+ else:
+  try:
+   tmp=tempfile.mkdtemp(prefix='preclaim-index-');os.chown(tmp,1002,1002)
+   idx=os.path.join(tmp,'index');shutil.copyfile(os.path.join(root,'.git','index'),idx);os.chown(idx,1002,1002)
+   d=subprocess.run(['git','-C',root,'diff','--name-only'],timeout=t,**dict(kw,env=dict(kw['env'],GIT_INDEX_FILE=idx,GIT_OPTIONAL_LOCKS='0')));s.update(diff_rc=d.returncode,clean=d.returncode==0 and not d.stdout.strip())
+  except(OSError,subprocess.TimeoutExpired)as e:s['diff_error']=type(e).__name__+': '+str(e)
+  finally:
+   if tmp:shutil.rmtree(tmp)
  return s
 repo=tree(b['repo']);workspace=tree(b['workspace'])
 py=dict(executable=os.access(b['python'],os.X_OK),import_ok=None,stderr_tail=None,error=None)
 if py['executable']:
- try:
-  r=subprocess.run([b['python'],'-B','-c','import httpx,scripts.eval_harness.bakeoff'],cwd=b['workspace']+'/apps/prototype-description-service',timeout=20,**kw);py.update(import_ok=r.returncode==0,stderr_tail=r.stderr[-300:])
- except(OSError,subprocess.TimeoutExpired)as e:py['error']=type(e).__name__+': '+str(e)
+ t=left(20)
+ if t<=0:py['error']='deadline_exhausted'
+ else:
+  try:
+   r=subprocess.run([b['python'],'-B','-c','import httpx,scripts.eval_harness.bakeoff'],cwd=b['workspace']+'/apps/prototype-description-service',timeout=t,**kw);py.update(import_ok=r.returncode==0,stderr_tail=r.stderr[-300:])
+  except(OSError,subprocess.TimeoutExpired)as e:py['error']=type(e).__name__+': '+str(e)
 print(json.dumps(dict(gpu=dict(state=gpu.get('state'),lease_expires_at=gpu.get('lease_expires_at')),publication=max(pubs,key=lambda x:x['sequence'],default=None),source=dict(repo=repo,workspace=workspace,python=py))))
 '''.replace('WINDOW', repr(window)).replace('BINDING', repr(binding))
+
+
+ROOT_KEYS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error')
+PYTHON_KEYS = ('executable', 'import_ok', 'stderr_tail', 'error')
 
 
 def classify_preclaim(report, binding):
@@ -125,15 +205,23 @@ def classify_preclaim(report, binding):
     src = report.get('source')
     if not isinstance(src, dict):
         raise ca.AdmissionRefusal('malformed_payload', 'preclaim reply has no source mapping')
+    for name, keys in (('repo', ROOT_KEYS), ('workspace', ROOT_KEYS), ('python', PYTHON_KEYS)):
+        m = src.get(name)
+        if not isinstance(m, dict) or any(k not in m for k in keys):
+            raise ca.AdmissionRefusal('malformed_payload', f"preclaim source.{name} is not a mapping with {', '.join(keys)}")
+    # NDM-06: a child that failed, timed out or was skipped reports an rc, an error or an unset field; each one refuses.
     for name in ('repo', 'workspace'):
-        root = src[name]
-        if root['head'] != binding['source'] or not root['clean']:
-            raise ca.AdmissionRefusal('source_unavailable', f"{name} {binding[name]}: expected HEAD {binding['source']} and clean, "
-                                      f"observed HEAD {root['head']} clean {root['clean']}; {REBUILD}")
+        r = src[name]
+        if not (r['head_error'] is None and r['diff_error'] is None and r['head_rc'] == 0 and r['diff_rc'] == 0
+                and r['head'] == binding['source'] and r['clean'] is True):
+            raise ca.AdmissionRefusal('source_unavailable', f"{name} {binding[name]}: expected HEAD {binding['source']} clean True rc 0 no error; "
+                                      f"observed head {r['head']!r} clean {r['clean']!r} head_rc {r['head_rc']!r} head_error {r['head_error']!r} "
+                                      f"diff_rc {r['diff_rc']!r} diff_error {r['diff_error']!r}; {REBUILD}")
     py = src['python']
-    if not py['executable'] or not py['import_ok']:
-        raise ca.AdmissionRefusal('source_unavailable', f"python {binding['python']}: expected executable and import ok, "
-                                  f"observed executable {py['executable']} import_ok {py['import_ok']}; {REBUILD}")
+    if not (py['error'] is None and py['executable'] is True and py['import_ok'] is True):
+        raise ca.AdmissionRefusal('source_unavailable', f"python {binding['python']}: expected executable True import_ok True no error; "
+                                  f"observed executable {py['executable']!r} import_ok {py['import_ok']!r} error {py['error']!r} "
+                                  f"stderr_tail {py['stderr_tail']!r}; {REBUILD}")
     return report
 
 

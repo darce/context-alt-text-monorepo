@@ -209,6 +209,7 @@ def owner_rows(ledger):
             key = v.get('physical_key') or v.get('expected_physical_key')
             require_bounds(k, cpu, mem)
             require('ledger_state', key, k)
+            require('ledger_state', k not in rows, 'owner row name collides with WB_operations: ' + k)
             rows[k] = dict(v, physical_key=key, aggregate_cpu_cores_max=cpu, aggregate_memory_bytes_max=mem)
     aura_a = ledger.get('Aura_WP400_A', {})
     if aura_a.get('remaining_actor_claim'):

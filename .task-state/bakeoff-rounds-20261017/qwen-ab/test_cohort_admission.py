@@ -392,6 +392,29 @@ def test_evaluate_labels_each_refusal_class(label, over, cls):
     assert e.value.cls == cls
 
 
+# The projection is (used + pending) / (used + free). With the default ledger, pending is 3 GiB runtime + 1.4e9 B emergency
+# (~1.30 GiB) + 1 GiB fixed + 4.5 GiB Aura term (no Aura_WP400_A key), about 9.80 GiB before any pending reservation.
+
+def test_disk_projection_counts_a_pending_reservation():
+    # (70 + 20 + 3 + 1.30 + 1 + 4.5) / 100 = 99.80% -> 100, over the 90% ceiling.
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(pending_reservations=[dict(reserved_bytes=20*G)]),
+                root=root(pct='70%', used_kb=70*G//1024, free_kb=30*G//1024))
+    assert e.value.cls == 'disk_projection' and 'projected 100%' in e.value.detail
+
+
+def test_disk_projection_without_pending_reservations_is_admitted():
+    # (70 + 3 + 1.30 + 1 + 4.5) / 100 = 79.80% -> 80, under the 90% ceiling.
+    assert healthy(root=root(pct='70%', used_kb=70*G//1024, free_kb=30*G//1024))['projected_root'] == 80
+
+
+def test_disk_projection_counts_the_fixed_reserves_and_the_aura_term():
+    # (82 + 3 + 1.30 + 1 + 4.5) / 100 = 91.80% -> 92, over 90. Without the 4.5 Aura term it is (82 + 5.30) / 100 -> 88.
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(root=root(pct='82%', used_kb=82*G//1024, free_kb=18*G//1024))
+    assert e.value.cls == 'disk_projection' and 'projected 92%' in e.value.detail
+
+
 def wb_row(drop=(), **over):
     row = dict(remaining_actor_claim=1, cpu_cores_aggregate=.25, memory_bytes_aggregate=G, physical_key='wb-key',
                expires='2026-10-20T13:00:00+00:00', setup_granted=False)
@@ -431,6 +454,14 @@ def test_a_wb_row_keyed_by_expected_physical_key_is_admitted():
     proof = healthy(ledger=ledger(WB_operations=dict(WB1=row)),
                     native=native(units=[dict(unit='workbay-lane-wb-key.scope', CPUQuotaPerSecUSec='250ms', MemoryMax=str(G))]))
     assert proof['owned']['workbay-lane-wb-key'] == pytest.approx([.25, G])
+
+
+def test_a_wb_operations_row_named_like_a_top_level_owner_row_is_refused_as_ledger_state():
+    # The WB claim must carry valid bounds: a zero-resource claim is refused by require_bounds before the collision check.
+    led = ledger(X=owner_row('x-key'), WB_operations=dict(X=wb_row(physical_key='wb-key')))
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.owner_rows(led)
+    assert e.value.cls == 'ledger_state' and 'owner row name collides with WB_operations: X' in e.value.detail
 
 
 def test_an_owner_row_without_expires_is_a_labeled_refusal():
@@ -1031,7 +1062,7 @@ def operator_checkout(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def stubbed_main(operator_checkout, monkeypatch):
+def stubbed_main(operator_checkout, monkeypatch, tmp_path):
     m = operator_checkout
     monkeypatch.setattr(RUN.subprocess, 'run', lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps(report()), stderr=''))
     persisted, runs = [], []
@@ -1040,15 +1071,22 @@ def stubbed_main(operator_checkout, monkeypatch):
     fake_runner.__spec__ = importlib.util.spec_from_file_location(RUNNER_NAME, m['bakeoff']/(RUNNER_NAME + '.py'))
     fake_runner.admission = types.SimpleNamespace(guard=None, N=None, PROFILE=None)
     fake_runner.cap = types.SimpleNamespace(persist=lambda path, obj: persisted.append((path, obj)))
-    fake_runner.run = lambda head, gate: runs.append((head, gate))
+    results, terminal = tmp_path/'results', dict(exit_code=0)
+    results.mkdir()
+    def run(head, gate):
+        runs.append((head, gate))
+        # The shared runner writes its terminal record before it returns; main reads the remote exit code from it.
+        (results/(fake_runner.N + '.transport-terminal.json')).write_text(json.dumps(terminal))
+    fake_runner.P = results
+    fake_runner.run = run
     monkeypatch.setitem(sys.modules, RUNNER_NAME, fake_runner)
-    return dict(m, runner=fake_runner, persisted=persisted, runs=runs)
+    return dict(m, runner=fake_runner, persisted=persisted, runs=runs, terminal=terminal)
 
 
 def test_main_admits_then_runs_with_cohort_identity_and_bootstrap(stubbed_main):
     m, admitted = stubbed_main, []
     m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: admitted.append(1))
-    assert RUN.main(m['argv']) is None
+    assert RUN.main(m['argv']) == 0
     runner = m['runner']
     assert admitted == [1] and m['runs'] == [(CUSTODY_SOURCE, 'QWEN-AB-G2')]
     assert runner.admission.guard is CA.guard
@@ -1119,6 +1157,23 @@ def test_main_refuses_a_prepared_record_bound_to_another_name(stubbed_main):
     with pytest.raises(SystemExit, match='preflight refused'):
         RUN.main(['--name', 'alias', '--dir', str(m['d']), '--gate-commit', 'g1'])
     assert calls == [] and m['persisted'] == [] and m['runs'] == []
+
+
+@pytest.mark.parametrize('rc', [1, 255])
+def test_main_reports_a_failed_remote_transport_as_exit_4(stubbed_main, capsys, rc):
+    m = stubbed_main
+    m['terminal']['exit_code'] = rc
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
+    assert RUN.main(m['argv']) == 4
+    assert json.loads(capsys.readouterr().out) == dict(status='ROOT_TRANSPORT_FAILED', exit_code=rc)
+
+
+def test_main_lets_a_missing_terminal_record_raise(stubbed_main):
+    m = stubbed_main
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
+    m['runner'].run = lambda head, gate: None
+    with pytest.raises(FileNotFoundError):
+        RUN.main(m['argv'])
 
 
 # --- runner v2: pilot checks, with the frozen keys that the pilot and the full recipe must share ---
@@ -1217,7 +1272,7 @@ def test_main_full_mode_admits_with_a_clean_pilot_and_binds_its_receipt(stubbed_
     full_recipe(m['d'])
     write_pilot(m['bakeoff'], m['d'])
     m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
-    assert RUN.main(m['argv'] + ['--pilot', 'p']) is None
+    assert RUN.main(m['argv'] + ['--pilot', 'p']) == 0
     assert m['runs'] == [(CUSTODY_SOURCE, 'QWEN-AB-G2')]
     assert 'QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256' in m['runner'].bootstrap({}, None)
 
@@ -1405,14 +1460,14 @@ def test_main_passes_the_helper_check_with_the_pinned_bytes(stubbed_main):
     m = stubbed_main
     assert hashlib.sha256((m['d']/'LEXICON-MIMO-40-LAST40-R1.prepared.json').read_bytes()).hexdigest() == 'f0ca0e59c1bc8db1dd83c99598f82c0fb3665a7dd443f66e44291f44f837a4cd'
     m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
-    assert RUN.main(m['argv']) is None
+    assert RUN.main(m['argv']) == 0
     assert m['runs'] == [(CUSTODY_SOURCE, 'QWEN-AB-G2')]
 
 
 def test_main_receipt_records_the_sha256_of_each_runner_module_it_resolved(stubbed_main):
     m = stubbed_main
     m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
-    assert RUN.main(m['argv']) is None
+    assert RUN.main(m['argv']) == 0
     _, receipt = m['runner'].inputs(CUSTODY_SOURCE, 'QWEN-AB-G2')
     origins = {RUNNER_NAME: m['bakeoff']/(RUNNER_NAME + '.py'), **{name: m['bakeoff']/(name + '.py') for name in LEAVES}}
     assert set(receipt['module_sha256']) == {RUNNER_NAME, *LEAVES}

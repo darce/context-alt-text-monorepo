@@ -178,6 +178,9 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     recipe = replace_once(recipe, "N='LEXICON-MIMO-40-LAST40-R1'", 'N=' + repr(name))
     recipe = replace_once(recipe, "N=" + repr(name), "assert " + repr(unit) + " in cg.parts, 'Declared root scope mismatch'\nN=" + repr(name))
     recipe = replace_once(recipe, "    assert previous=='aa048fdb-01cc-405d-9e2c-5af0063093fb','Continuation ownership changed; retain state and reconcile explicitly'\n", LATE_BIND_BLOCK)
+    # Refusals before LATE_BIND_BLOCK must not reach the finally holding a predecessor it never owned (RES-10).
+    recipe = replace_once(recipe, "owned_start=None;safe_withdraw=True;key_bytes=None;maintenance_attempted=False;child=None;maintenance_root=None",
+                          "owned_start=None;safe_withdraw=False;key_bytes=None;maintenance_attempted=False;child=None;maintenance_root=None")
     # Shared captured controls are checked separately from actual model input.
     recipe = replace_once(recipe, "batch_cfg=json.loads(raw);assert len(batch_cfg['images'])==20",
                           "batch_cfg=json.loads(raw);assert 0<len(batch_cfg['images'])<=20")

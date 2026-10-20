@@ -134,6 +134,28 @@ def test_parse_memory_max():
     assert CA.parse_memory_max('banana') is None
 
 
+@pytest.mark.parametrize('text,row,expected', [
+    ('some avg10=1.00 avg60=12.50 avg300=0.00 total=0\n', 'some', 12.5),
+    ('some avg10=1.00 avg60=12.50 avg300=0.00 total=0\nfull avg10=0.00 avg60=3 avg300=0.00 total=0\n', 'full', 3.),
+])
+def test_avg60_reads_the_row_named_by_its_leading_word(text, row, expected):
+    assert CA.avg60(text, row) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize('text,row', [
+    ('some avg10=0.00 avg60=0garbage avg300=0.00 total=0\n', 'some'),
+    ('some avg10=0.00 avg60=. avg300=0.00 total=0\n', 'some'),
+    ('some avg10=0.00 avg60=1..2 avg300=0.00 total=0\n', 'some'),
+    ('some avg10=0.00 avg60=nan avg300=0.00 total=0\n', 'some'),
+    ('some avg10=0.00 avg60=inf avg300=0.00 total=0\n', 'some'),
+    ('some avg10=0.00 avg60=-1 avg300=0.00 total=0\n', 'some'),
+    ('full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n', 'some'),
+    ('', 'some'),
+])
+def test_avg60_is_infinite_for_any_malformed_or_absent_reading(text, row):
+    assert CA.avg60(text, row) == float('inf')
+
+
 # --- classify_native_units ----------------------------------------------------------------------
 
 def test_classify_owned_unit_within_caps_passes():
@@ -169,6 +191,103 @@ def test_classify_unbounded_co_tenant_names_the_unit(cpu, mem):
         CA.classify_native_units([co('abc', cpu=cpu, mem=mem)], {'workbay-lane-own': [.5, 2*G]})
     assert e.value.cls == 'co_tenant_unbounded'
     assert 'workbay-lane-other-abc.scope' in e.value.detail
+
+
+# --- root named units: the remote probe reports, and the verdict is classified here -------------
+
+ROOT_UNIT = 'workbay-lane-own-x.scope'
+ROOT_CAPS = {ROOT_UNIT: [.5, 2*G]}
+NOT_FOUND = dict(LoadState='not-found', ActiveState='inactive', ControlGroup='', MainPID='0',
+                 CPUQuotaPerSecUSec='infinity', MemoryMax='infinity')
+
+
+def named(total_cpu=.25, total_memory=G, invalid=()):
+    return dict(system=dict(LoadState='loaded'), total_cpu=total_cpu, total_memory=total_memory, invalid_not_found=list(invalid))
+
+
+def loaded(cpu='250ms', mem=str(G)):
+    return dict(LoadState='loaded', ActiveState='active', ControlGroup='/user.slice/x.scope', MainPID='42',
+                CPUQuotaPerSecUSec=cpu, MemoryMax=mem)
+
+
+def test_classify_root_named_admits_units_within_caps():
+    CA.classify_root_named({ROOT_UNIT: named()}, ROOT_CAPS)
+
+
+def test_classify_root_named_tolerates_float_noise_on_the_cpu_cap():
+    CA.classify_root_named({ROOT_UNIT: named(total_cpu=.5 + 1e-9)}, ROOT_CAPS)
+
+
+@pytest.mark.parametrize('over', [dict(total_cpu=.75), dict(total_memory=3*G), dict(total_cpu=None), dict(total_memory=None)],
+                         ids=['over cpu cap', 'over memory cap', 'unbounded cpu', 'memory infinity'])
+def test_classify_root_named_refuses_over_quota_or_unbounded(over):
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.classify_root_named({ROOT_UNIT: named(**over)}, ROOT_CAPS)
+    assert e.value.cls == 'owned_unit_over_quota'
+
+
+def test_classify_root_named_refuses_an_invalid_not_found_row():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.classify_root_named({ROOT_UNIT: named(invalid=['gate-user'])}, ROOT_CAPS)
+    assert e.value.cls == 'root_probe'
+
+
+def test_classify_root_named_refuses_a_missing_probe_row():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.classify_root_named({}, ROOT_CAPS)
+    assert e.value.cls == 'root_probe'
+
+
+def run_root_named(monkeypatch, capsys, shown, units=ROOT_CAPS):
+    """Runs ROOT_NAMED_SCRIPT locally. shown is {namespace: {unit: row}}; a unit missing from it is not-found."""
+    def check_output(cmd, text=True, timeout=None):
+        namespace = 'system' if cmd[0] == 'systemctl' else 'gate-user'
+        row = shown.get(namespace, {}).get(cmd[cmd.index('show') + 1], NOT_FOUND)
+        return ''.join(f'{k}={v}\n' for k, v in row.items())
+    monkeypatch.setattr(subprocess, 'check_output', check_output)
+    exec(compile(CA.ROOT_NAMED_SCRIPT.replace('UNITS', repr(units)), 'root_named', 'exec'), {})
+    return json.loads(capsys.readouterr().out)
+
+
+def test_root_named_script_reports_raw_values_and_totals(monkeypatch, capsys):
+    out = run_root_named(monkeypatch, capsys, dict(system={ROOT_UNIT: loaded()}))
+    assert out[ROOT_UNIT]['system']['CPUQuotaPerSecUSec'] == '250ms'
+    assert out[ROOT_UNIT]['gate-user']['LoadState'] == 'not-found'
+    assert out[ROOT_UNIT]['total_cpu'] == pytest.approx(.25)
+    assert out[ROOT_UNIT]['total_memory'] == G and out[ROOT_UNIT]['invalid_not_found'] == []
+    CA.classify_root_named(out, ROOT_CAPS)
+
+
+def test_root_named_script_never_raises_for_an_over_quota_unit(monkeypatch, capsys):
+    out = run_root_named(monkeypatch, capsys, dict(system={ROOT_UNIT: loaded(cpu='1s')}))
+    assert out[ROOT_UNIT]['total_cpu'] == pytest.approx(1.)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.classify_root_named(out, ROOT_CAPS)
+    assert e.value.cls == 'owned_unit_over_quota'
+
+
+@pytest.mark.parametrize('cpu,mem,field', [('infinity', str(G), 'total_cpu'), ('250xs', str(G), 'total_cpu'),
+                                           ('250ms', 'infinity', 'total_memory'), ('250ms', '1.5', 'total_memory')])
+def test_root_named_script_totals_are_null_when_unbounded_or_unparseable(monkeypatch, capsys, cpu, mem, field):
+    out = run_root_named(monkeypatch, capsys, dict(system={ROOT_UNIT: loaded(cpu=cpu, mem=mem)}))
+    assert out[ROOT_UNIT][field] is None
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.classify_root_named(out, ROOT_CAPS)
+    assert e.value.cls == 'owned_unit_over_quota'
+
+
+@pytest.mark.parametrize('over', [dict(ActiveState='active'), dict(ControlGroup='/user.slice/x.scope'), dict(MainPID='7')])
+def test_root_named_script_flags_an_invalid_not_found_row(monkeypatch, capsys, over):
+    out = run_root_named(monkeypatch, capsys, dict(system={ROOT_UNIT: dict(NOT_FOUND, **over)}))
+    assert out[ROOT_UNIT]['invalid_not_found'] == ['system']
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.classify_root_named(out, ROOT_CAPS)
+    assert e.value.cls == 'root_probe'
+
+
+def test_root_named_script_has_no_assert_or_raise():
+    tree = ast.parse(CA.ROOT_NAMED_SCRIPT.replace('UNITS', '{}'))
+    assert [n for n in ast.walk(tree) if isinstance(n, (ast.Assert, ast.Raise))] == []
 
 
 # --- evaluate -----------------------------------------------------------------------------------
@@ -217,6 +336,52 @@ def test_evaluate_labels_each_refusal_class(label, over, cls):
     with pytest.raises(CA.AdmissionRefusal) as e:
         healthy(**over)
     assert e.value.cls == cls
+
+
+def test_plain_ceiling_refusal_is_not_masked_by_an_earlier_reserved_one():
+    # cpu is 2.75 here: the CPU ceiling fails only with the 0.75-core co-tenant, but the host CPU check fails
+    # without it (2.75 + 1.5 > 4), so the deterministic ledger_state must win and admit must not retry.
+    over = dict(profile=dict(aggregate_cpu_cores_max=2., aggregate_memory_bytes_max=2*G), native=native(units=[co('a', '750ms')]))
+    attempts, slept = [], []
+
+    def attempt():
+        attempts.append(1)
+        return healthy(**over)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.admit(attempt, sleep=slept.append)
+    assert e.value.cls == 'ledger_state'
+    assert len(attempts) == 1 and slept == []
+
+
+MALFORMED_AVG60 = ['avg60=0garbage', 'avg60=.', 'avg60=1..2', 'avg60=nan', 'avg60=inf', 'avg60=-1']
+
+
+@pytest.mark.parametrize('token', MALFORMED_AVG60)
+def test_cpu_pressure_refuses_a_malformed_avg60(token):
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(native=native(cpu=f'some avg10=0.00 {token} avg300=0.00 total=0\n'))
+    assert e.value.cls == 'cpu_pressure'
+
+
+@pytest.mark.parametrize('token', MALFORMED_AVG60)
+def test_io_pressure_refuses_a_malformed_avg60(token):
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(native=native(io=f'full avg10=0.00 {token} avg300=0.00 total=0\n'))
+    assert e.value.cls == 'io_pressure'
+
+
+@pytest.mark.parametrize('text', ['full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n', ''])
+def test_cpu_pressure_refuses_an_absent_row(text):
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(native=native(cpu=text))
+    assert e.value.cls == 'cpu_pressure'
+
+
+@pytest.mark.parametrize('text', ['some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n', ''])
+def test_io_pressure_refuses_an_absent_row(text):
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(native=native(io=text))
+    assert e.value.cls == 'io_pressure'
 
 
 # --- admit --------------------------------------------------------------------------------------
@@ -304,6 +469,22 @@ def test_guard_refuses_when_ledger_changes_during_probe(tmp_path, monkeypatch):
     with pytest.raises(CA.AdmissionRefusal) as e:
         CA.guard()
     assert e.value.cls == 'ledger_state'
+
+
+def test_guard_refuses_an_owned_unit_over_quota_before_evaluating(tmp_path, monkeypatch):
+    led = tmp_path/'ledger.json'
+    led.write_text(json.dumps(ledger(OWN=dict(owner_row(), native_unit=ROOT_UNIT))))
+    probe = dict(system=dict(LoadState='loaded'), total_cpu=1., total_memory=G, invalid_not_found=[])
+
+    def ssh(host, script, timeout=30):
+        if host == CA.HOST and 'LoadState' in script:
+            return {ROOT_UNIT: probe}
+        return native() if host == 'native-host' else root()
+    persisted = fake_r6(monkeypatch, tmp_path, led, ssh)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.guard()
+    assert e.value.cls == 'owned_unit_over_quota'
+    assert persisted == []
 
 
 # --- runner v2: CLI -----------------------------------------------------------------------------
@@ -408,7 +589,7 @@ def test_bind_generator_rejects_a_sha_mismatch():
 def run_fixture(tmp_path):
     d = tmp_path/'dir'
     d.mkdir()
-    (d/'n.prepared.json').write_text(json.dumps(prepared(RECIPE, mode='pilot', candidate='qwen', unit='workbay-x.scope',
+    (d/'n.prepared.json').write_text(json.dumps(prepared(RECIPE, name='n', mode='pilot', candidate='qwen', unit='workbay-x.scope',
                                                           gate_token='tok', preparer_sha256=hashlib.sha256(SRC).hexdigest())))
     (d/'n.remote.py').write_bytes(RECIPE)
     (d/'LEXICON-MIMO-40-LAST40-R1.prepared.json').write_text(json.dumps(dict(stage='S', manifest_sha256='M', source_head='H', gate='GG')))
@@ -437,7 +618,7 @@ def stubbed_main(tmp_path, monkeypatch):
     fake_runner.run = lambda head, gate: runs.append((head, gate))
     monkeypatch.setitem(sys.modules, 'run_selected_root_resume_qualification', fake_runner)
     argv = ['--name', 'n', '--dir', str(d), '--gate-commit', 'g1']
-    return dict(runner=fake_runner, bakeoff=bakeoff, persisted=persisted, runs=runs, argv=argv, monkeypatch=monkeypatch)
+    return dict(runner=fake_runner, bakeoff=bakeoff, d=d, persisted=persisted, runs=runs, argv=argv, monkeypatch=monkeypatch)
 
 
 def test_main_admits_then_runs_with_cohort_identity_and_bootstrap(stubbed_main):
@@ -460,7 +641,7 @@ def test_main_admits_then_runs_with_cohort_identity_and_bootstrap(stubbed_main):
     assert 'tok' in source and 'QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256' not in source
 
 
-@pytest.mark.parametrize('cls,code', [('cpu_pressure', 75), ('setup_owner', 3)])
+@pytest.mark.parametrize('cls,code', [('cpu_pressure', 75), ('setup_owner', 3), ('owned_unit_over_quota', 3)])
 def test_main_maps_admission_refusal_to_exit_code_without_running(stubbed_main, cls, code, capsys):
     def refuse(*a, **k):
         raise CA.AdmissionRefusal(cls, 'x')
@@ -469,6 +650,116 @@ def test_main_maps_admission_refusal_to_exit_code_without_running(stubbed_main, 
     assert stubbed_main['runs'] == []
     status = json.loads(capsys.readouterr().out)
     assert status == dict(status='ADMISSION_REFUSED', refusal=f'refusal:{cls}: x', transient=code == 75)
+
+
+def test_main_refuses_a_prepared_record_bound_to_another_name(stubbed_main):
+    m = stubbed_main
+    for p in m['d'].glob('n.*'):
+        (m['d']/p.name.replace('n.', 'alias.', 1)).write_bytes(p.read_bytes())
+    calls = []
+    m['monkeypatch'].setattr(RUN.subprocess, 'run', lambda *a, **k: calls.append(('run', a)))
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: calls.append(('admit', a)))
+    with pytest.raises(SystemExit, match='preflight refused'):
+        RUN.main(['--name', 'alias', '--dir', str(m['d']), '--gate-commit', 'g1'])
+    assert calls == [] and m['persisted'] == [] and m['runs'] == []
+
+
+# --- runner v2: pilot checks, with the frozen keys that the pilot and the full recipe must share ---
+
+FROZEN = dict(candidate='qwen', asset_spec_sha256='a' * 64, model_contract=dict(wire_model_id='wire-1', model_revision='rev-1'),
+              sources=['src-1'], immutable_candidate_configs=dict(cfg='c1'))
+FULL = dict(FROZEN, mode='full')
+PILOT_CAPACITY = dict(remaining_actor_claim=0, native=dict(GPU_stopped=True, UID0_hits=0, UID0_errors=0),
+                      execution_evidence=dict(persisted_image_rows=2, contract_valid_pairs=2, recorded_completion_POST_attempts=6))
+PILOT_RESULT = dict(complete=True, evaluated_images=2, item_errors=0, raw_passes=6)
+PILOT_RAW = dict(model_id='wire-1', model_revision='rev-1', valid_pairs=2)
+PILOT_VIOLATIONS = {
+    'remaining_actor_claim=1': dict(capacity=dict(PILOT_CAPACITY, remaining_actor_claim=1)),
+    'GPU_stopped=False': dict(capacity=dict(PILOT_CAPACITY, native=dict(PILOT_CAPACITY['native'], GPU_stopped=False))),
+    'UID0_hits=1': dict(capacity=dict(PILOT_CAPACITY, native=dict(PILOT_CAPACITY['native'], UID0_hits=1))),
+    'UID0_errors=1': dict(capacity=dict(PILOT_CAPACITY, native=dict(PILOT_CAPACITY['native'], UID0_errors=1))),
+    'evidence tuple changed': dict(capacity=dict(PILOT_CAPACITY, execution_evidence=dict(PILOT_CAPACITY['execution_evidence'],
+                                                                                         recorded_completion_POST_attempts=5))),
+    'archive sha256 mismatch': dict(archive_sha256='0' * 64),
+    'two raw records': dict(records=(PILOT_RAW, PILOT_RAW)),
+    'model id mismatch': dict(records=(dict(PILOT_RAW, model_id='other'),)),
+    'pilot mode is full': dict(pilot=dict(FROZEN, mode='full')),
+    'pilot candidate differs': dict(pilot=dict(FROZEN, mode='pilot', candidate='other')),
+    'pilot immutable config differs': dict(pilot=dict(FROZEN, mode='pilot', immutable_candidate_configs=dict(cfg='c2'))),
+    'candidate result incomplete': dict(result=dict(PILOT_RESULT, complete=False)),
+}
+
+
+def add_json(t, name, obj):
+    payload = json.dumps(obj).encode()
+    info = tarfile.TarInfo(name)
+    info.size = len(payload)
+    t.addfile(info, io.BytesIO(payload))
+
+
+def pilot_dirs(tmp_path, monkeypatch):
+    bakeoff, d = tmp_path/'bakeoff', tmp_path/'dir'
+    bakeoff.mkdir()
+    d.mkdir()
+    monkeypatch.setattr(RUN, 'BAKEOFF', bakeoff)
+    return bakeoff, d
+
+
+def write_pilot(bakeoff, d, capacity=PILOT_CAPACITY, pilot=dict(FROZEN, mode='pilot'), result=PILOT_RESULT,
+                records=(PILOT_RAW,), archive_sha256=None):
+    """Writes a pilot named p. Each keyword replaces one part, so a case breaks one condition and nothing else."""
+    archive = d/'p.archive.tar'
+    with tarfile.open(archive, 'w') as t:
+        add_json(t, 'permanent/candidate-result.json', result)
+        for i, rec in enumerate(records):
+            add_json(t, f'permanent/r{i}/raw.json', rec)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (bakeoff/'p.actual-capacity-return.json').write_text(
+        json.dumps(dict(capacity, archive=str(archive), archive_sha256=archive_sha256 or digest)))
+    (d/'p.prepared.json').write_text(json.dumps(pilot))
+
+
+def test_pilot_checks_passes_the_clean_pilot(tmp_path, monkeypatch):
+    bakeoff, d = pilot_dirs(tmp_path, monkeypatch)
+    write_pilot(bakeoff, d)
+    cap_sha, archive_sha = RUN.pilot_checks(d, FULL, 'p')
+    assert cap_sha == hashlib.sha256((bakeoff/'p.actual-capacity-return.json').read_bytes()).hexdigest()
+    assert archive_sha == hashlib.sha256((d/'p.archive.tar').read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('label', list(PILOT_VIOLATIONS))
+def test_pilot_checks_refuses_each_violated_condition_alone(tmp_path, monkeypatch, label):
+    bakeoff, d = pilot_dirs(tmp_path, monkeypatch)
+    write_pilot(bakeoff, d, **PILOT_VIOLATIONS[label])
+    with pytest.raises(ValueError):
+        RUN.pilot_checks(d, FULL, 'p')
+
+
+def full_recipe(d):
+    """Rewrites the recipe as a full-mode record that carries the frozen keys the pilot must match."""
+    (d/'n.prepared.json').write_text(json.dumps(prepared(RECIPE, name='n', unit='workbay-x.scope', gate_token='tok', **FROZEN)))
+
+
+def test_main_full_mode_refuses_when_the_pilot_fails_one_condition(stubbed_main):
+    m = stubbed_main
+    full_recipe(m['d'])
+    write_pilot(m['bakeoff'], m['d'], capacity=dict(PILOT_CAPACITY, remaining_actor_claim=1))
+    calls = []
+    m['monkeypatch'].setattr(RUN.subprocess, 'run', lambda *a, **k: calls.append(('run', a)))
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: calls.append(('admit', a)))
+    with pytest.raises(SystemExit, match='preflight refused'):
+        RUN.main(m['argv'] + ['--pilot', 'p'])
+    assert calls == [] and m['runs'] == []
+
+
+def test_main_full_mode_admits_with_a_clean_pilot_and_binds_its_receipt(stubbed_main):
+    m = stubbed_main
+    full_recipe(m['d'])
+    write_pilot(m['bakeoff'], m['d'])
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
+    assert RUN.main(m['argv'] + ['--pilot', 'p']) is None
+    assert m['runs'] == [(CUSTODY_SOURCE, 'QWEN-AB-G2')]
+    assert 'QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256' in m['runner'].bootstrap({}, None)
 
 
 # --- runner v2: preclaim ------------------------------------------------------------------------

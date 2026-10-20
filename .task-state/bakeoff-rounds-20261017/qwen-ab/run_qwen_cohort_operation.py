@@ -133,6 +133,7 @@ def main(argv=None):
     prepared = json.loads((d/(a.name + '.prepared.json')).read_bytes())
     raw = (d/(a.name + '.remote.py')).read_bytes()
     try:
+        need(prepared.get('name') == a.name, f"prepared record is for {prepared.get('name')!r}, not --name {a.name!r}")
         window = verify_prepared(prepared, raw)
         bind_generator(prepared, a.gate_commit, run_git)
         with tarfile.open(d/'QWEN-AB-G2.custody.tar') as t:

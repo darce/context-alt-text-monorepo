@@ -41,6 +41,13 @@ def need(ok, why):
         raise ValueError(why)
 
 
+# QDSG2-02..04, TEST-20: the uid 1002 clean check passes only these exact local config keys and untracked entries. Both are quoted into the DIFF
+# shell text, so an entry with a quote or a newline would change that text.
+KNOWN_REPO_CONFIG_KEYS = ('core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates')
+KNOWN_RUNTIME_ENTRIES = ('apps/prototype-description-service/:memory:.ses', 'apps/prototype-description-service/prototype_description_service.egg-info/')
+need(all("'" not in e and '\n' not in e for e in KNOWN_REPO_CONFIG_KEYS + KNOWN_RUNTIME_ENTRIES), 'a known entry cannot be quoted into the DIFF text')
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument('--name', required=True)
@@ -150,11 +157,31 @@ def run_git(*args):
 def preclaim_script(window, binding):
     # Read-only. Reports the GPU state, the newest publication, and the source roots as the recipe's uid 1002 children see them; no TTL is judged here, because the recipe refreshes AUTO.
     # The children share one 20 s deadline inside the caller's 30 s ssh. Root opens and creates nothing under a source tree: the diff child runs as
-    # uid 1002, copies .git/index into its own private directory, and diffs that copy against HEAD and lists the untracked files.
-    # The shared evidence workspace collects runtime data files, so the untracked listing is limited to import-capable files (16423).
-    # Include ignored code too: gitignore rules do not prevent Python from importing a file in the service directory.
+    # uid 1002, copies .git/index into its own private directory, and checks that copy against the worktree and the untracked entries.
+    # Both allowlists are exact, not denylists (QDSG2-03, filters): a repo config key can name a filter or fsmonitor hook, so the child reads only the
+    # local config and exits on any key outside KNOWN_REPO_CONFIG_KEYS before a git command can run one. Any untracked entry outside
+    # KNOWN_RUNTIME_ENTRIES refuses, ignored ones too (no --exclude-standard), because those two are the observed known-good state (TEST-20).
+    # Index bits that hide a change (assume-unchanged, skip-worktree) and tracked symlinks under the service directory refuse. hooksPath is pinned,
+    # so no repo hook under .git/hooks runs when git writes the private copy.
     return '''import glob,json,os,pathlib,subprocess,time
-DIFF="""set -e; idx=$(git -C "$1" rev-parse --path-format=absolute --git-path index); d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; cp -- "$idx" "$d/index"; export GIT_INDEX_FILE="$d/index" GIT_OPTIONAL_LOCKS=0; git -C "$1" diff HEAD --name-only; git -C "$1" ls-files --others -- '*.py' '*.pyc' '*.so' '*.pth'"""
+DIFF="""set -e
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0
+idx=$(git -C "$1" rev-parse --path-format=absolute --git-path index)
+d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
+git -C "$1" config --local --no-includes --name-only --list > "$d/c"
+rc=0; grep -v -x -F CONFIG_ARGS "$d/c" || rc=$?; [ "$rc" -le 1 ]
+[ "$rc" -eq 1 ] || exit 0
+cp -- "$idx" "$d/index"
+export GIT_INDEX_FILE="$d/index"
+git -c core.fsmonitor=false -c core.untrackedCache=false -c core.hooksPath=/dev/null -C "$1" ls-files -v > "$d/v"
+rc=0; grep -E '^([a-z]|S) ' "$d/v" || rc=$?; [ "$rc" -le 1 ]
+git -c core.fsmonitor=false -c core.untrackedCache=false -c core.hooksPath=/dev/null -C "$1" ls-files -s -- apps/prototype-description-service > "$d/s"
+rc=0; grep -E '^120000 ' "$d/s" || rc=$?; [ "$rc" -le 1 ]
+git -c core.fsmonitor=false -c core.untrackedCache=false -c core.hooksPath=/dev/null -C "$1" diff --cached --name-only HEAD
+git -c core.fsmonitor=false -c core.untrackedCache=false -c core.hooksPath=/dev/null -C "$1" diff --name-only
+git -c core.fsmonitor=false -c core.untrackedCache=false -c core.hooksPath=/dev/null -C "$1" ls-files --others --directory --no-empty-directory > "$d/o"
+rc=0; grep -v -x -F ENTRY_ARGS "$d/o" || rc=$?; [ "$rc" -le 1 ]"""
 w=pathlib.Path(WINDOW);b=BINDING
 gpu=json.loads(pathlib.Path('/run/acx/gpu-state.json').read_bytes())
 pubs=[]
@@ -186,7 +213,9 @@ if py['executable']:
    r=subprocess.run([b['python'],'-B','-c','import httpx,scripts.eval_harness.bakeoff'],cwd=b['workspace']+'/apps/prototype-description-service',timeout=t,**kw);py.update(import_ok=r.returncode==0,stderr_tail=r.stderr[-300:])
   except(OSError,subprocess.TimeoutExpired)as e:py['error']=type(e).__name__+': '+str(e)
 print(json.dumps(dict(gpu=dict(state=gpu.get('state'),lease_expires_at=gpu.get('lease_expires_at')),publication=max(pubs,key=lambda x:x['sequence'],default=None),source=dict(repo=repo,workspace=workspace,python=py))))
-'''.replace('WINDOW', repr(window)).replace('BINDING', repr(binding))
+'''.replace('WINDOW', repr(window)).replace('BINDING', repr(binding)).replace(
+        'CONFIG_ARGS', ' '.join(f"-e '{k}'" for k in KNOWN_REPO_CONFIG_KEYS)).replace(
+        'ENTRY_ARGS', ' '.join(f"-e '{e}'" for e in KNOWN_RUNTIME_ENTRIES))
 
 
 ROOT_KEYS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error')

@@ -5,6 +5,7 @@ import importlib.util
 import inspect
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -21,7 +22,8 @@ CUSTODY_SOURCE = '22b61b6c7bc3932378dcb7e795a99f3ab288ff58'
 BANNED = ['run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate', 'run_selected_root_resume_qualification']
 TRANSIENT = {'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve', 'probe_transport'}
 DETERMINISTIC = {'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
-                 'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled', 'malformed_payload'}
+                 'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled', 'malformed_payload',
+                 'source_unavailable'}
 
 
 def load(name):
@@ -115,6 +117,20 @@ def test_transient_and_deterministic_sets_are_exact():
     assert CA.DETERMINISTIC == frozenset(DETERMINISTIC)
     assert all(CA.AdmissionRefusal(c, 'x').transient for c in TRANSIENT)
     assert not any(CA.AdmissionRefusal(c, 'x').transient for c in DETERMINISTIC)
+
+
+def test_source_unavailable_is_deterministic_not_transient_and_admit_never_retries_it():
+    assert 'source_unavailable' in CA.DETERMINISTIC
+    assert 'source_unavailable' not in CA.TRANSIENT and 'source_unavailable' not in CA.EVALUATED
+    tries = []
+
+    def attempt():
+        tries.append(1)
+        raise CA.AdmissionRefusal('source_unavailable', 'x')
+
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.admit(attempt=attempt, sleep=lambda seconds: None)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False and tries == [1]
 
 
 # --- parsers ------------------------------------------------------------------------------------
@@ -929,7 +945,13 @@ def test_parse_args_accepts_the_v2_flags():
 
 # --- runner v2: verify_prepared -----------------------------------------------------------------
 
-RECIPE = b"window=Path('/tmp/qwen-owner-window.abc123')\nx = 1\n"
+SHA = 'ab94e904ca25e2e031ad241f2600aa0406201c15'
+ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/source'
+WORKSPACE = '/home/gate/bakeoff-rounds-20261017-inputs/results/n-1/workspace'
+BINDING = dict(source=SHA, repo=f'{ROOT}/{SHA}', python=f'{ROOT}/{SHA}.venv/bin/python', workspace=WORKSPACE)
+RECIPE = (f"window=Path('/tmp/qwen-owner-window.abc123')\nSOURCE='{SHA}'\n"
+          f"repo=Path('{ROOT}')/SOURCE\npython=repo.parent/(SOURCE+'.venv')/'bin/python'\n"
+          f"workspace=Path('{WORKSPACE}');x=1\nx = 1\n").encode()
 SRC = b'print("preparer")\n'
 
 
@@ -976,6 +998,37 @@ def test_verify_prepared_rejects_unknown_mode():
 def test_verify_prepared_requires_exactly_one_window_line(raw):
     with pytest.raises(ValueError, match='window'):
         RUN.verify_prepared(prepared(raw), raw)
+
+
+# --- runner v3: source_binding ------------------------------------------------------------------
+
+SOURCE_LINE = f"SOURCE='{SHA}'".encode()
+REPO_LINE = f"repo=Path('{ROOT}')/SOURCE".encode()
+PYTHON_LINE = b"python=repo.parent/(SOURCE+'.venv')/'bin/python'"
+WORKSPACE_LINE = f"workspace=Path('{WORKSPACE}')".encode()
+
+
+def swapped(old, new):
+    assert RECIPE.count(old) == 1, old
+    return RECIPE.replace(old, new)
+
+
+def test_source_binding_accepts_the_fixture_and_returns_the_four_exact_paths():
+    assert RUN.source_binding(RECIPE) == BINDING
+
+
+@pytest.mark.parametrize('raw,message', [
+    (swapped(REPO_LINE, b"repo=Path('/home/gate/workbay-sandbox')/SOURCE"), 'recipe binds a reaped WorkBay lane sandbox'),
+    (RECIPE + b"x='.venv-lane-'\n", 'recipe binds a reaped lane venv (.venv-lane-)'),
+    (RECIPE + REPO_LINE + b'\n', 'repo line must appear exactly once, found 2'),
+    (RECIPE.replace(PYTHON_LINE + b'\n', b''), 'python line must appear exactly once, found 0'),
+    (swapped(SOURCE_LINE, b"SOURCE='ab94e904'"), 'SOURCE line must appear exactly once, found 0'),
+    (swapped(WORKSPACE_LINE, b"workspace=Path('/tmp/n-1/workspace')"), 'workspace line must appear exactly once, found 0'),
+])
+def test_source_binding_refuses_each_unbound_recipe_with_its_message(raw, message):
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == message
 
 
 # --- runner v2: bind_generator ------------------------------------------------------------------
@@ -1279,69 +1332,200 @@ def test_main_full_mode_admits_with_a_clean_pilot_and_binds_its_receipt(stubbed_
 
 # --- runner v2: preclaim ------------------------------------------------------------------------
 
-def report(state='stopped', lease=None, action='auto', expires='2001-01-01T00:00:00Z', publication=True):
+def source_report():
+    """A healthy source report: every root at BINDING's sha and clean, and the interpreter imports. The TEST-20 baseline."""
+    root = dict(head=SHA, clean=True, head_rc=0, diff_rc=0, head_error=None, diff_error=None)
+    return dict(repo=dict(root), workspace=dict(root), python=dict(executable=True, import_ok=True, stderr_tail='', error=None))
+
+
+def report(state='stopped', lease=None, action='auto', expires='2001-01-01T00:00:00Z', publication=True, source=None):
     pub = dict(op='op1', action=action, expires_at=expires, sequence=3) if publication else None
-    return dict(gpu=dict(state=state, lease_expires_at=lease), publication=pub)
+    return dict(gpu=dict(state=state, lease_expires_at=lease), publication=pub,
+                source=source_report() if source is None else source)
 
 
 def test_classify_preclaim_refuses_a_running_gpu():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(state='running'))
+        RUN.classify_preclaim(report(state='running'), BINDING)
     assert e.value.cls == 'gpu_not_stopped'
 
 
 def test_classify_preclaim_refuses_a_set_gpu_lease():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(lease='2026-10-20T13:00:00Z'))
+        RUN.classify_preclaim(report(lease='2026-10-20T13:00:00Z'), BINDING)
     assert e.value.cls == 'gpu_not_stopped'
 
 
 def test_classify_preclaim_refuses_a_live_start():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(action='start'))
+        RUN.classify_preclaim(report(action='start'), BINDING)
     assert e.value.cls == 'live_start'
 
 
 def test_classify_preclaim_accepts_an_expired_auto():
     r = report(expires='2001-01-01T00:00:00Z')
-    assert RUN.classify_preclaim(r) == r
+    assert RUN.classify_preclaim(r, BINDING) == r
 
 
 def test_classify_preclaim_accepts_stop():
     r = report(action='stop')
-    assert RUN.classify_preclaim(r) == r
+    assert RUN.classify_preclaim(r, BINDING) == r
 
 
 def test_classify_preclaim_refuses_missing_publication():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(publication=False))
+        RUN.classify_preclaim(report(publication=False), BINDING)
     assert e.value.cls == 'predecessor_unsettled'
 
 
 def test_classify_preclaim_refuses_an_unsettled_action():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(action='settle'))
+        RUN.classify_preclaim(report(action='settle'), BINDING)
     assert e.value.cls == 'predecessor_unsettled'
 
 
+ZERO = '0' * 40
+SOURCE_BREAKS = {
+    'repo head mismatch': lambda s: s['repo'].update(head=ZERO),
+    'repo dirty': lambda s: s['repo'].update(clean=False),
+    'repo head None (rc 128)': lambda s: s['repo'].update(head=None, head_rc=128, clean=False),
+    'workspace head mismatch': lambda s: s['workspace'].update(head=ZERO),
+    'workspace dirty': lambda s: s['workspace'].update(clean=False),
+    'python not executable': lambda s: s['python'].update(executable=False),
+    'import failure': lambda s: s['python'].update(import_ok=False, stderr_tail='ModuleNotFoundError: httpx'),
+}
+
+
+def test_classify_preclaim_accepts_the_all_healthy_report_as_the_baseline():
+    r = report()
+    assert RUN.classify_preclaim(r, BINDING) == r
+
+
+@pytest.mark.parametrize('label', list(SOURCE_BREAKS))
+def test_classify_preclaim_refuses_each_unavailable_source_as_source_unavailable(label):
+    src = source_report()
+    SOURCE_BREAKS[label](src)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+
+
+def test_classify_preclaim_source_detail_names_the_root_expected_and_observed():
+    src = source_report()
+    src['workspace']['head'] = ZERO
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.detail == (f'workspace {WORKSPACE}: expected HEAD {SHA} and clean, observed HEAD {ZERO} clean True; '
+                              'rebuild: qwen-latebind/durable-source/build_durable_source.py')
+
+
+def test_classify_preclaim_keeps_the_gpu_check_ahead_of_the_source_check():
+    src = source_report()
+    src['repo']['clean'] = False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(state='running', source=src), BINDING)
+    assert e.value.cls == 'gpu_not_stopped'
+
+
+def test_classify_preclaim_refuses_a_report_without_a_source_mapping_as_malformed():
+    r = report()
+    del r['source']
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(r, BINDING)
+    assert e.value.cls == 'malformed_payload'
+
+
 def test_preclaim_script_has_no_ttl_check_and_compiles():
-    src = RUN.preclaim_script('/tmp/qwen-owner-window.abc123')
+    src = RUN.preclaim_script('/tmp/qwen-owner-window.abc123', BINDING)
     compile(src, 'preclaim', 'exec')
     assert 'remaining' not in src and '>300' not in src
 
 
-def test_preclaim_script_reports_the_highest_sequence_publication(tmp_path):
-    ops = tmp_path/'w'/'ops'
-    for op, seq, act in [('a', 1, 'start'), ('b', 2, 'auto')]:
-        (ops/op).mkdir(parents=True)
-        (ops/op/'publication.json').write_text(json.dumps(dict(action=act, expires_at='2001-01-01T00:00:00Z', sequence=seq)))
+PRECLAIM_ENV = dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME='/home/gate', LANG='C.UTF-8', PYTHONDONTWRITEBYTECODE='1',
+                    OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
+PY_CWD = f'{WORKSPACE}/apps/prototype-description-service'
+
+
+def completed(stdout='', stderr='', returncode=0):
+    return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def healthy_child(argv):
+    """Each source child succeeds on the bound source: the roots are at SHA and clean, and the interpreter imports."""
+    if argv[0] == 'git':
+        return completed(stdout=SHA + '\n' if argv[3] == 'rev-parse' else '')
+    return completed()
+
+
+def publish(tmp_path, *ops):
+    for op, seq, action in ops:
+        (tmp_path/'w'/'ops'/op).mkdir(parents=True, exist_ok=True)
+        (tmp_path/'w'/'ops'/op/'publication.json').write_text(json.dumps(dict(action=action, expires_at='2001-01-01T00:00:00Z', sequence=seq)))
+
+
+def run_preclaim(monkeypatch, capsys, tmp_path, answer=healthy_child, executable=True):
+    """Execs the generated preclaim text with subprocess replaced by a recorder and os.access fixed. Returns the calls and the printed reply."""
     gpu = tmp_path/'gpu.json'
     gpu.write_text(json.dumps(dict(state='stopped', lease_expires_at=None)))
-    src = RUN.preclaim_script(str(tmp_path/'w')).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
-    out = subprocess.run([sys.executable, '-I', '-B', '-'], input=src, text=True, capture_output=True, check=True).stdout
-    rep = json.loads(out)
+    src = RUN.preclaim_script(str(tmp_path/'w'), BINDING).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
+    calls = []
+    recorder = types.ModuleType('subprocess')
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return answer(argv)
+
+    recorder.run, recorder.TimeoutExpired = run, subprocess.TimeoutExpired
+    monkeypatch.setitem(sys.modules, 'subprocess', recorder)
+    monkeypatch.setattr(os, 'access', lambda path, mode: executable)
+    exec(compile(src, 'preclaim', 'exec'), {'__name__': 'preclaim'})
+    return calls, json.loads(capsys.readouterr().out)
+
+
+def test_preclaim_script_reports_the_highest_sequence_publication(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('a', 1, 'start'), ('b', 2, 'auto'))
+    _, rep = run_preclaim(monkeypatch, capsys, tmp_path)
     assert rep['gpu'] == dict(state='stopped', lease_expires_at=None)
     assert rep['publication'] == dict(op='b', action='auto', expires_at='2001-01-01T00:00:00Z', sequence=2)
+
+
+def test_preclaim_script_composes_the_five_source_children_exactly(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    calls, rep = run_preclaim(monkeypatch, capsys, tmp_path)
+    assert [argv for argv, _ in calls] == [
+        ['git', '-C', BINDING['repo'], 'rev-parse', 'HEAD'],
+        ['git', '-C', BINDING['repo'], 'diff', '--name-only'],
+        ['git', '-C', BINDING['workspace'], 'rev-parse', 'HEAD'],
+        ['git', '-C', BINDING['workspace'], 'diff', '--name-only'],
+        [BINDING['python'], '-B', '-c', 'import httpx,scripts.eval_harness.bakeoff'],
+    ]
+    for (argv, kw), timeout in zip(calls, [10, 15, 10, 15, 20]):
+        assert kw['timeout'] == timeout, argv
+        assert kw['user'] == 1002 and kw['group'] == 1002 and kw['extra_groups'] == [], argv
+        assert kw['env'] == PRECLAIM_ENV and kw['capture_output'] is True and kw['text'] is True, argv
+        assert kw.get('cwd') == (PY_CWD if argv[0] == BINDING['python'] else None), argv
+    assert rep['source'] == source_report()
+    assert RUN.classify_preclaim(rep, BINDING) == rep
+
+
+@pytest.mark.parametrize('target,path,fail', [
+    (['git', '-C', BINDING['repo'], 'rev-parse'], ('repo', 'head_error'), lambda argv: OSError('denied')),
+    (['git', '-C', BINDING['workspace'], 'diff'], ('workspace', 'diff_error'), lambda argv: subprocess.TimeoutExpired(argv, 15)),
+    ([BINDING['python']], ('python', 'error'), lambda argv: FileNotFoundError(2, 'No such file or directory')),
+], ids=['repo-rev-parse-oserror', 'workspace-diff-timeout', 'python-missing'])
+def test_a_source_child_that_cannot_run_is_recorded_and_refused_without_reraising(monkeypatch, capsys, tmp_path, target, path, fail):
+    publish(tmp_path, ('op1', 3, 'auto'))
+
+    def answer(argv):
+        if argv[:len(target)] == target:
+            raise fail(argv)
+        return healthy_child(argv)
+
+    _, rep = run_preclaim(monkeypatch, capsys, tmp_path, answer=answer)
+    assert rep['source'][path[0]][path[1]] is not None
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, BINDING)
+    assert e.value.cls == 'source_unavailable'
 
 
 # --- runner v2: bootstrap -----------------------------------------------------------------------
@@ -1475,3 +1659,35 @@ def test_main_receipt_records_the_sha256_of_each_runner_module_it_resolved(stubb
     assert len({hashlib.sha256(p.read_bytes()).hexdigest() for p in origins.values()}) == 4
     for name, path in origins.items():
         assert receipt['module_sha256'][name] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# --- runner v3: main refuses an unbound or unavailable source before any claim -----------------
+
+def rebind(m, raw):
+    """Rewrites the recipe and its prepared record together, so the preflight reads raw and its sha256 matches."""
+    (m['d']/'n.remote.py').write_bytes(raw)
+    (m['d']/'n.prepared.json').write_text(json.dumps(prepared(raw, name='n', mode='pilot', candidate='qwen', unit='workbay-x.scope',
+                                                              gate_token='tok', preparer_sha256=hashlib.sha256(SRC).hexdigest())))
+
+
+def test_main_refuses_a_recipe_still_bound_to_the_sandbox_before_any_ssh(stubbed_main):
+    m = stubbed_main
+    rebind(m, swapped(REPO_LINE, b"repo=Path('/home/gate/workbay-sandbox')/SOURCE"))
+    assert_refused_before_any_probe(m, m['monkeypatch'], r'^preflight refused: recipe binds a reaped WorkBay lane sandbox$')
+    assert m['persisted'] == [] and m['runs'] == []
+
+
+def test_main_refuses_an_unavailable_source_before_the_claim(stubbed_main, capsys):
+    m = stubbed_main
+    bad = source_report()
+    bad['repo']['head'] = '0' * 40
+    m['monkeypatch'].setattr(RUN.subprocess, 'run', lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps(report(source=bad)), stderr=''))
+    admitted = []
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: admitted.append(1))
+    assert RUN.main(m['argv']) == 3
+    assert admitted == [] and m['runs'] == []
+    assert [p.name for p, _ in m['persisted']] == ['n.preclaim.json']
+    assert not (m['runner'].P/'n.capacity-claim.json').exists()
+    status = json.loads(capsys.readouterr().out)
+    assert status['status'] == 'ADMISSION_REFUSED' and status['refusal'].startswith('refusal:source_unavailable:')
+    assert status['transient'] is False

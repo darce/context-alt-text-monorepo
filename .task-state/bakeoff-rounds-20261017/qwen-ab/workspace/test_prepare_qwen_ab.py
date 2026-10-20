@@ -703,5 +703,37 @@ class LateBindBlockTests(unittest.TestCase):
                             for e in self.chain(cm.exception)))
 
 
+class DurableSourceTests(unittest.TestCase):
+    OLD = ["repo=Path('/home/gate/workbay-sandbox')/KEY", "python=repo.parent/('.venv-lane-'+KEY)/'bin/python'"]
+    NEW = ["repo=Path('/home/gate/bakeoff-rounds-20261017-inputs/source')/SOURCE", "python=repo.parent/(SOURCE+'.venv')/'bin/python'"]
+
+    def test_pilot_and_full_recipes_bind_the_durable_source_root(self):
+        for mode, cohorts in [('pilot', None), ('full', ['qwen-gsq-01.json'])]:
+            with self.subTest(mode=mode):
+                recipe, _ = make('gsq', mode, cohorts=cohorts)
+                lines = recipe.split('\n')
+                for line in self.NEW:
+                    self.assertEqual(lines.count(line), 1, line)
+                self.assertNotIn('/home/gate/workbay-sandbox', recipe)
+                self.assertNotIn('.venv-lane-', recipe)
+
+    def test_reference_template_still_carries_the_replaced_lines(self):
+        template = (REF / 'LEXICON-MIMO-40-LAST40-R1.remote.py').read_text().split('\n')
+        for line in self.OLD:
+            self.assertEqual(template.count(line), 1, line)
+
+    def test_generated_module_level_repo_and_python_are_the_durable_expressions(self):
+        recipe, _ = make()
+        module = ast.parse(recipe).body
+        for name, line in zip(('repo', 'python'), self.NEW):
+            with self.subTest(name=name):
+                nodes = [n for n in module if isinstance(n, ast.Assign)
+                         and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)]
+                self.assertEqual(len(nodes), 1)
+                self.assertEqual(ast.dump(nodes[0].value), ast.dump(ast.parse(line).body[0].value))
+        self.assertEqual(generated_line(recipe, 'workspace='),
+                         generated_line((REF / 'LEXICON-MIMO-40-LAST40-R1.remote.py').read_text(), 'workspace='))
+
+
 if __name__ == '__main__':
     unittest.main()

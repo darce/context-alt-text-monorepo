@@ -181,6 +181,9 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     # Refusals before LATE_BIND_BLOCK must not reach the finally holding a predecessor it never owned (RES-10).
     recipe = replace_once(recipe, "owned_start=None;safe_withdraw=True;key_bytes=None;maintenance_attempted=False;child=None;maintenance_root=None",
                           "owned_start=None;safe_withdraw=False;key_bytes=None;maintenance_attempted=False;child=None;maintenance_root=None")
+    # RLSE-31/STOR-13: a reaped lane sandbox is not a durable input; bind the durable source root instead.
+    recipe = replace_once(recipe, "repo=Path('/home/gate/workbay-sandbox')/KEY", "repo=Path('/home/gate/bakeoff-rounds-20261017-inputs/source')/SOURCE")
+    recipe = replace_once(recipe, "python=repo.parent/('.venv-lane-'+KEY)/'bin/python'", "python=repo.parent/(SOURCE+'.venv')/'bin/python'")
     # Shared captured controls are checked separately from actual model input.
     recipe = replace_once(recipe, "batch_cfg=json.loads(raw);assert len(batch_cfg['images'])==20",
                           "batch_cfg=json.loads(raw);assert 0<len(batch_cfg['images'])<=20")

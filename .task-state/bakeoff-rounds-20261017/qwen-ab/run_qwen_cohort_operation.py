@@ -18,6 +18,14 @@ CUSTODY_SOURCE = '22b61b6c7bc3932378dcb7e795a99f3ab288ff58'
 WINDOW = re.compile(r"window=Path\('(/tmp/qwen-owner-window\.[A-Za-z0-9_-]+)'\)")
 RUNNER_MODULES = ('run_selected_root_resume_qualification', 'run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate')
 HELPER_SHA256 = 'f0ca0e59c1bc8db1dd83c99598f82c0fb3665a7dd443f66e44291f44f837a4cd'
+SOURCE_ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/source'
+REBUILD = 'rebuild: qwen-latebind/durable-source/build_durable_source.py'
+SOURCE_LINES = dict(
+    SOURCE=re.compile(r"^SOURCE='([0-9a-f]{40})'$", re.MULTILINE),
+    repo=re.compile(r"^repo=Path\('" + re.escape(SOURCE_ROOT) + r"'\)/SOURCE$", re.MULTILINE),
+    python=re.compile(r"^python=repo\.parent/\(SOURCE\+'\.venv'\)/'bin/python'$", re.MULTILINE),
+    workspace=re.compile(r"^workspace=Path\('(/home/gate/bakeoff-rounds-20261017-inputs/results/[A-Za-z0-9_.-]+/workspace)'\);", re.MULTILINE),
+)
 G = 1024**3
 
 
@@ -49,6 +57,18 @@ def verify_prepared(prepared, raw):
     return windows[0]
 
 
+def source_binding(raw):
+    # RLSE-31/STOR-13: the recipe binds only the durable source root; a reaped lane sandbox is refused before any ssh.
+    text = raw.decode()
+    need('/home/gate/workbay-sandbox' not in text, 'recipe binds a reaped WorkBay lane sandbox')
+    need('.venv-lane-' not in text, 'recipe binds a reaped lane venv (.venv-lane-)')
+    hits = {name: pattern.findall(text) for name, pattern in SOURCE_LINES.items()}
+    for name, found in hits.items():
+        need(len(found) == 1, f'{name} line must appear exactly once, found {len(found)}')
+    sha = hits['SOURCE'][0]
+    return dict(source=sha, repo=f'{SOURCE_ROOT}/{sha}', python=f'{SOURCE_ROOT}/{sha}.venv/bin/python', workspace=hits['workspace'][0])
+
+
 def bind_generator(prepared, gate_commit, git):
     try:
         git('merge-base', '--is-ancestor', gate_commit, 'main')
@@ -65,19 +85,33 @@ def run_git(*args):
     return subprocess.check_output(['git', *args], cwd=HERE, timeout=40)
 
 
-def preclaim_script(window):
-    # Read-only. Reports the GPU state and the newest publication; no TTL is judged here, because the recipe refreshes AUTO.
-    return '''import glob,json,pathlib
-w=pathlib.Path(WINDOW)
+def preclaim_script(window, binding):
+    # Read-only. Reports the GPU state, the newest publication, and the source roots as the recipe's uid 1002 children see them; no TTL is judged here, because the recipe refreshes AUTO.
+    return '''import glob,json,os,pathlib,subprocess
+w=pathlib.Path(WINDOW);b=BINDING
 gpu=json.loads(pathlib.Path('/run/acx/gpu-state.json').read_bytes())
 pubs=[]
 for p in glob.glob(str(w/'ops'/'*'/'publication.json')):
  d=json.loads(pathlib.Path(p).read_bytes());pubs.append(dict(op=pathlib.Path(p).parent.name,action=d.get('action'),expires_at=d.get('expires_at'),sequence=d.get('sequence',-1)))
-print(json.dumps(dict(gpu=dict(state=gpu.get('state'),lease_expires_at=gpu.get('lease_expires_at')),publication=max(pubs,key=lambda x:x['sequence'],default=None))))
-'''.replace('WINDOW', repr(window))
+kw=dict(user=1002,group=1002,extra_groups=[],env=dict(PATH='/usr/local/bin:/usr/bin:/bin',HOME='/home/gate',LANG='C.UTF-8',PYTHONDONTWRITEBYTECODE='1',OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1'),capture_output=True,text=True)
+def tree(root):
+ s=dict(head=None,clean=False,head_rc=None,diff_rc=None,head_error=None,diff_error=None)
+ try:h=subprocess.run(['git','-C',root,'rev-parse','HEAD'],timeout=10,**kw);s.update(head_rc=h.returncode,head=h.stdout.strip()if h.returncode==0 else None)
+ except(OSError,subprocess.TimeoutExpired)as e:s['head_error']=type(e).__name__+': '+str(e)
+ try:d=subprocess.run(['git','-C',root,'diff','--name-only'],timeout=15,**kw);s.update(diff_rc=d.returncode,clean=d.returncode==0 and not d.stdout.strip())
+ except(OSError,subprocess.TimeoutExpired)as e:s['diff_error']=type(e).__name__+': '+str(e)
+ return s
+repo=tree(b['repo']);workspace=tree(b['workspace'])
+py=dict(executable=os.access(b['python'],os.X_OK),import_ok=None,stderr_tail=None,error=None)
+if py['executable']:
+ try:
+  r=subprocess.run([b['python'],'-B','-c','import httpx,scripts.eval_harness.bakeoff'],cwd=b['workspace']+'/apps/prototype-description-service',timeout=20,**kw);py.update(import_ok=r.returncode==0,stderr_tail=r.stderr[-300:])
+ except(OSError,subprocess.TimeoutExpired)as e:py['error']=type(e).__name__+': '+str(e)
+print(json.dumps(dict(gpu=dict(state=gpu.get('state'),lease_expires_at=gpu.get('lease_expires_at')),publication=max(pubs,key=lambda x:x['sequence'],default=None),source=dict(repo=repo,workspace=workspace,python=py))))
+'''.replace('WINDOW', repr(window)).replace('BINDING', repr(binding))
 
 
-def classify_preclaim(report):
+def classify_preclaim(report, binding):
     import cohort_admission as ca
     gpu, pub = report['gpu'], report['publication']
     if gpu['state'] != 'stopped' or gpu.get('lease_expires_at') is not None:
@@ -88,6 +122,18 @@ def classify_preclaim(report):
         raise ca.AdmissionRefusal('live_start', pub['op'])
     if pub['action'] not in ('auto', 'stop'):
         raise ca.AdmissionRefusal('predecessor_unsettled', f"latest action {pub['action']!r} in op {pub['op']}")
+    src = report.get('source')
+    if not isinstance(src, dict):
+        raise ca.AdmissionRefusal('malformed_payload', 'preclaim reply has no source mapping')
+    for name in ('repo', 'workspace'):
+        root = src[name]
+        if root['head'] != binding['source'] or not root['clean']:
+            raise ca.AdmissionRefusal('source_unavailable', f"{name} {binding[name]}: expected HEAD {binding['source']} and clean, "
+                                      f"observed HEAD {root['head']} clean {root['clean']}; {REBUILD}")
+    py = src['python']
+    if not py['executable'] or not py['import_ok']:
+        raise ca.AdmissionRefusal('source_unavailable', f"python {binding['python']}: expected executable and import ok, "
+                                  f"observed executable {py['executable']} import_ok {py['import_ok']}; {REBUILD}")
     return report
 
 
@@ -164,6 +210,7 @@ def main(argv=None):
         base, cap = runner.admission, runner.cap
         need(prepared.get('name') == a.name, f"prepared record is for {prepared.get('name')!r}, not --name {a.name!r}")
         window = verify_prepared(prepared, raw)
+        binding = source_binding(raw)
         bind_generator(prepared, a.gate_commit, run_git)
         with tarfile.open(d/'QWEN-AB-G2.custody.tar') as t:
             g = json.load(t.extractfile('output/result.json'))
@@ -181,7 +228,8 @@ def main(argv=None):
                    manifest_sha256=helper['manifest_sha256'], helper_source_head=helper['source_head'],
                    helper_independent_gate=helper['gate'], remote_orchestration_sha256=prepared['recipe_sha256'],
                    actual_pilot=a.pilot, actual_pilot_receipt_sha256=pilot_sha, actual_pilot_custody_sha256=pilot_custody,
-                   predecessor_binding=prepared['predecessor_binding'], gate_commit=a.gate_commit, module_sha256=module_sha256)
+                   predecessor_binding=prepared['predecessor_binding'], gate_commit=a.gate_commit, module_sha256=module_sha256,
+                   source_binding=binding)
     # Bind the operation identity before admit(): the guard persists under base.N and evaluates base.PROFILE,
     # and r6's defaults would otherwise write over its receipt.
     base.N = runner.N = a.name
@@ -201,9 +249,9 @@ def main(argv=None):
         return {}, receipt
 
     try:
-        report = ca.ssh_json(['ssh', '-oBatchMode=yes', HOST, 'sudo -n /usr/bin/python3 -I -B -'], preclaim_script(window), 30)
+        report = ca.ssh_json(['ssh', '-oBatchMode=yes', HOST, 'sudo -n /usr/bin/python3 -I -B -'], preclaim_script(window, binding), 30)
         cap.persist(BAKEOFF/(a.name + '.preclaim.json'), report)
-        receipt['preclaim'] = classify_preclaim(report)
+        receipt['preclaim'] = classify_preclaim(report, binding)
         ca.admit()
         runner.admission.guard = ca.guard
         runner.inputs = inputs

@@ -1,9 +1,11 @@
 """Prepare prospective Qwen paired A/B recipes; never execute generated code.
 
 Example: python3 prepare_qwen_ab.py --references ../references --candidate gsq
- --mode pilot --name QWEN-PILOT-R1 --unit workbay-qwen-pilot.scope
- --actual-previous-auto UUID --out /tmp/qwen-prepared
+ --mode pilot --name QWEN-PILOT-R1 --unit workbay-qwen-pilot.scope --out /tmp/qwen-prepared
 
+The predecessor AUTO is late-bound at claim time by refresh (stop, withdraw,
+reconcile), not pinned at preparation. Coordinator must verify
+late-bound-predecessor.json after the run.
 Coordinator execution requires independent Sol XHIGH review. Full cohorts also
 require an actual paired pilot and predecessor settlement, checked by operator.
 """
@@ -14,7 +16,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import uuid
 
 PINS = {
  'LEXICON-MIMO-40-LAST40-R1.remote.py': 'd5e180d72fbbf2d53418ced03f7ba30be1f1bb488db1c2cdd10b1c727467c921',
@@ -26,6 +27,29 @@ PINS = {
 }
 SOURCES = {'gsq': 'QWEN38-GSQ-ALL38-LONG-R20C.execution.remote.py',
            'ud': 'QWEN38-27B-ALL38-LONG-R21.execution.remote.py'}
+# Claim-time predecessor binding (decision 18673): the recipe refreshes the
+# owned window's AUTO before START, so the fresh publication is the fencing
+# token. Replaces the pinned template line `assert previous=='aa048fdb...'`.
+LATE_BIND_BLOCK = """\
+    assert previous!='none' and str(uuid.UUID(previous))==previous,'Owned window operation unknown; retain state and reconcile explicitly'
+    def late_sealed(name):
+        p=window/'ops'/previous/name;s=p.lstat()
+        assert stat.S_ISREG(s.st_mode)and not stat.S_IMODE(s.st_mode)&0o222 and s.st_uid==0,'Unsealed or foreign predecessor evidence'
+        return json.loads(p.read_bytes())
+    late_result=late_sealed('result.json');late_publication=late_sealed('publication.json')
+    assert late_result.get('operation')==previous and late_result.get('window')==wid and late_result.get('outcome')=='published','Predecessor linkage changed; retain exact window'
+    late_action=late_publication.get('action')
+    if late_action not in('auto','stop'):raise RuntimeError('Predecessor is not a settled AUTO/STOP publication; retain exact window')
+    late_from=previous;refresh_stop=None
+    if late_action=='auto':
+        refresh_stop=public(['stop',str(window),previous],'refresh-stop',75);observe(refresh_stop,'stop','refresh-stop-observe',195)
+        refreshed=json.loads(Path('/run/acx/gpu-state.json').read_bytes());assert refreshed['state']=='stopped' and refreshed.get('lease_expires_at')is None,'Refresh STOP did not settle'
+    previous=public(['withdraw',str(window),wid],'refresh-auto',75)
+    assert previous!='none' and str(uuid.UUID(previous))==previous and previous not in(late_from,refresh_stop),'Fresh AUTO not published; retain exact window'
+    save('late-bound-predecessor.json',dict(reconciled=late_from,reconciled_action=late_action,refresh_stop=refresh_stop,fresh_auto=previous,binding='late_bound_at_claim_refresh',at=time.time()))
+    observe(previous,'auto','actual-previous-auto-observe',190)
+    assert public(['reconcile',str(window),wid],'actual-previous-auto-reconcile',45)==previous,'Actual predecessor changed'
+"""
 
 
 def sha(raw):
@@ -98,13 +122,10 @@ def validate_configs(root, plan, candidate):
     return model, configs
 
 
-def prepare(root, candidate, mode, name, unit, actual_previous_auto, cohorts=None,
-            client_seconds=None):
+def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None):
     require(candidate in SOURCES and mode in ('pilot', 'full'), 'candidate/mode required')
     require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,90}', name or '')), 'explicit safe name required')
     require(bool(re.fullmatch(r'workbay-[A-Za-z0-9_-]+\.scope', unit or '')), 'explicit scope unit required')
-    require(bool(actual_previous_auto) and str(uuid.UUID(actual_previous_auto)) == actual_previous_auto,
-            'explicit canonical actual previous AUTO required')
     root = Path(root)
     inputs = {key: pinned(root, key) for key in PINS}
     source = inputs['LEXICON-MIMO-40-LAST40-R1.remote.py'].decode()
@@ -151,9 +172,7 @@ def prepare(root, candidate, mode, name, unit, actual_previous_auto, cohorts=Non
     recipe = ''.join(lines)
     recipe = replace_once(recipe, "N='LEXICON-MIMO-40-LAST40-R1'", 'N=' + repr(name))
     recipe = replace_once(recipe, "N=" + repr(name), "assert " + repr(unit) + " in cg.parts, 'Declared root scope mismatch'\nN=" + repr(name))
-    recipe = replace_once(recipe, "assert previous=='aa048fdb-01cc-405d-9e2c-5af0063093fb'",
-                          'assert previous==' + repr(actual_previous_auto))
-    recipe = replace_once(recipe, "    print(json.dumps(dict(status='PRIVATE_RAW_WORKSPACE_READY'", "    observe(previous,'auto','actual-previous-auto-observe',190)\n    assert public(['reconcile',str(window),wid],'actual-previous-auto-reconcile',45)==previous, 'Actual predecessor changed'\n    print(json.dumps(dict(status='PRIVATE_RAW_WORKSPACE_READY'")
+    recipe = replace_once(recipe, "    assert previous=='aa048fdb-01cc-405d-9e2c-5af0063093fb','Continuation ownership changed; retain state and reconcile explicitly'\n", LATE_BIND_BLOCK)
     # Shared captured controls are checked separately from actual model input.
     recipe = replace_once(recipe, "batch_cfg=json.loads(raw);assert len(batch_cfg['images'])==20",
                           "batch_cfg=json.loads(raw);assert 0<len(batch_cfg['images'])<=20")
@@ -202,7 +221,7 @@ def prepare(root, candidate, mode, name, unit, actual_previous_auto, cohorts=Non
         require(function_bytes(source, func) == function_bytes(recipe, func), 'effect helper changed')
     compile(recipe, '<prospective-recipe>', 'exec')
     receipt = dict(status='PROSPECTIVE_NOT_EXECUTED_NOT_QUALIFIED', name=name, unit=unit,
-                   candidate=candidate, mode=mode, actual_previous_AUTO=actual_previous_auto,
+                   candidate=candidate, mode=mode, predecessor_binding='late_bound_at_claim_refresh',
                    model_contract=model, asset_spec_sha256=sha(json.dumps(spec, sort_keys=True).encode()),
                    preparer_sha256=sha(Path(__file__).read_bytes()),
                    recipe_sha256=sha(recipe.encode()), sources=PINS, configs={c: sha(r) for c, r in selected},
@@ -224,7 +243,9 @@ def prepare(root, candidate, mode, name, unit, actual_previous_auto, cohorts=Non
                                           cpu_quota_percent=25, memory_max_bytes=268435456),
                        guest_cleanup=dict(scope='guest', phase='cleanup', cpu_quota_percent=50,
                                           memory_max_bytes=536870912)),
-                   phase_floors_seconds=floors, previous_AUTO_observation_seconds=190, public_STOP_AUTO_cleanup_seconds=580,
+                   phase_floors_seconds=floors,
+                   predecessor_refresh_seconds=dict(stop=75, stop_observe=195, withdraw=75, auto_observe=190, reconcile=45),
+                   public_STOP_AUTO_cleanup_seconds=580,
                    public_cleanup_clock='Separate fixed public observation clocks after restore; never extend intent/native',
                    setup_native_seconds=540, setup_outer_seconds=570,
                    shared_client_sha256=PINS['paired_client.py'], no_execution=True,
@@ -234,7 +255,7 @@ def prepare(root, candidate, mode, name, unit, actual_previous_auto, cohorts=Non
                                 'No live qualification, independent acceptance, or quality claim',
                                 'Client deadline can retain incomplete and invalid pairs; no selective retries',
                                 '15 seconds per image is a scheduling floor, not measured Qwen latency or a completion guarantee',
-                                'Coordinator must verify actual pilot receipt contents and predecessor custody; a digest alone is not acceptance'])
+                                'Predecessor is bound at claim by stop/withdraw refresh; coordinator must verify late-bound-predecessor.json and actual pilot receipt contents after the run; a digest alone is not acceptance'])
     return recipe, receipt
 
 
@@ -245,7 +266,6 @@ def main():
     parser.add_argument('--mode', choices=('pilot', 'full'), required=True)
     parser.add_argument('--name', required=True)
     parser.add_argument('--unit', required=True)
-    parser.add_argument('--actual-previous-auto', required=True)
     parser.add_argument('--cohort', action='append', dest='cohorts')
     parser.add_argument('--client-seconds', type=int)
     parser.add_argument('--out', type=Path, required=True)
@@ -253,7 +273,7 @@ def main():
     try:
         require(not args.out.resolve().is_relative_to(args.references.resolve()), 'references are immutable; choose another output directory')
         recipe, receipt = prepare(args.references, args.candidate, args.mode, args.name,
-                                  args.unit, args.actual_previous_auto, args.cohorts, args.client_seconds)
+                                  args.unit, args.cohorts, args.client_seconds)
         args.out.mkdir(mode=0o700, parents=True, exist_ok=False)
         (args.out / 'recipe.remote.py').write_text(recipe)
         (args.out / 'prepared-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')

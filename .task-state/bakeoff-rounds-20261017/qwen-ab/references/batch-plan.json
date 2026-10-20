@@ -1,0 +1,244 @@
+{
+  "schema": "description-lexicon-batches/v1",
+  "batch_size_max": 20,
+  "one_model_residency_per_bounded_operation": true,
+  "pilot_required_before_full_generation": true,
+  "models": {
+    "mimo": {
+      "model_version": "MiMo-V2.6-Distill-Qwen-9B-Q4_K_M",
+      "model_revision": "sha256:4bca6f18c73f72270c7a20c2ea2bea581de8246e318714277120369d34048c81",
+      "wire_model_id": "/models/MiMo-V2.6-Distill-Qwen-9B-Q4_K_M.gguf"
+    },
+    "qwen-gsq": {
+      "model_version": "Qwen3.8-27B-GSQ-RCO-IQ3_S",
+      "model_revision": "sha256:64b53b64c7aa39f20a7e54bd80582fe595b1d745624ee8a72e92508c0326d810",
+      "wire_model_id": "/models/Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf"
+    },
+    "qwen-ud": {
+      "model_version": "Qwen3.8-27B-UD-Q4_K_XL",
+      "model_revision": "sha256:bee238bbeb3dc0a34bde4d0dedbaee1f98c009e8bb4226f03070054c12fb1372",
+      "wire_model_id": "/models/Qwen3.8-27B-UD-Q4_K_XL.gguf"
+    },
+    "joy": {
+      "model_version": "Llama-Joycaption-Beta-One-Hf-Llava-Q8_0",
+      "model_revision": "sha256:914fccbc28d0bdf87bab2937f58707bbc33556021664cd16a9666607d4058b99",
+      "wire_model_id": "/models/Llama-Joycaption-Beta-One-Hf-Llava-Q8_0.gguf",
+      "assets": "remote guest validation/acquisition pending"
+    },
+    "incumbent": {
+      "model_version": "qwen3-vl-30b-a3b-instruct-q4",
+      "model_revision": "sha256:87bb374d849f80ebdfabb304189fac9e0bd35a0f74506e6a59c51b206cbe863b",
+      "wire_model_id": "must discover and verify installed runtime; no guessed wire identifier"
+    }
+  },
+  "batches": [
+    {
+      "model": "mimo",
+      "config": "batch-configs/mimo-01.json",
+      "config_sha256": "bf2e460379f16a35d54c16aa3ebfd56889f8f58d1f3f7d05df4981516cdfc75d",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "mimo",
+      "config": "batch-configs/mimo-02.json",
+      "config_sha256": "5009ededbd0b2ad25760b514b868501a36ec0fcdc28dc1f24a94144b6f4da5f7",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "mimo",
+      "config": "batch-configs/mimo-03.json",
+      "config_sha256": "d4bdf8f11f97b54bf5bc0e081cc6b33152fc7ea5e12a456895f7d41fee285759",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "mimo",
+      "config": "batch-configs/mimo-04.json",
+      "config_sha256": "72b8b3e75467abc92d25a9a06aaab8bd80de9f7392dd76d1e404778b7e794b06",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "mimo",
+      "config": "batch-configs/mimo-05.json",
+      "config_sha256": "d1d51a460a81fc0edb26461986569737a5a83a14ce09fe29a7708ebea607de3e",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "mimo",
+      "config": "batch-configs/mimo-06.json",
+      "config_sha256": "6a176f7084e2beffd761eaa4fbbc497f0289e01e2fa6ee6ac65b3fc90679baee",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-gsq",
+      "config": "batch-configs/qwen-gsq-01.json",
+      "config_sha256": "928cf319e30998de2cd15f24efc547db983f336b47c9d23e2917938d9ff22327",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-gsq",
+      "config": "batch-configs/qwen-gsq-02.json",
+      "config_sha256": "a716982076e94fd98524b68325cf48fbabe6c1631c5a8d059efc1701a6e00611",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-gsq",
+      "config": "batch-configs/qwen-gsq-03.json",
+      "config_sha256": "2502ad2b7e931b92da02d2534ad47b01c51379d6dcb65762eaed6407f14ae47c",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-gsq",
+      "config": "batch-configs/qwen-gsq-04.json",
+      "config_sha256": "bb33a87dd025f166100b452d300c9ffc1b8d8f653f75bfad35fef024c31e4a59",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-gsq",
+      "config": "batch-configs/qwen-gsq-05.json",
+      "config_sha256": "36341b56c72f48872b59db5dacba054947b5f924cc179d2a36e082129ddd63ea",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-gsq",
+      "config": "batch-configs/qwen-gsq-06.json",
+      "config_sha256": "ed540c7404a20fa58a09b61cd710dea402f760adf863a5e7d88c9224a65bff02",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-ud",
+      "config": "batch-configs/qwen-ud-01.json",
+      "config_sha256": "8aade2c85b6ad2815c99e32ca5c8e75314411e16e7cd83071a3bab82f48b4056",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "qwen-ud",
+      "config": "batch-configs/qwen-ud-02.json",
+      "config_sha256": "3eed8b0d0547dba8cb2459ea181d33cbc7769b138b92d84cc79612cb4fc31d32",
+      "images": 10,
+      "completion_POST_budget": 30,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "joy",
+      "config": "batch-configs/joy-01.json",
+      "config_sha256": "19e861e5e43fb50930f52332b977ec394527c9429149a8fd6d96134833f6c5a4",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "joy",
+      "config": "batch-configs/joy-02.json",
+      "config_sha256": "cf344a5155c2fe026d5b690f1bac1193853d0fd2425b2328aab41f4a4a965bcd",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "joy",
+      "config": "batch-configs/joy-03.json",
+      "config_sha256": "5655bd4752104d43deccbdb9874294e5fd0f723a77f32947567d07ee5b102107",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "joy",
+      "config": "batch-configs/joy-04.json",
+      "config_sha256": "54876c65f91c9bfb9eecc7a8ec76e1ba4bc75829fc28a513c7d462cf416d6ac0",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "joy",
+      "config": "batch-configs/joy-05.json",
+      "config_sha256": "95f3df39c8138ee67fcc40d30846336cb3302df00708c045b54c17e6fbee4876",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "joy",
+      "config": "batch-configs/joy-06.json",
+      "config_sha256": "c7213ae910afab99d1ad3e6c30499840d22b5916fdd6cfee31368202d84b72dc",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "incumbent",
+      "config": "batch-configs/incumbent-01.json",
+      "config_sha256": "03b8f5513cbcaa9d8286971f5ec4f8e2a84239ba7bf46fea8c8c92bc99d9e5a1",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "incumbent",
+      "config": "batch-configs/incumbent-02.json",
+      "config_sha256": "23afc97592029c2170c4af1aa0fbad6e557a9a0e417e3c49b4f175068bd565ff",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "incumbent",
+      "config": "batch-configs/incumbent-03.json",
+      "config_sha256": "27234868633ceb900ff7c1ead50fb9e81c340f42f08221ac6e9c3acaabd5d2dd",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "incumbent",
+      "config": "batch-configs/incumbent-04.json",
+      "config_sha256": "5df54111abbeaf54a447181c743ce5d6af7aa2c40de61d081d11913158b20824",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "incumbent",
+      "config": "batch-configs/incumbent-05.json",
+      "config_sha256": "63be97e0fbc343154a524d10f2ea9e7a53d693fb529554e2054f521a6d6a1e88",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    },
+    {
+      "model": "incumbent",
+      "config": "batch-configs/incumbent-06.json",
+      "config_sha256": "1ea6276b5b806c23ab8911e2604a9f96cb58ebca7f7061ab494c164513f7d245",
+      "images": 20,
+      "completion_POST_budget": 60,
+      "status": "PREPARED_NOT_EXECUTED"
+    }
+  ]
+}

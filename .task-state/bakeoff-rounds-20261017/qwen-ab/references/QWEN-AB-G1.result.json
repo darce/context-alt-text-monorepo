@@ -1,0 +1,51 @@
+{
+  "status": "FAIL",
+  "summary": "Return to second author Sol HIGH standard: prepared receipts omit the required host/guest resource caps.",
+  "source_sha": "c26c9f038db67cf00b23b3da3654bf8b7b5a6ce2",
+  "changed_files": [],
+  "commits": [],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "P2",
+      "file": "prepare_qwen_ab.py:204",
+      "description": "The prepared receipt omits CPU, memory, swap, GPU and tmpfs limits and their host/guest scope, so the mandatory resource contract cannot be verified from the receipt.",
+      "evidence": "For both candidates, AST-evaluated producers retain guest setup CPU200%/40GiB, model CPU4/32GiB with equal memory-swap and GPU0, and control CPU25%/256MiB. Host assertions require CPU50%/2GiB; cleanup uses CPU50%/512MiB. The receipt records timing bounds but none of these resource caps.",
+      "fix": "Add explicit host and guest resource contracts matching the existing command producers, including inherited client/metadata limits. Verify receipt values against actual command AST producers. Preserve all qualified commands, flags and clocks."
+    }
+  ],
+  "tests": [
+    {
+      "command": "git --git-dir=/tmp/qwen-ab-prep-private-git show c26c9f038db67cf00b23b3da3654bf8b7b5a6ce2",
+      "exit_code": 0,
+      "summary": "All three reviewed working blobs match the commit byte for byte; verified again after review."
+    },
+    {
+      "command": "python3 -B -m unittest -v test_prepare_qwen_ab.py",
+      "exit_code": 1,
+      "summary": "Six passed; four errored because the read-only environment provides no writable temporary directory."
+    },
+    {
+      "command": "python3 -B - (stdin: offline generation and AST checks)",
+      "exit_code": 0,
+      "summary": "Verified all 26 config hashes; generated both pilots, both 20-image cohorts, GSQ40 and UD30 in memory. Qualified setup/spec, model contracts, manifest rebinding, receipt hashes, fixed bounds, effect helpers and cleanup AST verified."
+    },
+    {
+      "command": "python3 -B - (stdin: four stdlib causal tests)",
+      "exit_code": 0,
+      "summary": "Passed degraded paired-loop, metadata refusal/no fallback, config rejection and parser-error execution-completion checks."
+    },
+    {
+      "command": "python3 -B - (stdin: actual public-helper checks)",
+      "exit_code": 0,
+      "summary": "Five cases verified mutable-result reconciliation and foreign/linkage/sealing refusal without START replay."
+    }
+  ],
+  "limitations": [
+    "No complete generated recipe was executed; generated outputs remained in memory. No edits, commits, dispatch, network or live service actions occurred.",
+    "Default workspace HEAD remains cb6df7f33a051c68c9273fa143ea12ccf086ebbb with the three files untracked; no default-clean or main-merge claim.",
+    "Second-author handoff must retain immutable references at /home/gate/bakeoff-next-model-qwen-ab-g1-dbdb7a5f06f346b683fce2e59d6d00b0/references, including prior-art.md and both qualified Qwen execution sources.",
+    "If another author pass is needed after the second, stop and present an explicit proposal before Sol XHIGH. No dispatch performed.",
+    "No pilot eligibility approval, live qualification or quality-winner claim."
+  ]
+}

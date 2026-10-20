@@ -108,6 +108,8 @@ def pilot_checks(d, prepared, name):
     need(pr['mode'] == 'pilot' and pr['candidate'] == prepared['candidate'], 'pilot is not a pilot of this candidate')
     for key in ('asset_spec_sha256', 'model_contract', 'sources', 'immutable_candidate_configs'):
         need(pr[key] == prepared[key], f'pilot {key} differs from the full recipe')
+    need(pr.get('predecessor_binding') == 'late_bound_at_claim_refresh', 'pilot predates the late-bound generator; run a fresh pilot')
+    need(pr.get('preparer_sha256') == prepared['preparer_sha256'], 'pilot was prepared by a different generator than the full recipe')
     archive = Path(pilot['archive'])
     with archive.open('rb') as f:
         need(hashlib.file_digest(f, 'sha256').hexdigest() == pilot['archive_sha256'], 'pilot archive sha256 mismatch')
@@ -172,11 +174,7 @@ def main(argv=None):
         return {}, receipt
 
     try:
-        probe = subprocess.run(['ssh', '-oBatchMode=yes', HOST, 'sudo -n /usr/bin/python3 -I -B -'],
-                               input=preclaim_script(window), text=True, capture_output=True, timeout=30)
-        if probe.returncode:
-            raise SystemExit(f'preclaim probe failed: {probe.stderr.strip()}')
-        report = json.loads(probe.stdout)
+        report = ca.ssh_json(['ssh', '-oBatchMode=yes', HOST, 'sudo -n /usr/bin/python3 -I -B -'], preclaim_script(window), 30)
         cap.persist(BAKEOFF/(a.name + '.preclaim.json'), report)
         receipt['preclaim'] = classify_preclaim(report)
         ca.admit()

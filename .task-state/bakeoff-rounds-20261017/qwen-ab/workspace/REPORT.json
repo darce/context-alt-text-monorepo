@@ -1,0 +1,51 @@
+{
+  "status": "FIXED_PREPARATION_ONLY_PENDING_INDEPENDENT_G2",
+  "summary": "Addressed G1 F1 only: prepared resource_contracts now record host root CPU50%/2GiB with inherited clients/metadata; guest setup CPU200%/40GiB; model CPU4/32GiB, memory-swap=32GiB, GPU device=0, tmpfs /tmp:rw,nosuid,nodev,size=268435456; control CPU25%/256MiB; cleanup CPU50%/512MiB. All generated recipe bytes preserved against native c26 in six cases.",
+  "source_sha": "c26c9f038db67cf00b23b3da3654bf8b7b5a6ce2",
+  "changed_files": [
+    "prepare_qwen_ab.py",
+    "test_prepare_qwen_ab.py",
+    "REPORT.json"
+  ],
+  "commits": [],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "P2",
+      "file": "prepare_qwen_ab.py",
+      "description": "G1 mandatory receipt resource-contract omission fixed; no additional material issue found in this bounded author pass.",
+      "evidence": "Read immutable G1 for exact c26 plus supplied verified ONNX semantic/canon/codemap context. Reference SHA256: {\"NEXT-MODELS-G2.canon-codemap.json\": \"2fb743995d4bb95733261593d0ab38e807cdcc788e0b639d7684910695ca889c\", \"NEXT-MODELS-G2.semantic.json\": \"6b15c17ebeab03e1244e871621672b6d386eeaf14c850f5623d811c5a519b58a\", \"QWEN-AB-G1.result.json\": \"5977a1482af52d3552d61d08ba900ed35b46471da0cd652ce67998265d057692\", \"prior-art.md\": \"c0f2768d3ed35cd43729032c965bb04087fa799e70a6dc0d12e0c103f4cdac57\"}. Tests independently evaluate actual AST command assignments and host cgroup assertion values; they never execute a generated recipe or setup.",
+      "fix": "Added explicit host/guest phase labels, host inheritance, CPU/memory/model swap/GPU/tmpfs contracts. Added producer comparisons for both candidates/modes, 30 receipt-field corruptions, seven missing phases, and 12 actual command/host-assertion mutations. Runtime producers, qualified flags, clocks, effects, models/configs/loaders/prompts/inputs and review/source guards are unchanged."
+    }
+  ],
+  "tests": [
+    {
+      "command": "TMPDIR=\"$PWD/../output/second-author-tmp\" python3 -B -m unittest -v test_prepare_qwen_ab.PreparationTests.test_resource_contracts_match_actual_commands",
+      "exit_code": 1,
+      "summary": "Before receipt change: expected KeyError 'resource_contracts' in all four candidate/mode subcases; confirms the escaped omission is detected."
+    },
+    {
+      "command": "TMPDIR=\"$PWD/../output/second-author-tmp\" python3 -B -m unittest -v test_prepare_qwen_ab.py",
+      "exit_code": 0,
+      "summary": "Final 13 tests passed in 19.223s: all original 10 plus three resource-contract tests, including negative cases. Private output temp directory writable; prior G1 four tempfile environment errors did not recur."
+    },
+    {
+      "command": "python3 -B -",
+      "exit_code": 0,
+      "summary": "Offline stdin comparison loaded native git show c26c9f038db67cf00b23b3da3654bf8b7b5a6ce2:prepare_qwen_ab.py as a preparer module. Both two-image pilots, both 20-image cohorts, GSQ40 and UD30: generated recipe bytes identical; receipts differ only by resource_contracts using the same current __file__ hash context. No generated recipe executed."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "No whitespace errors."
+    }
+  ],
+  "limitations": [
+    "Independent Sol XHIGH G2 must pass before any actual pilot. This author pass is not independent acceptance, live qualification, a winner decision, or a self-merge gate.",
+    "No GPU/controller/SSH/Docker/service/network/dependency/other-model/subagent actions. Only local stdlib preparation, mocked/extracted tests, file edits and native Git operations.",
+    "source_sha records the actual native input HEAD c26; this report is included in the ensuing owned-files commit. The resulting actual HEAD is reported in the final response rather than embedded self-referentially here.",
+    "Native Git history is c26c9f038db67cf00b23b3da3654bf8b7b5a6ce2 with parent cb6df7f33a051c68c9273fa143ea12ccf086ebbb. The prior author report records its read-only default Git/private metadata workaround; this supplied clone already has native c26 HEAD and writable Git, and no alternate Git workaround was used in this pass.",
+    "Supplied immutable semantic/canon/codemap context was read; no fresh ONNX model inference, dependency installation, main-code structural query or external lookup was performed.",
+    "Resource contracts document prospective existing commands and inherited host limits, not live measured cgroup/container state. Actual paired pilot and predecessor capacity-return settlement remain coordinator prerequisites before full execution."
+  ]
+}

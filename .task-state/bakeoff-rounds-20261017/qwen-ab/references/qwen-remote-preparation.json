@@ -1,0 +1,105 @@
+{
+  "at": 1792437187.26744,
+  "preparation_only": true,
+  "execution_started": false,
+  "candidates": {
+    "qwen-gsq": {
+      "asset_spec": {
+        "cache": "/opt/acx-gpu/bakeoff-owned-cache/qwen3.8-27b-gsq-rco-gguf-d562806dbafae37109975e970aae91b43e73b440",
+        "components": {
+          "Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf": {
+            "bytes": 11771546784,
+            "sha256": "64b53b64c7aa39f20a7e54bd80582fe595b1d745624ee8a72e92508c0326d810"
+          },
+          "mmproj-Qwen3.8-27B-BF16.gguf": {
+            "bytes": 931146528,
+            "sha256": "13cb7bebccbd04afc8f4090cb949ecf8937cdf7377c5799b1a0c594e7c0d3e16"
+          }
+        },
+        "image_id": "sha256:fc26b60b30836e5a12fdb28823a3d4bda984c9386a4b04200c78e5a5150067fb",
+        "qwen_config_sha256": "60b918fa38f308933e08bbbcf881d66336c2567b786764a095430c7313710849",
+        "qwen_binary_sha256": "59a74a6528e0dcedfb89e6a3df41b8dbd593a2c3689096a2d030ad1c67ffe4d0",
+        "restore_program_sha256": "88ded798eedb75969a0c762c4a760312265f6cda9221e00c0589ed3e16b2b1dd",
+        "original_network_mode": "bridge",
+        "original_port_bindings": {
+          "8000/tcp": [
+            {
+              "HostIp": "",
+              "HostPort": "8000"
+            }
+          ]
+        }
+      },
+      "source_sha256": "cd9540c3c0ae8e02337880d850ed744bcd140d03ea98e29f479782ce4cf4e583",
+      "setup_sha256": "88cd2f20433759accc1a67d99475f48e199fca21e22867ad7f715812eb7b57ac",
+      "native_stop_110": true,
+      "readiness_150": true,
+      "no_download": true,
+      "config_present": true,
+      "config_sha256": "928cf319e30998de2cd15f24efc547db983f336b47c9d23e2917938d9ff22327",
+      "prerequisites": [
+        "Require MiMo final full settlement",
+        "Fresh actual owned predecessor",
+        "Exact historical runtime/weight/projector identity",
+        "Bounded paired pilot before full candidate cohort"
+      ]
+    },
+    "qwen-ud": {
+      "asset_spec": {
+        "cache": "/opt/acx-gpu/bakeoff-owned-cache/qwen38-27b-1cff334a4a228324d4ee1f76d55d372588f0d556",
+        "components": {
+          "Qwen3.8-27B-UD-Q4_K_XL.gguf": {
+            "bytes": 17923394624,
+            "sha256": "bee238bbeb3dc0a34bde4d0dedbaee1f98c009e8bb4226f03070054c12fb1372"
+          },
+          "mmproj-F16.gguf": {
+            "bytes": 927607488,
+            "sha256": "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e"
+          }
+        },
+        "image_id": "sha256:fc26b60b30836e5a12fdb28823a3d4bda984c9386a4b04200c78e5a5150067fb",
+        "qwen_config_sha256": "60b918fa38f308933e08bbbcf881d66336c2567b786764a095430c7313710849",
+        "qwen_binary_sha256": "59a74a6528e0dcedfb89e6a3df41b8dbd593a2c3689096a2d030ad1c67ffe4d0",
+        "restore_program_sha256": "88ded798eedb75969a0c762c4a760312265f6cda9221e00c0589ed3e16b2b1dd",
+        "original_network_mode": "bridge",
+        "original_port_bindings": {
+          "8000/tcp": [
+            {
+              "HostIp": "",
+              "HostPort": "8000"
+            }
+          ]
+        }
+      },
+      "source_sha256": "53661a3cdc666bef36d9cddd122f1e9a0e77dfdd8b9614eb0df8b1f04e436542",
+      "setup_sha256": "270941be4573bdc8ae4cf8a5007d26f2bdcd3cd86c98668d945a8dcb4fe72dd7",
+      "native_stop_110": true,
+      "readiness_150": true,
+      "no_download": true,
+      "config_present": true,
+      "config_sha256": "8aade2c85b6ad2815c99e32ca5c8e75314411e16e7cd83071a3bab82f48b4056",
+      "prerequisites": [
+        "Require MiMo final full settlement",
+        "Fresh actual owned predecessor",
+        "Exact historical runtime/weight/projector identity",
+        "Bounded paired pilot before full candidate cohort"
+      ]
+    }
+  },
+  "live_guest_inventory_at": "2026-10-19T19:11:30Z",
+  "live_guest_inventory_scope": "Regular files and expected byte sizes present; SHA verified separately at each serving boundary",
+  "live_guest_present": [
+    "MiMo-V2.6-Distill-Qwen-9B-Q4_K_M.gguf",
+    "mmproj-MiMo-V2.6-Distill-Qwen-9B-f16.gguf",
+    "Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf",
+    "mmproj-Qwen3.8-27B-BF16.gguf",
+    "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+    "mmproj-F16.gguf"
+  ],
+  "timing_observation": {
+    "completed_MiMo_40_client_latency_sum_s": 432.074,
+    "per_image_mean_s": 10.80185,
+    "per_image_max_s": 14.301,
+    "optimization": "Larger future per-model residencies may reduce boot/switch/restore overhead, but existing active immutable limits are preserved; evaluate tail/lease/restore slack before changing a prospective bound."
+  }
+}

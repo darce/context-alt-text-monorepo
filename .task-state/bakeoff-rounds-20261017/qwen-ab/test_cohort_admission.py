@@ -5,9 +5,11 @@ import importlib.util
 import inspect
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
+import time
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +23,8 @@ CUSTODY_SOURCE = '22b61b6c7bc3932378dcb7e795a99f3ab288ff58'
 BANNED = ['run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate', 'run_selected_root_resume_qualification']
 TRANSIENT = {'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve', 'probe_transport'}
 DETERMINISTIC = {'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
-                 'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled', 'malformed_payload'}
+                 'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled', 'malformed_payload',
+                 'source_unavailable'}
 
 
 def load(name):
@@ -115,6 +118,20 @@ def test_transient_and_deterministic_sets_are_exact():
     assert CA.DETERMINISTIC == frozenset(DETERMINISTIC)
     assert all(CA.AdmissionRefusal(c, 'x').transient for c in TRANSIENT)
     assert not any(CA.AdmissionRefusal(c, 'x').transient for c in DETERMINISTIC)
+
+
+def test_source_unavailable_is_deterministic_not_transient_and_admit_never_retries_it():
+    assert 'source_unavailable' in CA.DETERMINISTIC
+    assert 'source_unavailable' not in CA.TRANSIENT and 'source_unavailable' not in CA.EVALUATED
+    tries = []
+
+    def attempt():
+        tries.append(1)
+        raise CA.AdmissionRefusal('source_unavailable', 'x')
+
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.admit(attempt=attempt, sleep=lambda seconds: None)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False and tries == [1]
 
 
 # --- parsers ------------------------------------------------------------------------------------
@@ -929,7 +946,13 @@ def test_parse_args_accepts_the_v2_flags():
 
 # --- runner v2: verify_prepared -----------------------------------------------------------------
 
-RECIPE = b"window=Path('/tmp/qwen-owner-window.abc123')\nx = 1\n"
+SHA = 'ab94e904ca25e2e031ad241f2600aa0406201c15'
+ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/source'
+WORKSPACE = '/home/gate/bakeoff-rounds-20261017-inputs/results/n-1/workspace'
+BINDING = dict(source=SHA, repo=f'{ROOT}/{SHA}', python=f'{ROOT}/{SHA}.venv/bin/python', workspace=WORKSPACE)
+RECIPE = (f"window=Path('/tmp/qwen-owner-window.abc123')\nSOURCE='{SHA}'\n"
+          f"repo=Path('{ROOT}')/SOURCE\npython=repo.parent/(SOURCE+'.venv')/'bin/python'\n"
+          f"workspace=Path('{WORKSPACE}');x=1\nx = 1\n").encode()
 SRC = b'print("preparer")\n'
 
 
@@ -976,6 +999,103 @@ def test_verify_prepared_rejects_unknown_mode():
 def test_verify_prepared_requires_exactly_one_window_line(raw):
     with pytest.raises(ValueError, match='window'):
         RUN.verify_prepared(prepared(raw), raw)
+
+
+# --- runner v3: source_binding ------------------------------------------------------------------
+
+SOURCE_LINE = f"SOURCE='{SHA}'".encode()
+REPO_LINE = f"repo=Path('{ROOT}')/SOURCE".encode()
+PYTHON_LINE = b"python=repo.parent/(SOURCE+'.venv')/'bin/python'"
+WORKSPACE_LINE = f"workspace=Path('{WORKSPACE}')".encode()
+
+
+def swapped(old, new):
+    assert RECIPE.count(old) == 1, old
+    return RECIPE.replace(old, new)
+
+
+def test_source_binding_accepts_the_fixture_and_returns_the_four_exact_paths():
+    assert RUN.source_binding(RECIPE) == BINDING
+
+
+@pytest.mark.parametrize('raw,message', [
+    (swapped(REPO_LINE, b"repo=Path('/home/gate/workbay-sandbox')/SOURCE"), 'recipe binds a reaped WorkBay lane sandbox'),
+    (RECIPE + b"x='.venv-lane-'\n", 'recipe binds a reaped lane venv (.venv-lane-)'),
+    (RECIPE + REPO_LINE + b'\n', 'repo line must appear exactly once, found 2'),
+    (RECIPE.replace(PYTHON_LINE + b'\n', b''), 'python line must appear exactly once, found 0'),
+    (swapped(SOURCE_LINE, b"SOURCE='ab94e904'"), 'SOURCE line must appear exactly once, found 0'),
+    (swapped(WORKSPACE_LINE, b"workspace=Path('/tmp/n-1/workspace')"), 'workspace line must appear exactly once, found 0'),
+])
+def test_source_binding_refuses_each_unbound_recipe_with_its_message(raw, message):
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == message
+
+
+RESULTS = '/home/gate/bakeoff-rounds-20261017-inputs/results'
+# QDSG1-01: a second binding of a bound name, anywhere in the module, is refused even when the text checks each see exactly one line.
+REBINDS = [
+    pytest.param(swapped(WORKSPACE_LINE, WORKSPACE_LINE + b";workspace=Path('/tmp/unchecked-workspace')"), 'workspace', id='same-line'),
+    pytest.param(RECIPE + b"workspace=Path('/tmp/unchecked-workspace')\n", 'workspace', id='later-line'),
+    pytest.param(RECIPE + b"for workspace in ['/tmp/unchecked']:\n    pass\n", 'workspace', id='for-target'),
+    pytest.param(RECIPE + b'import os as workspace\n', 'workspace', id='import-as'),
+    pytest.param(RECIPE + b'def repo():\n    pass\n', 'repo', id='def'),
+    pytest.param(RECIPE + b'class python:\n    pass\n', 'python', id='class'),
+    pytest.param(RECIPE + b"python += 'x'\n", 'python', id='augassign'),
+    pytest.param(RECIPE + b'f = lambda SOURCE: 0\n', 'SOURCE', id='lambda-arg'),
+    pytest.param(RECIPE + b'def f():\n    global SOURCE\n', 'SOURCE', id='global'),
+    pytest.param(RECIPE + b'try:\n    pass\nexcept Exception as repo:\n    pass\n', 'repo', id='except-as'),
+]
+
+
+@pytest.mark.parametrize('raw,name', REBINDS)
+def test_source_binding_refuses_any_second_binding_of_a_bound_name(raw, name):
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == f'{name} must be bound exactly once, found 2 bindings'
+
+
+def test_source_binding_refuses_a_sha_line_that_only_sits_inside_a_string():
+    raw = swapped(SOURCE_LINE, b'"""\n' + SOURCE_LINE + b'\n"""')
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == 'SOURCE must be bound exactly once, found 0 bindings'
+
+
+def test_source_binding_refuses_a_bound_name_that_is_not_a_module_level_assignment():
+    # The repo line survives only inside a string, and the one real binding of repo is a for target: the text check sees one line, the module has one binding that is not an assignment.
+    raw = swapped(REPO_LINE, b'"""\n' + REPO_LINE + b'\n"""\nfor repo in []:\n    pass')
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == 'repo is bound outside a module-level single-target assignment, found 1 binding'
+
+
+def test_source_binding_refuses_a_star_import_that_could_rebind_any_name():
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(RECIPE + b'from os.path import *\n')
+    assert str(e.value) == 'recipe imports * and could rebind a bound name'
+
+
+def test_source_binding_refuses_a_recipe_that_does_not_parse():
+    with pytest.raises(ValueError, match='^recipe does not parse'):
+        RUN.source_binding(RECIPE + b'def (:\n')
+
+
+# QDSG1-02: the workspace is exactly <results root>/<NAME>/workspace; '..', '.', '//' and a trailing slash are refused, not normalised.
+@pytest.mark.parametrize('tail', ['../workspace', './workspace', 'a/../b/workspace', '/x/workspace', 'n-1/workspace/',
+                                  '.hidden/workspace', 'n-1/ws'])
+def test_source_binding_refuses_a_workspace_that_is_not_a_direct_child_of_results(tail):
+    bad = f'{RESULTS}/{tail}'
+    raw = swapped(WORKSPACE_LINE, f"workspace=Path('{bad}')".encode())
+    with pytest.raises(ValueError) as e:
+        RUN.source_binding(raw)
+    assert str(e.value) == f'workspace must be {RESULTS}/<NAME>/workspace, got {bad!r}'
+
+
+@pytest.mark.parametrize('name', ['n-1', 'a.b_c-9', 'A'])
+def test_source_binding_accepts_each_well_formed_result_name(name):
+    workspace = f'{RESULTS}/{name}/workspace'
+    assert RUN.source_binding(swapped(WORKSPACE_LINE, f"workspace=Path('{workspace}')".encode()))['workspace'] == workspace
 
 
 # --- runner v2: bind_generator ------------------------------------------------------------------
@@ -1279,69 +1399,896 @@ def test_main_full_mode_admits_with_a_clean_pilot_and_binds_its_receipt(stubbed_
 
 # --- runner v2: preclaim ------------------------------------------------------------------------
 
-def report(state='stopped', lease=None, action='auto', expires='2001-01-01T00:00:00Z', publication=True):
+def source_report():
+    """A healthy source report: every root at BINDING's sha and clean, and the interpreter imports. The TEST-20 baseline."""
+    root = dict(head=SHA, clean=True, head_rc=0, diff_rc=0, head_error=None, diff_error=None, dirty=[], diff_stderr_tail='')
+    return dict(repo=dict(root), workspace=dict(root), python=dict(executable=True, import_ok=True, stderr_tail='', error=None))
+
+
+def report(state='stopped', lease=None, action='auto', expires='2001-01-01T00:00:00Z', publication=True, source=None):
     pub = dict(op='op1', action=action, expires_at=expires, sequence=3) if publication else None
-    return dict(gpu=dict(state=state, lease_expires_at=lease), publication=pub)
+    return dict(gpu=dict(state=state, lease_expires_at=lease), publication=pub,
+                source=source_report() if source is None else source)
 
 
 def test_classify_preclaim_refuses_a_running_gpu():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(state='running'))
+        RUN.classify_preclaim(report(state='running'), BINDING)
     assert e.value.cls == 'gpu_not_stopped'
 
 
 def test_classify_preclaim_refuses_a_set_gpu_lease():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(lease='2026-10-20T13:00:00Z'))
+        RUN.classify_preclaim(report(lease='2026-10-20T13:00:00Z'), BINDING)
     assert e.value.cls == 'gpu_not_stopped'
 
 
 def test_classify_preclaim_refuses_a_live_start():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(action='start'))
+        RUN.classify_preclaim(report(action='start'), BINDING)
     assert e.value.cls == 'live_start'
 
 
 def test_classify_preclaim_accepts_an_expired_auto():
     r = report(expires='2001-01-01T00:00:00Z')
-    assert RUN.classify_preclaim(r) == r
+    assert RUN.classify_preclaim(r, BINDING) == r
 
 
 def test_classify_preclaim_accepts_stop():
     r = report(action='stop')
-    assert RUN.classify_preclaim(r) == r
+    assert RUN.classify_preclaim(r, BINDING) == r
 
 
 def test_classify_preclaim_refuses_missing_publication():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(publication=False))
+        RUN.classify_preclaim(report(publication=False), BINDING)
     assert e.value.cls == 'predecessor_unsettled'
 
 
 def test_classify_preclaim_refuses_an_unsettled_action():
     with pytest.raises(CA.AdmissionRefusal) as e:
-        RUN.classify_preclaim(report(action='settle'))
+        RUN.classify_preclaim(report(action='settle'), BINDING)
     assert e.value.cls == 'predecessor_unsettled'
 
 
+ZERO = '0' * 40
+SOURCE_BREAKS = {
+    'repo head mismatch': lambda s: s['repo'].update(head=ZERO),
+    'repo dirty': lambda s: s['repo'].update(clean=False),
+    'repo head None (rc 128)': lambda s: s['repo'].update(head=None, head_rc=128, clean=False),
+    'workspace head mismatch': lambda s: s['workspace'].update(head=ZERO),
+    'workspace dirty': lambda s: s['workspace'].update(clean=False),
+    'python not executable': lambda s: s['python'].update(executable=False),
+    'import failure': lambda s: s['python'].update(import_ok=False, stderr_tail='ModuleNotFoundError: httpx'),
+}
+
+
+def test_classify_preclaim_accepts_the_all_healthy_report_as_the_baseline():
+    r = report()
+    assert RUN.classify_preclaim(r, BINDING) == r
+
+
+@pytest.mark.parametrize('label', list(SOURCE_BREAKS))
+def test_classify_preclaim_refuses_each_unavailable_source_as_source_unavailable(label):
+    src = source_report()
+    SOURCE_BREAKS[label](src)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+
+
+def test_classify_preclaim_source_detail_names_the_root_expected_and_observed():
+    src = source_report()
+    src['workspace']['head'] = ZERO
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.detail == (f"workspace {WORKSPACE}: expected HEAD {SHA} clean True rc 0 no error; observed head '{ZERO}' clean True "
+                              "head_rc 0 head_error None diff_rc 0 diff_error None dirty [] diff_stderr_tail ''; "
+                              'rebuild: qwen-latebind/durable-source/build_durable_source.py')
+
+
+def test_classify_preclaim_keeps_the_gpu_check_ahead_of_the_source_check():
+    src = source_report()
+    src['repo']['clean'] = False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(state='running', source=src), BINDING)
+    assert e.value.cls == 'gpu_not_stopped'
+
+
+def test_classify_preclaim_refuses_a_report_without_a_source_mapping_as_malformed():
+    r = report()
+    del r['source']
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(r, BINDING)
+    assert e.value.cls == 'malformed_payload'
+
+
+# QDSG1-03: every child status is checked, not only head and clean; each row flips one field of the all-healthy report.
+ROOT_FIELDS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error', 'dirty', 'diff_stderr_tail')
+PY_FIELDS = ('executable', 'import_ok', 'error', 'stderr_tail')
+ROOT_FLIPS = [(owner, field, value) for owner in ('repo', 'workspace') for field, value in
+              [('head_rc', 128), ('diff_rc', 128), ('diff_rc', 1), ('head_error', 'OSError: denied'),
+               ('diff_error', 'TimeoutExpired: 15'), ('clean', 1), ('head', None)]]
+PYTHON_FLIPS = [('python', 'executable', False), ('python', 'import_ok', None), ('python', 'error', 'OSError: denied')]
+
+
+@pytest.mark.parametrize('owner,field,value', ROOT_FLIPS + PYTHON_FLIPS)
+def test_classify_preclaim_refuses_each_flipped_field_and_names_every_observed_field(owner, field, value):
+    src = source_report()
+    src[owner][field] = value
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+    environmental = field in ('head_error', 'diff_error', 'error')
+    assert e.value.detail.startswith('environmental: ' if environmental else f'{owner} {BINDING[owner]}:')
+    observed = PY_FIELDS if owner == 'python' else ROOT_FIELDS
+    assert all(f' {key} ' in e.value.detail for key in observed), e.value.detail
+
+
+# M2: an environmental error (a timeout, OSError, or a skipped child) names the field and the child where the fault stops, and asks for a re-run.
+@pytest.mark.parametrize('owner,field,value', [('repo', 'head_error', 'OSError: denied'), ('workspace', 'diff_error', 'TimeoutExpired: 15'),
+                                               ('python', 'error', 'deadline_exhausted')])
+def test_classify_preclaim_names_an_environmental_error_and_asks_for_a_rerun_not_a_rebuild(owner, field, value):
+    src = source_report()
+    src[owner][field] = value
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+    assert e.value.detail.startswith('environmental: ')
+    assert f'{field} {value!r}' in e.value.detail
+    assert 're-run after checking VM load; rebuild only if it recurs' in e.value.detail
+    assert RUN.REBUILD not in e.value.detail
+
+
+# M2: a pure mismatch (wrong HEAD, dirty tree, failed import with no error) keeps the REBUILD hint.
+@pytest.mark.parametrize('label', list(SOURCE_BREAKS))
+def test_classify_preclaim_keeps_the_rebuild_hint_for_a_pure_mismatch(label):
+    src = source_report()
+    SOURCE_BREAKS[label](src)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'source_unavailable' and not e.value.detail.startswith('environmental:')
+    assert e.value.detail.endswith(RUN.REBUILD)
+
+
+SOURCE_SHAPES = {
+    'repo missing': lambda s: s.pop('repo'),
+    'repo not a mapping': lambda s: s.update(repo='ok'),
+    'workspace null': lambda s: s.update(workspace=None),
+    'python not a mapping': lambda s: s.update(python=[]),
+    'root key missing': lambda s: s['repo'].pop('head_rc'),
+    'root error key missing': lambda s: s['workspace'].pop('diff_error'),
+    'root dirty missing': lambda s: s['repo'].pop('dirty'),
+    'root diff_stderr_tail missing': lambda s: s['workspace'].pop('diff_stderr_tail'),
+    'python key missing': lambda s: s['python'].pop('import_ok'),
+    'python stderr_tail missing': lambda s: s['python'].pop('stderr_tail'),
+}
+
+
+@pytest.mark.parametrize('label', list(SOURCE_SHAPES))
+def test_classify_preclaim_refuses_a_missing_or_ill_typed_source_mapping_as_malformed(label):
+    src = source_report()
+    SOURCE_SHAPES[label](src)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(report(source=src), BINDING)
+    assert e.value.cls == 'malformed_payload'
+
+
 def test_preclaim_script_has_no_ttl_check_and_compiles():
-    src = RUN.preclaim_script('/tmp/qwen-owner-window.abc123')
+    src = RUN.preclaim_script('/tmp/qwen-owner-window.abc123', BINDING)
     compile(src, 'preclaim', 'exec')
     assert 'remaining' not in src and '>300' not in src
 
 
-def test_preclaim_script_reports_the_highest_sequence_publication(tmp_path):
-    ops = tmp_path/'w'/'ops'
-    for op, seq, act in [('a', 1, 'start'), ('b', 2, 'auto')]:
-        (ops/op).mkdir(parents=True)
-        (ops/op/'publication.json').write_text(json.dumps(dict(action=act, expires_at='2001-01-01T00:00:00Z', sequence=seq)))
+PRECLAIM_ENV = dict(PATH='/usr/local/bin:/usr/bin:/bin', HOME='/home/gate', LANG='C.UTF-8', PYTHONDONTWRITEBYTECODE='1',
+                    OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
+
+
+def completed(stdout='', stderr='', returncode=0):
+    return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def healthy_child(argv):
+    """Each source child succeeds on the bound source: the roots are at SHA and clean, and the interpreter imports."""
+    if argv[0] == 'git':
+        return completed(stdout=SHA + '\n' if argv[3] == 'rev-parse' else '')
+    return completed()
+
+
+def publish(tmp_path, *ops):
+    for op, seq, action in ops:
+        (tmp_path/'w'/'ops'/op).mkdir(parents=True, exist_ok=True)
+        (tmp_path/'w'/'ops'/op/'publication.json').write_text(json.dumps(dict(action=action, expires_at='2001-01-01T00:00:00Z', sequence=seq)))
+
+
+class FakeClock:
+    """Stands in for time.monotonic. It moves only when a fake child is charged time, so the deadline is observable without sleeping."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+
+def roots(tmp_path):
+    """BINDING with repo and workspace as real directories holding a .git/index, so the preclaim's index copy has bytes to copy."""
+    b = dict(BINDING)
+    for name in ('repo', 'workspace'):
+        (tmp_path/name/'.git').mkdir(parents=True, exist_ok=True)
+        (tmp_path/name/'.git'/'index').write_bytes(b'DIRC')
+        b[name] = str(tmp_path/name)
+    return b
+
+
+def run_preclaim(monkeypatch, capsys, tmp_path, answer=healthy_child, executable=True, cost=lambda argv: 0.0):
+    """Execs the generated preclaim text with subprocess replaced by a recorder, os.access fixed, os.chown a no-op and time.monotonic faked.
+    cost(argv) is how long a fake child runs; a child that runs to its timeout raises TimeoutExpired and is charged that timeout.
+    Returns the calls and the printed reply."""
     gpu = tmp_path/'gpu.json'
     gpu.write_text(json.dumps(dict(state='stopped', lease_expires_at=None)))
-    src = RUN.preclaim_script(str(tmp_path/'w')).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
-    out = subprocess.run([sys.executable, '-I', '-B', '-'], input=src, text=True, capture_output=True, check=True).stdout
-    rep = json.loads(out)
+    src = RUN.preclaim_script(str(tmp_path/'w'), roots(tmp_path)).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
+    clock, calls = FakeClock(), []
+    recorder = types.ModuleType('subprocess')
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        took = cost(argv)
+        clock.now += min(took, kwargs['timeout'])
+        if took >= kwargs['timeout']:
+            raise subprocess.TimeoutExpired(argv, kwargs['timeout'])
+        return answer(argv)
+
+    recorder.run, recorder.TimeoutExpired = run, subprocess.TimeoutExpired
+    monkeypatch.setitem(sys.modules, 'subprocess', recorder)
+    monkeypatch.setattr(os, 'access', lambda path, mode: executable)
+    monkeypatch.setattr(os, 'chown', lambda path, uid, gid: None)
+    monkeypatch.setattr(time, 'monotonic', clock.monotonic)
+    exec(compile(src, 'preclaim', 'exec'), {'__name__': 'preclaim'})
+    return calls, json.loads(capsys.readouterr().out)
+
+
+def run_local(monkeypatch, capsys, tmp_path, b, scratch=None, home=None):
+    """Execs the generated preclaim text against the real git as the local uid: the uid 1002 switch is dropped, and os.chown is recorded
+    (path, uid, gid, mode at the time of the call) instead of applied. Returns the printed reply, every child's (argv, kwargs) and the chowns.
+    scratch, when given, is the child's TMPDIR, so a test can see what the child leaves behind. home, when given, is the child's HOME."""
+    gpu = tmp_path/'gpu.json'
+    gpu.write_text(json.dumps(dict(state='stopped', lease_expires_at=None)))
+    src = RUN.preclaim_script(str(tmp_path/'w'), b).replace("'/run/acx/gpu-state.json'", repr(str(gpu)))
+    real, calls, chowns = subprocess, [], []
+    local = types.ModuleType('subprocess')
+
+    def run(argv, **kwargs):
+        calls.append((argv, dict(kwargs)))
+        for key in ('user', 'group', 'extra_groups'):
+            kwargs.pop(key)
+        if scratch is not None:
+            kwargs['env'] = dict(kwargs['env'], TMPDIR=str(scratch))
+        if home is not None:
+            kwargs['env'] = dict(kwargs['env'], HOME=str(home))
+        return real.run(argv, **kwargs)
+
+    local.run, local.TimeoutExpired = run, real.TimeoutExpired
+    monkeypatch.setitem(sys.modules, 'subprocess', local)
+    monkeypatch.setattr(os, 'chown', lambda path, uid, gid: chowns.append((str(path), uid, gid, os.stat(path).st_mode & 0o777)))
+    exec(compile(src, 'preclaim', 'exec'), {'__name__': 'preclaim'})
+    return json.loads(capsys.readouterr().out), calls, chowns
+
+
+def git_in(path, *args):
+    return subprocess.run(['git', '-C', str(path), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def committed_repo(path):
+    """A real repo with one committed file, then stat-only drift on it: the same bytes under an older mtime."""
+    path.mkdir(parents=True)
+    git_in(path, 'init', '-q')
+    (path/'a.txt').write_text('hello\n')
+    git_in(path, 'add', 'a.txt')
+    git_in(path, 'commit', '-qm', 'init')
+    os.utime(path/'a.txt', (946684800, 946684800))
+    return path
+
+
+# Audit hooks cannot be removed, so one hook is installed for the session and records only while a test turns AUDIT['on'] on.
+AUDIT = dict(on=False, opened=[])
+
+
+def _record_open(event, args):
+    if event == 'open' and AUDIT['on'] and isinstance(args[0], (str, bytes, os.PathLike)):
+        AUDIT['opened'].append(os.fsdecode(args[0]))
+
+
+sys.addaudithook(_record_open)
+
+
+@pytest.fixture
+def opened_paths():
+    """Every path this process opens while the test runs. The preclaim's own file access is what these tests bound; children are separate processes."""
+    AUDIT.update(on=True, opened=[])
+    yield AUDIT['opened']
+    AUDIT.update(on=False)
+
+
+def test_preclaim_script_reports_the_highest_sequence_publication(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('a', 1, 'start'), ('b', 2, 'auto'))
+    _, rep = run_preclaim(monkeypatch, capsys, tmp_path)
     assert rep['gpu'] == dict(state='stopped', lease_expires_at=None)
     assert rep['publication'] == dict(op='b', action='auto', expires_at='2001-01-01T00:00:00Z', sequence=2)
+
+
+def test_preclaim_script_composes_the_five_source_children_exactly(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+    calls, rep = run_preclaim(monkeypatch, capsys, tmp_path)
+    argvs = [argv for argv, _ in calls]
+    assert argvs[0] == ['git', '-C', b['repo'], 'rev-parse', 'HEAD']
+    assert argvs[2] == ['git', '-C', b['workspace'], 'rev-parse', 'HEAD']
+    assert argvs[4] == [b['python'], '-B', '-c', 'import httpx,scripts.eval_harness.bakeoff']
+    # The diff child is one uid-1002 shell: it copies .git/index itself and diffs the copy, so the parent passes it only the root.
+    for i, root in ((1, b['repo']), (3, b['workspace'])):
+        assert argvs[i][:2] == ['/bin/sh', '-c'] and argvs[i][3:] == ['sh', root], argvs[i]
+    for (argv, kw), timeout in zip(calls, [10, 15, 10, 15, 20]):
+        assert kw['timeout'] == timeout, argv
+        assert kw['user'] == 1002 and kw['group'] == 1002 and kw['extra_groups'] == [], argv
+        assert kw['capture_output'] is True and kw['text'] is True, argv
+        assert kw.get('cwd') == (f"{b['workspace']}/apps/prototype-description-service" if argv[0] == b['python'] else None), argv
+        assert kw['env'] == PRECLAIM_ENV, argv
+    assert rep['source'] == source_report()
+    assert RUN.classify_preclaim(rep, b) == rep
+
+
+def diff_child_of(root):
+    """Matches the uid-1002 diff child of one root: /bin/sh -c DIFF sh <root>."""
+    return lambda argv: argv[:2] == ['/bin/sh', '-c'] and argv[3:] == ['sh', root]
+
+
+@pytest.mark.parametrize('target,path,fail', [
+    (lambda b: lambda argv: argv[:4] == ['git', '-C', b['repo'], 'rev-parse'], ('repo', 'head_error'), lambda argv: OSError('denied')),
+    (lambda b: diff_child_of(b['workspace']), ('workspace', 'diff_error'), lambda argv: subprocess.TimeoutExpired(argv, 15)),
+    (lambda b: lambda argv: argv[0] == b['python'], ('python', 'error'), lambda argv: FileNotFoundError(2, 'No such file or directory')),
+], ids=['repo-rev-parse-oserror', 'workspace-diff-timeout', 'python-missing'])
+def test_a_source_child_that_cannot_run_is_recorded_and_refused_without_reraising(monkeypatch, capsys, tmp_path, target, path, fail):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+    is_target = target(b)
+
+    def answer(argv):
+        if is_target(argv):
+            raise fail(argv)
+        return healthy_child(argv)
+
+    _, rep = run_preclaim(monkeypatch, capsys, tmp_path, answer=answer)
+    assert rep['source'][path[0]][path[1]] is not None
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+# QDSG1-04: the children share one 20 s deadline inside the 30 s ssh, and the JSON is printed whatever each child does.
+def test_hung_children_share_one_twenty_second_deadline_and_the_rest_are_skipped(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+    calls, rep = run_preclaim(monkeypatch, capsys, tmp_path, cost=lambda argv: float('inf'))
+    assert [kw['timeout'] for _, kw in calls] == [10, 10]
+    assert sum(kw['timeout'] for _, kw in calls) <= 20
+    src = rep['source']
+    assert src['repo']['head_error'].startswith('TimeoutExpired') and src['repo']['diff_error'].startswith('TimeoutExpired')
+    assert src['workspace']['head_error'] == 'deadline_exhausted' and src['workspace']['diff_error'] == 'deadline_exhausted'
+    assert src['python']['error'] == 'deadline_exhausted'
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable' and e.value.transient is False
+
+
+def test_a_slow_child_leaves_the_next_child_only_the_rest_of_the_deadline(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+
+    def cost(argv):
+        if argv[:4] == ['git', '-C', b['repo'], 'rev-parse']:
+            return 9.5
+        return float('inf') if diff_child_of(b['repo'])(argv) else 0.0
+
+    calls, rep = run_preclaim(monkeypatch, capsys, tmp_path, cost=cost)
+    assert [kw['timeout'] for _, kw in calls] == [10, 20 - 9.5]
+    assert rep['source']['repo']['head'] == SHA and rep['source']['repo']['diff_error'].startswith('TimeoutExpired')
+    assert rep['source']['workspace']['head_error'] == 'deadline_exhausted'
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+# QDSG1-05: the read-only preclaim must not rewrite .git/index; the diff child reads a private copy, as uid 1002, and the copy is removed.
+def git_index_probe(tmp_path, damage=None):
+    repo = committed_repo(tmp_path/'repo')
+    if damage == 'missing':
+        (repo/'.git'/'index').unlink()
+    if damage == 'unreadable':
+        (repo/'.git'/'index').chmod(0)
+    b = dict(BINDING, source=git_in(repo, 'rev-parse', 'HEAD'), repo=str(repo), workspace=str(repo), python=str(tmp_path/'no-python'))
+    return repo, b
+
+
+def test_plain_git_diff_rewrites_the_index_on_stat_only_drift(tmp_path):
+    """The hazard the copy removes, shown on this git: a plain diff rewrites .git/index after stat-only drift, so the next test is not vacuous."""
+    repo = committed_repo(tmp_path/'repo')
+    index = repo/'.git'/'index'
+    before = index.read_bytes()
+    assert git_in(repo, 'diff', '--name-only') == ''
+    assert index.read_bytes() != before
+
+
+def test_preclaim_diff_leaves_the_repo_index_bytes_and_mtime_untouched_on_stat_only_drift(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    index = repo/'.git'/'index'
+    before = (index.read_bytes(), index.stat().st_mtime_ns)
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    for name in ('repo', 'workspace'):
+        assert rep['source'][name]['diff_rc'] == 0 and rep['source'][name]['diff_error'] is None
+        assert rep['source'][name]['clean'] is True
+    assert (index.read_bytes(), index.stat().st_mtime_ns) == before
+
+
+def test_root_opens_nothing_under_the_repo_git_and_chowns_nothing(monkeypatch, capsys, tmp_path, opened_paths):
+    """H1/H2: the parent never opens, creates or chowns a path under a source tree; the uid-1002 diff child copies the index itself."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    opened_paths.clear()
+    rep, _, chowns = run_local(monkeypatch, capsys, tmp_path, b)
+    assert [p for p in opened_paths if p.startswith(str(repo/'.git'))] == []
+    assert chowns == []
+    assert rep['source']['repo']['clean'] is True and rep['source']['workspace']['clean'] is True
+
+
+def test_root_never_reads_an_index_that_is_a_symlink_to_a_file_outside_the_repo(monkeypatch, capsys, tmp_path, opened_paths):
+    """H2: a .git/index replaced by a symlink to a root-readable file is never followed by the parent."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    sentinel = tmp_path/'sentinel'
+    sentinel.write_bytes(b'SENTINEL\n')
+    (repo/'.git'/'index').unlink()
+    (repo/'.git'/'index').symlink_to(sentinel)
+    opened_paths.clear()
+    run_local(monkeypatch, capsys, tmp_path, b)
+    target = os.path.realpath(sentinel)
+    assert [p for p in opened_paths if os.path.realpath(p) == target or p.startswith(str(repo/'.git'))] == []
+
+
+def test_the_diff_child_removes_its_private_index_copy(monkeypatch, capsys, tmp_path):
+    """The copy lives in a directory the child makes and its EXIT trap removes; the scratch TMPDIR is empty afterwards."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    _, b = git_index_probe(tmp_path)
+    scratch = tmp_path/'scratch'
+    scratch.mkdir()
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b, scratch=scratch)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is True
+    assert list(scratch.iterdir()) == []
+
+
+@pytest.mark.parametrize('damage', ['missing', pytest.param('unreadable', marks=pytest.mark.skipif(os.geteuid() == 0, reason='root reads any file'))])
+def test_a_missing_or_unreadable_repo_index_fails_the_diff_child_and_is_never_clean(monkeypatch, capsys, tmp_path, damage):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    _, b = git_index_probe(tmp_path, damage=damage)
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    root = rep['source']['repo']
+    assert root['diff_error'] is None and root['clean'] is False and root['diff_rc'] not in (None, 0)
+    assert 'index' in root['diff_stderr_tail']
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_a_linked_worktree_whose_git_is_a_file_is_clean_not_a_not_a_directory_error(monkeypatch, capsys, tmp_path):
+    """L1: in a linked worktree .git is a file, so the index is found through git, not by joining .git/index onto the root."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, _ = git_index_probe(tmp_path)
+    wt = tmp_path/'wt'
+    git_in(repo, 'worktree', 'add', '-q', str(wt))
+    assert (wt/'.git').is_file()
+    b = dict(BINDING, source=git_in(wt, 'rev-parse', 'HEAD'), repo=str(wt), workspace=str(wt), python=str(tmp_path/'no-python'))
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    root = rep['source']['repo']
+    assert root['diff_error'] is None and root['diff_rc'] == 0 and root['clean'] is True
+
+
+# M1: the clean check covers staged, unstaged and untracked code against HEAD; runtime data and stat-only touches stay clean.
+def preclaim_after(monkeypatch, capsys, tmp_path, edit):
+    """Runs the real preclaim over a committed repo after edit(repo) changes it. Returns the root report and the bound source."""
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    edit(repo)
+    b = dict(b, source=git_in(repo, 'rev-parse', 'HEAD'))
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
+    return rep, b
+
+
+def test_a_staged_modification_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    def edit(repo):
+        (repo/'a.txt').write_text('staged\n')
+        git_in(repo, 'add', 'a.txt')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_an_unstaged_modification_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, lambda repo: (repo/'a.txt').write_text('unstaged\n'))
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_an_untracked_python_file_that_is_not_ignored_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, lambda repo: (repo/'new.py').write_text('x = 1\n'))
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_an_ignored_log_file_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    """QDSG2-03: no log exists in either live root, so the exact allowlist refuses an ignored log like any other untracked entry."""
+    def edit(repo):
+        (repo/'.gitignore').write_text('*.log\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore logs')
+        (repo/'build.log').write_text('ignored\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_an_ignored_build_log_under_the_service_dir_names_its_path_in_the_refusal(monkeypatch, capsys, tmp_path):
+    """FIXE: the DIFF child prints the blocking entry; the refusal carries it, so the operator needs no re-run to see which file blocked admission."""
+    def edit(repo):
+        track_service(repo)
+        (repo/'.gitignore').write_text('*.log\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore logs')
+        (repo/SERVICE/'build.log').write_text('ignored\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['dirty'] == [f'{SERVICE}/build.log']
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+    assert f'{SERVICE}/build.log' in e.value.detail
+
+
+def test_a_refusal_lists_at_most_five_blocking_entries_each_cut_to_200_characters(monkeypatch, capsys, tmp_path):
+    """FIXE: the report is bounded. Six blockers give five lines; a 244-character name is cut to 200 characters on its line."""
+    long_name = 'a' * 240 + '.txt'
+
+    def edit(repo):
+        track_service(repo)
+        for name in (long_name, 'n1.txt', 'n2.txt', 'n3.txt', 'n4.txt', 'n5.txt'):
+            (repo/SERVICE/name).write_text('x\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    dirty = rep['source']['repo']['dirty']
+    assert len(dirty) == 5 and all(len(line) <= 200 for line in dirty)
+    assert dirty[0] == f'{SERVICE}/{long_name}'[:200]
+    assert f'{SERVICE}/n5.txt' not in dirty
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and repr(dirty) in e.value.detail
+
+
+def test_the_diff_child_stderr_tail_is_its_last_300_characters_and_reaches_the_refusal(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+    stderr = 'e' * 400 + 'TAIL'
+
+    def answer(argv):
+        if diff_child_of(b['repo'])(argv):
+            return completed(stdout=f'{SERVICE}/build.log\n', stderr=stderr)
+        return healthy_child(argv)
+
+    _, rep = run_preclaim(monkeypatch, capsys, tmp_path, answer=answer)
+    assert rep['source']['repo']['diff_stderr_tail'] == stderr[-300:]
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable' and stderr[-300:] in e.value.detail
+
+
+# M2, TEST-20: the shared evidence workspace collects runtime data files, so only import-capable untracked files refuse the clean check.
+def classify_with_healthy_python(rep, b):
+    """Judges the source roots alone: these fixtures bind no interpreter, so its child is set healthy before the verdict."""
+    rep['source']['python'] = dict(executable=True, import_ok=True, stderr_tail='', error=None)
+    return RUN.classify_preclaim(rep, b)
+
+
+def test_an_untracked_ses_runtime_file_that_is_not_ignored_stays_clean(monkeypatch, capsys, tmp_path):
+    """The known-good evidence workspace: its only untracked path is a SQLite artifact from an earlier run."""
+    def edit(repo):
+        track_service(repo)
+        (repo/'apps'/'prototype-description-service'/':memory:.ses').write_bytes(b'SQLite format 3\x00')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is True
+    assert classify_with_healthy_python(rep, b)['source']['repo']['clean'] is True
+
+
+@pytest.mark.parametrize('path', ['apps/prototype-description-service/shadow.py', 'pkg/native.so', 'pkg/hook.pth', 'pkg/cached.pyc'])
+def test_an_untracked_import_capable_file_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, path):
+    def edit(repo):
+        (repo/path).parent.mkdir(parents=True, exist_ok=True)
+        (repo/path).write_bytes(b'x = 1\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+@pytest.mark.parametrize('filename', ['shadow.py', 'native.so', 'cached.pyc', 'hook.pth'])
+@pytest.mark.parametrize('ignore_directory', [False, True], ids=['ignored-file', 'ignored-directory'])
+def test_ignored_import_capable_code_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, filename, ignore_directory):
+    service = 'apps/prototype-description-service'
+    path = f'{service}/{filename}'
+
+    def edit(repo):
+        (repo/'.gitignore').write_text('apps/\n' if ignore_directory else path + '\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore code fixture')
+        (repo/service).mkdir(parents=True)
+        (repo/path).write_text("MARKER = 'ignored module imported'\n")
+        assert git_in(repo, 'check-ignore', path) == path
+        if filename == 'shadow.py':
+            imported = subprocess.run([sys.executable, '-B', '-c', 'import shadow; print(shadow.MARKER)'],
+                                      cwd=repo/service, capture_output=True, text=True, check=True)
+            assert imported.stdout.strip() == 'ignored module imported'
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    for name in ('repo', 'workspace'):
+        assert rep['source'][name]['diff_rc'] == 0 and rep['source'][name]['diff_error'] is None
+        assert rep['source'][name]['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+# QDSG2-02..04, repo config, tracked symlinks (FIXD2): the clean check passes only exact known-good local config keys and untracked entries.
+SERVICE = 'apps/prototype-description-service'
+
+
+def track_service(repo):
+    """The live service directory holds tracked code. Without a tracked file in it, --directory collapses the whole directory into one apps/ line."""
+    (repo/SERVICE).mkdir(parents=True, exist_ok=True)
+    (repo/SERVICE/'app.py').write_text('APP = 1\n')
+    git_in(repo, 'add', f'{SERVICE}/app.py')
+    git_in(repo, 'commit', '-qm', 'service code')
+
+
+def marker_script(path, marker, tail=''):
+    """An executable shell script that creates marker when git runs it. tail is any further body, such as cat for a clean filter."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!/bin/sh\ntouch '{marker}'\n{tail}")
+    path.chmod(0o755)
+    return path
+
+
+def commit_filtered_module(repo):
+    """Commits .gitattributes and a module under filter=probe before any driver is configured, so the fixture never runs the filter itself."""
+    (repo/'.gitattributes').write_text('*.py filter=probe\n')
+    (repo/SERVICE).mkdir(parents=True, exist_ok=True)
+    (repo/SERVICE/'shadow.py').write_text("MARKER = 'reviewed'\n")
+    git_in(repo, 'add', '.gitattributes', f'{SERVICE}/shadow.py')
+    git_in(repo, 'commit', '-qm', 'filtered module')
+    os.utime(repo/SERVICE/'shadow.py', (946684800, 946684800))
+
+
+def test_the_fixture_repo_has_exactly_the_four_allowlisted_local_keys(tmp_path):
+    repo = committed_repo(tmp_path/'repo')
+    keys = git_in(repo, 'config', '--local', '--no-includes', '--name-only', '--list').split()
+    assert sorted(keys) == sorted(['core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates'])
+
+
+@pytest.mark.parametrize('flag', ['--assume-unchanged', '--skip-worktree'])
+@pytest.mark.parametrize('changed', [True, False], ids=['changed-content', 'flag-alone'])
+def test_an_index_flag_that_hides_a_tracked_module_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, flag, changed):
+    module = f'{SERVICE}/shadow.py'
+
+    def edit(repo):
+        (repo/SERVICE).mkdir(parents=True)
+        (repo/module).write_text("MARKER = 'reviewed'\n")
+        git_in(repo, 'add', module)
+        git_in(repo, 'commit', '-qm', 'tracked module')
+        git_in(repo, 'update-index', flag, module)
+        if changed:
+            (repo/module).write_text("MARKER = 'changed'\n")
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_a_stage_restored_to_head_in_the_worktree_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    """QDSG2-04: the worktree equals HEAD (A) but the index holds B. The recipe's own post-claim diff refuses this state, so preclaim must too."""
+    def edit(repo):
+        (repo/'a.txt').write_text('staged\n')
+        git_in(repo, 'add', 'a.txt')
+        (repo/'a.txt').write_text('hello\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_an_untracked_nested_repo_under_the_service_dir_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    def edit(repo):
+        track_service(repo)
+        child = repo/SERVICE/'untracked_namespace'
+        child.mkdir()
+        git_in(child, 'init', '-q')
+        (child/'child.py').write_text("MARKER = 'nested'\n")
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_an_extensionless_symlink_to_a_package_under_the_service_dir_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path):
+    pkg = tmp_path/'pkg'
+    pkg.mkdir()
+    (pkg/'__init__.py').write_text("MARKER = 'linked'\n")
+
+    def edit(repo):
+        track_service(repo)
+        os.symlink(pkg, repo/SERVICE/'untracked_link')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+@pytest.mark.parametrize('name', ['mod.cpython-312.pyc', 'state.json'], ids=['pyc', 'non-import-file'])
+def test_an_ignored_pycache_directory_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, name):
+    """The .pyc is caught by the old suffix list too. The non-suffix file is the case only the exact allowlist refuses."""
+    def edit(repo):
+        track_service(repo)
+        (repo/'.gitignore').write_text('__pycache__/\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore caches')
+        cache = repo/SERVICE/'__pycache__'
+        cache.mkdir()
+        (cache/name).write_bytes(b'cached\n')
+        assert git_in(repo, 'check-ignore', f'{SERVICE}/__pycache__/{name}') == f'{SERVICE}/__pycache__/{name}'
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_a_repo_fsmonitor_hook_refuses_and_never_runs(monkeypatch, capsys, tmp_path):
+    marker = tmp_path/'fsmonitor.marker'
+    script = marker_script(tmp_path/'fsmonitor.sh', marker)
+
+    def edit(repo):
+        git_in(repo, 'config', 'core.fsmonitor', str(script))
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert not marker.exists()
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_a_repo_clean_filter_driven_by_gitattributes_refuses_and_never_runs(monkeypatch, capsys, tmp_path):
+    marker = tmp_path/'filter.marker'
+    script = marker_script(tmp_path/'filter.sh', marker, tail='cat\n')
+
+    def edit(repo):
+        commit_filtered_module(repo)
+        git_in(repo, 'config', 'filter.probe.clean', str(script))
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert not marker.exists()
+    assert rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable'
+
+
+def test_a_global_clean_filter_under_the_child_home_never_runs(monkeypatch, capsys, tmp_path):
+    """The child reads no global config: its HOME gets a .gitconfig with a clean filter, and the stat-dirty module is clean with the filter unrun."""
+    marker = tmp_path/'global.marker'
+    script = marker_script(tmp_path/'global.sh', marker, tail='cat\n')
+    home = tmp_path/'home'
+    home.mkdir()
+    (home/'.gitconfig').write_text(f'[filter "probe"]\n\tclean = {script}\n')
+    publish(tmp_path, ('op1', 3, 'auto'))
+    repo, b = git_index_probe(tmp_path)
+    commit_filtered_module(repo)
+    rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b, home=home)
+    assert not marker.exists()
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is True
+
+
+def test_a_repo_post_index_change_hook_never_runs(monkeypatch, capsys, tmp_path):
+    """git writes the child's private index copy during the diff. A repo hook in .git/hooks must not run then (hooksPath is pinned)."""
+    marker = tmp_path/'hook.marker'
+
+    def edit(repo):
+        marker_script(repo/'.git'/'hooks'/'post-index-change', marker)
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert not marker.exists()
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is True
+
+
+@pytest.mark.parametrize('key,value', [('include.path', 'extra.cfg'), ('core.hooksPath', 'hooks')], ids=['include-path', 'hooks-path'])
+def test_an_extra_local_config_key_is_not_clean_and_is_refused(monkeypatch, capsys, tmp_path, key, value):
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, lambda repo: git_in(repo, 'config', key, value))
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is False
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+    assert key.lower() in e.value.detail
+
+
+@pytest.mark.parametrize('path,clean', [(f'{SERVICE}/lnk', False), ('apps/other/lnk', True)], ids=['under-service', 'outside-service'])
+def test_a_committed_symlink_is_judged_by_its_location(monkeypatch, capsys, tmp_path, path, clean):
+    """A tracked symlink under the service directory refuses. One outside that directory does not: the check is scoped to the service tree."""
+    outside = tmp_path/'outside'
+    outside.mkdir()
+
+    def edit(repo):
+        (repo/path).parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(outside, repo/path)
+        git_in(repo, 'add', path)
+        git_in(repo, 'commit', '-qm', 'symlink')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['clean'] is clean
+
+
+def test_both_known_runtime_entries_together_stay_clean_and_classify_accepts(monkeypatch, capsys, tmp_path):
+    def edit(repo):
+        track_service(repo)
+        (repo/SERVICE/':memory:.ses').write_bytes(b'SQLite format 3\x00')
+        egg = repo/SERVICE/'prototype_description_service.egg-info'
+        egg.mkdir()
+        (egg/'PKG-INFO').write_text('Metadata-Version: 2.1\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['diff_rc'] == 0 and rep['source']['repo']['diff_error'] is None
+    assert rep['source']['repo']['clean'] is True
+    assert classify_with_healthy_python(rep, b)['source']['repo']['clean'] is True
+
+
+@pytest.mark.parametrize('entry', ["it's", 'line\nbreak'], ids=['quote', 'newline'])
+def test_an_allowlist_entry_that_cannot_be_quoted_stops_the_import(entry):
+    src = (QWEN_AB/'run_qwen_cohort_operation.py').read_text()
+    bad = src.replace('KNOWN_RUNTIME_ENTRIES = (', 'KNOWN_RUNTIME_ENTRIES = (' + repr(entry) + ', ', 1)
+    assert bad != src
+    with pytest.raises(ValueError, match='cannot be quoted'):
+        exec(compile(bad, 'bad', 'exec'), {'__name__': 'bad', '__file__': str(QWEN_AB/'run_qwen_cohort_operation.py')})
 
 
 # --- runner v2: bootstrap -----------------------------------------------------------------------
@@ -1475,3 +2422,35 @@ def test_main_receipt_records_the_sha256_of_each_runner_module_it_resolved(stubb
     assert len({hashlib.sha256(p.read_bytes()).hexdigest() for p in origins.values()}) == 4
     for name, path in origins.items():
         assert receipt['module_sha256'][name] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# --- runner v3: main refuses an unbound or unavailable source before any claim -----------------
+
+def rebind(m, raw):
+    """Rewrites the recipe and its prepared record together, so the preflight reads raw and its sha256 matches."""
+    (m['d']/'n.remote.py').write_bytes(raw)
+    (m['d']/'n.prepared.json').write_text(json.dumps(prepared(raw, name='n', mode='pilot', candidate='qwen', unit='workbay-x.scope',
+                                                              gate_token='tok', preparer_sha256=hashlib.sha256(SRC).hexdigest())))
+
+
+def test_main_refuses_a_recipe_still_bound_to_the_sandbox_before_any_ssh(stubbed_main):
+    m = stubbed_main
+    rebind(m, swapped(REPO_LINE, b"repo=Path('/home/gate/workbay-sandbox')/SOURCE"))
+    assert_refused_before_any_probe(m, m['monkeypatch'], r'^preflight refused: recipe binds a reaped WorkBay lane sandbox$')
+    assert m['persisted'] == [] and m['runs'] == []
+
+
+def test_main_refuses_an_unavailable_source_before_the_claim(stubbed_main, capsys):
+    m = stubbed_main
+    bad = source_report()
+    bad['repo']['head'] = '0' * 40
+    m['monkeypatch'].setattr(RUN.subprocess, 'run', lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps(report(source=bad)), stderr=''))
+    admitted = []
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: admitted.append(1))
+    assert RUN.main(m['argv']) == 3
+    assert admitted == [] and m['runs'] == []
+    assert [p.name for p, _ in m['persisted']] == ['n.preclaim.json']
+    assert not (m['runner'].P/'n.capacity-claim.json').exists()
+    status = json.loads(capsys.readouterr().out)
+    assert status['status'] == 'ADMISSION_REFUSED' and status['refusal'].startswith('refusal:source_unavailable:')
+    assert status['transient'] is False

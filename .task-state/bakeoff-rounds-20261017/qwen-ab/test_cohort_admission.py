@@ -2,6 +2,7 @@
 import ast
 import hashlib
 import importlib.util
+import inspect
 import io
 import json
 import subprocess
@@ -20,7 +21,7 @@ CUSTODY_SOURCE = '22b61b6c7bc3932378dcb7e795a99f3ab288ff58'
 BANNED = ['run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate', 'run_selected_root_resume_qualification']
 TRANSIENT = {'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_projection', 'co_tenant_reserve', 'probe_transport'}
 DETERMINISTIC = {'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
-                 'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled'}
+                 'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled', 'malformed_payload'}
 
 
 def load(name):
@@ -444,6 +445,77 @@ def test_lane_memory_ceiling_is_named_for_its_lane_scope():
     assert CA.LANE_MEMORY_CEILING == 16*G and not hasattr(CA, 'MEMORY_CEILING')
 
 
+def test_aura_runtime_reserve_is_named_for_aura_runtime():
+    assert CA.AURA_RUNTIME_CPU == 1.5 and CA.AURA_RUNTIME_MEMORY == 4*G
+    assert not hasattr(CA, 'GUEST_CPU') and not hasattr(CA, 'GUEST_MEMORY')
+
+
+AURA = dict(active=True, cpu_cores_aggregate=1.5, memory_bytes_aggregate=4*G)
+
+
+def test_active_aura_runtime_at_its_fixed_reserve_is_admitted():
+    healthy(ledger=ledger(aura_runtime=AURA))
+
+
+def test_active_aura_runtime_over_its_cpu_reserve_is_refused_as_ledger_state():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(aura_runtime=dict(AURA, cpu_cores_aggregate=1.75)))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_active_aura_runtime_one_byte_over_its_memory_reserve_is_refused_as_ledger_state():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(aura_runtime=dict(AURA, memory_bytes_aggregate=4*G + 1)))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_inactive_aura_runtime_is_not_bounded_by_the_reserve():
+    healthy(ledger=ledger(aura_runtime=dict(AURA, active=False, cpu_cores_aggregate=3.)))
+
+
+def test_wb_row_with_a_claim_and_cpu_is_refused_as_ledger_state():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(wb=dict(remaining_actor_claim=1, cpu_cores_aggregate=.5, memory_bytes_aggregate=0)))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_wb_row_with_cpu_and_no_claim_is_admitted():
+    healthy(ledger=ledger(wb=dict(remaining_actor_claim=0, cpu_cores_aggregate=.5, memory_bytes_aggregate=0)))
+
+
+def test_wb_row_with_a_claim_and_zero_resources_is_admitted():
+    healthy(ledger=ledger(wb=dict(remaining_actor_claim=1, cpu_cores_aggregate=0, memory_bytes_aggregate=0)))
+
+
+def test_two_owner_rows_sharing_a_physical_key_are_refused_as_ledger_state():
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(A=owner_row('dup-deadbeef'), B=owner_row('dup-deadbeef', cpu=1., mem=2*G)))
+    assert e.value.cls == 'ledger_state' and 'duplicate unit key' in e.value.detail
+
+
+def test_two_owner_rows_sharing_a_custody_unit_are_refused_as_ledger_state():
+    a = dict(owner_row('a'), custody_unit='workbay-custody-x.scope')
+    b = dict(owner_row('b'), custody_unit='workbay-custody-x.scope')
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(A=a, B=b))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_one_row_naming_its_custody_unit_and_scope_alike_is_admitted():
+    healthy(ledger=ledger(OWN=dict(owner_row(), custody_unit='workbay-custody-x.scope', custody_scope='workbay-custody-x.scope')))
+
+
+def test_setup_granted_row_without_an_active_claim_is_refused_as_ledger_state():
+    row = dict(setup_granted=True, aggregate_cpu_cores_max=2., aggregate_memory_bytes_max=8*G)
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        healthy(ledger=ledger(OWN=row))
+    assert e.value.cls == 'ledger_state'
+
+
+def test_row_without_setup_granted_or_a_claim_is_still_skipped():
+    healthy(ledger=ledger(OWN=dict(setup_granted=False, aggregate_cpu_cores_max=2., aggregate_memory_bytes_max=8*G)))
+
+
 # The lane total is 2 GiB (coordinator) + the profile + 4 GiB (no Aura row yet), so 10 GiB of profile is exactly the ceiling.
 AT_MEMORY_CEILING = dict(aggregate_cpu_cores_max=.5, aggregate_memory_bytes_max=10*G)
 
@@ -573,7 +645,10 @@ def fake_r6(monkeypatch, tmp_path, led):
     (tmp_path/'raw_auth_source_gate_root_probe.py').write_text('print(1)\n')
     persisted = []
     fake = types.ModuleType('run_owner_root_fixture_r6')
-    fake.cap = types.SimpleNamespace(LEDGER=led, persist=lambda path, obj: persisted.append((path, obj)))
+    def persist(path, obj):
+        path.write_text(json.dumps(obj))
+        persisted.append((path, obj))
+    fake.cap = types.SimpleNamespace(LEDGER=led, persist=persist)
     fake.P, fake.N, fake.PROFILE = tmp_path, 'QWEN-TEST', PROFILE
     fake.d = types.SimpleNamespace(HOST='native-host')
     monkeypatch.setitem(sys.modules, 'run_owner_root_fixture_r6', fake)
@@ -661,6 +736,47 @@ def test_guard_labels_a_probe_transport_failure_as_transient(tmp_path, monkeypat
         CA.guard()
     assert e.value.cls == 'probe_transport' and e.value.transient
     assert persisted == []
+
+
+def guard_under(monkeypatch, tmp_path, ledger_text=None, root_reply=None, native_reply=None):
+    """Sets up CA.guard() over fakes: the ledger text and each probe's reply. Unset arguments are the healthy fixture."""
+    led = tmp_path/'ledger.json'
+    led.write_text(json.dumps(ledger()) if ledger_text is None else ledger_text)
+    fake_r6(monkeypatch, tmp_path, led)
+    replies = dict(root=root() if root_reply is None else root_reply, native=native() if native_reply is None else native_reply)
+    fake_ssh(monkeypatch, lambda argv, script: ssh_reply(replies['native' if argv[5] == 'native-host' else 'root']))
+
+
+def without(mapping, key):
+    return {k: v for k, v in mapping.items() if k != key}
+
+
+MALFORMED = {
+    'ledger without WB_operations': dict(ledger_text=json.dumps(without(ledger(), 'WB_operations'))),
+    'ledger that is not JSON': dict(ledger_text='{"Bakeoff": '),
+    'ledger without a top-level key': dict(ledger_text=json.dumps(without(ledger(), 'Bakeoff'))),
+    'df reply with one line': dict(root_reply=dict(root(), df='Filesystem 1K-blocks Used Available Use% Mounted on\n')),
+    'root probe without euid': dict(root_reply=without(root(), 'euid')),
+    'native reply without physical_mem_available': dict(native_reply=without(native(), 'physical_mem_available')),
+}
+
+
+@pytest.mark.parametrize('label', list(MALFORMED), ids=list(MALFORMED))
+def test_malformed_payload_is_a_labeled_deterministic_refusal(tmp_path, monkeypatch, label):
+    guard_under(monkeypatch, tmp_path, **MALFORMED[label])
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.guard()
+    assert e.value.cls == 'malformed_payload' and not e.value.transient
+
+
+def test_guard_persists_no_proof_when_the_ledger_changed_during_the_probe(tmp_path, monkeypatch):
+    reads = iter([json.dumps(ledger()).encode(), json.dumps(ledger(note='moved')).encode()])
+    fake_r6(monkeypatch, tmp_path, types.SimpleNamespace(read_bytes=lambda: next(reads)))
+    fake_ssh(monkeypatch, lambda argv, script: ssh_reply(native() if argv[5] == 'native-host' else root()))
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        CA.guard()
+    assert e.value.cls == 'ledger_state'
+    assert not (tmp_path/'QWEN-TEST.operation-capacity.json').exists()
 
 
 # --- ssh_json: transport failures are transient, a probe that ran and failed or replied badly is deterministic ---
@@ -817,39 +933,68 @@ def test_bind_generator_rejects_a_sha_mismatch():
 
 # --- runner v2: main wiring, with ssh, git, the shared runner and admission all stubbed ----------
 
+RUNNER_NAME = 'run_selected_root_resume_qualification'
+LEAVES = ('run_owner_root_fixture_r6', 'bakeoff_frontier_capacity', 'orchestrate')
+RUNNER_REF = QWEN_AB/'references'/'admission'/(RUNNER_NAME + '.py')
+HELPER_REF = QWEN_AB/'references'/'LEXICON-MIMO-40-LAST40-R1.prepared.json'
+
+
+def operator_bakeoff(bakeoff, runner_bytes):
+    """The operator's BAKEOFF: the untracked runner and its two untracked leaves, plus r6. Preflight locates these files; it never runs them."""
+    bakeoff.mkdir(exist_ok=True)
+    (bakeoff/(RUNNER_NAME + '.py')).write_bytes(runner_bytes)
+    for name in LEAVES:
+        (bakeoff/(name + '.py')).write_text('# stand-in: located by find_spec, never executed by the preflight\n')
+
+
+def one_byte_changed(raw):
+    return bytes([raw[0] ^ 1]) + raw[1:]
+
+
 def run_fixture(tmp_path):
     d = tmp_path/'dir'
     d.mkdir()
     (d/'n.prepared.json').write_text(json.dumps(prepared(RECIPE, name='n', mode='pilot', candidate='qwen', unit='workbay-x.scope',
                                                           gate_token='tok', preparer_sha256=hashlib.sha256(SRC).hexdigest())))
     (d/'n.remote.py').write_bytes(RECIPE)
-    (d/'LEXICON-MIMO-40-LAST40-R1.prepared.json').write_text(json.dumps(dict(stage='S', manifest_sha256='M', source_head='H', gate='GG')))
+    (d/'LEXICON-MIMO-40-LAST40-R1.prepared.json').write_bytes(HELPER_REF.read_bytes())
     payload = json.dumps(dict(status='PASS', source_sha=CUSTODY_SOURCE)).encode()
     with tarfile.open(d/'QWEN-AB-G2.custody.tar', 'w') as t:
         info = tarfile.TarInfo('output/result.json')
         info.size = len(payload)
         t.addfile(info, io.BytesIO(payload))
     bakeoff = tmp_path/'bakeoff'
-    bakeoff.mkdir()
+    operator_bakeoff(bakeoff, RUNNER_REF.read_bytes())
     (bakeoff/'QWEN-AB-G2.actual-capacity-return.json').write_text(json.dumps(dict(remaining_actor_claim=0)))
     return d, bakeoff
 
 
 @pytest.fixture
-def stubbed_main(tmp_path, monkeypatch):
+def operator_checkout(tmp_path, monkeypatch):
+    """The lane's inputs with BAKEOFF at the operator copy. No runner is in sys.modules, so the preflight must find it on disk."""
     d, bakeoff = run_fixture(tmp_path)
     monkeypatch.setattr(RUN, 'BAKEOFF', bakeoff)
     monkeypatch.setattr(RUN, 'run_git', FakeGit())
-    monkeypatch.setattr(RUN.subprocess, 'run', lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps(report()), stderr=''))
     monkeypatch.setattr(sys, 'path', list(sys.path))
+    for name in (RUNNER_NAME,) + LEAVES:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    argv = ['--name', 'n', '--dir', str(d), '--gate-commit', 'g1']
+    return dict(d=d, bakeoff=bakeoff, argv=argv, monkeypatch=monkeypatch)
+
+
+@pytest.fixture
+def stubbed_main(operator_checkout, monkeypatch):
+    m = operator_checkout
+    monkeypatch.setattr(RUN.subprocess, 'run', lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps(report()), stderr=''))
     persisted, runs = [], []
-    fake_runner = types.ModuleType('run_selected_root_resume_qualification')
+    fake_runner = types.ModuleType(RUNNER_NAME)
+    # The preflight reads the spec's origin and checks its bytes, so the stand-in is located at the operator copy.
+    fake_runner.__spec__ = importlib.util.spec_from_file_location(RUNNER_NAME, m['bakeoff']/(RUNNER_NAME + '.py'))
     fake_runner.admission = types.SimpleNamespace(guard=None, N=None, PROFILE=None)
     fake_runner.cap = types.SimpleNamespace(persist=lambda path, obj: persisted.append((path, obj)))
     fake_runner.run = lambda head, gate: runs.append((head, gate))
-    monkeypatch.setitem(sys.modules, 'run_selected_root_resume_qualification', fake_runner)
-    argv = ['--name', 'n', '--dir', str(d), '--gate-commit', 'g1']
-    return dict(runner=fake_runner, bakeoff=bakeoff, d=d, persisted=persisted, runs=runs, argv=argv, monkeypatch=monkeypatch)
+    monkeypatch.setitem(sys.modules, RUNNER_NAME, fake_runner)
+    return dict(m, runner=fake_runner, persisted=persisted, runs=runs)
 
 
 def test_main_admits_then_runs_with_cohort_identity_and_bootstrap(stubbed_main):
@@ -1110,3 +1255,107 @@ def test_bootstrap_source_omits_pilot_env_when_pilot_sha_is_none():
     compile(src, 'bootstrap', 'exec')
     assert 'QWEN_AB_SOL_XHIGH_GATE' in src
     assert 'QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256' not in src
+
+
+# --- runner seam: the real reviewed runner and the real r6; stand-ins only for the two untracked leaves -------
+
+def load_path(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def real_runner(monkeypatch):
+    # Only the attributes that r6 and the runner read at import time are stood in; everything else is the real code.
+    cap_stub = types.ModuleType('bakeoff_frontier_capacity')
+    cap_stub.P, cap_stub.RAWKEY = Path('/nonexistent'), 'raw-key'
+    orchestrate_stub = types.ModuleType('orchestrate')
+    orchestrate_stub.P = Path('/nonexistent')
+    monkeypatch.setitem(sys.modules, 'bakeoff_frontier_capacity', cap_stub)
+    monkeypatch.setitem(sys.modules, 'orchestrate', orchestrate_stub)
+    r6 = load_path('run_owner_root_fixture_r6', QWEN_AB.parent/'run_owner_root_fixture_r6.py')
+    monkeypatch.setitem(sys.modules, 'run_owner_root_fixture_r6', r6)
+    return r6, load_path(RUNNER_NAME, RUNNER_REF)
+
+
+def test_the_real_runner_has_the_seams_that_main_patches(real_runner):
+    r6, runner = real_runner
+    assert list(inspect.signature(runner.run).parameters) == ['head', 'gate']
+    assert len(inspect.signature(runner.inputs).parameters) == 2
+    assert len(inspect.signature(runner.bootstrap).parameters) == 2
+    assert runner.admission is r6
+    inspect.signature(r6.guard).bind()
+    assert all(isinstance(getattr(runner, name), str) for name in ('N', 'UNIT', 'ROLE'))
+
+
+# --- runner preflight: the runner, its leaves and the helper record are checked before anything is run -------
+
+def assert_refused_before_any_probe(m, monkeypatch, pattern):
+    probes = []
+    monkeypatch.setattr(RUN.subprocess, 'run', lambda *a, **k: probes.append(a))
+    with pytest.raises(SystemExit, match=pattern):
+        RUN.main(m['argv'])
+    assert probes == []
+
+
+def test_main_refuses_a_checkout_without_the_runner_before_any_probe(operator_checkout, tmp_path, monkeypatch):
+    bare = tmp_path/'bare'
+    bare.mkdir()
+    monkeypatch.setattr(RUN, 'BAKEOFF', bare)
+    monkeypatch.setattr(sys, 'path', [str(bare)])
+    assert_refused_before_any_probe(operator_checkout, monkeypatch, r'^preflight refused: run_selected_root_resume_qualification is missing')
+
+
+def test_main_refuses_a_runner_copy_that_differs_by_one_byte(operator_checkout, monkeypatch):
+    m = operator_checkout
+    (m['bakeoff']/(RUNNER_NAME + '.py')).write_bytes(one_byte_changed(RUNNER_REF.read_bytes()))
+    assert_refused_before_any_probe(m, monkeypatch, r'^preflight refused: runner differs from the reviewed reference copy$')
+
+
+def qwen_ab_with_helper(tmp_path, monkeypatch, helper_bytes):
+    """A qwen-ab tree whose reviewed references hold helper_bytes; RUN.HERE points at it."""
+    here = tmp_path/'qwen-ab'
+    (here/'references'/'admission').mkdir(parents=True)
+    (here/'references'/'admission'/(RUNNER_NAME + '.py')).write_bytes(RUNNER_REF.read_bytes())
+    (here/'references'/'LEXICON-MIMO-40-LAST40-R1.prepared.json').write_bytes(helper_bytes)
+    monkeypatch.setattr(RUN, 'HERE', here)
+
+
+def test_main_refuses_a_helper_record_with_one_changed_byte(operator_checkout, monkeypatch):
+    m = operator_checkout
+    (m['d']/'LEXICON-MIMO-40-LAST40-R1.prepared.json').write_bytes(one_byte_changed(HELPER_REF.read_bytes()))
+    assert_refused_before_any_probe(m, monkeypatch, r'^preflight refused: helper record sha256')
+
+
+def test_main_refuses_an_absent_helper_record_with_its_path(operator_checkout, monkeypatch):
+    m = operator_checkout
+    (m['d']/'LEXICON-MIMO-40-LAST40-R1.prepared.json').unlink()
+    assert_refused_before_any_probe(m, monkeypatch, r'^preflight refused: helper record is missing: .*LEXICON-MIMO-40-LAST40-R1\.prepared\.json$')
+
+
+def test_main_pins_the_helper_sha_even_when_the_reviewed_copy_agrees(operator_checkout, tmp_path, monkeypatch):
+    m = operator_checkout
+    changed = one_byte_changed(HELPER_REF.read_bytes())
+    qwen_ab_with_helper(tmp_path, monkeypatch, changed)
+    (m['d']/'LEXICON-MIMO-40-LAST40-R1.prepared.json').write_bytes(changed)
+    assert_refused_before_any_probe(m, monkeypatch, r'^preflight refused: helper record sha256')
+
+
+def test_main_refuses_a_helper_record_that_differs_from_the_reviewed_copy(operator_checkout, tmp_path, monkeypatch):
+    m = operator_checkout
+    qwen_ab_with_helper(tmp_path, monkeypatch, one_byte_changed(HELPER_REF.read_bytes()))
+    assert_refused_before_any_probe(m, monkeypatch, r'^preflight refused: helper record differs from the reviewed reference copy$')
+
+
+def test_helper_reference_copy_is_the_pinned_record():
+    assert hashlib.sha256(HELPER_REF.read_bytes()).hexdigest() == 'f0ca0e59c1bc8db1dd83c99598f82c0fb3665a7dd443f66e44291f44f837a4cd'
+
+
+def test_main_passes_the_helper_check_with_the_pinned_bytes(stubbed_main):
+    m = stubbed_main
+    assert hashlib.sha256((m['d']/'LEXICON-MIMO-40-LAST40-R1.prepared.json').read_bytes()).hexdigest() == 'f0ca0e59c1bc8db1dd83c99598f82c0fb3665a7dd443f66e44291f44f837a4cd'
+    m['monkeypatch'].setattr(CA, 'admit', lambda *a, **k: None)
+    assert RUN.main(m['argv']) is None
+    assert m['runs'] == [(CUSTODY_SOURCE, 'QWEN-AB-G2')]

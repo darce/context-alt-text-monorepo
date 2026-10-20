@@ -1401,7 +1401,7 @@ def test_main_full_mode_admits_with_a_clean_pilot_and_binds_its_receipt(stubbed_
 
 def source_report():
     """A healthy source report: every root at BINDING's sha and clean, and the interpreter imports. The TEST-20 baseline."""
-    root = dict(head=SHA, clean=True, head_rc=0, diff_rc=0, head_error=None, diff_error=None)
+    root = dict(head=SHA, clean=True, head_rc=0, diff_rc=0, head_error=None, diff_error=None, dirty=[], diff_stderr_tail='')
     return dict(repo=dict(root), workspace=dict(root), python=dict(executable=True, import_ok=True, stderr_tail='', error=None))
 
 
@@ -1483,7 +1483,7 @@ def test_classify_preclaim_source_detail_names_the_root_expected_and_observed():
     with pytest.raises(CA.AdmissionRefusal) as e:
         RUN.classify_preclaim(report(source=src), BINDING)
     assert e.value.detail == (f"workspace {WORKSPACE}: expected HEAD {SHA} clean True rc 0 no error; observed head '{ZERO}' clean True "
-                              "head_rc 0 head_error None diff_rc 0 diff_error None; "
+                              "head_rc 0 head_error None diff_rc 0 diff_error None dirty [] diff_stderr_tail ''; "
                               'rebuild: qwen-latebind/durable-source/build_durable_source.py')
 
 
@@ -1504,7 +1504,7 @@ def test_classify_preclaim_refuses_a_report_without_a_source_mapping_as_malforme
 
 
 # QDSG1-03: every child status is checked, not only head and clean; each row flips one field of the all-healthy report.
-ROOT_FIELDS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error')
+ROOT_FIELDS = ('head', 'clean', 'head_rc', 'diff_rc', 'head_error', 'diff_error', 'dirty', 'diff_stderr_tail')
 PY_FIELDS = ('executable', 'import_ok', 'error', 'stderr_tail')
 ROOT_FLIPS = [(owner, field, value) for owner in ('repo', 'workspace') for field, value in
               [('head_rc', 128), ('diff_rc', 128), ('diff_rc', 1), ('head_error', 'OSError: denied'),
@@ -1558,6 +1558,8 @@ SOURCE_SHAPES = {
     'python not a mapping': lambda s: s.update(python=[]),
     'root key missing': lambda s: s['repo'].pop('head_rc'),
     'root error key missing': lambda s: s['workspace'].pop('diff_error'),
+    'root dirty missing': lambda s: s['repo'].pop('dirty'),
+    'root diff_stderr_tail missing': lambda s: s['workspace'].pop('diff_stderr_tail'),
     'python key missing': lambda s: s['python'].pop('import_ok'),
     'python stderr_tail missing': lambda s: s['python'].pop('stderr_tail'),
 }
@@ -1873,6 +1875,7 @@ def test_a_missing_or_unreadable_repo_index_fails_the_diff_child_and_is_never_cl
     rep, _, _ = run_local(monkeypatch, capsys, tmp_path, b)
     root = rep['source']['repo']
     assert root['diff_error'] is None and root['clean'] is False and root['diff_rc'] not in (None, 0)
+    assert 'index' in root['diff_stderr_tail']
     with pytest.raises(CA.AdmissionRefusal) as e:
         RUN.classify_preclaim(rep, b)
     assert e.value.cls == 'source_unavailable'
@@ -1944,6 +1947,59 @@ def test_an_ignored_log_file_is_not_clean_and_is_refused(monkeypatch, capsys, tm
     with pytest.raises(CA.AdmissionRefusal) as e:
         classify_with_healthy_python(rep, b)
     assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+
+
+def test_an_ignored_build_log_under_the_service_dir_names_its_path_in_the_refusal(monkeypatch, capsys, tmp_path):
+    """FIXE: the DIFF child prints the blocking entry; the refusal carries it, so the operator needs no re-run to see which file blocked admission."""
+    def edit(repo):
+        track_service(repo)
+        (repo/'.gitignore').write_text('*.log\n')
+        git_in(repo, 'add', '.gitignore')
+        git_in(repo, 'commit', '-qm', 'ignore logs')
+        (repo/SERVICE/'build.log').write_text('ignored\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    assert rep['source']['repo']['dirty'] == [f'{SERVICE}/build.log']
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+    assert f'{SERVICE}/build.log' in e.value.detail
+
+
+def test_a_refusal_lists_at_most_five_blocking_entries_each_cut_to_200_characters(monkeypatch, capsys, tmp_path):
+    """FIXE: the report is bounded. Six blockers give five lines; a 244-character name is cut to 200 characters on its line."""
+    long_name = 'a' * 240 + '.txt'
+
+    def edit(repo):
+        track_service(repo)
+        for name in (long_name, 'n1.txt', 'n2.txt', 'n3.txt', 'n4.txt', 'n5.txt'):
+            (repo/SERVICE/name).write_text('x\n')
+
+    rep, b = preclaim_after(monkeypatch, capsys, tmp_path, edit)
+    dirty = rep['source']['repo']['dirty']
+    assert len(dirty) == 5 and all(len(line) <= 200 for line in dirty)
+    assert dirty[0] == f'{SERVICE}/{long_name}'[:200]
+    assert f'{SERVICE}/n5.txt' not in dirty
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        classify_with_healthy_python(rep, b)
+    assert e.value.cls == 'source_unavailable' and repr(dirty) in e.value.detail
+
+
+def test_the_diff_child_stderr_tail_is_its_last_300_characters_and_reaches_the_refusal(monkeypatch, capsys, tmp_path):
+    publish(tmp_path, ('op1', 3, 'auto'))
+    b = roots(tmp_path)
+    stderr = 'e' * 400 + 'TAIL'
+
+    def answer(argv):
+        if diff_child_of(b['repo'])(argv):
+            return completed(stdout=f'{SERVICE}/build.log\n', stderr=stderr)
+        return healthy_child(argv)
+
+    _, rep = run_preclaim(monkeypatch, capsys, tmp_path, answer=answer)
+    assert rep['source']['repo']['diff_stderr_tail'] == stderr[-300:]
+    with pytest.raises(CA.AdmissionRefusal) as e:
+        RUN.classify_preclaim(rep, b)
+    assert e.value.cls == 'source_unavailable' and stderr[-300:] in e.value.detail
 
 
 # M2, TEST-20: the shared evidence workspace collects runtime data files, so only import-capable untracked files refuse the clean check.
@@ -2193,6 +2249,7 @@ def test_an_extra_local_config_key_is_not_clean_and_is_refused(monkeypatch, caps
     with pytest.raises(CA.AdmissionRefusal) as e:
         classify_with_healthy_python(rep, b)
     assert e.value.cls == 'source_unavailable' and 'clean False' in e.value.detail
+    assert key.lower() in e.value.detail
 
 
 @pytest.mark.parametrize('path,clean', [(f'{SERVICE}/lnk', False), ('apps/other/lnk', True)], ids=['under-service', 'outside-service'])

@@ -151,8 +151,9 @@ def preclaim_script(window, binding):
     # Read-only. Reports the GPU state, the newest publication, and the source roots as the recipe's uid 1002 children see them; no TTL is judged here, because the recipe refreshes AUTO.
     # The children share one 20 s deadline inside the caller's 30 s ssh. Root opens and creates nothing under a source tree: the diff child runs as
     # uid 1002, copies .git/index into its own private directory, and diffs that copy against HEAD and lists the untracked files.
+    # The shared evidence workspace collects runtime data files, and only import-capable untracked files can change code (16423), so the untracked listing is limited to them.
     return '''import glob,json,os,pathlib,subprocess,time
-DIFF="""set -e; idx=$(git -C "$1" rev-parse --path-format=absolute --git-path index); d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; cp -- "$idx" "$d/index"; export GIT_INDEX_FILE="$d/index" GIT_OPTIONAL_LOCKS=0; git -C "$1" diff HEAD --name-only; git -C "$1" ls-files --others --exclude-standard"""
+DIFF="""set -e; idx=$(git -C "$1" rev-parse --path-format=absolute --git-path index); d=$(mktemp -d); trap 'rm -rf "$d"' EXIT; cp -- "$idx" "$d/index"; export GIT_INDEX_FILE="$d/index" GIT_OPTIONAL_LOCKS=0; git -C "$1" diff HEAD --name-only; git -C "$1" ls-files --others --exclude-standard -- '*.py' '*.pyc' '*.so' '*.pth'"""
 w=pathlib.Path(WINDOW);b=BINDING
 gpu=json.loads(pathlib.Path('/run/acx/gpu-state.json').read_bytes())
 pubs=[]

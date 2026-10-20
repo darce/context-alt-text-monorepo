@@ -130,7 +130,7 @@ class Paths:
   result += [self.store/'.intent-authority.json.lock']
   return result
 
-def bounded_json(path,optional=False):
+def bounded_bytes(path,optional=False):
  try:
   p=P(path); fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
  except FileNotFoundError:
@@ -138,11 +138,34 @@ def bounded_json(path,optional=False):
   raise
  try:
   s=os.fstat(fd); check(stat.S_ISREG(s.st_mode) and s.st_size<=MAX,'unsafe source receipt')
-  raw=os.read(fd,MAX+1); check(len(raw)<=MAX,'oversize source'); return json.loads(raw)
+  raw=os.read(fd,MAX+1); check(len(raw)<=MAX,'oversize source'); return raw
  finally: os.close(fd)
 
-def view(paths,mode):
- a=bounded_json(paths.store/'intent-authority.json')
+def bounded_json(path,optional=False):
+ raw=bounded_bytes(path,optional)
+ return None if raw is None else json.loads(raw)
+
+def project_authority(raw,floor):
+ """The only authority shape any guard sees; bounded by construction (RES-05).
+
+ floor=None selects the newest record only (highest_sequence). Records below
+ the floor are fenced by the native authority (STOR-10) and decide nothing, so
+ they are counted and hashed but never transferred. sha256 covers the exact
+ persisted bytes that were read, so equal digests mean unchanged authority.
+ """
+ a=json.loads(raw); check(type(a) is dict and type(a.get('intents')) is dict,'unknown authority')
+ high=a['highest_sequence']; check(type(high) is int and high>=0,'unknown authority')
+ if floor is None: floor=high
+ check(type(floor) is int and floor>=0,'unknown authority floor')
+ intents={}
+ for nonce,record in a['intents'].items():
+  check(type(record) is dict and type(record.get('sequence')) is int,'unknown authority record')
+  if record['sequence']>=floor: intents[nonce]=record
+ return dict(highest_sequence=high,rejected_sequences=a.get('rejected_sequences'),intent_count=len(a['intents']),
+             sha256=hashlib.sha256(raw).hexdigest(),intents=intents)
+
+def view(paths,mode,floor):
+ a=project_authority(bounded_bytes(paths.store/'intent-authority.json'),floor)
  pubs={str(p):bounded_json(p) for base in [paths.runtime,paths.store/'intents'] for p in sorted(base.glob('*/gpu-intent.json'))}
  loads=[] if mode=='auto' else [bounded_json(paths.runtime/e/'describe-load.json') for e in ENVS]
  return dict(authority=a,publications=pubs,loads=loads,deferred=bounded_json(paths.store/'deferred-stop.json',optional=True))
@@ -264,7 +287,7 @@ def guard(v,previous,known,actor,mode):
  check(not a.get('rejected_sequences'),'authority rejection history')
  pubs=list(v['publications'].values())
  if previous is None:
-  check(high==0 and not a['intents'] and not pubs and v['deferred'] is None,'first-use changed; preserve foreign state')
+  check(high==0 and a['intent_count']==0 and not pubs and v['deferred'] is None,'first-use changed; preserve foreign state')
  else:
   check(previous in known.values(),'previous lacks immutable candidate custody')
   check(previous['requested_by']==actor,'other window')
@@ -358,7 +381,9 @@ def guardian(wfd,ofd,paths,writer,plan,window,hook=None):
    pf=subdir(wfd,'ops'); prior=subdir(pf,plan['previous']); os.close(pf)
    try: check(load_json(prior,'result.json')['outcome']=='published','previous operation unresolved')
    finally: os.close(prior)
-  status,v=native_job(lambda:view(paths,plan['action']),5); check(status==0 and v is not None,'read-only preflight unknown')
+  # Floor = predecessor sequence; records below it decide nothing (RES-05).
+  floor=0 if previous is None else previous['sequence']
+  status,v=native_job(lambda:view(paths,plan['action'],floor),5); check(status==0 and v is not None,'read-only preflight unknown')
   seal(ofd,'preflight.json',v)
   actor='ubuntu:QWEN-OWNER-ADMISSION:capacity-only:'+window['id']
   guard(v,previous,known,actor,plan['action'])
@@ -388,7 +413,7 @@ def guardian(wfd,ofd,paths,writer,plan,window,hook=None):
   # Compare actual persisted bytes under all fences; never republish/retry.
   attempt=0
   while True:
-   read_status,after=native_job(lambda:view(paths,'auto'),5)
+   read_status,after=native_job(lambda:view(paths,'auto',floor),5)
    if barrier and read_status==0 and after is not None:
     current=after['publications'].get(str(paths.target))
     if current==candidate:
@@ -438,7 +463,7 @@ def reconcile(wfd,paths):
  finally: os.close(ops)
  if not proven: return None
  _,op,candidate=max(proven)
- status,v=native_job(lambda:view(paths,'auto'),5); check(status==0 and v is not None,'reconciliation read unknown')
+ status,v=native_job(lambda:view(paths,'auto',candidate['sequence']),5); check(status==0 and v is not None,'reconciliation read unknown')
  guard(v,candidate,known,candidate['requested_by'],'auto'); return op
 
 def dead_native(record):
@@ -533,11 +558,16 @@ def _checkpoint_fence(paths,path,window_lock,s):
  else: admitted=False
  return stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_size==0 and admitted
 
-def checkpoint_view(paths):
+def checkpoint_floor(records):
+ """Predecessor sequence chosen by checkpoint_selection; shared by both reads."""
+ proven=[r['candidate']['sequence'] for r in records.values() if r['outcome']=='published']
+ return max(proven,default=0)
+
+def checkpoint_view(paths,floor):
  """Fixed topology, held no-follow ancestry and bounded actual resource proof.
 
  This is read-only. Publication/authority acceptance still uses guard(), with
- the same native payloads; no checkpoint receipt substitutes for source state.
+ the same projected payloads; no checkpoint receipt substitutes for source state.
  """
  controller_roles=_resource_roles(paths,'controller'); runtime_roles=_resource_roles(paths,'runtime')
  owner=(os.geteuid(),os.getegid()); root=os.stat('/'); system_role=(root.st_uid,root.st_gid); proofs={}; missing=object()
@@ -559,7 +589,7 @@ def checkpoint_view(paths):
      check(pair in controller_roles and stat.S_IMODE(s.st_mode) in (0o700,0o755),'unsafe current resource directory')
    return fd
   except BaseException: os.close(fd); raise
- def read(path,optional=False):
+ def read(path,optional=False,decode=json.loads):
   fd=open_dir(P(path).parent)
   try:
    try: s=os.stat(P(path).name,dir_fd=fd,follow_symlinks=False)
@@ -571,9 +601,9 @@ def checkpoint_view(paths):
    check((s.st_uid,s.st_gid) in roles and mode in (0o400,0o600,0o640,0o644,0o660),'unsafe current resource file')
    raw,proof=proof_file(fd,P(path).name,mode=mode,uid=s.st_uid)
    check(all(proof[k]==v for k,v in identity(s).items()),'current resource identity changed')
-   proofs[str(path)]=proof; return json.loads(raw)
+   proofs[str(path)]=proof; return decode(raw)
   finally: os.close(fd)
- a=read(paths.store/'intent-authority.json'); pubs={}
+ a=read(paths.store/'intent-authority.json',decode=lambda raw:project_authority(raw,floor)); pubs={}
  for base in (paths.runtime,paths.store/'intents'):
   try: fd=open_dir(base)
   except FileNotFoundError:
@@ -624,7 +654,7 @@ def checkpoint(wfd,paths,window):
     fd=subdir(ops,op)
     try: records[op]=operation_snapshot(fd,op,window)
     finally: os.close(fd)
-   before,resources=checkpoint_view(paths); previous,retained=checkpoint_selection(records,before,window)
+   before,resources=checkpoint_view(paths,checkpoint_floor(records)); previous,retained=checkpoint_selection(records,before,window)
    moved=sorted(set(records)-set(retained))
    check(moved and len(retained)<32,'checkpoint has no safe budget to reclaim')
    # All refusal controls run before creating checkpoint custody or moving ops.
@@ -649,7 +679,7 @@ def checkpoint(wfd,paths,window):
    fd=subdir(ops if op in active else archive,op)
    try: check(operation_snapshot(fd,op,window)==expected,'checkpoint original bytes/identity changed')
    finally: os.close(fd)
-  actual,resources=checkpoint_view(paths)
+  actual,resources=checkpoint_view(paths,checkpoint_floor(records))
   check(actual==manifest['state'] and resources==manifest['resources'],'checkpoint current state changed; no retry')
   check(checkpoint_selection(records,actual,window)==(previous,retained),'checkpoint predecessor changed')
   # Recovery always verifies every byte/location first, then resumes only the

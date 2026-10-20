@@ -30,7 +30,7 @@ TRANSIENT = frozenset({'cpu_pressure', 'io_pressure', 'memory_headroom', 'disk_p
                        'probe_transport'})
 DETERMINISTIC = frozenset({'ledger_state', 'setup_owner', 'expired_owner_lease', 'root_probe', 'owned_unit_over_quota',
                            'co_tenant_unbounded', 'gpu_not_stopped', 'live_start', 'predecessor_unsettled',
-                           'malformed_payload'})
+                           'malformed_payload', 'source_unavailable'})
 
 ROOT_NAMED_SCRIPT = """import json,math,subprocess
 units=UNITS;out={}

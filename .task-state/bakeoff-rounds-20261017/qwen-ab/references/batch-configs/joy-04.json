@@ -1,0 +1,132 @@
+{
+  "service_dir": "/home/gate/bakeoff-rounds-20261017-inputs/results/RAW-INCUMBENT-OBSERVATION-R1-0c2012a4be0649188b54942696474aa6/workspace/apps/prototype-description-service",
+  "loader_override": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/depiction_lexicon.py",
+  "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+  "canon_root": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon",
+  "canon_sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+  "endpoint": "http://10.0.1.9:8000",
+  "model_version": "Llama-Joycaption-Beta-One-Hf-Llava-Q8_0",
+  "model_revision": "sha256:914fccbc28d0bdf87bab2937f58707bbc33556021664cd16a9666607d4058b99",
+  "images": [
+    {
+      "image_id": "c023",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c023.jpg",
+      "sha256": "da59d7e20f6658bf4b3399858132818eaa27a14db77a34440ea55c25a14e19d0",
+      "source_cluster": "c023"
+    },
+    {
+      "image_id": "c024",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c024.jpg",
+      "sha256": "4b3b6c8cd10c7489f1e80aa11516f81db1f98569ce726662ed2df069755718ec",
+      "source_cluster": "c024"
+    },
+    {
+      "image_id": "c025",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c025.jpg",
+      "sha256": "afe674f0dcf9a649590d8c0ba316d3651b704e5cccaae68a1eb22e32481848ee",
+      "source_cluster": "c025"
+    },
+    {
+      "image_id": "c026",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c026.jpg",
+      "sha256": "75b524d9b0bad7b0b5a2a217ac2f070f3a4522fc4b80280dd84111b411599a04",
+      "source_cluster": "c026"
+    },
+    {
+      "image_id": "c027",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c027.jpg",
+      "sha256": "e66b48ba799db24db18b2bd1d9a0686aa05c330a683e47cd4273cc0a908f16fe",
+      "source_cluster": "c027"
+    },
+    {
+      "image_id": "c028",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c028.jpg",
+      "sha256": "ce69c611f5609928b2433ccfaefc31a08b4109b67af08f3f603715184105de23",
+      "source_cluster": "c028"
+    },
+    {
+      "image_id": "c029",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c029.png",
+      "sha256": "895af07ac94a378e8a7c7960acc078ceac93623a95e6cf2e62974df5a823b487",
+      "source_cluster": "c029"
+    },
+    {
+      "image_id": "c030",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c030.jpg",
+      "sha256": "bcb931ca9cf75abfd9c29d78c2bd641f37aab6f09cf90d895da0a79d83d29314",
+      "source_cluster": "c030"
+    },
+    {
+      "image_id": "c031",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c031.jpg",
+      "sha256": "c774d7c38ddb7b7590d5cf1281c9f819c84e60a549ffd1aaa67df6afd244da99",
+      "source_cluster": "c031"
+    },
+    {
+      "image_id": "c032",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c032.jpg",
+      "sha256": "2cd182521ba2271f3e2ed8449e951ffc248bfd3c95c94c4d84da83dc641249b4",
+      "source_cluster": "c032"
+    },
+    {
+      "image_id": "c033",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c033.jpg",
+      "sha256": "538e57b8180e6595bfdf09dd8ad5e9958cdf59cd753f378d2efd2d0c46aa8360",
+      "source_cluster": "c033"
+    },
+    {
+      "image_id": "c034",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c034.jpg",
+      "sha256": "464822026322611c79fed99ba23bf12cd0866f9bda247bd10fb230718b4e15d1",
+      "source_cluster": "c034"
+    },
+    {
+      "image_id": "c035",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c035.jpg",
+      "sha256": "fbed64b436052c3f61142341ebc1088df9e7d1bcb9df7969e7271fbc494df085",
+      "source_cluster": "c035"
+    },
+    {
+      "image_id": "c036",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c036.jpg",
+      "sha256": "febc06e57385c7ecbbc16b087d3d62bb18aad91190fe4f617fee7e0fa875aa4c",
+      "source_cluster": "c036"
+    },
+    {
+      "image_id": "c037",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c037.jpg",
+      "sha256": "6e7cd705dce3c45687af01fd17ecbda54f470ffa017952c4d20ef07a2c36e5bd",
+      "source_cluster": "c037"
+    },
+    {
+      "image_id": "c038",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/c038.jpg",
+      "sha256": "8bbd20a379078ecebd1c139576be9368f0447f4b32b9c6eaebf44a3424c8ff3c",
+      "source_cluster": "c038"
+    },
+    {
+      "image_id": "n040",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/n040.jpg",
+      "sha256": "778315992d0fbae146d9b8a6d2f91f19a5f34218adfec1da954c8e0ab6c014fd",
+      "source_cluster": "n040"
+    },
+    {
+      "image_id": "n041",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/n041.jpg",
+      "sha256": "b58f39d8ba4be28a50b35b2cb11f5acc3269f1846934fd9659a83d43c492c99f",
+      "source_cluster": "n041"
+    },
+    {
+      "image_id": "n043",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/n043.jpg",
+      "sha256": "058bcdff8f4172aa350d102627af524dc606748ee7d3fc55a748967a9814cac0",
+      "source_cluster": "n043"
+    },
+    {
+      "image_id": "n044",
+      "path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images/n044.jpg",
+      "sha256": "015f9ec5325ae8c05b62807998e87b37cd86df889884a4a753dfcd65366d843c",
+      "source_cluster": "n044"
+    }
+  ]
+}

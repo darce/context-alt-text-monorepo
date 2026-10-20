@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "retrieved_at_utc": "2026-10-19T15:28:38.573750Z",
+  "source": "Hugging Face Hub API, with official upstream cross-check",
+  "repository": {
+    "id": "concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf",
+    "branch_ref_observed": "main",
+    "immutable_revision": "acfe6bf78ae4e411cd5c7c8f4a71ba01f26a5b97",
+    "last_modified_utc": "2025-05-15T15:53:26.000Z",
+    "model_api_url": "https://huggingface.co/api/models/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf",
+    "pinned_tree_api_url": "https://huggingface.co/api/models/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf/tree/acfe6bf78ae4e411cd5c7c8f4a71ba01f26a5b97?recursive=true&expand=true",
+    "pinned_tree_url": "https://huggingface.co/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf/tree/acfe6bf78ae4e411cd5c7c8f4a71ba01f26a5b97"
+  },
+  "artifacts": [
+    {
+      "filename": "Llama-Joycaption-Beta-One-Hf-Llava-Q8_0.gguf",
+      "size_bytes": 8540772544,
+      "lfs_sha256": "914fccbc28d0bdf87bab2937f58707bbc33556021664cd16a9666607d4058b99",
+      "lfs_pointer_size_bytes": 135,
+      "hf_git_blob_oid": "ab15025745c9d35662c508c6b2ee36f4a84015f1",
+      "xet_hash": "ee8f02f3719cf9a0ee4127ad6477cbc36a5d8ff8c116310ab9f5e4e397e56d9b",
+      "content_last_commit": "2b9ad79f67e26d47e9fc824fee9cf0e277a76d0a",
+      "immutable_file_url": "https://huggingface.co/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf/resolve/acfe6bf78ae4e411cd5c7c8f4a71ba01f26a5b97/Llama-Joycaption-Beta-One-Hf-Llava-Q8_0.gguf"
+    },
+    {
+      "filename": "llama-joycaption-beta-one-llava-mmproj-model-f16.gguf",
+      "size_bytes": 877771808,
+      "lfs_sha256": "94002cb5c354c7c9e538e64f37d593db9eceeca2e94573bae6cd3b2bd8bb1952",
+      "lfs_pointer_size_bytes": 134,
+      "hf_git_blob_oid": "b14ebb099b75b6cb85965a30b08a2a49d6ffc256",
+      "xet_hash": "4d5b95f4fbf636ac9f8f383f9617d10819843c01f977489bfbe4f1378604727f",
+      "content_last_commit": "2b9ad79f67e26d47e9fc824fee9cf0e277a76d0a",
+      "immutable_file_url": "https://huggingface.co/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf/resolve/acfe6bf78ae4e411cd5c7c8f4a71ba01f26a5b97/llama-joycaption-beta-one-llava-mmproj-model-f16.gguf"
+    }
+  ],
+  "upstream_cross_check": {
+    "hugging_face_model_id": "fancyfeast/llama-joycaption-beta-one-hf-llava",
+    "hugging_face_observed_head_revision": "ebf414ea497a020da0f82df3913e5b6cb8e9663a",
+    "hugging_face_last_modified_utc": "2025-05-16T04:12:26.000Z",
+    "hugging_face_model_api_url": "https://huggingface.co/api/models/fancyfeast/llama-joycaption-beta-one-hf-llava",
+    "official_github_repository_url": "https://github.com/fpgaminer/joycaption",
+    "official_github_readme_url": "https://github.com/fpgaminer/joycaption/blob/main/README.md",
+    "official_github_readme_api_url": "https://api.github.com/repos/fpgaminer/joycaption/readme",
+    "current_model_reference_line": "[**Try the Demo on HuggingFace**](https://huggingface.co/spaces/fancyfeast/joy-caption-beta-one) **|** [**Download the Current Model on Hugging Face**](https://huggingface.co/fancyfeast/llama-joycaption-beta-one-hf-llava) **|** [**Latest Release Post**](https://civitai.com/articles/14672) **|** [**Data**](#datasets)",
+    "beta_one_status_line": "JoyCaption is currently at Beta One. This means that things are nearing completion for version 1.0."
+  },
+  "verification": {
+    "required_artifacts_found_at_immutable_revision": true,
+    "sha256_and_size_read_from_hugging_face_lfs_metadata": true,
+    "weights_downloaded": false,
+    "inference_run": false
+  }
+}

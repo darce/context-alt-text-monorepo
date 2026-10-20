@@ -3,14 +3,20 @@ import ast
 import base64
 import copy
 import hashlib
+import inspect
 import json
 from pathlib import Path
+import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
+import time
 import types
 import unittest
+import uuid
 
 import prepare_qwen_ab as p
 
@@ -19,8 +25,7 @@ AUTO = '11111111-1111-4111-8111-111111111111'
 
 
 def make(candidate='gsq', mode='pilot', **kwargs):
-    return p.prepare(REF, candidate, mode, 'QWEN-TEST-R1', 'workbay-qwen-test.scope',
-                     AUTO, **kwargs)
+    return p.prepare(REF, candidate, mode, 'QWEN-TEST-R1', 'workbay-qwen-test.scope', **kwargs)
 
 
 def execute_producer(source):
@@ -193,6 +198,26 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(ast.dump(ast.Module(body=original_finally, type_ignores=[])),
                          ast.dump(ast.Module(body=candidate_finally, type_ignores=[])))
 
+    def test_late_bound_predecessor_contract(self):
+        for candidate in ('gsq', 'ud'):
+            for mode in ('pilot', 'full'):
+                with self.subTest(candidate=candidate, mode=mode):
+                    cohorts = None if mode == 'pilot' else ['qwen-' + candidate + '-01.json']
+                    recipe, receipt = make(candidate, mode, cohorts=cohorts)
+                    self.assertNotIn('aa048fdb', recipe)
+                    self.assertIsNone(re.search(r"assert previous==['\"][0-9a-f-]{36}", recipe))
+                    self.assertEqual(recipe.count(p.LATE_BIND_BLOCK), 1)
+                    self.assertEqual(recipe.count("observe(previous,'auto'"), 1)
+                    order = ["'before-reconcile'", "'refresh-auto'", "'actual-previous-auto-observe'",
+                             "'actual-previous-auto-reconcile'", 'PRIVATE_RAW_WORKSPACE_READY',
+                             "public(['start',str(window),previous]"]
+                    positions = [recipe.index(text) for text in order]
+                    for before, after in zip(positions, positions[1:]):
+                        self.assertLess(before, after)
+                    self.assertEqual(receipt['predecessor_binding'], 'late_bound_at_claim_refresh')
+                    self.assertNotIn('actual_previous_AUTO', receipt)
+                    self.assertEqual(sum(receipt['predecessor_refresh_seconds'].values()), 580)
+
     def test_rejections(self):
         for cohorts, seconds in [(['qwen-gsq-01.json'], 1000),
                                  (['qwen-gsq-01.json'], 299),
@@ -202,12 +227,11 @@ class PreparationTests(unittest.TestCase):
                                  (['qwen-gsq-%02d.json' % i for i in range(1, 7)], None)]:
             with self.subTest(cohorts=cohorts, seconds=seconds), self.assertRaises(ValueError):
                 make(mode='full', cohorts=cohorts, client_seconds=seconds)
-        for auto in (None, '', 'AUTO', 'none'):
-            with self.assertRaises((ValueError, AttributeError)):
-                p.prepare(REF, 'gsq', 'pilot', 'TEST', 'workbay-test.scope', auto)
+        self.assertEqual(list(inspect.signature(p.prepare).parameters),
+                         ['root', 'candidate', 'mode', 'name', 'unit', 'cohorts', 'client_seconds'])
         for name, unit in [('', 'workbay-test.scope'), ('TEST', ''), ('x;echo', 'workbay-test.scope')]:
             with self.assertRaises(ValueError):
-                p.prepare(REF, 'gsq', 'pilot', name, unit, AUTO)
+                p.prepare(REF, 'gsq', 'pilot', name, unit)
 
     def test_wrong_hash_model_config_and_duplicate(self):
         plan = json.loads((REF / 'batch-plan.json').read_bytes())
@@ -241,18 +265,18 @@ class PreparationTests(unittest.TestCase):
                 (root / key).write_bytes((REF / key).read_bytes())
             (root / p.SOURCES['gsq']).write_text('altered')
             with self.assertRaisesRegex(ValueError, 'source hash'):
-                p.prepare(root, 'gsq', 'pilot', 'TEST', 'workbay-test.scope', AUTO)
+                p.prepare(root, 'gsq', 'pilot', 'TEST', 'workbay-test.scope')
 
-    def test_cli_receipt_and_no_overwrite_or_missing_auto(self):
+    def test_cli_receipt_and_no_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'prepared'
             command = [sys.executable, '-B', str(Path(p.__file__)), '--references', str(REF),
                        '--candidate', 'ud', '--mode', 'pilot', '--name', 'TEST',
                        '--unit', 'workbay-test.scope', '--out', str(out)]
-            bad = subprocess.run(command, capture_output=True)
-            self.assertEqual(bad.returncode, 2)
+            legacy = subprocess.run(command + ['--actual-previous-auto', AUTO], capture_output=True)
+            self.assertEqual(legacy.returncode, 2)
+            self.assertIn(b'unrecognized arguments', legacy.stderr)
             self.assertFalse(out.exists())
-            command += ['--actual-previous-auto', AUTO]
             run = subprocess.run(command, capture_output=True)
             self.assertEqual(run.returncode, 0, run.stderr)
             receipt = json.loads((out / 'prepared-receipt.json').read_bytes())
@@ -443,6 +467,124 @@ class ActualPairedClientTests(unittest.TestCase):
         self.assertEqual(len(invalid['items'][0]['describe']['passes']), 3)
         self.assertIn('invalid surfaces', invalid['items'][0]['error'])
         self.assertEqual(saves[-1], invalid)
+
+
+class LateBindBlockTests(unittest.TestCase):
+    OLD = '22222222-2222-4222-8222-222222222222'
+    NEW = '33333333-3333-4333-8333-333333333333'
+    STOP = '44444444-4444-4444-8444-444444444444'
+    WID = '55555555-5555-4555-8555-555555555555'
+
+    class Window:
+        """Fake window; evidence maps ('ops', op, name) to (raw, mode, uid)."""
+        def __init__(self, evidence, parts=()):
+            self.evidence = evidence
+            self.parts = parts
+        def __truediv__(self, part):
+            return type(self)(self.evidence, self.parts + (str(part),))
+        def __str__(self):
+            return '/fake/window'
+        def lstat(self):
+            _, mode, uid = self.evidence[self.parts]
+            return types.SimpleNamespace(st_mode=stat.S_IFREG | mode, st_uid=uid)
+        def read_bytes(self):
+            return self.evidence[self.parts][0]
+
+    def exec_block(self, replies, events, saves, action='auto', previous=OLD, mode=0o444, uid=0, state=None):
+        published = dict(operation=self.OLD, window=self.WID, outcome='published')
+        evidence = {
+            ('ops', self.OLD, 'result.json'): (json.dumps(published).encode(), mode, uid),
+            ('ops', self.OLD, 'publication.json'): (json.dumps(dict(action=action)).encode(), mode, uid),
+        }
+        replies = list(replies)
+        gpu_state = dict(state='stopped', lease_expires_at=None) if state is None else state
+        def public(arguments, label, timeout):
+            events.append(('public', arguments, label))
+            return replies.pop(0)
+        def observe(op, phase, label, timeout):
+            events.append(('observe', op, phase, label))
+        def save(name, value):
+            events.append(('save', name))
+            saves.append(value)
+        ns = dict(public=public, observe=observe, save=save, window=self.Window(evidence),
+                  wid=self.WID, json=json, uuid=uuid, stat=stat, time=time, previous=previous,
+                  Path=lambda path: types.SimpleNamespace(read_bytes=lambda: json.dumps(gpu_state).encode()))
+        exec(textwrap.dedent(p.LATE_BIND_BLOCK), ns)
+        return ns
+
+    def test_late_bound_block_behaviour_latest_auto(self):
+        events, saves = [], []
+        ns = self.exec_block([self.STOP, self.NEW, self.NEW], events, saves)
+        self.assertEqual(events, [
+            ('public', ['stop', '/fake/window', self.OLD], 'refresh-stop'),
+            ('observe', self.STOP, 'stop', 'refresh-stop-observe'),
+            ('public', ['withdraw', '/fake/window', self.WID], 'refresh-auto'),
+            ('save', 'late-bound-predecessor.json'),
+            ('observe', self.NEW, 'auto', 'actual-previous-auto-observe'),
+            ('public', ['reconcile', '/fake/window', self.WID], 'actual-previous-auto-reconcile'),
+        ])
+        self.assertEqual(ns['previous'], self.NEW)
+        self.assertEqual(len(saves), 1)
+        self.assertEqual(saves[0]['reconciled'], self.OLD)
+        self.assertEqual(saves[0]['reconciled_action'], 'auto')
+        self.assertEqual(saves[0]['refresh_stop'], self.STOP)
+        self.assertEqual(saves[0]['fresh_auto'], self.NEW)
+        self.assertEqual(saves[0]['binding'], 'late_bound_at_claim_refresh')
+
+    def test_late_bound_block_behaviour_latest_stop(self):
+        events, saves = [], []
+        ns = self.exec_block([self.NEW, self.NEW], events, saves, action='stop')
+        self.assertEqual(events, [
+            ('public', ['withdraw', '/fake/window', self.WID], 'refresh-auto'),
+            ('save', 'late-bound-predecessor.json'),
+            ('observe', self.NEW, 'auto', 'actual-previous-auto-observe'),
+            ('public', ['reconcile', '/fake/window', self.WID], 'actual-previous-auto-reconcile'),
+        ])
+        self.assertEqual(ns['previous'], self.NEW)
+        self.assertEqual(saves[0]['reconciled_action'], 'stop')
+        self.assertIsNone(saves[0]['refresh_stop'])
+
+    def test_late_bound_block_behaviour_latest_start(self):
+        events, saves = [], []
+        with self.assertRaisesRegex(RuntimeError, 'not a settled AUTO/STOP'):
+            self.exec_block([], events, saves, action='start')
+        self.assertEqual(events, [])
+        self.assertEqual(saves, [])
+
+    def test_late_bound_block_behaviour_none_predecessor(self):
+        events, saves = [], []
+        with self.assertRaisesRegex(AssertionError, 'Owned window operation unknown'):
+            self.exec_block([], events, saves, previous='none')
+        self.assertEqual(events, [])
+
+    def test_late_bound_block_behaviour_unsealed_evidence(self):
+        for mode, uid in [(0o644, 0), (0o444, 1000)]:
+            with self.subTest(mode=oct(mode), uid=uid):
+                events, saves = [], []
+                with self.assertRaisesRegex(AssertionError, 'Unsealed or foreign predecessor evidence'):
+                    self.exec_block([], events, saves, mode=mode, uid=uid)
+                self.assertEqual(events, [])
+
+    def test_late_bound_block_behaviour_refresh_stop_unsettled(self):
+        events, saves = [], []
+        with self.assertRaisesRegex(AssertionError, 'Refresh STOP did not settle'):
+            self.exec_block([self.STOP], events, saves, state=dict(state='running', lease_expires_at=None))
+        self.assertNotIn('refresh-auto', [e[2] for e in events if e[0] == 'public'])
+        self.assertEqual(saves, [])
+
+    def test_late_bound_block_behaviour_withdraw_returns_old(self):
+        events, saves = [], []
+        with self.assertRaisesRegex(AssertionError, 'Fresh AUTO not published'):
+            self.exec_block([self.STOP, self.OLD], events, saves)
+        self.assertNotIn(('observe', self.OLD, 'auto', 'actual-previous-auto-observe'), events)
+        self.assertEqual(saves, [])
+
+    def test_late_bound_block_behaviour_reconcile_mismatch(self):
+        events, saves = [], []
+        with self.assertRaisesRegex(AssertionError, 'Actual predecessor changed'):
+            self.exec_block([self.STOP, self.NEW, self.STOP], events, saves)
+        self.assertEqual(events[-1], ('public', ['reconcile', '/fake/window', self.WID],
+                                      'actual-previous-auto-reconcile'))
 
 
 if __name__ == '__main__':

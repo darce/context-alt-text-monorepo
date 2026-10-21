@@ -1,6 +1,7 @@
 """Qwen cohort operation runner v2: late-bound predecessor, landed-generator binding (decision 18673)."""
 import argparse
 import ast
+import base64
 import hashlib
 import importlib.util
 import json
@@ -33,6 +34,10 @@ BOUND = ('SOURCE', 'repo', 'python', 'workspace')
 REPO_EXPR = ast.dump(ast.parse(f"Path('{SOURCE_ROOT}')/SOURCE", mode='eval').body)
 PYTHON_EXPR = ast.dump(ast.parse("repo.parent/(SOURCE+'.venv')/'bin/python'", mode='eval').body)
 RESULT_NAME = re.compile(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*')
+# Mirrors prepare_qwen_ab.py (replacement-038, decision 18687): the replacement record must agree with the recipe's own pin.
+REPLACED_IMAGE_ID = 'original-038'
+REPLACEMENT_SOURCE = 'qwen-gsq-02.json'
+REPLACEMENT_SELECTION = 'r2-replacement-original-038'
 G = 1024**3
 
 
@@ -53,7 +58,7 @@ def parse_args(argv=None):
     p.add_argument('--name', required=True)
     p.add_argument('--dir', required=True, help='holds <name>.prepared.json and <name>.remote.py')
     p.add_argument('--gate-commit', required=True)
-    p.add_argument('--pilot', help='required iff the prepared mode is full')
+    p.add_argument('--pilot', help='required iff the prepared mode is full or replacement')
     return p.parse_args(argv)
 
 
@@ -65,10 +70,47 @@ def verify_prepared(prepared, raw):
         raise ValueError(f'recipe does not parse: {e}') from e
     need(prepared.get('predecessor_binding') == 'late_bound_at_claim_refresh', 'predecessor must be late_bound_at_claim_refresh')
     need('actual_previous_AUTO' not in prepared, 'pinned actual_previous_AUTO is not allowed')
-    need(prepared.get('mode') in ('pilot', 'full'), f"mode must be pilot or full, got {prepared.get('mode')!r}")
+    need(prepared.get('mode') in ('pilot', 'full', 'replacement'), f"mode must be pilot, full or replacement, got {prepared.get('mode')!r}")
+    if prepared['mode'] == 'replacement':
+        verify_replacement(prepared, raw)
+    else:
+        need('replacement' not in prepared, 'replacement record is valid only in replacement mode')
     windows = WINDOW.findall(raw.decode())
     need(len(windows) == 1, f'recipe must contain exactly one owner window line, found {len(windows)}')
     return windows[0]
+
+
+def embedded_configs(raw):
+    # The recipe's own batch pins, read as a literal; the recipe is never executed here.
+    nodes = [n for n in ast.walk(ast.parse(raw)) if isinstance(n, ast.Assign)
+             and any(isinstance(t, ast.Name) and t.id == 'configs' for t in n.targets)]
+    need(len(nodes) == 1, f'recipe must embed exactly one configs literal, found {len(nodes)}')
+    return ast.literal_eval(nodes[0].value)
+
+
+def verify_replacement(prepared, raw):
+    # One image, three POSTs, and the image the recipe embeds must be the one the replacement record names.
+    rep = prepared.get('replacement')
+    need(isinstance(rep, dict) and rep.get('image_id') == REPLACED_IMAGE_ID, 'replacement record must name original-038')
+    need(all(isinstance(rep.get(k), str) and re.fullmatch(r'[0-9a-f]{64}', rep[k]) for k in ('old_sha256', 'new_sha256', 'revision_sha256'))
+         and rep['old_sha256'] != rep['new_sha256'], 'replacement digests are malformed or unchanged')
+    need(prepared.get('total_distinct_images') == 1 and prepared.get('completion_POST_budget') == 3,
+         'replacement must be one image with three completion POSTs')
+    pins = embedded_configs(raw)
+    need(list(pins) == [REPLACEMENT_SOURCE], 'recipe must embed exactly the replacement config')
+    pin = pins[REPLACEMENT_SOURCE]
+    need(pin.get('selection') == REPLACEMENT_SELECTION and pin.get('revision_sha256') == rep['revision_sha256'],
+         'recipe revision pin disagrees with the replacement record')
+    config = base64.b64decode(pin['b64'], validate=True)
+    need(hashlib.sha256(config).hexdigest() == pin['sha256'], 'recipe config sha256 mismatch')
+    images = json.loads(config)['images']
+    need(len(images) == 1 and images[0]['image_id'] == REPLACED_IMAGE_ID and images[0]['sha256'] == rep['new_sha256']
+         and images[0]['path'] == rep.get('path'), 'recipe image disagrees with the replacement record')
+
+
+def pilot_requirement(prepared, pilot):
+    need((pilot is not None) == (prepared.get('mode') in ('full', 'replacement')),
+         '--pilot is required iff the prepared mode is full or replacement')
 
 
 def workspace_ok(p):
@@ -346,7 +388,7 @@ def main(argv=None):
         need(g['status'] == 'PASS' and g['source_sha'] == CUSTODY_SOURCE, 'QWEN-AB-G2 custody is not PASS at the pinned source')
         need(json.loads((BAKEOFF/'QWEN-AB-G2.actual-capacity-return.json').read_bytes())['remaining_actor_claim'] == 0,
              'QWEN-AB-G2 capacity was not returned')
-        need((a.pilot is not None) == (prepared['mode'] == 'full'), '--pilot is required iff the prepared mode is full')
+        pilot_requirement(prepared, a.pilot)
         pilot_sha = pilot_custody = None
         if a.pilot is not None:
             pilot_sha, pilot_custody = pilot_checks(d, prepared, a.pilot)

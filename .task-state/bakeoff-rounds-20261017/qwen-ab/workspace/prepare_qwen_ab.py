@@ -3,6 +3,8 @@
 Example: python3 prepare_qwen_ab.py --references ../references --candidate gsq
  --mode pilot --name QWEN-PILOT-R1 --unit workbay-qwen-pilot.scope --out /tmp/qwen-prepared
 
+Replacement-038 (one image, gsq only): --mode replacement --revision <corpus-revision-r2.json>.
+
 The predecessor AUTO is late-bound at claim time by refresh (stop, withdraw,
 reconcile), not pinned at preparation. Coordinator must verify
 late-bound-predecessor.json after the run.
@@ -14,6 +16,7 @@ import ast
 import base64
 import hashlib
 import json
+import posixpath
 from pathlib import Path
 import re
 
@@ -36,6 +39,16 @@ OWNER_WINDOW_SHA256 = '60c0cfdceedbf778be717300d7d0d5c071a07860be333abcd694e4e0c
 OLD_OWNER_MANIFEST_SHA256 = '45c86daf3bc312eea23ab1382965b56dcbc1c97dd1c82070decc6ee617d3c5ca'
 OWNER_MANIFEST_SHA256 = 'cd399f1f0d55fd1dbf4eb980d0accbdb6b2ac27536f4f11a222b3262bdcbb495'
 OWNER_STAGE_SOURCE_COMMIT = '27bf69d5349c44033f419ec4fa73e893b4dd6b2d'
+# Replacement-038 (decision 18687, RLSE-21): corpus revision R2 replaces original-038 only. The record is
+# pinned by digest; the frozen qwen-gsq-02.json still carries the R1 bytes and is never edited.
+R1_IMAGES_DIR = '/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images'
+R2_ROOT = '/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R2'
+R2_REVISION_SHA256 = '66a2efb3c2bdeea52baa28ec8570336a20aed21e3c32f646ab9d7a7911f8b240'
+R2_IMAGE_SHA256 = '710a6798653ef868338136da63e2c176e892d73bac342e395bf0df640e70022e'
+REPLACED_IMAGE_ID = 'original-038'
+REPLACEMENT_SOURCE = 'qwen-gsq-02.json'
+REVISION_SCHEMA = 'bakeoff-corpus-revision/v1'
+SELECTION = {'pilot': 'first-two', 'full': 'whole-cohort', 'replacement': 'r2-replacement-original-038'}
 # Claim-time predecessor binding (decision 18673): the recipe refreshes the
 # owned window's AUTO before START, so the fresh publication is the fencing
 # token. Replaces the pinned template line `assert previous=='aa048fdb...'`.
@@ -143,8 +156,41 @@ def validate_configs(root, plan, candidate):
     return model, configs
 
 
-def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None):
-    require(candidate in SOURCES and mode in ('pilot', 'full'), 'candidate/mode required')
+def read_regular(path):
+    path = Path(path)
+    require(path.is_file() and not path.is_symlink(), 'not a regular file: ' + str(path))
+    return path.read_bytes()
+
+
+def replacement_path(revision_raw, previous):
+    """Check the R2 revision record against the frozen original-038 entry; return its VM image path."""
+    require(sha(revision_raw) == R2_REVISION_SHA256, 'revision record is not the pinned R2 record')
+    rev = json.loads(revision_raw)
+    require(isinstance(rev, dict) and rev.get('schema') == REVISION_SCHEMA and rev.get('revision') == 'r2',
+            'revision must be bakeoff-corpus-revision/v1 r2')
+    require(rev.get('image_id') == REPLACED_IMAGE_ID, 'wrong image id')
+    require('replacements' not in rev, 'two replacements requested; the revision names one original-038 replacement')
+    old, new = rev.get('previous'), rev.get('replacement')
+    require(isinstance(old, dict) and isinstance(new, dict), 'revision needs previous and replacement records')
+    require(old.get('image_id') == new.get('image_id') == REPLACED_IMAGE_ID, 'wrong image id')
+    require(new.get('dataset_revision') == 'r2', 'replacement is not dataset revision r2')
+    require(old.get('sha256') == new.get('replaces_sha256') == previous['sha256'],
+            'wrong old sha256: revision does not replace the frozen original-038 bytes')
+    require(new.get('sha256') == R2_IMAGE_SHA256, 'wrong new sha256: not the sealed R2 original-038 bytes')
+    require(new.get('context_pack') == {} and new.get('present_identities') == [], 'identity context must be empty')
+    require(rev.get('old_outputs_reused_for_replacement') is False, 'old outputs must not be reused for the replacement')
+    models = rev.get('required_GPU_models')
+    require(isinstance(models, list) and 'qwen-gsq' in models, 'qwen-gsq must be a required GPU model')
+    rel = new.get('path')
+    require(isinstance(rel, str), 'replacement path is missing')
+    image = posixpath.join(R2_ROOT, rel)
+    require(image == posixpath.normpath(image) and image.startswith(R2_ROOT + '/'), 'replacement path outside the R2 dir')
+    return image
+
+
+def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None, revision=None):
+    require(candidate in SOURCES and mode in SELECTION, 'candidate/mode required')
+    require((revision is not None) == (mode == 'replacement'), 'revision is required in replacement mode only')
     require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,90}', name or '')), 'explicit safe name required')
     require(bool(re.fullmatch(r'workbay-[A-Za-z0-9_-]+\.scope', unit or '')), 'explicit scope unit required')
     root = Path(root)
@@ -153,10 +199,22 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     prior = inputs[SOURCES[candidate]].decode()
     plan = json.loads(inputs['batch-plan.json'])
     model, configs = validate_configs(root, plan, candidate)
+    revision_raw = replacement = None
     if mode == 'pilot':
         require(not cohorts, 'pilot uses first immutable config only')
         cfg = json.loads(configs[0][1]); cfg['images'] = cfg['images'][:2]
         selected = [(configs[0][0], (json.dumps(cfg, indent=2) + '\n').encode())]
+    elif mode == 'replacement':
+        require(candidate == 'gsq' and not cohorts, 'replacement is gsq only and takes the revision, not cohorts')
+        revision_raw = read_regular(revision)
+        frozen = dict(configs)[REPLACEMENT_SOURCE]
+        matches = [im for im in json.loads(frozen)['images'] if im['image_id'] == REPLACED_IMAGE_ID]
+        require(len(matches) == 1, 'frozen qwen-gsq-02 must hold exactly one original-038 entry')
+        image = replacement_path(revision_raw, matches[0])
+        cfg = json.loads(frozen); cfg['images'] = [dict(matches[0], path=image, sha256=R2_IMAGE_SHA256)]
+        selected = [(REPLACEMENT_SOURCE, (json.dumps(cfg, indent=2) + '\n').encode())]
+        replacement = dict(image_id=REPLACED_IMAGE_ID, old_sha256=matches[0]['sha256'], new_sha256=R2_IMAGE_SHA256,
+                           path=image, revision_sha256=sha(revision_raw))
     else:
         require(bool(cohorts) and len(set(cohorts)) == len(cohorts), 'explicit unique full cohorts required')
         available = dict(configs)
@@ -164,21 +222,25 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
         require(cohorts == [c for c, _ in configs if c in cohorts], 'preserve frozen cohort order')
         selected = [(c, available[c]) for c in cohorts]
     count = sum(len(json.loads(raw)['images']) for _, raw in selected)
-    client = client_seconds if client_seconds is not None else (420 if mode == 'pilot' else 650)
+    require(mode != 'replacement' or count == 1, 'replacement is exactly one image')
+    short_run = mode in ('pilot', 'replacement')
+    client = client_seconds if client_seconds is not None else (420 if short_run else 650)
     # Fixed phase reservations, not a promise every request will finish. The
     # native client deadline preserves incomplete/invalid attempts without retry.
-    floors = dict(identity=180, setup=570, metadata=30, client=client, restore=270, control=80)
-    require(isinstance(client, int) and 3 * 5 * count <= client <= (420 if mode == 'pilot' else 1000),
+    START_RESERVE = 300  # lease counts from START publication; START->ready took 145-195 s on owner-window ops
+    floors = dict(identity=60, setup=300, metadata=30, client=client, restore=270, control=80)
+    require(isinstance(client, int) and 3 * 5 * count <= client <= (420 if short_run else 1000),
             'cohort impossible under client floor/cap (15 seconds per image)')
-    require(sum(floors.values()) <= 1800, 'phase floors exceed fixed intent1800')
+    require(START_RESERVE + sum(floors.values()) <= 1800, 'phase floors plus START reserve exceed fixed lease 1800')
     require(150 + 30 + client + 270 <= 1500, 'phase floors exceed native1500')
     spec, template = producer(prior)
     prep = json.loads(inputs['qwen-remote-preparation.json'])['candidates']['qwen-' + candidate]
     require(sha(template.encode()) == prep['setup_sha256'], 'qualified setup hash mismatch')
     require(all(spec[k] == v for k, v in prep['asset_spec'].items()), 'qualified spec mismatch')
+    revision_pin = {} if revision_raw is None else dict(revision_sha256=sha(revision_raw))
     encoded = {c: dict(b64=base64.b64encode(raw).decode(), sha256=sha(raw),
                        immutable_source_sha256=sha(dict(configs)[c]),
-                       selection='first-two' if mode == 'pilot' else 'whole-cohort')
+                       selection=SELECTION[mode], **revision_pin)
                for c, raw in selected}
     # Replace only AST-identified producer statements, preserving effect helpers.
     edits = []
@@ -221,7 +283,7 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     recipe = replace_once(recipe, old_line, command_line)
     recipe = replace_once(recipe, 'serving=json.loads(guest(command,125))', 'serving=json.loads(guest(command,570))')
     recipe = recipe.replace('>=1600,', '>=' + str(sum(floors.values())) + ',')
-    recipe = recipe.replace('>=1420,', '>=' + str(570 + 30 + client + 270) + ',')
+    recipe = recipe.replace('>=1420,', '>=' + str(floors['setup'] + floors['metadata'] + client + floors['restore']) + ',')
     recipe = recipe.replace('>=1270,', '>=' + str(30 + client + 270) + ',')
     recipe = replace_once(recipe, 'min(1000,int(expires-time.time()-270));assert deadline-time.monotonic()>=990',
                           'min(' + str(client) + ',int(expires-time.time()-270));assert deadline-time.monotonic()>=' + str(client - 1))
@@ -239,10 +301,15 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     materialize += "    paired_client=batch_input/'paired_client.py'\n    with paired_client.open('xb')as f:f.write(client_raw);f.flush();os.fsync(f.fileno())\n    paired_client.chmod(0o440);os.chown(paired_client,0,1002)\n"
     recipe = replace_once(recipe, '    cohorts=[];seen=set()', materialize + '    cohorts=[];seen=set()')
     recipe = replace_once(recipe, "str(pilot_input/'paired_client.py')", 'str(paired_client)')
+    if replacement is not None:
+        # The replacement is the only image: its parent dir is the R2 revision dir, which the recipe reads as images_dir.
+        revision_dir = posixpath.dirname(replacement['path'])
+        recipe = replace_once(recipe, "path_image.parent==Path('" + R1_IMAGES_DIR + "')", "path_image.parent==Path('" + revision_dir + "')")
+        recipe = replace_once(recipe, "data=dict(images_dir='" + R1_IMAGES_DIR + "')", "data=dict(images_dir='" + revision_dir + "')")
     # This guard is deliberately unresolved until independent review. The CLI
     # cannot certify review or a live pilot by generating a recipe.
     guard = "assert os.environ.get('QWEN_AB_SOL_XHIGH_GATE')==" + repr(sha(recipe.encode())) + ", 'Independent Sol XHIGH gate required; coordinator execution only'\n"
-    if mode == 'full':
+    if mode in ('full', 'replacement'):
         guard += "assert os.environ.get('QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256') and re.fullmatch(r'[0-9a-f]{64}',os.environ['QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256']), 'Actual pilot receipt required before full; coordinator must verify contents'\n"
     recipe = replace_once(recipe, "assert os.geteuid()==os.getuid()==0", guard + "assert os.geteuid()==os.getuid()==0")
     for func in ('public', 'observe', 'guest'):
@@ -275,6 +342,7 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
                        guest_cleanup=dict(scope='guest', phase='cleanup', cpu_quota_percent=50,
                                           memory_max_bytes=536870912)),
                    phase_floors_seconds=floors,
+                   start_reserve_seconds=START_RESERVE,
                    predecessor_refresh_seconds=dict(stop=75, stop_observe=195, withdraw=75, auto_observe=190, reconcile=45),
                    public_STOP_AUTO_cleanup_seconds=580,
                    public_cleanup_clock='Separate fixed public observation clocks after restore; never extend intent/native',
@@ -287,6 +355,8 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
                                 'Client deadline can retain incomplete and invalid pairs; no selective retries',
                                 '15 seconds per image is a scheduling floor, not measured Qwen latency or a completion guarantee',
                                 'Predecessor is bound at claim by stop/withdraw refresh; coordinator must verify late-bound-predecessor.json and actual pilot receipt contents after the run; a digest alone is not acceptance'])
+    if replacement is not None:
+        receipt['replacement'] = replacement
     return recipe, receipt
 
 
@@ -294,7 +364,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--references', type=Path, required=True)
     parser.add_argument('--candidate', choices=SOURCES, required=True)
-    parser.add_argument('--mode', choices=('pilot', 'full'), required=True)
+    parser.add_argument('--mode', choices=tuple(SELECTION), required=True)
+    parser.add_argument('--revision', type=Path, help='corpus-revision-r2.json; replacement mode only')
     parser.add_argument('--name', required=True)
     parser.add_argument('--unit', required=True)
     parser.add_argument('--cohort', action='append', dest='cohorts')
@@ -304,7 +375,7 @@ def main():
     try:
         require(not args.out.resolve().is_relative_to(args.references.resolve()), 'references are immutable; choose another output directory')
         recipe, receipt = prepare(args.references, args.candidate, args.mode, args.name,
-                                  args.unit, args.cohorts, args.client_seconds)
+                                  args.unit, args.cohorts, args.client_seconds, args.revision)
         args.out.mkdir(mode=0o700, parents=True, exist_ok=False)
         (args.out / 'recipe.remote.py').write_text(recipe)
         (args.out / 'prepared-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')

@@ -1,188 +1,358 @@
 # UXREC-1 workbench recovery inventory
 
-Design preparation, 2026-10-21. **Proposed; map gate pending; no product implementation or runtime acceptance.** SSOT: existing `apps/prototype-wp-alt-context/docs/ux-maps/{workbench-operator-loop,describe-gpu-tier,workbench-identity-chips}.uxmap.json`; sibling Markdown is generated, never independently edited. No new map or confirmation tab.
+2026-10-21. **Proposed design. Not approved. No product implementation and no runtime acceptance.** The executable slices, symbols, tests and ownership are in the [task plan](../../tasks/uxrec/UXREC-1-workbench-recovery-task-plan.md). This inventory explains current and target states, the screens, and why each design choice was made.
 
-Requested source: `70cb608c5cc6ee7e1081eab1cc85626ccb96bf2f`. VM checkout: history-stripped `d4760d2ba12869b0283a25c342b005e3cdc1aff1`; requested commit object is absent (`git diff --stat <requested> HEAD` exits 128). Snapshot source was read directly; exact-source parity cannot be independently certified. Initial `uv.lock` modification is unrelated and preserved. No foreign tree, runtime service, secret environment file or model was accessed.
+**Sources of truth.**
 
-Graph tools are not exposed in this session. Supplied indexed anchors belong to `ux-status-main-70cb608c5`; they are prior evidence, not a successful worker graph query. Native codemap packet is inherited `bad_json/unavailable`, not passed. UXREC-1 reinjection is `skipped:no_embeddings`, with zero relevant lines. Inherited MAINT verified reinjection and gte-base-en-v1.5 semantic results are prior art only. No backfill or invented nonempty packet.
+- The three maps `apps/prototype-wp-alt-context/docs/ux-maps/{workbench-operator-loop,describe-gpu-tier,workbench-identity-chips}.uxmap.json` are the SSOT for screens and actions. One map writer owns those JSON files, their generated `.md` and their `render_ux_maps.visible.json` entries.
+- This inventory uses the shared action IDs from decision 18920: `act-edit-person-name` (primary, `IdentityClusterItem`) and `act-toggle-repeated-region-evidence` (secondary, in place). It also uses these IDs as they exist at source: `act-view-current-attention`, `act-view-audit-history`, `act-retry-dead-letter` and `act-discard-dead-letter`.
+- If the joined maps rename an ID, the map JSON wins. No product code reads these IDs.
+
+**Provenance.**
+
+- Anchors were read in a history-stripped checkout (sandbox HEAD `aa67fd9e`). The coordinator asserts it is tree-equivalent to exact source `680982f59fb5be5874b3ff3b1e7ad193344c9171`, which includes the sibling security merge `02d4cd0cf`. The original commit objects are absent by design, and that absence is not a source defect.
+- No graph or handoff tool was available in this lane, so the supplied codemap anchors (`groupIdentitiesByClusters`, `gpuStateNotice`, `ClusterPanelProvider`, `fetchClusterMembers`, `_is_gpu_operator`) were checked by reading the files.
+- Semantic packets that returned `query_finding_not_embedded` remain typed gaps. They are not evidence that no prior art exists.
+- The working tree's unrelated `uv.lock` change is preserved.
 
 ## Current and target inventory
 
-Paths below are relative to `apps/prototype-wp-alt-context/` unless prefixed otherwise. Source-fixed behavior is regression coverage, not new implementation work.
+Paths are relative to `apps/prototype-wp-alt-context/` unless they start with `apps/`. "Preserve" rows are integrated work that must not regress. They are not new work.
 
-| Surface / trigger | Current source evidence | Smallest target / completion outcome |
+| Surface / trigger | Current source evidence | Target outcome |
 | --- | --- | --- |
-| Idle, GPU/capability unknown | `js/admin/pages/workbench/gpuStatePresentation.ts:77` promises CPU continuation in `notReportedNotice`; `useGpuStateToasts.ts:155` suppresses dormant unavailable toast when runId is null | Proposed neutral inline consequence: “GPU tier not reported. Description readiness is unconfirmed.” Preserve quiet idle; never infer CPU support, actual failure or completion from unknown GPU observation. |
-| Configured service health error | `js/admin/pages/settings/GpuControlCard.tsx:324` names Description Service, cause/check time; Refresh/Retry refetches | Keep service-specific cause, checking and checked-at. Recognition configuration and generic API health are separate from description readiness. Settings recovery must not submit media or start GPU. |
-| Genuine accepted run failure | `gpuStatePresentation.ts:89` onward retains timeout/poll/failure vocabulary; `js/admin/api/describeApi.ts:1498` status GET and `:1510` cancel POST | Preserve genuine errors, prior results, typed cause and supported retry. Status retry is a read; “queued” is not “succeeded.” No unsupported CPU fallback promise. |
-| Warming, navigation/reload | `js/admin/hooks/describeOperationStore.ts` tenant-scoped sessionStorage and memory fallback; `useBulkDescribe.ts` resumes run_id; existing remount tests | Preserve accepted operation and cancel/read status. Return resumes the same run, never duplicate POST. Source persistence is not evidence of live warmup or final results. |
-| Current attention vs audit | `js/admin/pages/workbench/DeadLetterPanel.tsx:149` defaults timelineStatus to all; `:552` supports one status per paginated query | Proposed default failed attention; pending/conflict explicit attention status choices; History explicitly exposes all/acknowledged/discarded. Keep records and pagination. Do not invent combined unresolved totals by filtering one page. |
-| July failed label rows | `src/sovereign/sync/class-outbox-maintenance-service.php:1149` conditionally discards superseded exhausted label rows | DW3-UX0924-04 INTEGRATED per supplied audit, source mechanism present. Exact four July rows and eligibility remain unverified. Do not repeat old deferred status or promise erasure. |
-| Repeated exact face across groups | `identity-clusters/utils.ts:111–194` groups by person_id then cluster_id, deduplicates same-face-in-media within a group and preserves identityClusterIds | Proposed evidence-only cross-group annotation; keep each original group/action scope. Same source/crop is evidence, not person equivalence or license for transitive merge. |
-| Existing naming / review | `identity-clusters/IdentityClusterItem.tsx:530` uses namingReady independently of advisory loading; `ClusterReviewPanel.tsx:45` takes clusterId, removes by identity ID and pages Show all | Keep naming usable after mandatory roster ready; preserve actual review controls and mutation targets. Correction: wrapper is `IdentityClusterList.tsx:405`, not nonexistent IdentityClusters.tsx. `ClusterPreview.tsx` is noninteractive; pre-existing chip-to-workspace map is a target, not proof of live navigation. |
-| Empty unlabeled | `js/admin/api/recognition/clusterApiQueries.ts:144` normalizes object with clusters array, data_source and conditional projection/count fields | Preserve exact object response; clusters=[] is valid. Bare lists and real transport/auth failures must not be disguised as empty success. |
-| URL/key persistence | `js/admin/pages/settings/SettingsForm.tsx:265`, `js/admin/pages/SettingsPage.tsx:363,605` | Preserve blur/Enter commit, acknowledged stored readback and health after save; no key write while typing, no repeated credential onboarding. |
-| Retention unavailable | `js/admin/pages/RetentionPage.tsx:79,165` service/cause/check time and actual busy refetch | Preserve inline recovery. Source ORM fix is inherited integrated evidence; runtime upstream500 remains unresolved. Retry success requires new service evidence, not a label change. |
+| Open the Changes panel | `js/admin/pages/workbench/DeadLetterPanel.tsx`: `INITIAL_STATE.timelineStatus: 'all'`. The failed list (`useDeadLetterOperations`) and the all-status timeline (`useOutboxOperations`) always both render. `DeadLetterOperationRow.showFailedRecovery` is true for failed timeline rows, so each failed row and its Retry/Discard appear twice. | The panel opens on **Needs attention › Failed**, which shows only the existing failed list and maintenance zone. Pending and Conflict show only the server-filtered timeline. **History** shows the existing all-status or filtered timeline without the maintenance zone. Each failed row appears once per view. |
+| Counts | The failed list shows `Showing a-b of N failed changes.` from its server total. The timeline shows `Showing a-b of N changes (status).` from its own server total. | Unchanged per list. There is no combined attention count, and no locally filtered page is shown as a total. |
+| Failed-list load error | An early return replaces the whole panel, timeline included. | The error stays inside the Failed region. History, Pending and Conflict remain reachable. |
+| Four supplied July failed label updates | `src/sovereign/sync/class-outbox-maintenance-service.php` discards eligible superseded exhausted label rows. The rows' eligibility and processing are unverified. | They remain in **Needs attention › Failed** while their server status is `failed`. They leave only through existing reconciliation or a guarded operator action. There is no clearance claim and no age-only hiding. This slice improves classification and navigation, not the records themselves. |
+| GPU warming (accepted run) | `js/admin/hooks/useGpuStateToasts.ts` shows `GPU_STATE_VOCABULARY.warmingToast` = "GPU warming — CPU drafts first". | "GPU warming — this run is waiting for the description service". It makes no CPU claim. |
+| GPU degraded during a run | `degradedToast` = "GPU unavailable — CPU drafts kept", always with "Review results". | With `draftCount === 0`: "GPU unavailable — no descriptions returned yet" and no review action. With `draftCount > 0`: "GPU unavailable — N drafts ready to review" with "Review results". |
+| GPU ready / done / failed toasts; dormant unavailable | Existing ready ("Back to run"), done ("Review N drafts"), failed (Retry only when retryable) toasts. A `GPU_STATUS_UNAVAILABLE` toast with no run is suppressed. | **Preserve** unchanged. |
+| Latent unknown and starting notices | `gpuStatePresentation.ts:gpuStateNotice` → `notReportedNotice` ("…can still continue on CPU") and `startingNotice` ("CPU drafts stay available…"). It has no production caller; only `gpuStatePresentation.test.ts` reads it. | Optional cleanup (plan Stretch Goal). This is not the visible fix and not required to close the GPU slice. |
+| Settings: GPU telemetry stale or unknown | `pages/settings/GpuControlCard.tsx` maps `snapshot_fresh: false` to `GPU_STATE.UNKNOWN` ("Service: not reported") and hides Start/Stop. Refresh re-reads status. | **Preserve**. Unknown stays neutral and is never shown as "not configured". `/gpu/status` (`routers/gpu.py:GpuStatusResponse`) has no configuration or capability field. |
+| Settings: received `endpoint_unconfigured` envelope | The PHP proxy passes the typed scene reason through (`class-gpu-control-controller.php:map_unavailable_reason`; shape pinned in `GpuControlControllerTest.php`). `utils/serviceUnavailable.ts:unavailableReasonCopy` has no entry, so it falls back to "an unexpected error occurred (endpoint_unconfigured)". | "Description service is unavailable because its GPU endpoint is not configured. An administrator must set the GPU endpoint for the Description service. Retry only checks again; it does not change the setting." Permission denial keeps its own `upstream_4xx` copy. |
+| Navigation / reload during a run | `hooks/describeOperationStore.ts` and `useBulkDescribe.ts` resume the tenant-scoped `run_id` without resubmitting. | **Preserve**. Source persistence is not evidence of live warm-up or results. |
+| Same exact photo region under two groups | `identity-clusters/utils.ts:groupIdentitiesByClusters` groups by person, then cluster, then ungrouped. Same-face dedup (IoU > 0.5) runs only within one group, so cross-group repeats stay as separate cards with no cue. | Each involved card gets a collapsed native disclosure, "Same photo region is also listed in N other group(s)". It lists `Photo <media_id>`, the exact box, each matching observation's group reference and face record reference, the limit statement, and loaded-pool counts. Grouping, order and targets are unchanged. |
+| Naming / editing a group | `IdentityClusterItem.tsx` label button → `startEditing`. `ClusterActions` offers "Edit label" / "Name this person". `namingReady` does not wait for advisory suggestions. | **Preserve** as the one primary action (`act-edit-person-name`). |
+| Group thumbnail | `ClusterPreview.tsx` prefers `representative_face`, which may come from another photo. It is non-interactive. | **Preserve**. It is context only. The disclosure never presents it as the matching observation. |
+| Expanded person chip / person workspace from a chip | Pre-existing map intent in `workbench-identity-chips` (`act-expand-person-chip` and related). `IdentityClusterList` has no review callback, and `ClusterPanelContext.tsx:readReviewFromParams` needs `panel=review&cluster=<id>`. | Out of scope. It stays pre-existing map intent and is not promoted as a UXREC outcome. There is no new route, tab, panel or "Review faces" button. |
+| Empty unlabeled faces | `api/recognition/clusterApiQueries.ts` accepts the object response with `clusters: []`. | **Preserve**. Real transport or auth failures stay errors. |
+| Recognition URL / key | `pages/settings/SettingsForm.tsx`, `pages/SettingsPage.tsx`: commit on blur or Enter, acknowledged readback, health check after save. | **Preserve**. |
+| Retention unavailable | `pages/RetentionPage.tsx` shows the service, cause, check time and a real refetch. | **Preserve**. Recovery from upstream 500 remains a runtime item. |
 
-Backend envelope: `apps/prototype-description-service/api/main.py:296–382` computes profile-specific description_adapter usable/reason; unavailable local dependencies/adapter and unconfigured GPU endpoint can refuse readiness. `scene/application/describe_run_worker.py:213–221,288–311` permits warmup CPU continuation only for a configured usable callable; otherwise persists typed failure. Therefore unknown GPU telemetry alone proves no CPU capability. Preserve exact API shapes and valid describe policy; no new readiness endpoint, adapter activation or threshold change is proposed.
+## GPU run outcomes (distinct; evidence-gated)
+
+Source: `apps/prototype-description-service/scene/application/describe_run_worker.py`. Frontend evidence fields: `js/admin/api/describeApi.ts`.
+
+| Outcome | Worker path | Evidence the UI can read | What copy may say |
+| --- | --- | --- | --- |
+| GPU success | `_wait_for_gpu_ready` returns and describing proceeds with the GPU policy | `DescribeRunResponse.status` completed or completed_with_errors; item `tier: 'final_gpu'`; `fallback_reason: null`; `completed` count | Ready, then "N drafts ready to review". Review appears only when N > 0. |
+| Usable-CPU completion after warm-up timeout | `TimeoutError` → `_apply_warmup_cpu_fallback` returns a continuation. The caller sets `gpu_policy = None`, and `_persist_warmup_cpu_fallback_reason` records the fallback. | `fallback_reason` non-null; item `tier: 'provisional_cpu'`; `completed` count | Only after this evidence arrives may copy name CPU results. There is no automatic CPU-to-GPU upgrade of those drafts. |
+| Typed failure without CPU | `TimeoutError` with no usable adapter (`_usable_cpu_describe_one` returns `None`) → run FAILED, terminal code `gpu_warmup_timeout` | `status: 'failed'`; `terminal.code`; `terminal.retryable` | "GPU warm-up timed out. Retry to continue." Retry appears only when retryable. No drafts or review are implied. |
+| No warm-up at all | `gpu_run_policy` returns `None` when no endpoint URL is configured. Describe readiness reports `endpoint_unconfigured`. | Typed `unavailable.reason` on describe or readiness paths. Nothing on `/gpu/status`. | Configuration copy, and only where that envelope is actually received. |
+
+The UI cannot know before a run returns whether a usable CPU adapter exists, so no pre-result copy may promise CPU work ([HAI-05], [INT-10]).
 
 ## Screens and interaction contract
 
-These are proposed content sketches, not captured runtime screenshots. Wide is approximately 90 text columns (two evidence/content roles); narrow is approximately 40 (one stacked column). Actual thumbnails use equal comparable cells with proportional source crops, no stretching. Source captions stay attached when stacking. Long source titles wrap; exact references are in an inspectable disclosure, not UUID-first headings. Read order follows visual order. Routine updates use the existing status line, with no repeated toast, sound or spinner after unchanged polls.
+These are content sketches, not runtime screenshots. Wide is 90 text columns and narrow is 40; they are checked mechanically. In the sketches, `*` marks `aria-pressed="true"` and `<…>` marks a placeholder for actual server data. No live IDs, titles or counts were invented. Copy is the plan's exact copy. Routine updates add no toast, sound or spinner.
 
-### Quiet idle / unknown service
+### Needs attention › Failed (default)
 
 ```text
 WIDE
-+--------------------------------------------------------------------------------------+
-| Review Queue                                          Settings                       |
-| [selected image / proportional preview]  Describe selected                            |
-|                                         GPU tier not reported.                       |
-|                                         Description readiness is unconfirmed.         |
-+--------------------------------------------------------------------------------------+
++----------------------------------------------------------------------------------------+
+| Failed Sync Queue (overlay title, WBTRUST-5 owned)                             Close   |
+| Changes view:  [Needs attention*]  [History]                                           |
+| Needs attention status:  [Failed*]  [Pending]  [Conflict]                              |
++----------------------------------------------------------------------------------------+
+| Failed changes                                                                         |
+| Showing 1-<n> of <total> failed changes.                                               |
+| [Retry all failed (<total>)]  [Discard <k> eligible]                                   |
+| Cluster label update                                         [Retry]  [Discard]        |
+| Entity: <entity_key> (cluster)   Attempts: <n>   Age: <n> days                         |
+| Last attempted: <time>   Error: <code>: <message>                                      |
+| [Previous]  [Next]                                                                     |
++----------------------------------------------------------------------------------------+
 NARROW
 +--------------------------------------+
-| Review Queue                Settings |
-| [selected image, proportional]       |
-| Describe selected                    |
-| GPU tier not reported.               |
-| Readiness is unconfirmed.            |
+| Failed Sync Queue              Close |
+| [Needs attention*]  [History]        |
+| [Failed*] [Pending] [Conflict]       |
++--------------------------------------+
+| Failed changes                       |
+| Showing 1-<n> of <total> failed      |
+| changes.                             |
+| [Retry all failed (<total>)]         |
+| [Discard <k> eligible]               |
+| Cluster label update                 |
+| Entity: <entity_key> (cluster)       |
+| Attempts: <n>   Age: <n> days        |
+| Error: <code>: <message>             |
+| [Retry]  [Discard]                   |
+| [Previous]  [Next]                   |
 +--------------------------------------+
 ```
 
-Trigger: no active run and unavailable/unknown observation. Existing Describe remains the one primary action when a valid selection permits submission; this copy slice does not invent a disabled prerequisite. Settings is secondary. Tab/Enter activate real controls; static status is not focusable or an alert. On a successful status read, replace the observation without stealing focus. On read failure, remain unknown and retain selected work; manual status recovery lives in the existing service control, not a new global banner. This avoids a capability claim [HAI-05] and redundant feedback [PERC-10].
+- **Trigger**: the Changes panel opens. `panelView: 'attention'`, `attentionStatus: 'failed'`.
+- **Behaviour**: only `useDeadLetterOperations` runs (20-row page plus 50-row eligibility). No outbox timeline query runs.
+- **Actions**: existing guarded row Retry/Discard (Discard needs "Confirm discard"). Armed bulk "Retry all failed (N)" and "Discard eligible" auto-disarm. None is the screen's primary.
+- **Keyboard and announcements**: Tab reaches the view group, the status group, the bulk zone, then rows. Activating a toggle keeps focus on it, so focus never jumps. The existing polite status region announces loading and outcomes, and errors stay inline ([A11Y-11], [A11Y-21]).
+- **Failure**: an error shows the alert "Unable to load failed changes." inside this region only.
+- **Empty**: the existing "No failed changes." with "Refresh failed changes". This never implies that history is empty.
 
-### Configured health error / actual run failure
-
-```text
-WIDE
-+--------------------------------------------------------------------------------------+
-| Description Service                    | Accepted run: Failed                        |
-| Status unavailable; [reported cause]   | [reported run cause]; existing drafts kept   |
-| Checked [actual time]                  | [Retry run]   Review existing drafts         |
-| [Retry status] -> Checking...           | Retry queued is not completion.              |
-+--------------------------------------------------------------------------------------+
-NARROW (different states, not stacked everywhere)
-+--------------------------------------+
-| Description Service                  |
-| [reported cause]                     |
-| Checked [actual time]                |
-| [Retry status]  Checking...           |
-+--------------------------------------+
-+--------------------------------------+
-| Accepted run: Failed                 |
-| [reported cause]                     |
-| [Retry run]   Review existing drafts |
-+--------------------------------------+
-```
-
-Health recovery and run recovery are separate screens/outcomes. Retry status invokes existing refetch, becomes busy and reports the newer checked-at/error; it never launches inference. Run retry uses the existing supported retry action only when retryable; results review is secondary and conditional on returned drafts. Retry status is the single primary recovery action in the health error sketch; retry run is the single primary in a retryable run error sketch. These are contextual target hierarchies, not a grant to edit reserved composition files. Keep focus on the initiating control, use aria-busy while pending and a polite result status; actionable failures remain inline and announced once. Success names the actual changed state. Missing configuration links Settings rather than repeating a futile start. No credential value is included. [FORM-05], [INT-19], [INT-22].
-
-### Accepted warmup / cancel / navigation / resume
+### Needs attention › Pending / Conflict
 
 ```text
 WIDE
-+--------------------------------------------------------------------------------------+
-| Description run                        [Back to run after navigation]                |
-| [observed starting/warming status]     [actual bound or unavailable observation]       |
-| Existing results [count, if returned]  Cancel run    Review existing drafts            |
-+--------------------------------------------------------------------------------------+
++----------------------------------------------------------------------------------------+
+| Changes view:  [Needs attention*]  [History]                                           |
+| Needs attention status:  [Failed]  [Pending*]  [Conflict]                              |
++----------------------------------------------------------------------------------------+
+| Pending changes                                                                        |
+| Showing 1-<n> of <total> changes (pending).          (polite live region)              |
+| Cluster label update   Status: pending   Created: <time>   Age: <n> minutes            |
+| Entity: <entity_key> (cluster)                                                         |
+| [Previous timeline page]  [Next timeline page]                                         |
+| Empty result: No pending changes.   (Conflict: No conflicted changes.)                 |
++----------------------------------------------------------------------------------------+
 NARROW
 +--------------------------------------+
-| Description run                      |
-| [observed state / actual bound]      |
-| Existing results [reported count]    |
-| Cancel run   Review existing drafts  |
-| Navigation preserves accepted run.   |
+| [Needs attention*]  [History]        |
+| [Failed] [Pending*] [Conflict]       |
++--------------------------------------+
+| Pending changes                      |
+| Showing 1-<n> of <total> changes     |
+| (pending).                           |
+| Cluster label update                 |
+| Status: pending                      |
+| Entity: <entity_key> (cluster)       |
+| [Previous timeline page]             |
+| [Next timeline page]                 |
 +--------------------------------------+
 ```
 
-Trigger: accepted run, not idle telemetry. Describe start is no longer actionable while the accepted operation is pending; cancellation is the prominent pending recovery action, review secondary if drafts exist. Escape/navigation does not silently cancel. Cancel POST acknowledgement and subsequent status determine cancellation; a failed cancel leaves the run visible with retry recovery. Tab/Enter operate Cancel, pending control has aria-busy, status updates are polite without focus movement. On remount, rehydrate the tenant run_id and resume GETs; do not replay submit. If storage is unavailable, report the actual memory-only durability limit instead of promising reload recovery. Completion offers actual draft review; retryable failure retains genuine error and prior results. [INT-10], [INT-20], [HAI-05]. Exact runtime startup/results remain unaccepted.
+- **Behaviour**: exactly one `useOutboxOperations({limit:10, offset:0, status:'pending'|'conflict'})`. The count is that query's server total, announced through one polite container.
+- **Actions**: no maintenance zone and no row recovery, because non-failed rows already render none. Conflicts are still resolved in the Conflict Inbox (`act-open-conflicts`).
+- **View changes**: switching resets `timelineOffset` to 0, disarms bulk confirmations, clears a pending row discard and sends no mutation ([INT-19]).
 
-### Current attention / explicit history
+### History
 
 ```text
 WIDE
-+--------------------------------------------------------------------------------------+
-| Changes: Current attention   History                                                 |
-| Failed [selected]   Pending   Conflict                                                |
-| Operation / target              Cause / age                 Action                   |
-| [label update target]           [reported failure]           [Retry]  Discard         |
-| No failed changes? Show that result; History still keeps records.                     |
-+--------------------------------------------------------------------------------------+
++----------------------------------------------------------------------------------------+
+| Changes view:  [Needs attention]  [History*]                                           |
++----------------------------------------------------------------------------------------+
+| Change history                                                                         |
+| [All*] [pending] [acknowledged] [conflict] [failed] [discarded]                        |
+| Showing 1-<n> of <total> changes (all statuses).     (polite live region)              |
+| Cluster label update   Status: acknowledged   Acknowledged: <time>                     |
+| Cluster label update   Status: failed   Error: <code>: <message>                       |
+|                                                              [Retry]  [Discard]        |
+| Cluster dismiss        Status: discarded   Will not retry                              |
+| [Previous timeline page]  [Next timeline page]                                         |
++----------------------------------------------------------------------------------------+
 NARROW
 +--------------------------------------+
-| Current attention   History          |
-| Failed [v]                           |
-| [operation and readable target]      |
-| [cause] / [age]                      |
-| [Retry]   Discard                    |
-| Page [current server-filtered page]  |
+| [Needs attention]  [History*]        |
++--------------------------------------+
+| Change history                       |
+| [All*] [pending] [acknowledged]      |
+| [conflict] [failed] [discarded]      |
+| Showing 1-<n> of <total> changes     |
+| (all statuses).                      |
+| Cluster label update                 |
+| Status: failed                       |
+| Error: <code>: <message>             |
+| [Retry]  [Discard]                   |
+| [Previous timeline page]             |
+| [Next timeline page]                 |
 +--------------------------------------+
 ```
 
-Trigger: open Changes. Target defaults to failed attention; pending/conflict selected explicitly, not a fabricated combined API status. History uses the existing all/status query and retains audit records. Native buttons/select provide Tab/Enter and normal select keys; use aria-pressed for view buttons and an associated select label, not incomplete custom tabs. Switch resets the newly selected query offset; returning restores the prior view's position if feasible within panel ownership. Announce loaded count/view politely, keep focus on view control. Mutation success says queued/discarded, failure stays row-local. Existing guarded Discard is never the primary. Empty current attention must not claim all history is empty. Read-only view changes never discard or reconcile rows. [INT-19], [INT-22].
+- **Trigger**: `act-view-audit-history` (History).
+- **Behaviour**: the existing status filters, now `aria-pressed` and focusable, drive the existing single-status query. `All` sends no status.
+- **Actions**: rows whose status is `failed` keep their existing guarded row Retry/Discard. Only one list is mounted, so they never appear twice. The maintenance zone is absent.
+- **Empty**: "No changes found for this filter."
+- **Limit**: the WBTRUST-5-owned overlay title "Failed Sync Queue" is out of scope here.
 
-### Duplicate-face evidence / safe review
+### GPU toasts during an accepted run
 
 ```text
 WIDE
-+--------------------------------------------------------------------------------------+
-| Repeated source-face evidence             [Review faces]                             |
-| Source photo [visible title]              Same source face appears in 2 groups        |
-| [proportional crop] [proportional crop]    Evidence is not an identity merge.           |
-| Group A             Group B               Details v   Show all available evidence     |
-| Details: source media ref, bbox, each exact group ref and face/identity ref            |
-| Displayed 2 observations / [available total]; coverage [complete or incomplete]        |
-+--------------------------------------------------------------------------------------+
++----------------------------------------------------------------------------------------+
+| (i) GPU warming — this run is waiting for the description service                      |
++----------------------------------------------------------------------------------------+
+| (!) GPU unavailable — no descriptions returned yet                       [Dismiss]     |
++----------------------------------------------------------------------------------------+
+| (!) GPU unavailable — <n> drafts ready to review       [Review results]  [Dismiss]     |
++----------------------------------------------------------------------------------------+
 NARROW
 +--------------------------------------+
-| Repeated source-face evidence        |
-| Source photo [visible title]         |
-| [crop A]  [crop B]                    |
-| Group A   Group B                    |
-| [Review faces]   Details v           |
-| Details: exact source/group/face     |
-| refs, bbox and displayed/total       |
-| Show all available evidence          |
+| (i) GPU warming — this run is        |
+| waiting for the description service  |
++--------------------------------------+
+| (!) GPU unavailable — no             |
+| descriptions returned yet            |
+|                            [Dismiss] |
++--------------------------------------+
+| (!) GPU unavailable — <n> drafts     |
+| ready to review                      |
+| [Review results]           [Dismiss] |
 +--------------------------------------+
 ```
 
-A/B and counts above are illustrative fixtures, not recovered Emma group IDs. No exact corpus face/group IDs were supplied or discovered in this design lane. Product disclosure must render the actual API references verbatim for each observation; missing fields say unavailable. Do not fabricate UUIDs. The user identifies the supplied Emma crops as one person; retain that ground truth without deriving any new name from filenames, captions or image similarity.
+- **Trigger**: run activity edges from `useActivityStatus`. Each edge fires at most once per run (existing edge memory).
+- **Copy rules**: copy names only returned state ([INT-22]). "Review results" appears only when `draftCount > 0` ([INT-01]).
+- **Warming toast**: an info toast that auto-dismisses.
+- **Degraded toasts**: error toasts with `durationMs: null`, so they persist until dismissed (existing behaviour).
 
-Proposed repeated-evidence derivation is separate from unchanged grouping and action scopes. It should prefer an exact source + face correspondence if provided; bbox/source matches must describe their method and ambiguity, not claim byte-identical faces from arbitrary overlap. Different photos of the same person are identity-recall evidence, not exact-source duplicates. A camera can repeat a capture; a detector can duplicate overlapping boxes; a group can duplicate a face reference. These are distinct hypotheses. Show the mechanism and alternative account, not a single definitive diagnosis [VIZ-23].
+### Settings › Description Service: received configuration error vs stale telemetry
 
-Review opens the existing available face-review path for the selected actual group; no new merge UI or endpoint is assumed. If chip-to-panel wiring requires reserved owners, keep the disclosure-only slice and request a coordinated extension. Details uses native disclosure, aria-expanded and a meaningful accessible name; Tab/Enter opens review; close returns focus to its trigger. Member removal still targets the original identity ID, naming targets its existing editable cluster/person. Success preserves source/action correspondence; load failure retains available evidence and offers read-only retry. Disclose displayed/available totals, truncated/loading/incomplete coverage, source ordering and which representative was selected; Show all is not proof of exhaustive corpus coverage [VIZ-41]. No automatic merge, global visual dedup or transitive similarity closure [GRPH-18].
+```text
+WIDE
++----------------------------------------------------------------------------------------+
+| Settings › Description Service                                                         |
+| (!) Description service is unavailable because its GPU endpoint is not configured.     |
+| An administrator must set the GPU endpoint for the Description service. Retry only     |
+| checks again; it does not change the setting.   Last checked <time>                    |
+| [Retry] -> Fetching…                                                                   |
++----------------------------------------------------------------------------------------+
+| Stale telemetry (different state): Service: not reported   [Refresh]                   |
+| (never shows 'not configured')                                                         |
++----------------------------------------------------------------------------------------+
+NARROW
++--------------------------------------+
+| Settings › Description Service       |
+| (!) Description service is           |
+| unavailable because its GPU endpoint |
+| is not configured.                   |
+| An administrator must set the GPU    |
+| endpoint for the Description         |
+| service. Retry only checks again; it |
+| does not change the setting.         |
+| Last checked <time>                  |
+| [Retry]                              |
++--------------------------------------+
+```
 
-## Pinned authority and design decisions
+- **Trigger**: a typed `unavailable` envelope with `reason: 'endpoint_unconfigured'` from status, intent or error, read through `readUnavailable`. Stale telemetry is a different state with neutral copy ([RLSE-04]).
+- **Retry**: an existing read-only refetch. The copy says it cannot configure anything.
+- **Scope**: no Start, configuration or credential control is added.
 
-Applied **Canon v0.26.2**, pinned local manifest `/home/gate/heuristics-canon-v0.26.2/meta/release-manifest.json`; canonical project: https://github.com/darce/heuristics-canon . No web summaries used as authority. Full triggered rows, PRINCIPLES.md and all matching Rule IDs cards were read. Matching card: `reasoning/perceived-enforced-boundaries.md` (CARD-12); its verification is applied by matching visual groups to unchanged data/action targets and refusing an unsupported automation envelope. Principle 10 sibling checks (security, architecture, team boundaries) reinforce this separation; no new auth or organization implementation is claimed. Disconfirmer: a configured tested CPU envelope could justify conditional capability copy, but GPU unknown alone cannot. Next feedback boundary: map review, then focused source tests, then separately granted runtime acceptance.
+### Identity card with repeated-region evidence (`act-toggle-repeated-region-evidence`)
 
-Manifest SHA256 verification passed for interaction-ux `986a319d91f00c5c96382b3b299b2dee6f23cc64d89cd50e125ddbe8f5203659`, graph-theory `23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c`, design-aesthetics `ef47bce7e1b65f9082a409e50ab67aaaf6c66e751b03132e4dfb3896d48a3018`, accessibility `4f6dba17a0026ba1971fba0bda21f35b63882a92cccf47f45a90f0f87267a246`; also AGENTS.md, PRINCIPLES.md and CARD-12 matched. Sibling security/engineering/planning lexicons were separately digest-checked. Row anchors below resolve under the pinned release's lexicons; source titles/locators are exactly the published Source cells.
+```text
+WIDE
++----------------------------------------------------------------------------------------+
+| [current thumbnail]  <group label>   [Edit label]  [Remove from group]                 |
+|                      > Same photo region is also listed in 1 other group               |
++----------------------------------------------------------------------------------------+
+| [current thumbnail]  <group label>   [Edit label]                                      |
+|                      v Same photo region is also listed in 1 other group               |
+|                        Matching uses exact box coordinates in the face records         |
+|                        loaded for this photo. It does not show that these faces        |
+|                        are the same person, and nothing is merged or moved.            |
+|                        Photo <media_id> — box x <x>, y <y>, width <w>, height <h>      |
+|                        - <label> (person <person_id>) — face record <identity_id>      |
+|                        - Face group <cluster_id> — face record <identity_id>           |
+|                        Checked <e> of <n> loaded face records with usable box          |
+|                        coordinates.                                                    |
++----------------------------------------------------------------------------------------+
+NARROW
++--------------------------------------+
+| [thumb] <group label>                |
+| [Edit label]                         |
+| v Same photo region is also          |
+|   listed in 1 other group            |
+|   Matching uses exact box            |
+|   coordinates in the face records    |
+|   loaded for this photo. It does not |
+|   show that these faces are the same |
+|   person, and nothing is merged or   |
+|   moved.                             |
+|   Photo <media_id> — box x <x>,      |
+|   y <y>, width <w>, height <h>       |
+|   - <label> (person <person_id>)     |
+|     — face record                    |
+|     <identity_id, wraps anywhere>    |
+|   - Face group <cluster_id, wraps>   |
+|     — face record <identity_id>      |
+|   Checked <e> of <n> loaded face     |
+|   records with usable box            |
+|   coordinates.                       |
++--------------------------------------+
+```
 
-| Decision | Stable row authority (Canon v0.26.2) |
+- **Trigger**: the loaded identities for this media row contain eligible observations with the same positive `media_id` and exactly equal `x`/`y`/`width`/`height` under two or more different group keys.
+- **Display**: the disclosure is native `<details>`/`<summary>`, closed by default, and comes after the naming control in DOM and visual order ([A11Y-12], [PERC-10]). "Remove from group" still appears only for single-member groups (existing gate).
+- **Keyboard**: Tab reaches the summary, and Enter or Space toggles it natively. Expanding does not move focus.
+- **Content**: the disclosure is text only, with no image, button or link. Ids are verbatim inside `<code>` and wrap anywhere at 320 px ([A11Y-08]). In the narrow layout the thumbnail, label and disclosure stack in one column.
+- **Ungrouped residue**: the same disclosure appears under "Not yet grouped (N)" when a residue face is involved.
+- **Limits**: nothing in the disclosure mutates data. Naming targets `getEditableClusterId(group)` and removal targets `members[0].identity_id`, both unchanged.
+
+## Stable design choices
+
+1. **Failed is the default attention status, and no combined count exists.** The outbox API takes one `status` per request (`conflictApi.ts:fetchOutboxOperations`). A combined unresolved total needs several queries or a backend aggregate. Filtering one page locally would present a partial page as a global total. The failed list already has its own server total and the existing guarded recovery, so it is the safe default.
+2. **History keeps row-level recovery but not the maintenance zone.** The row actions are existing, guarded and identity-announced, and they target the same operation id in either view. Only one list is mounted per view, so duplication cannot recur. Bulk maintenance concerns the failed backlog and belongs to Needs attention.
+3. **Mount, don't hide.** The timeline section calls its query only when mounted. That guarantees no failed timeline in the default view without adding an `enabled` option to the shared hook.
+4. **GPU copy follows returned evidence.** `draftCount` (`run.completed ?? 0`) is the only returned-results signal the toast hook has, and it carries no tier proof. Copy therefore never says "CPU". CPU provenance (`fallback_reason`, `provisional_cpu` tier) lives in run and item data, which the review surfaces already show.
+5. **`endpoint_unconfigured` copy goes where the envelope can arrive.** The status schema stays unchanged. Telling unknown telemetry apart from configuration needs a status-contract field, which is deferred to a separate task.
+6. **Exact coordinates, before dedup, by shared key.** `identityGroupKey` is shared by grouping and evidence, so the two cannot drift. Reading before dedup is necessary because dedup can drop the very observation that repeats. Exact equality is an equivalence, so it cannot chain borderline matches. A missed near-duplicate is preferable to a false link ([GRPH-18], [CAL-02]).
+7. **Text evidence, not crops.** Cached corpus research reports boxes that overhang the listed image size, so crop geometry and coordinate transforms are unverified. `ClusterPreview` may show a representative from another photo. Text references show the actual matching observation without relying on either ([VIZ-23]).
+8. **Exact references stay inside the disclosure.**
+   - `js/admin/__tests__/banned-vocabulary.test.tsx` keeps rendered page text free of UUIDs and review surfaces free of "cluster"/"identity" words.
+   - The disclosure body is where verbatim references belong. Summaries, headings, accessible names and toasts carry none.
+   - Visible wording uses "face group" and "face record".
+   - The page sweep's fixture renders `identities: []`, so the disclosure is never part of that sweep.
+9. **Loaded pool only.** The pool line counts unique loaded face records and eligible ones. No title, hash, completeness or corpus total field exists, so none is implied ([VIZ-41], J tier: a contextual judgment that the loaded media row is the pool).
+
+## Deferred, with boundaries
+
+- **Status-contract configuration or capability field** on `GpuStatusResponse`: a backend contract change for a separate task.
+- **Copy for other scene unavailable reasons** (`endpoint_not_private`, `endpoint_resolution_pending`, `state_missing`, `state_stale`, `degraded`, `operator_stop`, `auth_rejected`): they keep the generic fallback.
+- **`degradedNotice(count)` ignores its count** in `ActivityStatusStrip` idle copy. The strip is WBTRUST-5-reserved, so this is a follow-up for that owner.
+- **The done toast at `draftCount === 0`** reads "0 drafts ready to review" and offers "Review 0 drafts". The copy is truthful but odd; this is a follow-up.
+- **Worker warm-up short-circuit, boot-time settings validation, and fallback provenance in a typed field**: backend items outside UXREC slices.
+- **Identity**: corpus diagnosis of the supplied same-person crops, cross-photo duplicate content (no content-hash field), detector or recall repair, and any merge flow. These need a separately granted CORPUS probe or other tasks. The operator's identification of the supplied crops as one person is supplied ground truth. No new identification is made.
+- **Overlay title "Failed Sync Queue"** (`pages/WorkbenchPage.tsx`): owned by WBTRUST-5.
+
+Inherited structural map critique stays typed and outside these slices: HAI-01 on `workbench-operator-loop` `z-review-suggestions-group-card` and INT-07 on the `describe-gpu-tier` dashboard `describe-single` action. No `evidence_linked` or `preview_required` field may be set to silence them without evidence.
+
+## Pinned authority
+
+Canon v0.26.2 is pinned at `/home/gate/heuristics-canon-v0.26.2` (project <https://github.com/darce/heuristics-canon>), and all 53 manifest digests match. The routed families for UI, AI review, task decomposition and prose were read. Rows were kept only when their trigger is observable here. The cards opened were those listing kept IDs: CARD-22 `constrained-domains-have-solved-it`, CARD-03 `designed-unknown` and CARD-12 `perceived-enforced-boundaries` (with Principle 10 siblings). Under CARD-12, each implied grouping must match an enforced cut:
+
+- The view toggles match mounted queries.
+- The disclosure matches unchanged data and action targets.
+- The toast copy matches returned run data.
+- The lanes match single-writer file ownership.
+
+| Decision | Stable row authority |
 | --- | --- |
-| Neutral unknown/capability claim | [HAI-05] **Imperceptible AI is not ethical**, `interaction-ux.md#hai-05`; *Human-Centered AI* |
-| Accepted run shows progress, next step, cancel | [INT-10] **Status–predict–stop**, `interaction-ux.md#int-10`; *Human-Centered AI* |
-| Separate health recovery, run completion, evidence review | [INT-19] **One outcome per interaction**, `interaction-ux.md#int-19`; *Microinteractions, ch. 1* + *Microinteractions, ch. 3* |
-| Remount/retry does not silently resubmit automatic work | [INT-20] **Manage automatic starts**, `interaction-ux.md#int-20`; *Microinteractions, ch. 2* |
-| Queued/checking/completed are distinct results | [INT-22] **Explain the result**, `interaction-ux.md#int-22`; *Microinteractions, ch. 4* |
-| Quiet idle and unchanged polling | [PERC-10] **Least useful feedback**, `interaction-ux.md#perc-10`; *Microinteractions, ch. 4* |
-| Preserve inline recoverable save errors and stored readback | [FORM-05] **Inline actionable errors**, `interaction-ux.md#form-05`; *Designing Interfaces, 3rd ed.*; [FORM-08] **Echo-back stored interpretation**, `interaction-ux.md#form-08`; *Pattern Languages of Program Design, ch. 10* |
-| Fit wide comparison and narrow stacking to actual copy/image roles | [LAY-23] **Scale the grid to complexity**; [LAY-24] **Content-and-frame grid**; [LAY-25] **Use zones and spans**, `design-aesthetics.md#lay-23` / `#lay-24` / `#lay-25`; each *Thinking with Type, ch. 3* |
-| Approximate real copy lengths and proportional crops in sketches | [LAY-28] **Proportional thumbnail**, `design-aesthetics.md#lay-28`; *Grid Systems in Graphic Design, ch. 11* |
-| Repeated evidence never merges identities | [GRPH-18] **Never trust the transitive closure of a raw similarity threshold**, `graph-theory.md#grph-18`; *Introduction to Information Retrieval, § 17.2* |
-| Source/crop/group comparison, mechanism and alternatives | [VIZ-23] **Show the evidence path**, `interaction-ux.md#viz-23`; *Richard Feynman's Mental Models, ch. 5* + *Envisioning Information, ch. 4* |
-| Inspectable selection and available pool before consequential review | [VIZ-41] **Reveal the image-selection pool**, `interaction-ux.md#viz-41`; *Visual Explanations, ch. 1* (J: applied to representative selection, not decoration) |
+| No CPU or result claim before evidence | [HAI-05] **Imperceptible AI is not ethical**, `lexicons/interaction-ux.md#hai-05`, *Human-Centered AI* |
+| Run status, next step and existing stop/retry stay visible | [INT-10] **Status–predict–stop**, `#int-10`, *Human-Centered AI* |
+| Recovery and audit are separate outcomes | [INT-19] **One outcome per interaction**, `#int-19`, *Microinteractions, ch. 1* + *Microinteractions, ch. 3* |
+| Messages name the resulting state | [INT-22] **Explain the result**, `#int-22`, *Microinteractions, ch. 4* |
+| Smallest signal; disclosure collapsed; no new banner | [PERC-10] **Least useful feedback**, `#perc-10`, *Microinteractions, ch. 4* |
+| A review action only when results exist; thumbnail non-interactive | [INT-01] **Affordance match**, `#int-01`, *Designing Interfaces, 3rd ed.* |
+| Data, comparison basis, mechanism limit and alternatives inspectable | [VIZ-23] **Show the evidence path**, `#viz-23`, *Richard Feynman's Mental Models, ch. 5* + *Envisioning Information, ch. 4* |
+| Loaded-pool accounting; representative is not the selection | [VIZ-41] **Reveal the image-selection pool**, `#viz-41`, *Visual Explanations, ch. 1* |
+| No transitive similarity closure or merge | [GRPH-18] **Never trust the transitive closure of a raw similarity threshold**, `lexicons/graph-theory.md#grph-18`, *Introduction to Information Retrieval, § 17.2* |
+| Abstain on conflicting or malformed records | [CAL-02] **Unknown is a valid result**, `lexicons/ml-systems.md#cal-02`, *Designing Machine Learning Systems* |
+| Unknown, empty, error and loading designed per state | [RLSE-04] **Undesigned state is a bug**, `lexicons/engineering.md#rlse-04`, bootstrap (practice label) |
+| Content-and-frame fit for 90/40-column layouts | [LAY-24] **Content-and-frame grid**, `lexicons/design-aesthetics.md#lay-24`, *Thinking with Type, ch. 3* |
+| Sketches use real copy lengths | [LAY-28] **Proportional thumbnail**, `#lay-28`, *Grid Systems in Graphic Design, ch. 11* |
+| Native controls; keyboard; status; reflow; confirmed discard | [A11Y-12] **Native first, ARIA last (4.1.2)**, *Web Content Accessibility Guidelines 2.2, SC 4.1.2*; [A11Y-11] **Keyboard walk (2.1.1/2.1.2/2.4.3/2.4.7)**, *Web Content Accessibility Guidelines 2.2, SC 2.1.1*; [A11Y-21] **Announce status (4.1.3)**, *Web Content Accessibility Guidelines 2.2, SC 4.1.3*; [A11Y-08] **Reflow and resize (1.4.4/1.4.10/1.4.12)**, *Web Content Accessibility Guidelines 2.2, SC 1.4.4*; [A11Y-18] **Reversible, checked, or confirmed (3.3.4)**, *Web Content Accessibility Guidelines 2.2, SC 3.3.4*. All in `lexicons/accessibility.md`. |
 
-LAY-27's published trigger is repeated **print pages**; it was read but is not cited as a mandatory screen rule. Aligned thumbnail cells are a design interpretation using the applicable content/frame rules, not a rewritten LAY-27 trigger. GRPH-07 has no capacity-constrained agent assignment in this no-delegation lane and is inert. GRPH-09's actual conflict edges are described in the task plan. Tufte's evidence path requires inspectable relevant data and alternatives; it supplies no warrant for decoration or hidden essential evidence.
+LAY-27's published trigger is repeated print pages, so it does not fire on this UI. LAY-23 (J tier, column count) does not fire either: the evidence is one text column inside an existing card. Planning-side rules (GRPH-01, GRPH-09, TEAM-01, TEST-06) are applied in the task plan.
 
 ## FIR prior research boundary
 
-Read `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html`, especially `#v13-caption`, `#v12`, `#v12-space`, `#v12-config`. This report is dated research and prior VM measurements, not current service readiness and not published rule authority.
+`benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` (sections `#v13-caption`, `#v12`, `#v12-space`, `#v12-config`) is dated research. It is not current service readiness and not rule authority.
 
-- Caption comparator: Qwen3-VL-30B-A3B-Instruct Q4_K_M, profile pin abbreviated `0af19e…` in the report; raw single-view and async four-view ensemble are distinct research arms. Qwen3.8-27B UD-Q4_K_XL (`1cff33…`) is a challenger, not promoted. Florence fallback when adapter unset is configuration drift, not proof the current tenant can use CPU. EmbeddingGemma 2 is semantic ranking research, not a face recognizer or caption generator.
-- SFace: 128D, L2-normalized/cosine, in-house YuNet/five-point alignment and ORT; existing isolated 128D FIR space. Do not pad vectors or infer compatibility from equal dimensions.
-- AuraFace-v1: `glintr100.onnx`, publisher revision `af6d057c9b0ec4071d4c49c80e3539258798b609`; report model digest `a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60`. 512D raw graph output, in-house L2 normalization/cosine; ArcFace 112 alignment, BGR crop to RGB NCHW `(pixel-127.5)/127.5`. Model identity includes numeric runtime versions (report `cv5.0.0/ort1.29`). Separate fresh 512D database/enrollment from pixels, not InsightFace runtime or reused buffalo vectors.
-- Namespace contract is weights/revision + preprocessing/alignment + normalization + metric + runtime version + store, scoped by modality/model. PGVECTOR_DIM must agree with the actual space; it is not a model migration control. Incumbent InsightFace/buffalo 512D is a third space. No cross-space centroid import or implicit fallback. Semantic gte-base-en-v1.5 handoff embeddings belong to a different task-retrieval namespace; this packet supplies no dimension/normalization proof for that service.
-- Candidate measurements do not establish activation, quality, successful descriptions or fresh enrollment. Detector duplicate-box/capture hypotheses and identity-recall hypotheses need separate corpus probes; no threshold tuning or re-inference is authorized here.
+- **Caption comparator**: Qwen3-VL-30B-A3B-Instruct Q4_K_M.
+- **SFace**: an isolated 128D space with L2/cosine.
+- **AuraFace-v1**: `glintr100.onnx`, revision `af6d057c9b0ec4071d4c49c80e3539258798b609`. 512D raw output, ArcFace-112 alignment, RGB NCHW `(pixel-127.5)/127.5`, then in-house L2 normalization. Runtime identity includes `cv5.0.0/ort1.29`.
+- **Namespaces**: weights, preprocessing, normalization, metric, runtime and store each define a separate namespace. Equal dimension never licenses cross-space comparison.
+- **Scope**: none of this establishes activation, enrollment or description readiness. None of it feeds the UXREC slices, which use no similarity, embedding or threshold.

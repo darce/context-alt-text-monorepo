@@ -119,6 +119,7 @@ class Checkpoint(unittest.TestCase):
                          (self.paths.runtime / 'dev/gpu-intent.json', self.ids[30])):
             path.write_text(json.dumps(self.candidates[op]))
         p = self.candidates[self.current]
+        self.floor = p['sequence']  # checkpoint predecessor; fenced records sit below it
         self.authority = dict(highest_sequence=32, rejected_sequences=[], intents={p['nonce']: dict(
             sequence=32, publication={k:p[k] for k in ('action', 'requested_at', 'expires_at',
                                                        'ttl_seconds', 'requested_by', 'sequence')})})
@@ -142,7 +143,7 @@ class Checkpoint(unittest.TestCase):
                 records[op] = self.c.operation_snapshot(fd, op, self.w)
             finally:
                 os.close(fd)
-        state, _ = self.c.checkpoint_view(self.paths)
+        state, _ = self.c.checkpoint_view(self.paths, self.floor)
         self.assertEqual(self.c.checkpoint_selection(records, state, self.w),
                          (self.current, sorted((self.current, self.ids[30]))))
 
@@ -158,10 +159,10 @@ class Checkpoint(unittest.TestCase):
     def test_causal_cap_then_recovery_preserves_all_proof_bytes(self):
         with self.assertRaisesRegex(RuntimeError, 'operation budget exhausted'):
             self.c.known_candidates(self.fd)
-        self.assertEqual(self.c.guard(self.c.view(self.paths, 'start'),
+        self.assertEqual(self.c.guard(self.c.view(self.paths, 'start', self.floor),
                                       self.candidates[self.current], self.candidates, ACTOR, 'start'), 32)
         before = inventory(Path(self.w['path']) / 'ops')
-        state = self.c.view(self.paths, 'start')
+        state = self.c.view(self.paths, 'start', self.floor)
         receipt = self.checkpoint()
         self.assert_checkpoint_result(before, state, receipt)
 
@@ -174,7 +175,7 @@ class Checkpoint(unittest.TestCase):
                          (WINDOW, self.w['path'], self.current))
         self.assertEqual(set(receipt['retained']), {self.current, self.ids[30]})
         self.assertEqual(set(receipt['archived']), set(self.ids)-set(receipt['retained']))
-        self.assertEqual(self.c.view(self.paths, 'start'), state)
+        self.assertEqual(self.c.view(self.paths, 'start', self.floor), state)
         known = self.c.known_candidates(self.fd)
         for op in (self.current, self.ids[30]):
             self.assertEqual(known[op], self.candidates[op])
@@ -201,7 +202,7 @@ class Checkpoint(unittest.TestCase):
 
     def test_interrupted_checkpoint_recovers_same_manifest(self):
         before = inventory(Path(self.w['path']) / 'ops')
-        state = self.c.view(self.paths, 'start')
+        state = self.c.view(self.paths, 'start', self.floor)
         rename = os.rename
         moved = []
 
@@ -328,7 +329,7 @@ class Checkpoint(unittest.TestCase):
             self.assert_valid_baseline()
             resources = inventory(paths.store), inventory(paths.runtime)
             before = inventory(Path(self.w['path']) / 'ops')
-            state = self.c.view(paths, 'start')
+            state = self.c.view(paths, 'start', self.floor)
             self.assert_checkpoint_result(before, state, self.checkpoint())
             self.assertEqual((inventory(paths.store), inventory(paths.runtime)), resources)
 
@@ -386,7 +387,7 @@ class Checkpoint(unittest.TestCase):
         load.write_text(json.dumps(dict(value, lease_demand=1)))
         before = inventory(self.base)
         for action in ('start', 'stop'):
-            state = self.c.view(self.paths, action)
+            state = self.c.view(self.paths, action, self.floor)
             self.assertEqual(len(state['loads']), 5)
             self.assertEqual(state['loads'][-1]['lease_demand'], 1)
             with self.assertRaisesRegex(RuntimeError, 'work/demand'):
@@ -394,11 +395,11 @@ class Checkpoint(unittest.TestCase):
         self.assertEqual(inventory(self.base), before)
         load.write_bytes(original)
         for action in ('start', 'stop'):
-            self.assertEqual(self.c.guard(self.c.view(self.paths, action), self.candidates[self.current],
+            self.assertEqual(self.c.guard(self.c.view(self.paths, action, self.floor), self.candidates[self.current],
                                           self.candidates, ACTOR, action), 32)
         self.assert_valid_baseline()
         before = inventory(Path(self.w['path']) / 'ops')
-        state = self.c.view(self.paths, 'start')
+        state = self.c.view(self.paths, 'start', self.floor)
         self.assert_checkpoint_result(before, state, self.checkpoint())
 
     def test_missing_fifth_intent_fence_refuses_checkpoint_read_only(self):
@@ -418,7 +419,7 @@ class Checkpoint(unittest.TestCase):
         self.c.unlock([self.c.lock_path(fence, time.monotonic()+1)])
         self.assert_valid_baseline()
         before = inventory(Path(self.w['path']) / 'ops')
-        state = self.c.view(self.paths, 'start')
+        state = self.c.view(self.paths, 'start', self.floor)
         self.assert_checkpoint_result(before, state, self.checkpoint())
 
     def test_refusal_matrix_is_read_only(self):

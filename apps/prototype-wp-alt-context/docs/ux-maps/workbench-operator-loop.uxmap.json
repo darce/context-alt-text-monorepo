@@ -14,7 +14,7 @@
     "Producer contract verified from current bytes: RecognitionPolicy::DEFAULT=false; Settings GET requires boolean recognition_enabled (fetchSettings rejects missing/nonboolean); Settings POST may return HTTP 200 with result=error/partial and failed fields. Require result=ok, saved containing recognition_enabled and no matching failed field; HTTP success alone never confirms persistence.",
     "Send only {recognition_enabled: desiredBoolean}, never URL, api_key or allow_person_names. Share queryKeys.settings.all with SettingsPage; reconcile through fresh Settings GET. After an acknowledged write, failed/malformed/mismatched readback permits verification reads only; never replay the write. Unknown/rejected state also recovers through Settings GET.",
     "Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action.",
-    "UXREC-1 design proposal (target contract, not current source): the Changes panel opens on Needs attention, which defaults to Failed and renders only the existing failed list; Pending and Conflict render only that status's server-filtered timeline; History renders the existing all/status timeline, read-only and apart from maintenance actions. Every count is the server total of the one query on screen; there is no combined attention total. This slice improves classification and navigation and removes duplicate presentation; it clears no records, so old failed rows (including the four July rows) stay failed attention until existing reconciliation or an operator action changes them. Preserve all audit records, reconciliation and existing naming-policy controls. See docs/assessments/current/UXREC-1-ux-inventory.md."
+    "UXREC-1 design proposal (target contract, not current source): the Changes panel opens on Needs attention, which defaults to Failed and renders only the existing failed list; Pending and Conflict render only that status's server-filtered timeline; History renders the existing all/status timeline with existing guarded per-row Retry/Discard only on failed rows, once per view. Retry excludes terminal failures; Discard keeps Confirm discard. Bulk Retry/Discard stay attention_failed only, with existing confirmation, capability and age/clock guards preserved as applicable. [NAV-19] Keep related work adjacent, Source: About Face, ch. 12 (Canon v0.26.2, https://github.com/darce/heuristics-canon): act beside the inspected failed row instead of switching views to find it again. Every count is the server total of the one query on screen; there is no combined attention total. This slice improves classification and navigation and removes duplicate presentation; it clears no records, so old failed rows (including the four July rows) stay failed attention until existing reconciliation or an operator action changes them. Preserve all audit records, reconciliation and existing naming-policy controls. See docs/assessments/current/UXREC-1-ux-inventory.md."
   ],
   "jobs": [
     {
@@ -197,7 +197,7 @@
       "id": "workbench-dead-letter",
       "kind": "overlay",
       "title": "Changes — Needs attention / History (proposed)",
-      "purpose": "UXREC-1 proposed. Current source starts with timelineStatus all and renders the failed list and a second all-status timeline together, so a failed row can appear twice with two action sets. Target: one list per view. Needs attention › Failed (default) renders only the existing failed list; Needs attention › Pending or Conflict renders only the server-filtered timeline for that status; History renders the existing timeline for All or one status, read-only. Switching views or filters is a read and never discards, retries or reconciles rows. No combined attention total, no locally filtered page presented as a global total, no age-only hiding.",
+      "purpose": "UXREC-1 proposed. Current source starts with timelineStatus all and renders the failed list and a second all-status timeline together, so a failed row can appear twice with two action sets. Target: one list per view. Needs attention › Failed (default) renders only the existing failed list; Needs attention › Pending or Conflict renders only the server-filtered timeline for that status; History renders the existing timeline for All or one status, retaining guarded per-row Retry/Discard only on failed rows, once per view. Retry excludes terminal failures; bulk controls stay in Failed attention only. Switching views or filters is a read and never discards, retries or reconciles rows. No combined attention total, no locally filtered page presented as a global total, no age-only hiding.",
       "route": "#/workbench?panel=dead-letter",
       "job_entry": false,
       "deep_link": true,
@@ -220,7 +220,7 @@
         },
         {
           "id": "z-dl-actions",
-          "label": "Failed view only: existing row Retry (non-terminal rows), row Discard with Confirm discard, Retry all failed (N) with arm and confirm, and Discard eligible failed changes older than 7 days with arm and confirm. Retry reports queued, not recovered; failures stay inline. Pending, Conflict and History render none of these controls.",
+          "label": "Failed attention: existing row Retry only on non-terminal failed rows and row Discard with Confirm discard. Bulk Retry all failed (N) and Discard eligible failed changes older than 7 days stay attention_failed only. Preserve capability and pending-mutation guards, bulk arm/confirm and bulk-discard age/clock eligibility. Retry reports queued, not recovered; failures stay inline. Pending and Conflict show no recovery controls; History retains only its failed-row actions.",
           "role": "form",
           "states": ["default", "loading", "empty", "error"]
         },
@@ -232,7 +232,7 @@
         },
         {
           "id": "z-dl-history",
-          "label": "History view: the existing timeline for All (default) or one of pending, acknowledged, conflict, failed, discarded; 10 per page, offset reset to 0 on each filter change, server total per filter. Read-only audit rows, including acknowledged and discarded records; no maintenance controls and no delete-on-hide.",
+          "label": "History view: the existing timeline for All (default) or one of pending, acknowledged, conflict, failed, discarded; 10 per page, offset reset to 0 on each filter change, server total per filter. Existing guarded per-row Retry only on non-terminal failed rows and Discard with Confirm discard only on failed rows, once per view. Other statuses have no row recovery actions. Preserve capability and pending-mutation guards; no bulk controls and no delete-on-hide.",
           "role": "content",
           "states": ["default", "loading", "empty", "error"]
         }
@@ -363,25 +363,25 @@
     },
     {
       "id": "act-retry-dead-letter",
-      "verb": "Retry failed op",
+      "verb": "Retry non-terminal failed op",
       "target": "sync",
       "hierarchy": "primary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,
       "screen_id": "workbench-dead-letter",
-      "when": ["attention_failed"]
+      "when": ["attention_failed", "history"]
     },
     {
       "id": "act-discard-dead-letter",
-      "verb": "Discard failed op",
+      "verb": "Discard failed op (Confirm discard)",
       "target": "sync",
       "hierarchy": "destructive",
       "costly": true,
       "irreversible": true,
       "preview_required": true,
       "screen_id": "workbench-dead-letter",
-      "when": ["attention_failed"]
+      "when": ["attention_failed", "history"]
     },
     {
       "id": "act-review-back",
@@ -568,7 +568,7 @@
         },
         {
           "screen_id": "workbench-dead-letter",
-          "branch_label": "history: existing timeline, All or one status, 10 per page, read-only; no maintenance controls"
+          "branch_label": "history: existing timeline, All or one status, 10 per page; guarded row Retry/Discard only on failed rows, once per view (Retry excludes terminal failures; Discard requires confirmation); no bulk controls"
         },
         {
           "screen_id": "workbench-dead-letter",
@@ -728,7 +728,7 @@
     "**Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence",
     "**Dead-letter discard confirm** — destructive + irreversible path",
     "**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])",
-    "UXREC-1 TIMELINE proposed: replace the INITIAL_STATE timelineStatus 'all' default and the always-rendered second timeline in DeadLetterPanel with Needs attention (Failed = existing failed list only; Pending or Conflict = server-filtered timeline only) and read-only History (existing all/status timeline), keeping deadLetterPanelReducer paging and the handleTimelineStatusChange offset reset. Fixtures cover old failed rows, genuine pending and conflict rows, and terminal acknowledged/discarded history. Do not delete history, hide by age, or repeat integrated DW3-UX0924-04 reconciliation."
+    "UXREC-1 TIMELINE proposed: replace the INITIAL_STATE timelineStatus 'all' default and the always-rendered second timeline in DeadLetterPanel with Needs attention (Failed = existing failed list only; Pending or Conflict = server-filtered timeline only) and History (existing all/status timeline with guarded row Retry/Discard only on failed rows, once per view), keeping deadLetterPanelReducer paging and the handleTimelineStatusChange offset reset. Bulk controls stay attention_failed only; preserve confirmation, capability, pending-mutation and bulk-discard age/clock guards. Proposed fixtures cover old failed rows, genuine pending and conflict rows, History failed rows with non-terminal-only Retry and confirmed Discard, and acknowledged/discarded history with no recovery actions. Do not delete history, hide by age, or repeat integrated DW3-UX0924-04 reconciliation."
   ],
   "open_questions": [
     "Should Scan CTAs require selection count preview on the same surface before start? ([INT-07])",

@@ -72,6 +72,55 @@ Persona timing = planning cadence, not prophecy: don't force a grand launch whil
 - **Phase 2 — Payments + paid conversion (Sep, start loud).** Stripe checkout + webhooks → plan enforcement. Validate price with paid intent before scaling `[GTM-01][GTM-02]`. **Gate:** ≥1 *unsolicited* paid conversion at target price — the real PMF falsifier `[PROD-04]`.
 - **Phase 3 — Launch motions + WP.org (Sep–Nov, loud).** WP.org submission + freemium split (§11); founder build-in-public + network activation (§10); community surface feeding the flywheel. **Gate:** WP.org approved; first *inbound* signups.
 - **Phase 4 — Compounding (Nov+).** Retention, onboarding funnels, OAuth, referrals, case studies. Persona caution: stabilize, don't rebrand under stress `[STRAT-08]`.
+- **Phase 5 — Quebec and Europe, in short order (§3.1).** French localization and francophone market entry, triggered by the first reference customers rather than a calendar date.
+
+### 3.1 Quebec and Europe expansion (added 2026-10-21, decision 18969)
+
+i18n has been a product requirement since the first commit (2025-09-20). Launch is English only, but expansion to Quebec and Europe follows the first English reference customers in short order. The operator sets the window. The plan is fast because the architecture is kept i18n-ready from the start (constitution sr-012), not because translation is done early.
+
+**Why these markets.**
+- Quebec is the adjacent home market for a Canadian founder, and French is a condition of entry there.
+- One French localization also serves France, Belgium, Switzerland and Luxembourg.
+- European accessibility law creates demand:
+  - The European Accessibility Act has been enforced since 2025-06-28 for in-scope consumer services such as e-commerce.
+  - The Web Accessibility Directive (EU) 2016/2102 covers public-sector sites, including many public universities.
+  - Every accessibility claim still needs version, level, scope and date (`[A11Y-22]`).
+- Output language is part of accessibility. English alt text on a French page breaks WCAG 3.1.2 unless the language change is marked `[A11Y-05]`. For a francophone site, French output is the product, not an add-on.
+
+**Sequence.**
+
+| Step | Scope | Trigger / gate |
+|---|---|---|
+| E0 — Readiness (now, every slice) | No language implemented. Every architecture decision passes sr-012: locale is explicit (BCP 47), labels key on concept IDs `[FM-12]`, strings go through gettext, no hardcoded formats `[REF-27][FORM-02]` | Planning review rejects designs where adding a language needs a code or schema change |
+| E1 — French (fr-CA first, fr-FR where wording differs) | Plugin UI `.po/.mo`; WP.org language packs once listed; describe output language from the WPML/Polylang post language, else the site locale; the public-figure name registry in French; marketing site, legal documents, support macros | First English reference customers exist `[GTM-14]`; French output passes the same caption-quality bar as English |
+| E2 — Quebec launch | French-first commercial documents and checkout; CAD prices; Quebec privacy and French-language obligations confirmed by counsel | Counsel sign-off on the Quebec conditions below |
+| E3 — Francophone Europe + English-reading EU B2B | EUR prices; EU VAT; GDPR DPA; EU hosting region option | Counsel sign-off on the EU conditions below |
+| E4 — Further EU languages (de, es, it, nl …) | Each language is registry rows, translation files and a `supported_languages` entry; no code change | Demand evidence per language `[OPS-69]` |
+
+**Market-entry conditions** (planning inputs only, not legal advice; counsel confirms each before E2 or E3):
+
+- **Quebec, French language.** The Charter of the French Language, as amended by Bill 96 (2022), covers:
+  - French availability of software;
+  - commercial documents;
+  - contracts of adhesion, which must be offered in French first.
+- **Quebec, privacy.** Law 25 requires:
+  - a person in charge of personal information;
+  - privacy impact assessments, including for transfers outside Quebec;
+  - consent rules.
+- **Quebec, biometrics.** Creating a biometric database must be disclosed to the CAI in advance. This is already in the PUBFIG-1 scope.
+- **EU, GDPR.** Face templates are special-category biometric data (GDPR Art. 9). EU entry needs a lawful basis, a DPIA, a DPA, and transfer safeguards or EU residency.
+- **EU AI Act.** Art. 5(1)(e) has prohibited building facial-recognition databases by untargeted scraping since 2025-02-02. The public-figure library must show targeted, licensed sourcing before it is offered in the EU.
+- **Tax.** ADR-014 keeps tax with the seller. Stripe Tax computes the tax; the operator registers:
+  - QST/GST for Quebec;
+  - EU VAT for B2C (non-Union OSS);
+  - reverse charge for EU B2B.
+- **Hosting.** OCI has Canadian and EU regions. Pinning a tenant to a region must stay possible by design, as a deploy target rather than a redesign.
+
+**Canon** (Heuristics Canon v0.26.2):
+- `[GTM-14]` (the published row "Develop reference customers first", not the proposed GTM-14..16 in D10) is the counter-case. Expansion comes after the first reference customers, not instead of them.
+- `[PROD-60]` treats French UI, French output and francophone markets as planned consumers, scoped before goals freeze.
+- `[FM-12]` keys data on concept IDs with per-language labels, so a translation never creates a new category.
+- The canon has no dedicated i18n row.
 
 ---
 
@@ -334,6 +383,7 @@ Four moves, in order — do not skip to Move 3.
 | WP.org channel | Rejected for phone-home; or delisted | Review rejection; or landlord shock `[BOOT-07]` |
 | Price holds | No unsolicited pay at $19 | Move-1 interest, no paid intent `[GTM-01]` |
 | Free tier converts | Free users never hit the trigger | Upgrades ≈ 0 despite active free sites `[BOOT-06]` |
+| Quebec/EU in short order | English assumptions baked in, so French takes a rebuild, not a localization | Any slice failing sr-012 review; first fr-CA pilot not deployable within the operator's window after E1 starts |
 
 If a disconfirmer fires, change the falsified assumption and keep shipping; don't rebrand the identity `[STRAT-08]`.
 
@@ -353,6 +403,7 @@ If a disconfirmer fires, change the falsified assumption and keep shipping; don'
 | D8 | CRM | none now; **Attio** when concierge volume forces it | operator (§6.4) |
 | D9 | Data ownership map | in-house SoR = tenant/plan/keys/usage/flywheel/consent/email; ref vendors by ID | **settled** (§6.3), write ADR `[ARCH-07]` |
 | D10 | Naming / positioning | category = **"Verified Alt Text"**; method = **"The Curated-Accuracy Method"** (Roster → Recognize & Flag → Curate); method is a supporting asset, **not** the H1 tagline | **settled** — see `positioning-canon-rules-and-naming.md` `[GTM-14..16]` |
+| D11 | i18n + Quebec/Europe | English-only launch; architecture i18n-ready now (sr-012); French first, after the first reference customers; Quebec then francophone EU (§3.1) | **settled** (decision 18969); window: operator |
 
 > **Companion docs:** `positioning-canon-rules-and-naming.md` (naming + proposed canon rules GTM-14..16) · `offload-brief-ap7-concierge.md` (first offload lane) · **decomposition set** (all §14 Epics → atomic sub-slices, each citing engineering-heuristics v2 IDs): `decomposition-ap1-ap2.md`, `decomposition-ap3-ap4-ap5-accounts-billing.md`, `decomposition-mk1-ls3-frontend-plugin.md`. Heuristics live in `docs/strategy/{engineering,business-marketing,design-aesthetics}-heuristics.md`.
 

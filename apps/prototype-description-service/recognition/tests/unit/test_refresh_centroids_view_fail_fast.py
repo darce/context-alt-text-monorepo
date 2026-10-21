@@ -74,16 +74,20 @@ async def test_refresh_centroids_view_postgres_happy_path(monkeypatch) -> None:
             return 0
 
     class _OkSession:
-        async def execute(self, *args, **kwargs):  # noqa: ANN002, ANN003
-            order.append("execute")
+        async def execute(self, statement, *args, **kwargs):  # noqa: ANN002, ANN003
+            order.append(str(statement))
             return _OkResult()
 
     repo = cr.SqlAlchemyClusterRepository(_OkSession())
 
     await repo.refresh_centroids_view()
     bypass.assert_awaited_once()
-    assert order[0] == "bypass", "RLS bypass must precede the REFRESH"
-    assert "execute" in order
+    # SECAUDIT-1: the previous bypass value is read before enabling, so the
+    # bypass is no longer the first event; the invariant is bypass-before-REFRESH.
+    refresh_sql = "REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"
+    assert refresh_sql in order
+    assert order.index("bypass") < order.index(refresh_sql), "RLS bypass must precede the REFRESH"
+    assert order[-1].startswith("SELECT set_config('app.bypass_rls'"), "bypass must be restored after the REFRESH"
 
 
 @pytest.mark.parametrize("outcome", [MvRefreshOutcome.SKIPPED_HEADROOM, MvRefreshOutcome.FAILED])

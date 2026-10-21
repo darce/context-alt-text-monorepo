@@ -1,3 +1,4 @@
+import { idPathSegment, InvalidIdPathSegmentError } from '../../utils/pathSegment';
 import React, { createContext, useContext, useMemo, useReducer } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -42,7 +43,14 @@ const OVERLAY_PANEL_VALUES = new Set(['conflicts', 'dead-letter']);
 export const readReviewFromParams = (searchParams: URLSearchParams): ClusterPanelState => {
   const clusterId = searchParams.get(APP_LINK_PARAMS.cluster);
   if (searchParams.get(APP_LINK_PARAMS.panel) === APP_LINK_VALUES.panelReview && clusterId) {
-    return { mode: 'review', clusterId };
+    try {
+      idPathSegment(clusterId);
+      return { mode: 'review', clusterId };
+    } catch (error) {
+      if (!(error instanceof InvalidIdPathSegmentError)) {
+        throw error;
+      }
+    }
   }
   return { mode: 'none', clusterId: null };
 };

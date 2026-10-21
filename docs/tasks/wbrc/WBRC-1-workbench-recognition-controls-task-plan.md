@@ -111,23 +111,23 @@ Initial VM observation: 4 CPUs, 13.4 GiB MemAvailable, 35 GiB disk; CPU PSI 7.55
 
 ### Checklist for Slice 1: Bootstrap producer
 
-- [x] Add safe nested metadata and focused boundary tests.
-- [x] Run scoped remote PHP verification.
+- [ ] Add safe nested metadata and focused boundary tests.
+- [ ] Run scoped remote PHP verification.
 
 ### Checklist for Slice 2: Workbench control
 
-- [x] Implement accessible confirmed policy state, mutations and recovery.
-- [x] Verify real-shape responses, Settings consistency and side-effect isolation remotely.
+- [ ] Implement accessible confirmed policy state, mutations and recovery.
+- [ ] Verify real-shape responses, Settings consistency and side-effect isolation remotely.
 
 ### Checklist for Slice 3: Map and state audit
 
-- [x] Update existing map, render ASCII and run critique.
+- [ ] Update existing map, render ASCII and run critique.
 
 ## Review Readiness
 
-- [x] Assemble disjoint commits and record exact source/test identities.
+- [ ] Assemble disjoint commits and record exact source/test identities.
 - [ ] Obtain independent remote xhigh merge gate with fresh prior art and canon.
-- [x] Record actual verification limits and durable handoff.
+- [ ] Record actual verification limits and durable handoff.
 
 ## Success Criteria
 

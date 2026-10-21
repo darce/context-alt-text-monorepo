@@ -49,3 +49,13 @@ describe('config soft-warning correlation [OBS-03]', () => {
     expect(ids[0]).not.toBe(ids[1]);
   });
 });
+
+describe('recognition bootstrap strict booleans', () => {
+  it.each([undefined, null, true, 'false', {}, { enabled: 'false', canManage: 'true' }])('keeps malformed %j unknown', (recognitionPolicy) => {
+    const config = registerConfig({ nonce: 'abcdef1234', ajaxUrl: '/ajax', endpoints: {}, recognitionPolicy });
+    expect(config.recognitionPolicy).toEqual({ enabled: null, canManage: null });
+  });
+  it.each([true, false])('preserves literal %s', (value) => {
+    expect(registerConfig({ nonce: 'abcdef1234', ajaxUrl: '/ajax', endpoints: {}, recognitionPolicy: { enabled: value, canManage: value } }).recognitionPolicy).toEqual({ enabled: value, canManage: value });
+  });
+});

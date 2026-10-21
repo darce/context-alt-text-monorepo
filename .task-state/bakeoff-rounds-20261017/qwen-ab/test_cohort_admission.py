@@ -286,6 +286,29 @@ def test_an_unmeasured_cpu_window_charges_the_declared_cpu_cap(field, value):
     assert out['charged_cpu'] == 2. and out['charged_memory'] == 6*G
 
 
+@pytest.mark.parametrize('seconds', [5., 30.])
+def test_a_window_at_either_inclusive_bound_is_measured(seconds):
+    out = CA.classify_native_units([measured('abc', cores=.10, used=200*10**6, seconds=seconds)], OWN)['co_tenant'][0]
+    assert out['measured_cpu'] == pytest.approx(.10) and out['charged_cpu'] == .25
+
+
+@pytest.mark.parametrize('seconds', [4.99, 30.01])
+def test_a_window_just_outside_either_bound_charges_the_declared_cpu_cap(seconds):
+    out = CA.classify_native_units([measured('abc', cores=.10, used=200*10**6, seconds=seconds)], OWN)['co_tenant'][0]
+    assert out['measured_cpu'] is None and out['charged_cpu'] == 2.
+
+
+def test_the_sample_window_is_inside_the_measured_bounds():
+    # A SAMPLE_SECONDS outside [5, 30] would charge every co-tenant its cap while the receipt shows no measurement.
+    assert 5 <= CA.SAMPLE_SECONDS <= 30
+
+
+def test_a_fully_idle_co_tenant_over_a_valid_window_is_charged_the_cpu_floor():
+    # A zero counter delta is a measurement of zero, not a missing one; the floor still charges .25.
+    out = CA.classify_native_units([measured('abc', cores=0., used=200*10**6)], OWN)['co_tenant'][0]
+    assert out['measured_cpu'] == 0. and out['charged_cpu'] == .25
+
+
 @pytest.mark.parametrize('value', [MISSING, None, '[not set]', '-1', 'banana', '1.5e9', float('nan'), 1.5e9, True])
 def test_an_unreadable_memory_reading_is_no_evidence_and_charges_the_declared_memory_cap(value):
     row = with_field(measured('abc', cores=.10, used=200*10**6), 'MemoryCurrent', value)
@@ -426,34 +449,58 @@ CO_B = 'workbay-lane-other-b.scope'
 
 
 def shown_a(**over):
-    row = dict(CPUQuotaPerSecUSec='2s', MemoryMax=str(6*G), ControlGroup='/g/a', CPUUsageNSec='1000000000', MemoryCurrent=str(200*10**6))
+    row = dict(CPUQuotaPerSecUSec='2s', MemoryMax=str(6*G), ControlGroup='/g/a', InvocationID='inv-1', CPUUsageNSec='1000000000',
+               MemoryCurrent=str(200*10**6))
+    row.update(over)
+    return row
+
+
+def after_a(**over):
+    row = dict(ControlGroup='/g/a', InvocationID='inv-1', CPUUsageNSec='2000000000')
     row.update(over)
     return row
 
 
 def fake_systemctl(shown, after):
-    """shown: {unit: row} read before the sample window; after: {unit: row, or an exception to raise} read after it."""
+    """shown: {unit: row} read before the sample window; after: {unit: row, or an exception to raise} read after it.
+    As systemctl show does, a call answers only the properties it asked for with -p."""
     listed = ''.join(f'{unit} loaded active running {unit}\n' for unit in shown)
+
+    def render(cmd, row):
+        asked = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == '-p']
+        return ''.join(f'{k}={v}\n' for k, v in row.items() if k in asked)
 
     def check_output(cmd, text=True, timeout=None):
         if cmd[2] == 'list-units':
             return listed
         unit = cmd[3]
         if 'MemoryMax' in cmd:
-            return ''.join(f'{k}={v}\n' for k, v in shown[unit].items())
+            return render(cmd, shown[unit])
         if isinstance(after[unit], BaseException):
             raise after[unit]
-        return ''.join(f'{k}={v}\n' for k, v in after[unit].items())
+        return render(cmd, after[unit])
     return check_output
 
 
 def fake_clock(monkeypatch, stamps):
-    # NATIVE_SCRIPT stamps the monotonic clock before each unit's first read and after its second, in unit order; the
+    # NATIVE_SCRIPT stamps the monotonic clock after each unit's first read and before its second, in unit order; the
     # sleep is recorded, not taken. A stamp the script does not take fails loudly on the exhausted iterator.
     slept, ticks = [], iter(stamps)
     monkeypatch.setattr(time, 'sleep', slept.append)
     monkeypatch.setattr(time, 'monotonic', lambda: next(ticks))
     return slept
+
+
+def ticking_clock(monkeypatch, start=100.):
+    # The clock moves only when the test moves it: the sleep advances it, and a fake systemctl call can take time.
+    clock, slept = [start], []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock[0] += seconds
+    monkeypatch.setattr(time, 'sleep', sleep)
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    return clock, slept
 
 
 def test_native_script_compiles():
@@ -463,7 +510,7 @@ def test_native_script_compiles():
 def test_native_script_samples_each_unit_over_one_window_and_classify_charges_it(monkeypatch, capsys, tmp_path):
     slept = fake_clock(monkeypatch, [100., 110.])
     out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296',
-                            systemctl=fake_systemctl({CO_A: shown_a()}, {CO_A: dict(ControlGroup='/g/a', CPUUsageNSec='2000000000')}))
+                            systemctl=fake_systemctl({CO_A: shown_a()}, {CO_A: after_a()}))
     assert slept == [CA.SAMPLE_SECONDS]
     assert out['units'][0]['cpu_usage_nsec_delta'] == 1_000_000_000
     assert out['units'][0]['sample_seconds'] == pytest.approx(10.)
@@ -475,8 +522,7 @@ def test_native_script_gives_each_unit_its_own_window_over_one_shared_sleep(monk
     # Unit a starts first and ends first; each sample_seconds is that unit's own elapsed time, not the shared sleep's.
     slept = fake_clock(monkeypatch, [100., 101., 110.5, 111.2])
     systemctl = fake_systemctl({CO_A: shown_a(), CO_B: shown_a(ControlGroup='/g/b')},
-                               {CO_A: dict(ControlGroup='/g/a', CPUUsageNSec='2000000000'),
-                                CO_B: dict(ControlGroup='/g/b', CPUUsageNSec='3000000000')})
+                               {CO_A: after_a(), CO_B: after_a(ControlGroup='/g/b', CPUUsageNSec='3000000000')})
     out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296', systemctl=systemctl)
     assert slept == [CA.SAMPLE_SECONDS]
     assert {u['unit']: u['sample_seconds'] for u in out['units']} == pytest.approx({CO_A: 10.5, CO_B: 10.2})
@@ -485,10 +531,10 @@ def test_native_script_gives_each_unit_its_own_window_over_one_shared_sleep(monk
 
 @pytest.mark.parametrize('first,after', [
     ('1000000000', subprocess.CalledProcessError(4, 'show')),  # the unit vanished between the two reads
-    ('1000000000', dict(ControlGroup='/g/a', CPUUsageNSec='[not set]')),
-    ('1000000000', dict(ControlGroup='/g/replaced', CPUUsageNSec='2000000000')),  # restarted into a new cgroup
-    ('1000000000', dict(ControlGroup='/g/a', CPUUsageNSec='500000000')),  # counter went backwards
-    ('[not set]', dict(ControlGroup='/g/a', CPUUsageNSec='2000000000')),
+    ('1000000000', after_a(CPUUsageNSec='[not set]')),
+    ('1000000000', after_a(ControlGroup='/g/replaced', CPUUsageNSec='2000000000')),  # restarted into a new cgroup
+    ('1000000000', after_a(CPUUsageNSec='500000000')),  # counter went backwards
+    ('[not set]', after_a()),
 ], ids=['vanished', 'second reading not set', 'cgroup replaced', 'counter reset', 'first reading not set'])
 def test_native_script_nulls_an_unusable_cpu_delta_so_the_cap_is_charged(monkeypatch, capsys, tmp_path, first, after):
     fake_clock(monkeypatch, [100., 110.])
@@ -496,6 +542,46 @@ def test_native_script_nulls_an_unusable_cpu_delta_so_the_cap_is_charged(monkeyp
                             systemctl=fake_systemctl({CO_A: shown_a(CPUUsageNSec=first)}, {CO_A: after}))
     assert out['units'][0]['cpu_usage_nsec_delta'] is None
     assert CA.classify_native_units(out['units'], {})['co_tenant'][0]['charged_cpu'] == 2.
+
+
+def test_native_script_refuses_a_restart_at_the_same_cgroup_path(monkeypatch, capsys, tmp_path):
+    # The service restarted inside the window: same cgroup path, a counter reset, and the new invocation caught up past the first reading.
+    fake_clock(monkeypatch, [100., 110.])
+    systemctl = fake_systemctl({CO_A: shown_a(CPUUsageNSec='9000000000')},
+                               {CO_A: after_a(InvocationID='inv-2', CPUUsageNSec='10000000000')})
+    out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296', systemctl=systemctl)
+    assert out['units'][0]['cpu_usage_nsec_delta'] is None
+    assert CA.classify_native_units(out['units'], {})['co_tenant'][0]['charged_cpu'] == 2.
+
+
+@pytest.mark.parametrize('first_id,after_id', [(MISSING, 'inv-1'), ('', 'inv-1'), ('inv-1', MISSING), ('inv-1', '')],
+                         ids=['first missing', 'first empty', 'second missing', 'second empty'])
+def test_native_script_nulls_a_delta_unless_both_reads_carry_a_present_invocation(monkeypatch, capsys, tmp_path, first_id, after_id):
+    fake_clock(monkeypatch, [100., 110.])
+    systemctl = fake_systemctl({CO_A: with_field(shown_a(), 'InvocationID', first_id)},
+                               {CO_A: with_field(after_a(), 'InvocationID', after_id)})
+    out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296', systemctl=systemctl)
+    assert out['units'][0]['cpu_usage_nsec_delta'] is None
+    assert CA.classify_native_units(out['units'], {})['co_tenant'][0]['charged_cpu'] == 2.
+
+
+def test_native_script_takes_the_window_between_the_reads_not_the_calls(monkeypatch, capsys, tmp_path):
+    # Each fake systemctl call takes 7 s, reading its counter halfway through, around the 10 s sleep. The window runs from the first
+    # call's return to the second call's start, which is the sleep alone: 10e9 ns over 10 s is 1.0 core and charges 2.0 of the 4 s cap.
+    clock, slept = ticking_clock(monkeypatch)
+    answer = fake_systemctl({CO_A: shown_a(CPUQuotaPerSecUSec='4s')}, {CO_A: after_a(CPUUsageNSec='11000000000')})
+
+    def slow(cmd, **kwargs):
+        clock[0] += 3.5
+        out = answer(cmd, **kwargs)
+        clock[0] += 3.5
+        return out
+    out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296', systemctl=slow)
+    assert slept == [CA.SAMPLE_SECONDS]
+    assert out['units'][0]['cpu_usage_nsec_delta'] == 10_000_000_000
+    assert out['units'][0]['sample_seconds'] == pytest.approx(10.)
+    row = CA.classify_native_units(out['units'], {})['co_tenant'][0]
+    assert row['measured_cpu'] == pytest.approx(1.) and row['charged_cpu'] == pytest.approx(2.)
 
 
 def test_native_script_takes_no_sample_window_when_no_unit_runs(monkeypatch, capsys, tmp_path):

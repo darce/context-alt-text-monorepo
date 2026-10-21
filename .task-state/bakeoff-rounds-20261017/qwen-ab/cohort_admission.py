@@ -61,6 +61,8 @@ print(json.dumps(out))
 """
 
 SAMPLE_SECONDS = 10  # the NATIVE_SCRIPT CPU window; measured_cores ignores a window outside [5, 30] seconds
+# A delta counts only when both reads carry the same present InvocationID, so a restart at the same cgroup path cannot splice two invocations.
+# sample_seconds runs from each unit's first read to its second, so it never exceeds the counter interval and cores are never understated.
 NATIVE_SCRIPT = '''import json,pathlib,subprocess,time,os
 q=lambda *a:subprocess.check_output(a,text=True,timeout=8)
 b=pathlib.Path('/sys/fs/cgroup/user.slice/user-'+str(os.getuid())+'.slice')
@@ -68,16 +70,17 @@ def num(x):
  try:return int(x)
  except(TypeError,ValueError):return None
 def sample(n):
- try:return dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','ControlGroup','-p','CPUUsageNSec').splitlines()if '='in x)
+ try:return dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','ControlGroup','-p','CPUUsageNSec','-p','InvocationID').splitlines()if '='in x)
  except subprocess.SubprocessError:return {}
 units=[];first={};started={}
 for line in q('systemctl','--user','list-units','--state=running','--no-legend','--plain','workbay-lane-*.scope','workbay-lane-*.service','workbay-custody-*.scope','workbay-custody-*.service').splitlines():
- n=line.split()[0];started[n]=time.monotonic();r=dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','CPUQuotaPerSecUSec','-p','MemoryMax','-p','ControlGroup','-p','CPUUsageNSec','-p','MemoryCurrent').splitlines()if '='in x);r['unit']=n;units.append(r);first[n]=num(r.get('CPUUsageNSec'))
+ n=line.split()[0];r=dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','CPUQuotaPerSecUSec','-p','MemoryMax','-p','ControlGroup','-p','InvocationID','-p','CPUUsageNSec','-p','MemoryCurrent').splitlines()if '='in x);r['unit']=n;units.append(r);first[n]=num(r.get('CPUUsageNSec'));started[n]=time.monotonic()
 if units:time.sleep(SAMPLE_SECONDS)
 for r in units:
- v=sample(r['unit']);c=num(v.get('CPUUsageNSec'));a=first[r['unit']]
- r['cpu_usage_nsec_delta']=None if v.get('ControlGroup')!=r.get('ControlGroup')or a is None or c is None or c<a else c-a
- r['sample_seconds']=time.monotonic()-started[r['unit']]
+ n=r['unit'];t=time.monotonic();v=sample(n);c=num(v.get('CPUUsageNSec'));a=first[n];k=r.get('InvocationID')
+ same_invocation=bool(k)and v.get('InvocationID')==k and v.get('ControlGroup')==r.get('ControlGroup')
+ r['cpu_usage_nsec_delta']=c-a if same_invocation and a is not None and c is not None and c>=a else None
+ r['sample_seconds']=t-started[n]
 i=dict(l.split(':',1)for l in pathlib.Path('/proc/meminfo').read_text().splitlines());s=dict(l.split()for l in (b/'memory.stat').read_text().splitlines())
 mx=(b/'memory.max').read_text().strip();w=None if mx=='max' else int(mx)-max(0,int((b/'memory.current').read_text())-int(s.get('inactive_file',0)))
 print(json.dumps({'at':time.time(),'units':units,'cpu':pathlib.Path('/proc/pressure/cpu').read_text(),'io':(b/'io.pressure').read_text(),'physical_mem_available':int(i['MemAvailable'].split()[0])*1024,'working_headroom':w}))

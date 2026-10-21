@@ -15,6 +15,7 @@
 - Producer contract verified from current bytes: RecognitionPolicy::DEFAULT=false; Settings GET requires boolean recognition_enabled (fetchSettings rejects missing/nonboolean); Settings POST may return HTTP 200 with result=error/partial and failed fields. Require result=ok, saved containing recognition_enabled and no matching failed field; HTTP success alone never confirms persistence.
 - Send only {recognition_enabled: desiredBoolean}, never URL, api_key or allow_person_names. Share queryKeys.settings.all with SettingsPage; reconcile through fresh Settings GET. After an acknowledged write, failed/malformed/mismatched readback permits verification reads only; never replay the write. Unknown/rejected state also recovers through Settings GET.
 - Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action.
+- UXREC-1 design proposal awaiting map gate: default to current attention, with explicit audit history; preserve all audit records, reconciliation and existing naming-policy controls. This map is a target contract, not proof that the referenced components implement the proposal. See docs/assessments/current/UXREC-1-ux-inventory.md.
 
 ## Jobs
 - `job-clear-queue` — Clear media queue (scan / describe)
@@ -38,7 +39,7 @@
 | `workbench-shell` | screen | `#/workbench` | Workbench |
 | `workbench-scan` | screen | `#/workbench?tab=scan` | Scan media queue |
 | `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox |
-| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
+| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Changes — current attention / audit history (proposed) |
 | `workbench-review-panel` | screen | `#/workbench?tab=scan&panel=review&cluster=` | Review these faces |
 | `exit-roster` | exit | `#/roster` | Roster (person workspace) |
 | `exit-settings` | exit | `#/settings` | Settings / service health |
@@ -244,9 +245,9 @@ code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.
 +------------------------------------------------------------+
 ```
 
-### Failed Sync Queue (Dead Letter) (`workbench-dead-letter`)
+### Changes — current attention / audit history (proposed) (`workbench-dead-letter`)
 
-Purpose: Inspect failed sync ops; retry or discard
+Purpose: UXREC-1 proposed: open on current attention (unresolved pending/conflict/failed operations), with explicit History for acknowledged/discarded records. Current source timelineStatus defaults to all. Preserve status pagination, retry/discard guards and server audit records; no blanket erasure of July rows. Empty current attention is success, not empty history. Smallest frontend slice: default failed attention and explicit pending/conflict status choices, each with server-filtered pagination; no fabricated aggregate unresolved count or client filtering of one all-status page.
 
 url_params: `panel`
 
@@ -258,23 +259,46 @@ code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPane
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-dl-list` | Dead-letter items | queue | default, loading, empty, error |
-| `z-dl-actions` | Retry / discard | form | default, loading, empty, error |
+| `z-dl-list` | Current attention (proposed default): unresolved work only; each row keeps operation, cause, age and exact target; terminal audit records remain under History. | queue | default, loading, empty, error |
+| `z-dl-actions` | Existing Retry / guarded Discard remain row-scoped. Retry announces queued, not recovered; failures stay actionable. History switching is read-only. | form | default, loading, empty, error |
+| `z-dl-history` | History (proposed explicit view): all audit states with existing status filter and paging; no delete-on-hide; return to current attention retains context. | nav | default, loading, empty, error, degraded |
 
 ```
 +------------------------------------------------------------+
-| Failed Sync Queue (Dead Letter)  [overlay]  #/workbench?p\ |
-|   anel=dead-letter                                         |
-| Inspect failed sync ops; retry or discard                  |
+| Changes — current attention / audit history (proposed)  [\ |
+|   overlay]  #/workbench?panel=dead-letter                  |
+| UXREC-1 proposed: open on current attention (unresolved p\ |
+|   ending/conflict/failed operations), with explicit Histo\ |
+|   ry for acknowledged/discarded records. Current source t\ |
+|   imelineStatus defaults to all. Preserve status paginati\ |
+|   on, retry/discard guards and server audit records; no b\ |
+|   lanket erasure of July rows. Empty current attention is\ |
+|    success, not empty history. Smallest frontend slice: d\ |
+|   efault failed attention and explicit pending/conflict s\ |
+|   tatus choices, each with server-filtered pagination; no\ |
+|    fabricated aggregate unresolved count or client filter\ |
+|   ing of one all-status page.                              |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Dead-letter items (queue) states=[default,loading,emp\ |
-|   ty,error]                                                |
-|   - Retry / discard (form) states=[default,loading,empty,\ |
-|   error]                                                   |
+|   - Current attention (proposed default): unresolved work\ |
+|    only; each row keeps operation, cause, age and exact t\ |
+|   arget; terminal audit records remain under History. (qu\ |
+|   eue) states=[default,loading,empty,error]                |
+|   - Existing Retry / guarded Discard remain row-scoped. R\ |
+|   etry announces queued, not recovered; failures stay act\ |
+|   ionable. History switching is read-only. (form) states=\ |
+|   [default,loading,empty,error]                            |
+|   - History (proposed explicit view): all audit states wi\ |
+|   th existing status filter and paging; no delete-on-hide\ |
+|   ; return to current attention retains context. (nav) st\ |
+|   ates=[default,loading,empty,error,degraded]              |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Retry failed op -> sync (costly,preview)       |
+|   [secondary] Show History (proposed) -> workbench-dead-l\ |
+|   etter                                                    |
+|   [secondary] Show Current attention (proposed) -> workbe\ |
+|   nch-dead-letter                                          |
 |   [DESTRUCTIVE] Discard failed op -> sync (costly,preview\ |
 |   ,irreversible)                                           |
 +------------------------------------------------------------+
@@ -404,6 +428,8 @@ Component pointers:
 | `act-enable-recognition` | Enable facial recognition | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_off |
 | `act-disable-recognition` | Disable facial recognition | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_on |
 | `act-retry-policy-read` | Retry status (read only) | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_unknown, policy_readback_error, policy_rejected |
+| `act-view-audit-history` | Show History (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | always |
+| `act-view-current-attention` | Show Current attention (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | always |
 
 ## Flows
 ### Select media → scan → continue (`flow-scan-happy`)
@@ -461,7 +487,8 @@ flow: Sync failure → dead letter → retry/discard (flow-dead-l\
   etter-recover) job=job-recover-sync
   1. Workbench [workbench-shell]
      --degraded sync strip-->
-  2. Failed Sync Queue (Dead Letter) [workbench-dead-letter]
+  2. Changes — current attention / audit history (proposed) [\
+  workbench-dead-letter]
      --panel=dead-letter-->
   3. Workbench [workbench-shell] (visit 2)
 ```
@@ -471,7 +498,7 @@ flowchart TD
   %% flow: Sync failure → dead letter → retry/discard job=job-recover-sync
   %% steps: [{"screen_id":"workbench-shell","branch_label":"degraded sync strip"},{"screen_id":"workbench-dead-letter","branch_label":"panel=dead-letter"},{"screen_id":"workbench-shell","branch_label":"retry or discard complete"}]
   n_workbench_shell["Workbench (screen)"]
-  n_workbench_dead_letter["Failed Sync Queue (Dead Letter) (overlay)"]
+  n_workbench_dead_letter["Changes — current attention / audit history (proposed) (overlay)"]
   n_workbench_shell -->|degraded sync strip| n_workbench_dead_letter
   n_workbench_dead_letter -->|panel=dead-letter| n_workbench_shell
 ```
@@ -615,6 +642,7 @@ flowchart TD
 3. **Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence
 4. **Dead-letter discard confirm** — destructive + irreversible path
 5. **Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])
+6. UXREC-1 TIMELINE proposed: current-attention default and explicit audit history within DeadLetterPanel; do not delete history or repeat integrated DW3-UX0924-04 cleanup.
 
 ## Domain state mapping
 
@@ -639,9 +667,9 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-recognition-policy z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-review-header z-review-faces z-roster-main z-settings-form
+Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-recognition-policy z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-dl-history z-review-header z-review-faces z-roster-main z-settings-form
 
-Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read
+Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read act-view-audit-history act-view-current-attention
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -662,8 +690,9 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Conflict list
 - Conflict detail / candidates
 - Resolve / defer actions
-- Dead-letter items
-- Retry / discard
+- Current attention (proposed default): unresolved work only; each row keeps operation, cause, age and exact target; terminal audit records remain under History.
+- Existing Retry / guarded Discard remain row-scoped. Retry announces queued, not recovered; failures stay actionable. History switching is read-only.
+- History (proposed explicit view): all audit states with existing status filter and paging; no delete-on-hide; return to current attention retains context.
 - Header + Back
 - Faces grid
 - Entries / clusters workspace

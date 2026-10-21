@@ -11,7 +11,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from fastapi import BackgroundTasks, Depends, Header, HTTPException, status
+from fastapi import BackgroundTasks, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import async_session_factory
@@ -138,6 +138,7 @@ async def _require_auth_impl(
     background_tasks: BackgroundTasks | None,
     session: AsyncSession | None,
     enforce_tenant_match: bool = True,
+    query_tenant_ids: tuple[str, ...] = (),
 ) -> AuthContext:
     """Shared auth implementation that keeps the direct-call test seam explicit.
 
@@ -202,17 +203,20 @@ async def _require_auth_impl(
                 trace_id=None,
             )
         raise
-    if enforce_tenant_match and tenant_claim and x_tenant_id:
-        provided = normalize_tenant_id(x_tenant_id)
-        if tenant_claim != provided:
-            emit_auth_event(
-                "tenant_mismatch",
-                api_key_id=api_key_id,
-                key_hash=hashed_for_audit,
-                tenant_claim=x_tenant_id,
-                trace_id=None,
-            )
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+    if enforce_tenant_match and tenant_claim:
+        for supplied_tenant in (x_tenant_id, *query_tenant_ids):
+            if supplied_tenant is None:
+                continue
+            provided = normalize_tenant_id(supplied_tenant)
+            if normalize_tenant_id(tenant_claim) != provided:
+                emit_auth_event(
+                    "tenant_mismatch",
+                    api_key_id=api_key_id,
+                    key_hash=hashed_for_audit,
+                    tenant_claim=supplied_tenant,
+                    trace_id=None,
+                )
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
     _enqueue_api_key_telemetry(background_tasks, api_key_id)
 
     emit_auth_event(
@@ -305,6 +309,7 @@ async def require_auth(
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     api_key_header_value: str | None = Header(default=None, alias="X-Api-Key"),
     session: AsyncSession | None = Depends(get_optional_session),
+    request: Request = None,
 ) -> AuthContext:
     """Enforce bearer auth when enabled via settings."""
     return await _require_auth_impl(
@@ -314,6 +319,7 @@ async def require_auth(
         background_tasks=background_tasks,
         session=session,
         enforce_tenant_match=True,
+        query_tenant_ids=tuple(request.query_params.getlist("tenant_id")) if request is not None else (),
     )
 
 

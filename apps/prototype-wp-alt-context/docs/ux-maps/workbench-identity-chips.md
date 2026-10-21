@@ -12,7 +12,7 @@
 - Pre-existing target, not current source and not a UXREC-1 outcome: let chip name, avatar, and face-group-count buttons open the person workspace while preserving reversible roster merge behavior (INT-07, INT-09).
 - Current source: each group card's label button and its Name this person / Edit label control open the existing inline naming editor; that naming action is the media row's primary. The thumbnail (ClusterPreview) is noninteractive, and no chip-to-review or chip-to-workspace navigation exists.
 - UXREC-1 IDENTITY (proposed): a new projection buildRepeatedRegionEvidence reads the row's raw DetectedIdentity records before groupIdentitiesByClusters de-duplicates within a group. It reports a repeated region only for the same positive media_id with exactly equal finite x, y, width and height (x and y at least 0, width and height above 1) under two or more different group keys (person:<id>, else cluster:<id>, else ungrouped), using one shared group-key helper so grouping and evidence cannot drift. No IoU or similarity threshold, cross-photo content match, automatic merge or transitive grouping ([GRPH-18] Never trust the transitive closure of a raw similarity threshold, Introduction to Information Retrieval, § 17.2).
-- UXREC-1 evidence is text in an in-place native details disclosure on the group card or Not yet grouped section: Photo <media_id>, the region, and each identity_id with its group ref ([VIZ-23] Show the evidence path, Richard Feynman's Mental Models, ch. 5 + Envisioning Information, ch. 4). Counts cover only unique faces loaded for this row; there is no source title, hash, corpus total or completeness field ([VIZ-41] Reveal the image-selection pool, Visual Explanations, ch. 1). Matching coordinates are not identity truth or detector repair. The operator's statement that the supplied Emma crops show one person stays supplied ground truth, not a new identification.
+- UXREC-1 evidence is text in an in-place native details disclosure on the group card or Not yet grouped section: Photo <media_id>, the region, each identity_id with its group ref, and the row pool line Checked M of N loaded face records with usable box coordinates ([VIZ-23] Show the evidence path, Richard Feynman's Mental Models, ch. 5 + Envisioning Information, ch. 4). N counts each unique non-empty identity_id loaded for this row once; M counts those with usable box coordinates whose loaded copies agree. An identity_id whose loaded copies disagree is excluded from M and from every region and appears only in the skipped count. There is no overall group total, source title, hash, corpus total or completeness field. No evidence image is added; [VIZ-41] Reveal the image-selection pool, Visual Explanations, ch. 1, would apply only if a selected image were later offered as consequential evidence. Matching coordinates are not identity truth or detector repair. The operator's statement that the supplied Emma crops show one person stays supplied ground truth, not a new identification.
 
 ## Jobs
 - `job-media-person-chips` — Read person chips in a media row and verify face evidence
@@ -48,7 +48,7 @@ url_params: `media`
 | `z-representative-avatar` | Representative face avatar (store reference crop rendered before the person's label) | ai_review | default, error, degraded |
 | `z-member-count` | Member count (+N faces on this person chip) | status | default, loading, empty, error |
 | `z-chip-actions` | Group card controls (current source): the label button and Name this person / Edit label open the inline naming editor; Remove from group and Split keep their existing identity and group targets | form | default, loading, error |
-| `z-repeated-region-evidence` | Proposed repeated-region details (native details and summary, in place): shown only on a group card or the Not yet grouped section that lists an exact repeated photo region. Summary: the same photo region is also listed in N other loaded groups. Expanded text: Photo <media_id>, region x, y, width, height, and each identity_id with its group ref; checked M loaded faces in K loaded groups for this row, and not-compared faces with unusable or conflicting region data. The thumbnail is context only; no new crop, image, title, merge or naming change. empty = no repeated region, nothing rendered; degraded = some loaded faces not compared. | ai_review | default, empty, degraded |
+| `z-repeated-region-evidence` | Proposed repeated-region details (native details and summary, in place): shown only on a group card or the Not yet grouped section that lists an exact repeated photo region. Summary: Same photo region is also listed in %d other group(s), counting only the other group keys that share this card's regions. Expanded text: the exact-coordinates limit statement; Photo <media_id>, region x, y, width, height, and each identity_id with its group ref; then the row pool line 'Checked %1$d of %2$d loaded face records with usable box coordinates.', where %2$d is N, the unique non-empty identity_id values loaded for this row, and %1$d is M, those with usable box coordinates whose loaded copies agree. Only when one or more identity_ids have loaded copies that disagree (media_id, group key, person_id, cluster_id or box) does the skipped line follow: '%d face record was skipped because its loaded copies disagree.' (plural: '%d face records were skipped because their loaded copies disagree.') A skipped identity_id counts once in N, never in M or a region. No overall group total. The thumbnail is context only; no new crop, image, title, merge or naming change. empty = no repeated region, nothing rendered; degraded = M below N (unusable box coordinates or skipped records). | ai_review | default, empty, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -85,16 +85,27 @@ url_params: `media`
 |   - Proposed repeated-region details (native details and \ |
 |   summary, in place): shown only on a group card or the N\ |
 |   ot yet grouped section that lists an exact repeated pho\ |
-|   to region. Summary: the same photo region is also liste\ |
-|   d in N other loaded groups. Expanded text: Photo <media\ |
-|   _id>, region x, y, width, height, and each identity_id \ |
-|   with its group ref; checked M loaded faces in K loaded \ |
-|   groups for this row, and not-compared faces with unusab\ |
-|   le or conflicting region data. The thumbnail is context\ |
-|    only; no new crop, image, title, merge or naming chang\ |
-|   e. empty = no repeated region, nothing rendered; degrad\ |
-|   ed = some loaded faces not compared. (ai_review) states\ |
-|   =[default,empty,degraded]                                |
+|   to region. Summary: Same photo region is also listed in\ |
+|    %d other group(s), counting only the other group keys \ |
+|   that share this card's regions. Expanded text: the exac\ |
+|   t-coordinates limit statement; Photo <media_id>, region\ |
+|    x, y, width, height, and each identity_id with its gro\ |
+|   up ref; then the row pool line 'Checked %1$d of %2$d lo\ |
+|   aded face records with usable box coordinates.', where \ |
+|   %2$d is N, the unique non-empty identity_id values load\ |
+|   ed for this row, and %1$d is M, those with usable box c\ |
+|   oordinates whose loaded copies agree. Only when one or \ |
+|   more identity_ids have loaded copies that disagree (med\ |
+|   ia_id, group key, person_id, cluster_id or box) does th\ |
+|   e skipped line follow: '%d face record was skipped beca\ |
+|   use its loaded copies disagree.' (plural: '%d face reco\ |
+|   rds were skipped because their loaded copies disagree.'\ |
+|   ) A skipped identity_id counts once in N, never in M or\ |
+|    a region. No overall group total. The thumbnail is con\ |
+|   text only; no new crop, image, title, merge or naming c\ |
+|   hange. empty = no repeated region, nothing rendered; de\ |
+|   graded = M below N (unusable box coordinates or skipped\ |
+|    records). (ai_review) states=[default,empty,degraded]   |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Name this person / Edit label -> inline namin\ |
@@ -313,8 +324,9 @@ flow: UXREC-1: exact repeated photo region → in-place details\
   3. Media row — person chips [workbench-media-row-person-chi\
   ps] (visit 3)
      --open the native details in place: Photo <media_id>, re\
-  gion, each identity_id and group ref, loaded-row counts and\
-   not-compared faces-->
+  gion, each identity_id and group ref, Checked M of N loaded\
+   face records with usable box coordinates, and a skipped co\
+  unt only when loaded copies disagree-->
   4. Media row — person chips [workbench-media-row-person-chi\
   ps] (visit 4)
 ```
@@ -322,11 +334,11 @@ flow: UXREC-1: exact repeated photo region → in-place details\
 ```mermaid
 flowchart TD
   %% flow: UXREC-1: exact repeated photo region → in-place details → unchanged naming job=job-media-person-chips
-  %% steps: [{"screen_id":"workbench-media-row-person-chips","branch_label":"row loads its faces; buildRepeatedRegionEvidence reads the raw records before groupIdentitiesByClusters de-duplicates within a group"},{"screen_id":"workbench-media-row-person-chips","branch_label":"same positive media_id and identical finite region under two or more group keys → a summary on each involved card or section; otherwise nothing renders"},{"screen_id":"workbench-media-row-person-chips","branch_label":"open the native details in place: Photo <media_id>, region, each identity_id and group ref, loaded-row counts and not-compared faces"},{"screen_id":"workbench-media-row-person-chips","branch_label":"naming, Remove from group and Split keep their original identity and group targets; closing the details changes nothing"}]
+  %% steps: [{"screen_id":"workbench-media-row-person-chips","branch_label":"row loads its faces; buildRepeatedRegionEvidence reads the raw records before groupIdentitiesByClusters de-duplicates within a group"},{"screen_id":"workbench-media-row-person-chips","branch_label":"same positive media_id and identical finite region under two or more group keys → a summary on each involved card or section; otherwise nothing renders"},{"screen_id":"workbench-media-row-person-chips","branch_label":"open the native details in place: Photo <media_id>, region, each identity_id and group ref, Checked M of N loaded face records with usable box coordinates, and a skipped count only when loaded copies disagree"},{"screen_id":"workbench-media-row-person-chips","branch_label":"naming, Remove from group and Split keep their original identity and group targets; closing the details changes nothing"}]
   n_workbench_media_row_person_chips["Media row — person chips (screen)"]
   n_workbench_media_row_person_chips -->|row loads its faces; buildRepeatedRegionEvidence reads the raw records before groupIdentitiesByClusters de-duplicates within a group| n_workbench_media_row_person_chips
   n_workbench_media_row_person_chips -->|same positive media_id and identical finite region under two or more group keys → a summary on each involved card or section; otherwise nothing renders| n_workbench_media_row_person_chips
-  n_workbench_media_row_person_chips -->|open the native details in place: Photo <media_id>, region, each identity_id and group ref, loaded-row counts and not-compared faces| n_workbench_media_row_person_chips
+  n_workbench_media_row_person_chips -->|open the native details in place: Photo <media_id>, region, each identity_id and group ref, Checked M of N loaded face records with usable box coordinates, and a skipped count only when loaded copies disagree| n_workbench_media_row_person_chips
 ```
 
 ### Pre-existing target (not current source): person chip → face review → person workspace (`flow-person-chip-evidence`)
@@ -380,7 +392,7 @@ flowchart TD
 3. Render current-face fallback with canonical Representative image unavailable copy
 4. Pre-existing target, outside UXREC-1: connect chip actions to face review and the person workspace
 5. Collapse ungrouped residue into one Not yet grouped (N) section without visually deduplicating faces
-6. UXREC-1 IDENTITY proposed: add buildRepeatedRegionEvidence (raw DetectedIdentity records in; per-group repeated-region evidence with unique identity_id accounting, deterministic region, group and identity ordering, and abstention on malformed or conflicting records out) sharing one group-key helper with groupIdentitiesByClusters; render native details/summary in IdentityClusterItem and the Not yet grouped section of IdentityClusterList; narrow-layout wrapping only in _identity-cluster-list.scss; grouping, identityClusterIds, naming and removal targets unchanged.
+6. UXREC-1 IDENTITY proposed: add buildRepeatedRegionEvidence (raw DetectedIdentity records in; per-group repeated-region evidence out: M eligible of N unique loaded identity_ids, unusable box coordinates loaded but not eligible, abstention for an identity_id whose loaded copies disagree in media_id, group key, person_id, cluster_id or box, and deterministic region, group and identity ordering for every input permutation) sharing one group-key helper with groupIdentitiesByClusters; render native details/summary in IdentityClusterItem and the Not yet grouped section of IdentityClusterList; narrow-layout wrapping only in _identity-cluster-list.scss; grouping, identityClusterIds, naming and removal targets unchanged.
 
 ## Parity index
 
@@ -402,7 +414,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Representative face avatar (store reference crop rendered before the person's label)
 - Member count (+N faces on this person chip)
 - Group card controls (current source): the label button and Name this person / Edit label open the inline naming editor; Remove from group and Split keep their existing identity and group targets
-- Proposed repeated-region details (native details and summary, in place): shown only on a group card or the Not yet grouped section that lists an exact repeated photo region. Summary: the same photo region is also listed in N other loaded groups. Expanded text: Photo <media_id>, region x, y, width, height, and each identity_id with its group ref; checked M loaded faces in K loaded groups for this row, and not-compared faces with unusable or conflicting region data. The thumbnail is context only; no new crop, image, title, merge or naming change. empty = no repeated region, nothing rendered; degraded = some loaded faces not compared.
+- Proposed repeated-region details (native details and summary, in place): shown only on a group card or the Not yet grouped section that lists an exact repeated photo region. Summary: Same photo region is also listed in %d other group(s), counting only the other group keys that share this card's regions. Expanded text: the exact-coordinates limit statement; Photo <media_id>, region x, y, width, height, and each identity_id with its group ref; then the row pool line 'Checked %1$d of %2$d loaded face records with usable box coordinates.', where %2$d is N, the unique non-empty identity_id values loaded for this row, and %1$d is M, those with usable box coordinates whose loaded copies agree. Only when one or more identity_ids have loaded copies that disagree (media_id, group key, person_id, cluster_id or box) does the skipped line follow: '%d face record was skipped because its loaded copies disagree.' (plural: '%d face records were skipped because their loaded copies disagree.') A skipped identity_id counts once in N, never in M or a region. No overall group total. The thumbnail is context only; no new crop, image, title, merge or naming change. empty = no repeated region, nothing rendered; degraded = M below N (unusable box coordinates or skipped records).
 - One person chip spanning multiple face groups (person_id is the grouping key)
 - N face groups badge when the person spans more than one face group
 - Representative face avatar shared by the person chip
@@ -426,5 +438,5 @@ States (all zones and screens): default loading empty error degraded
 - Pixel or token design; implementation uses the existing --acx-* system
 - No auto-transitive similarity merge, filename-based identity, new merge endpoint, detector threshold tuning or backend activation. Camera/detector duplicate and identity-recall hypotheses require separate corpus evidence.
 - UXREC-1 adds no panel route, review callback, ClusterReviewPanel change, new tab or 'Review faces' navigation; chip-to-review and chip-to-workspace stay pre-existing targets.
-- UXREC-1 adds no evidence crop or image, comparison thumbnail, source title, hash, corpus total or completeness claim. The existing thumbnail may show the group representative from another photo and is never presented as the matching observation.
+- UXREC-1 adds no evidence crop or image, comparison thumbnail, source title, hash, corpus total, overall group total, new counting field or completeness claim. The existing thumbnail may show the group representative from another photo and is never presented as the matching observation.
 - No IoU or overlap tolerance, similarity score, cross-photo content match, automatic merge or transitive grouping from repeated regions; no live IDs are invented for the operator-supplied Emma crops.

@@ -3,7 +3,7 @@
 > **Metadata**
 >
 > - **Date**: 2026-10-21 17:30 EST
-> - **Author**: PLAN3, codex-remote gpt-6.1-sol (xhigh)
+> - **Author**: PLAN3, codex-remote gpt-6.1-sol (xhigh); identity copy-equality correction by PLAN4, claude-remote claude-opus-5-5 (xhigh)
 > - **Project**: `apps/prototype-wp-alt-context` (WordPress admin SPA)
 > - **Task ID**: `UXREC-1`
 > - **Task Plan Status**: `proposed`. Not approved, not running product work, not deployed, not accepted.
@@ -64,7 +64,7 @@ Three independent frontend slices:
 - **RED before GREEN.** Add the named assertion, predict its failure message, and watch it fail against unchanged production source ([TEST-06] **Watch it fail once / predict the failure**, *Modern Software Engineering, ch. 8*). Then make the smallest owned change and rerun the same selector GREEN.
 - **One home per action.** A failed operation's Retry and Discard render in one list per view, never two at once ([INT-19] **One outcome per interaction**, *Microinteractions, ch. 1* + *Microinteractions, ch. 3*).
 - **Claims follow returned evidence.** Copy states what the server returned, not what might happen ([HAI-05] **Imperceptible AI is not ethical**, *Human-Centered AI*).
-- **Abstain rather than force.** The identity projection abstains on malformed or conflicting input; it never classifies a person.
+- **Abstain rather than force.** The identity projection abstains on malformed or conflicting input, including loaded copies of one face record that disagree. It never picks a winning copy and never classifies a person.
 - **Reuse, then add.** Reuse the existing queries, mutations, guarded confirmations, vocabulary and native `<details>` pattern. New symbols are marked **(new)**.
 - **Source completion is not runtime acceptance.** Every slice closes on source tests. Deployed behaviour is accepted only in a separately granted runtime window (see [Verification Strategy](#verification-strategy)).
 
@@ -75,6 +75,7 @@ Three independent frontend slices:
 - **Maintenance zone**: the bulk controls `Retry all failed (N)` and `Discard N eligible` / `Discard eligible failed changes` (`data-testid="acx-zone-z-dl-actions"`), with their armed confirmations and results list.
 - **Returned drafts**: `ActivityStatus.draftCount`, which is `run.completed ?? 0` (`useActivityStatus.ts:describeDraftCount`). It counts results without tier proof.
 - **Observation**: one loaded `DetectedIdentity` record (`identity_id`, `media_id`, `bbox`, `person_id`, `cluster_id`), read before same-face dedup.
+- **Retained tuple**: every field a `RepeatedRegionObservation` keeps: `identityId`, `mediaId`, `groupKey`, `personId`, `clusterId` and the `bbox` numbers `x`/`y`/`width`/`height`. Loaded copies of one `identity_id` collapse only when the whole tuple is equal.
 - **Group key**: `person:<person_id>`, else `cluster:<cluster_id>`, else `ungrouped`. These are the keys `groupIdentitiesByClusters` already uses.
 - **Repeated region**: two or more eligible observations with the same positive `media_id` and exactly equal `x`/`y`/`width`/`height` under at least two different group keys.
 - **Loaded pool**: the identities passed to `IdentityClusterList` for one media row. No corpus total, completeness, title or hash field exists.
@@ -265,25 +266,26 @@ export const identityGroupKey: (identity: Pick<DetectedIdentity, 'person_id' | '
 //   groupIdentitiesByClusters must call it instead of its inline key expression (pure refactor).
 
 // js/admin/pages/workbench/identity-clusters/repeatedRegionEvidence.ts (new module)
+// The retained tuple. Copies of one identityId collapse only when every field below is equal (Rule 2).
 export interface RepeatedRegionObservation {
-  identityId: string;            // DetectedIdentity.identity_id, verbatim
+  identityId: string;            // DetectedIdentity.identity_id, verbatim (the copy partition)
   mediaId: number;               // DetectedIdentity.media_id
-  bbox: Readonly<BoundingBox>;   // DetectedIdentity.bbox, verbatim numbers
+  bbox: Readonly<BoundingBox>;   // new { x, y, width, height } with DetectedIdentity.bbox's numbers verbatim; no other bbox property
   groupKey: string;              // identityGroupKey(identity)
   personId: string | null;       // identity.person_id || null
-  clusterId: string | null;      // identity.cluster_id ?? null
+  clusterId: string | null;      // identity.cluster_id ?? null (retained even when person_id wins groupKey)
 }
 export interface RepeatedRegion {
   regionKey: string;             // `${mediaId}|${x}|${y}|${width}|${height}` (String(n) per number)
   mediaId: number;
-  bbox: Readonly<BoundingBox>;
+  bbox: Readonly<BoundingBox>;   // observations[0].bbox (sorted order, never first input arrival)
   groupKeys: readonly string[];  // ≥ 2 distinct, ascending code-unit order
   observations: readonly RepeatedRegionObservation[]; // sorted by groupKey, then identityId (code-unit order)
 }
 export interface RepeatedRegionPool {
-  loadedObservationCount: number;     // distinct non-empty identity_id values in the input
-  eligibleObservationCount: number;   // distinct identity_ids that are non-conflicting with supported geometry
-  abstainedIdentityIds: readonly string[]; // identity_ids whose loaded copies disagree; ascending
+  loadedObservationCount: number;     // distinct non-empty identity_id values in the input; an abstained id counts once
+  eligibleObservationCount: number;   // distinct identity_ids whose copies all agree (Rule 2) and whose geometry is supported (Rule 3)
+  abstainedIdentityIds: readonly string[]; // identity_ids whose loaded copies disagree in any retained field; ascending code-unit order
 }
 export interface RepeatedRegionEvidence {
   regions: readonly RepeatedRegion[]; // sorted by mediaId, x, y, width, height (numeric ascending)
@@ -310,10 +312,15 @@ export const RepeatedRegionEvidenceDisclosure: (props: { view: RepeatedRegionEvi
 **`buildRepeatedRegionEvidence` rules** (the slice tests pin each one):
 
 1. **Input stage.** Read the same raw `identities` array that `IdentityClusterList` passes to `groupIdentitiesByClusters`, before any dedup. Never mutate it.
-2. **Accounting.** Ignore records whose `identity_id` is not a non-empty string after `trim()`, and do not count them. Records with the same `identity_id` collapse to one observation when their signature `` `${media_id}|${groupKey}|${x}|${y}|${width}|${height}` `` matches. If two copies of an id disagree, add the id to `abstainedIdentityIds` and keep it out of every region.
+2. **Accounting.** Ignore records whose `identity_id` is not a non-empty string after `trim()`, and do not count them. Partition the rest by verbatim `identity_id`. Compare copies of one id with a structural comparison of the complete retained tuple (a module-private helper, for example `sameRetainedTuple(left, right)` (new)). The tuple fields are `mediaId` (`media_id`), `groupKey` (`identityGroupKey(identity)`), `personId` (`identity.person_id || null`), `clusterId` (`identity.cluster_id ?? null`) and the geometry. The geometry is `null` when `bbox` is not a non-null object; otherwise it is its `x`, `y`, `width` and `height`.
+   - Two copies agree only when every corresponding field satisfies `Object.is`, with both geometries `null` or all four numbers `Object.is`-equal. `Object.is` keeps the retained value independent of input order. `NaN` equals `NaN`, and Rule 3 still makes it ineligible. `0` and `-0` differ, so copies that differ only in signed zero abstain rather than retaining whichever arrived first.
+   - Compare fields, never a joined string and never `groupKey` alone. Person precedence hides `cluster_id` from `groupKey`, and ids may contain any delimiter. Fields that the observation does not retain (`confidence`, labels, URLs, extra `bbox` properties) do not participate.
+   - Equal copies collapse to one observation. Because every retained field is equal, the kept observation does not depend on which copy came first.
+   - If any two copies of an id disagree in any field, add the id to `abstainedIdentityIds` once. Count it once in `loadedObservationCount`, never in `eligibleObservationCount`, and keep it out of every region. Never choose a winning copy (first, last, lowest, newest or sorted-first).
+   - Abstention is local to this projection. `groupIdentitiesByClusters` still receives every record unchanged, and its existing grouping and mutation targets are not altered.
 3. **Supported geometry.** `Number.isInteger(media_id) && media_id > 0`. `bbox` is a non-null object. `x`, `y`, `width` and `height` are numbers and `Number.isFinite`. `x >= 0`, `y >= 0`, `width > 1` and `height > 1`. Anything else is loaded but not eligible.
 4. **Predicate.** Eligible observations fall in the same region only when `mediaId` and all four box numbers are strictly equal. Exact equality is an equivalence on coordinates, not a similarity chain. A region is emitted only when it holds at least two distinct group keys. There is no IoU, no similarity, no cross-photo matching and no merge.
-5. **Ordering.** Regions, group keys and observations use the orderings in the type comments. Permuting the input must produce deep-equal output.
+5. **Ordering.** Regions, group keys and observations use the orderings in the type comments. A region's `bbox`, and so its region-line numbers, comes from `observations[0]` in that order, never from the first input arrival. Distinct ids with `0` and `-0` in the same position are strictly equal under Rule 4 and share one region; the sorted-first observation fixes which number is kept. Permuting the input must produce deep-equal output, with numbers compared by `Object.is`.
 6. **Claim limit.** The output describes loaded records with matching coordinates. It carries no person-identity, completeness or corpus claim.
 
 ### Exact copy
@@ -526,6 +533,7 @@ Files/functions:
 Fixtures (pure; synthetic IDs; `R = {x: 12, y: 20, width: 40, height: 48}`):
 
 - `P1A`: `identity_id 'face-a'`, `person_id '1'`, `cluster_id 'c-1'`, media 10, R.
+- `P1A2`: `{...P1A, cluster_id: 'c-2'}`. It is the same `face-a` in the same `person:1` group key, media and box, so the old `media_id|groupKey|box` signature collided while `clusterId` differs.
 - `P2B`: `'face-b'`, `person_id '2'`, media 10, R.
 - `C3C`: `'face-c'`, `person_id null`, `cluster_id 'c-3'`, media 10, R.
 - `UND`: `'face-u'`, `person_id null`, `cluster_id null`, media 10, R.
@@ -541,9 +549,29 @@ RED tests in `repeatedRegionEvidence.test.ts` (`describe('UXREC-1 buildRepeatedR
   - R vs `{x:13,…}` (IoU above 0.5, still no region);
   - width 1, height 1, `x: -1`, `NaN`, `Infinity`, missing `bbox`, `media_id` 0, −3 or 1.5, and empty `identity_id` (excluded from `loadedObservationCount`).
 - **No chaining**: A and B share R, and C overlaps R without being equal. Only {A, B} form a region.
-- **Duplicates**: an identical `face-a` record twice counts once. `face-a` with two different boxes, or two different `person_id` values, goes to `abstainedIdentityIds` and joins no region.
+- **Duplicates (identical copy positive)**: `[P1A, {...P1A}, P2B]` counts `face-a` once. It still gives one region with observation ids `['face-a','face-b']`, and the pool is `{loadedObservationCount: 2, eligibleObservationCount: 2, abstainedIdentityIds: []}`. A copy that differs only in a non-retained field (`confidence`, `cluster_label`, `thumb_url`, or an extra `bbox` property) also collapses. The retained observation's keys are exactly `identityId`, `mediaId`, `bbox`, `groupKey`, `personId` and `clusterId`, and its `bbox` keys are exactly `x`, `y`, `width` and `height`.
+- **Existing person-ref conflict**: `face-a` with two different boxes, or with two different `person_id` values, goes to `abstainedIdentityIds` and joins no region.
+- **Conflicting cluster reference, all permutations**: each of the 6 permutations of `[P1A, P1A2, P2B]` gives `pool` `toEqual` `{loadedObservationCount: 2, eligibleObservationCount: 1, abstainedIdentityIds: ['face-a']}`, `regions` `[]` and `byGroupKey.size === 0`. The 6 outputs are `toEqual` each other. No observation for `face-a` with `clusterId` `'c-1'` or `'c-2'` appears anywhere, so no copy wins.
+  - For each permutation, the `groupIdentitiesByClusters(permutation)` value and each group's `getEditableClusterId(group)` and `members[0].identity_id` are identical before and after `buildRepeatedRegionEvidence(permutation)`.
+  - The existing grouping of this pair is input-order-dependent: the `person:1` `clusterId` follows the first copy and `identityClusterIds['face-a']` the last. The slice does not change that and does not assert it is permutation-invariant.
+- **Conflict beside a region**: every permutation of `[P1A, P1A2, P2B, C3C]` gives one region with `groupKeys ['cluster:c-3','person:2']` and observation ids `['face-c','face-b']`. The pool is `{loadedObservationCount: 3, eligibleObservationCount: 2, abstainedIdentityIds: ['face-a']}`.
+- **Every retained field participates**: pair `P2B` with two `face-a` copies that differ in exactly one retained field. Each pair abstains `face-a` (`abstainedIdentityIds ['face-a']`, `eligibleObservationCount 1`, no region) in both input orders:
+  - `media_id` 10 vs 11;
+  - `person_id` `'1'` vs `'3'` (`personId` and `groupKey`);
+  - `cluster_id` `'c-1'` vs `'c-2'` under `person_id '1'` (`clusterId` only; `groupKey` stays `person:1`);
+  - `person_id null` with `cluster_id` `'c-1'` vs `'c-9'` (`clusterId` and `groupKey`);
+  - each of `x`, `y`, `width` and `height` changed by 1;
+  - `bbox: null` vs R;
+  - `person_id` `'1'` vs the runtime number `1` (cast through `unknown`). `groupKey` stays `person:1`, but `Object.is` separates the retained `personId`, which would otherwise depend on input order.
+  - For string ids, `personId` and `groupKey` determine each other, and `groupKey` is a function of `personId` and `clusterId`. The number case is therefore the only input that isolates `personId`, and no input isolates `groupKey`. `groupKey` is still compared explicitly.
+- **Normalized references agree**: `person_id` `''`, `null` and absent are the same `personId` (`null`), and `cluster_id` `null` and absent are the same `clusterId`. Such copies collapse.
+- **No joined string**: `face-d` copies `{person_id: '1|1', cluster_id: 'c-1'}` and `{person_id: '1', cluster_id: '1|1|c-1'}`, both media 10 and R, abstain in both orders. Their `groupKey` values differ (`person:1|1` vs `person:1`), but a `|`-joined string of all retained fields would be identical for both.
+- **Signed zero** (`Z = {x: 0, y: 20, width: 40, height: 48}`; assert numbers with `toBe`, which uses `Object.is`):
+  - `face-a` copies with `x: 0` and `x: -0` abstain in both orders.
+  - Two identical `x: -0` copies collapse, and the kept `bbox.x` is `-0`.
+  - Distinct ids `{...P1A, bbox: {...Z, x: -0}}` and `{...P2B, bbox: Z}` form one region (Rule 4 is unchanged). In both orders `regionKey` is `'10|0|20|40|48'` and `region.bbox.x` is `-0`, because `face-a` under `person:1` is `observations[0]`. With the signs swapped, `region.bbox.x` is `0` in both orders.
 - **Partial pool**: the counts equal the distinct ids passed in. No field implies a total beyond the input.
-- **Determinism**: every permutation of `[P1A, P2B, C3C]` gives `toEqual` output.
+- **Determinism**: every permutation of `[P1A, P2B, C3C]` gives `toEqual` output. So does every permutation of the conflict fixtures above.
 - **Purity**: a deep-frozen input does not throw. `groupIdentitiesByClusters(input)` deep-equals its value from before the call, including `members`, `identityClusterIds` and `clusterId` for every group. `getEditableClusterId(group)` and `group.members[0].identity_id` (naming and removal targets) are unchanged.
 
 Other RED tests:
@@ -567,6 +595,7 @@ Other RED tests:
   - `renderList([P1A, P2B])` gives two cards, each with one disclosure. The count of `Edit label` / `Name this person` buttons and of label buttons equals the count for the same two records with 1×1 boxes, which produce no disclosure.
   - `[P1A, {...P1A, identity_id:'face-a2'}]` (same group) gives no disclosure.
   - `[C3C, UND]` gives the disclosure under `Not yet grouped (1)`.
+  - Every permutation of `[P1A, P1A2, P2B]` gives no disclosure. Every permutation of `[P1A, P1A2, P2B, C3C]` gives disclosures only on the `person:2` and `cluster:c-3` cards, none on the `person:1` card. Each disclosure shows `Checked 2 of 3 loaded face records with usable box coordinates.` and `1 face record was skipped because its loaded copies disagree.`. The label buttons and the `Edit label` / `Name this person` / `Remove from group` buttons match, by name and order, a control render of the same permutation with `P2B` on media 11 and `C3C` on media 12. That control has the same groups and members but no region. (A 1×1-box control is not used here, because same-face dedup ignores unusable boxes and would change the `person:1` members.)
   - Existing 1×1 fixtures render no disclosure.
 
 Keep green unchanged: the `groupIdentitiesByClusters same-face dedup (GPUFLOW-3 R1)` block, the twin-chip, provenance and suggestion-recovery suites, `gettext-literals.test.ts` and `banned-vocabulary.test.tsx`.
@@ -731,6 +760,7 @@ make lane-manifest-init TASK=UXREC-1 LANE_IDS='uxrec-1-timeline uxrec-1-gpu-stat
 - [ ] Added `repeatedRegionEvidence.test.ts` plus the `UXREC-1 identityGroupKey`, `UXREC-1 repeated region disclosure` and `UXREC-1 repeated region wiring` tests, and saw each fail as predicted.
 - [ ] Added `identityGroupKey` and switched `groupIdentitiesByClusters` to it. The existing utils and same-face dedup tests stay green.
 - [ ] Implemented `buildRepeatedRegionEvidence` and `repeatedRegionViewForGroup` to rules 1–6 and the types above. No IoU, no similarity, no image fields.
+- [ ] Rule 2 compares copies field by field over the complete retained tuple with `Object.is`. It uses no joined string, no `groupKey`-only signature and no winning copy. The `[P1A, P1A2, P2B]` and `[P1A, P1A2, P2B, C3C]` permutations, every-field participation, `face-d` delimiter and signed-zero fixtures pass. A region's `bbox` comes from its sorted `observations[0]`.
 - [ ] Implemented `RepeatedRegionEvidenceDisclosure` as native `<details>`/`<summary>`, closed by default, using text only and the exact copy. Exact references appear only inside the body.
 - [ ] Wired `IdentityClusterList`: a memoized evidence value, `groupLabels`, a per-item `repeatedRegionEvidence`, and the residue-section disclosure. `IdentityClusterItem` renders it last in display mode.
 - [ ] Added `.acx-identity-cluster__repeated-region` rules to `_identity-cluster-list.scss` using tokens and `overflow-wrap: anywhere` for `code`.
@@ -759,6 +789,7 @@ make lane-manifest-init TASK=UXREC-1 LANE_IDS='uxrec-1-timeline uxrec-1-gpu-stat
 - [ ] DONE with zero results says `Description run finished — no drafts returned.` and has no review action. Positive DONE keeps existing copy and offers review only with a non-null href. The producer emits that href only for DONE + positive returned completed count + valid run id; ready/errors/suppression/edge memory remain green.
 - [ ] `unavailableReasonCopy('endpoint_unconfigured')` returns configuration copy, and `GpuControlCard` renders it for the PHP-pinned envelope. Stale telemetry never renders "not configured".
 - [ ] A repeated exact region across two loaded groups renders one collapsed native disclosure per involved card, with the region, references and pool counts. Same-group, cross-photo, overlapping, degenerate and conflicting inputs render none.
+- [ ] Copies of one face record that disagree in any retained field, including only `cluster_id` under a winning `person_id`, abstain in every input order. Each counts once as loaded and never as eligible, joins no region and is reported by the conditional skipped line. Identical copies still count once and still match.
 - [ ] `groupIdentitiesByClusters` output, `getEditableClusterId` and `members[0].identity_id` are identical with and without the projection.
 - [ ] Every slice's full command and `npm run typecheck` pass on the VM, and each lane's diff lists only its owned paths.
 
@@ -775,12 +806,12 @@ Pinned at `/home/gate/heuristics-canon-v0.26.2`, from <https://github.com/darce/
 | Toast text names the resulting state ("no descriptions returned yet", "N drafts ready") | [INT-22] **Explain the result**, `#int-22`, *Microinteractions, ch. 4* |
 | One disclosure per card; no new banner or toast for evidence | [PERC-10] **Least useful feedback**, `#perc-10`, *Microinteractions, ch. 4* |
 | A review action only where results exist; the thumbnail stays non-interactive | [INT-01] **Affordance match**, `#int-01`, *Designing Interfaces, 3rd ed.* |
-| Evidence shows data, comparison basis (exact box) and limit | [VIZ-23] **Show the evidence path**, `#viz-23`, *Richard Feynman's Mental Models, ch. 5* + *Envisioning Information, ch. 4* |
+| Evidence shows data, comparison basis (exact box) and limit; each listed face record is one whose loaded copies agree on every retained field, and disagreeing copies are counted as skipped, not resolved | [VIZ-23] **Show the evidence path**, `#viz-23`, *Richard Feynman's Mental Models, ch. 5* + *Envisioning Information, ch. 4* |
 | If a selected image becomes consequential evidence, expose its selection pool. Here the thumbnail is context only; the unchanged loaded-pool contract supports the text comparison, not an image-selection claim. | Conditional [VIZ-41] **Reveal the image-selection pool**, `#viz-41`, *Visual Explanations, ch. 1*; its image-evidence trigger is absent in this slice |
 | Exact equality only; no merge or transitive similarity closure | [GRPH-18] **Never trust the transitive closure of a raw similarity threshold**, `lexicons/graph-theory.md#grph-18`, *Introduction to Information Retrieval, § 17.2* |
 | Loading, empty, error and unknown states are designed per mode | [RLSE-04] **Undesigned state is a bug**, `lexicons/engineering.md#rlse-04`, bootstrap (practice label) |
 | Work order is a DAG | [GRPH-01] **Model the work as a DAG, then topological-sort**, `graph-theory.md#grph-01`, *The Algorithm Design Manual, ch. 7* |
-| File collisions are conflict edges (I1 and WBTRUST-4) | [GRPH-09] **Colour the conflict graph**, `graph-theory.md#grph-09`, *Graph Theory with Applications, ch. 8* |
+| File collisions are conflict edges (I1 and WBTRUST-4); the plan/inventory writer and the map writer hold disjoint files | [GRPH-09] **Colour the conflict graph**, `graph-theory.md#grph-09`, *Graph Theory with Applications, ch. 8* |
 | Every boundary has one ownership path | [TEAM-01] **Align org communication with intended architecture**, `lexicons/planning.md#team-01`, *Team Topologies* |
 | RED predicted before GREEN | [TEST-06] **Watch it fail once / predict the failure**, `lexicons/engineering.md#test-06`, *Modern Software Engineering, ch. 8* |
 | Keyboard reachability of view groups and disclosure | [A11Y-11] **Keyboard walk (2.1.1/2.1.2/2.4.3/2.4.7)**, `#a11y-11`, *Web Content Accessibility Guidelines 2.2, SC 2.1.1* |
@@ -793,7 +824,7 @@ Matching cards checked against their full triggers and verification sections:
 - `designed-unknown` (CARD-03, via RLSE-04): zero-DONE, empty and partial-evidence states are explicit; invalid observations abstain without a person classification.
 - `falsification-disconfirmers` (CARD-08, via TEST-06): each defect has a predicted RED assertion; positive and suppression guards cannot be counted as RED.
 - `measurement-integrity` (CARD-11, via TEST-06): real-shaped completed-count fixtures and unchanged regression cases constrain the test instrument; a docs check proves no product behavior.
-- `perceived-enforced-boundaries` (CARD-12, via HAI-05, INT-01, GRPH-18 and TEAM-01; Principle 10): the views, disclosure and toasts imply only boundaries that the data, actions and ownership enforce.
+- `perceived-enforced-boundaries` (CARD-12, via HAI-05, INT-01, GRPH-18 and TEAM-01; Principle 10): the views, disclosure and toasts imply only boundaries that the data, actions and ownership enforce. One listed face record reference implies one record only when its loaded copies agree; a repeated region identifies no person.
 
 The candidate cards `bounded-role-lets-a-small-model-be-safe` (CARD-19), `constrained-domains-have-solved-it` (CARD-22) and `controlled-vocabulary-caps-hallucination` (CARD-24) were checked and are inert here: no model-tier choice, custom widget or generated closed-class attribute is proposed. A11Y-12's custom-widget and CAL-02's forced-classification triggers are absent, so neither is an applied citation. Native controls and deterministic abstention remain explicit implementation requirements. Principle 2's cross-domain disconfirmers and Principle 10's security/architecture siblings check the same boundaries without adding a new security workstream. GRPH-18 constrains the explicitly rejected similarity-chaining alternative; it does not claim that this exact-coordinate projection clusters identities. VIZ-23 applies to the text finding and its alternative account; VIZ-41 remains conditional on consequential image evidence.
 

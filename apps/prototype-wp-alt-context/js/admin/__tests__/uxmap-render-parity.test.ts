@@ -1647,6 +1647,10 @@ describe('ux-map render parity (owned maps)', () => {
       { domain_states: ['busy'], canonical_state: 'loading' },
       { domain_states: ['filtered', 'suggested_label'], canonical_state: 'default' },
       { domain_states: ['missing_image'], canonical_state: 'edge_input' },
+      { domain_states: ['policy_on', 'policy_off'], canonical_state: 'default' },
+      { domain_states: ['policy_unknown', 'policy_permission_denied', 'policy_read_only'], canonical_state: 'degraded' },
+      { domain_states: ['policy_saving', 'policy_readback'], canonical_state: 'loading' },
+      { domain_states: ['policy_readback_error', 'policy_rejected'], canonical_state: 'error' },
     ]);
     expect(mappings.length, 'domain-state mapping disappeared').toBeGreaterThan(0);
     for (const mapping of mappings) {

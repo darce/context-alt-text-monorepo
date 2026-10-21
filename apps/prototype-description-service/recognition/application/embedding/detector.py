@@ -20,8 +20,6 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import httpx
-
-from recognition.shared.safe_fetch import SafeFetchError, fetch_public_image
 import imagehash
 import numpy as np
 from PIL import Image
@@ -33,6 +31,7 @@ from recognition.application.integrations import (
     create_adapter_circuit_breaker,
     wait_for_adapter,
 )
+from recognition.shared.safe_fetch import SafeFetchError, fetch_public_image
 
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter

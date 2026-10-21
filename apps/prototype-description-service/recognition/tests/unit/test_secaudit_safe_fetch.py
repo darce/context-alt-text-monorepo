@@ -88,3 +88,18 @@ async def test_injected_detector_client_is_guarded(detector_type):
         detector._client = client
         assert await detector._fetch_image("http://169.254.169.254/") is None
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_default_resolver_path_is_checked(monkeypatch):
+    from recognition.shared import safe_fetch
+
+    async def resolve(*args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))]
+
+    monkeypatch.setattr(safe_fetch, "_getaddrinfo", resolve)
+    calls = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: calls.append(r))) as client:
+        with pytest.raises(SafeFetchError):
+            await fetch_public_image("http://metadata.test/", client=client, timeout=1)
+    assert calls == []

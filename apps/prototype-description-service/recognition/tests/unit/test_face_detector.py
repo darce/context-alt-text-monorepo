@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import numpy as np
 import pytest
 
@@ -27,6 +29,16 @@ from recognition.application.embedding.detector import (
 from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
 from recognition.application.integrations import AdapterBreakerConfig, AdapterBreakerOpenError, AdapterCircuitBreaker
 from recognition.config import get_settings
+from recognition.shared import safe_fetch
+
+
+async def _public_resolve(host, port, **kwargs):
+    """Stand-in for DNS so URL tests never depend on live resolution."""
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", port))]
+
+
+def _image_transport() -> httpx.MockTransport:
+    return httpx.MockTransport(lambda request: httpx.Response(200, content=b"\xff\xd8fake-jpeg-bytes"))
 
 _EMBEDDING_DIM = get_settings().identity_detection.embedding_dimension
 _MANIFEST_MODEL_ID = incumbent_embedding_model_manifest().model_id
@@ -157,17 +169,8 @@ class TestInsightFaceFaceDetector:
 
         # Mock httpx to return fake image bytes
         with pytest.MonkeyPatch.context() as mp:
-            import httpx
-
-            async def mock_get(*args, **kwargs):
-                response = MagicMock()
-                response.content = b"\xff\xd8fake-jpeg-bytes"
-                response.raise_for_status = MagicMock()
-                return response
-
-            mock_client = MagicMock()
-            mock_client.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client = httpx.AsyncClient(transport=_image_transport())
+            mp.setattr(safe_fetch, "_getaddrinfo", _public_resolve)
             mp.setattr(httpx, "AsyncClient", lambda **kwargs: mock_client)
 
             detections = await detector.detect(["http://example.com/image.jpg"])
@@ -184,24 +187,21 @@ class TestInsightFaceFaceDetector:
         mock_face = _adapter_face(pose=None)
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
-        mock_response = MagicMock()
-        mock_response.content = b"\xff\xd8fake-jpeg-bytes"
-        mock_response.raise_for_status = MagicMock()
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        shared_client = httpx.AsyncClient(transport=_image_transport())
+        mock_client = MagicMock(wraps=shared_client)
 
         detector = InsightFaceFaceDetector(mock_adapter, client=mock_client)
 
         with pytest.MonkeyPatch.context() as mp:
-            import httpx
-
             def fail_client(*args, **kwargs):
                 raise AssertionError("AsyncClient should not be constructed when client is provided")
 
+            mp.setattr(safe_fetch, "_getaddrinfo", _public_resolve)
             mp.setattr(httpx, "AsyncClient", fail_client)
             detections = await detector.detect(["http://example.com/image.jpg"])
+        await shared_client.aclose()
 
-        mock_client.get.assert_called_once()
+        mock_client.stream.assert_called_once()
         assert len(detections) == 1
 
     @pytest.mark.asyncio

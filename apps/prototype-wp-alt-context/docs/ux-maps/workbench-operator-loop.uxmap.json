@@ -6,7 +6,14 @@
     "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
     "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
     "Operator clears media queue via Scan and resolves identity conflicts without losing place",
-    "Decompose Workbench UI tasks from screens/zones/states/flows instead of inventing IA mid-plan"
+    "Decompose Workbench UI tasks from screens/zones/states/flows instead of inventing IA mid-plan",
+    "WBRC-1 proposed interaction contract, not evidence of implemented or live-accepted UI. Canon v0.26.2: policy is site-wide; connection health, enabled policy and completed inference are separate facts (CARD-12 / Principle 10; [CLM-03] The policy is a contract, bootstrap practice label).",
+    "Keep the policy beside scan actions: [NAV-06] Frequency elevates chrome, Designing Interfaces, 3rd ed. + Microinteractions, ch. 2. Enable and Disable occupy the same secondary control position: [SECD-08] Make the safe path the easy path, Security Engineering.",
+    "Cold-start policy remains false until affirmative opt-in: [SECD-12] Biometric opt-in default, Face Recognition Technology (Compulsory Visibility), ch. 2. A missing/malformed page-load snapshot is Unknown, never silently Off. recognitionPolicy.enabled and canManage are bootstrap hints, not a second store or authorization grant.",
+    "Confirm only after field acknowledgement and fresh validated settings readback: [FORM-08] Echo-back stored interpretation, Pattern Languages of Program Design, ch. 10. Keep local persistent actionable errors: [FORM-05] Inline actionable errors, Designing Interfaces, 3rd ed. No modal or confirm tab and no repeated opt-in prompt after a persisted choice.",
+    "Producer contract verified from current bytes: RecognitionPolicy::DEFAULT=false; Settings GET requires boolean recognition_enabled (fetchSettings rejects missing/nonboolean); Settings POST may return HTTP 200 with result=error/partial and failed fields. Require result=ok, saved containing recognition_enabled and no matching failed field; HTTP success alone never confirms persistence.",
+    "Send only {recognition_enabled: desiredBoolean}, never URL, api_key or allow_person_names. Share queryKeys.settings.all with SettingsPage; reconcile through fresh Settings GET. After an acknowledged write, failed/malformed/mismatched readback permits verification reads only; never replay the write. Unknown/rejected state also recovers through Settings GET.",
+    "Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action."
   ],
   "jobs": [
     {
@@ -24,6 +31,10 @@
     {
       "id": "job-assign-people",
       "label": "Assign people (exit to Roster)"
+    },
+    {
+      "id": "job-recognition-policy",
+      "label": "Inspect or explicitly change the site-wide recognition policy without running scan"
     }
   ],
   "screens": [
@@ -84,7 +95,7 @@
       "url_params": ["tab", "status", "media", "s", "p", "perPage", "rq", "panel", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-scan-selected",
-      "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],
+      "states": ["default", "loading", "empty", "error", "first_time", "edge_input", "degraded"],
       "zones": [
         {
           "id": "z-review-queue",
@@ -119,6 +130,12 @@
           "states": ["default", "loading", "error"]
         },
         {
+          "id": "z-recognition-policy",
+          "label": "Facial recognition: On / Off / Unknown; site-wide policy beside scan actions. Same-position secondary Enable (Off) / Disable (On); loading = saving or verifying (mutation unavailable); error = rejected write or readback failure with inline Retry status; degraded = unknown, permission denied or read-only snapshot with administrator explanation. On confirms policy only, not connection or inference.",
+          "role": "form",
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
           "id": "z-identity-preview",
           "label": "Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows)",
           "role": "ai_review",
@@ -137,7 +154,8 @@
           "role": "ai_review",
           "states": ["default", "loading", "error", "degraded", "edge_input"]
         }
-      ]
+      ],
+      "action_states": ["policy_off", "policy_on", "policy_unknown", "policy_saving", "policy_readback", "policy_readback_error", "policy_permission_denied", "policy_read_only", "policy_rejected"]
     },
     {
       "id": "workbench-conflicts",
@@ -372,6 +390,39 @@
       "irreversible": false,
       "preview_required": true,
       "screen_id": "workbench-shell"
+    },
+    {
+      "id": "act-enable-recognition",
+      "verb": "Enable facial recognition",
+      "target": "recognition-policy-settings",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan",
+      "when": ["policy_off"]
+    },
+    {
+      "id": "act-disable-recognition",
+      "verb": "Disable facial recognition",
+      "target": "recognition-policy-settings",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan",
+      "when": ["policy_on"]
+    },
+    {
+      "id": "act-retry-policy-read",
+      "verb": "Retry status (read only)",
+      "target": "recognition-policy-settings",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan",
+      "when": ["policy_unknown", "policy_readback_error", "policy_rejected"]
     }
   ],
   "flows": [
@@ -450,6 +501,94 @@
           "branch_label": null
         }
       ]
+    },
+    {
+      "id": "flow-policy-enable",
+      "job": "job-recognition-policy",
+      "label": "Off -> explicit Enable -> acknowledgement -> readback -> confirmed On",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_off: explicit secondary Enable sends only recognition_enabled=true"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_saving: prevent further mutation; HTTP200 field failure goes to policy_rejected"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_readback: acknowledged write; fresh Settings GET, no success claim yet"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_on: matching boolean confirmed; secondary Disable in same position; scan requires separate explicit action"
+        }
+      ]
+    },
+    {
+      "id": "flow-policy-disable",
+      "job": "job-recognition-policy",
+      "label": "On -> explicit Disable -> acknowledgement -> readback -> confirmed Off",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_on: explicit secondary Disable sends only recognition_enabled=false"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_saving: no further mutation; no identity deletion or job cancellation"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_readback: verify persisted false through fresh Settings GET"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_off: matching boolean confirmed; secondary Enable in same position"
+        }
+      ]
+    },
+    {
+      "id": "flow-policy-recover",
+      "job": "job-recognition-policy",
+      "label": "Unknown / rejected / failed readback -> Retry status reads only",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_unknown: absent or malformed bootstrap; no toggle; admin may Retry status"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_rejected: HTTP failure or HTTP200 result/failed/saved field failure; inline error; Retry status GET before another explicit choice"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_readback_error: acknowledged write but failed/malformed/mismatched readback; no toggle or saved claim"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "Retry status: fresh GET only; never replay acknowledged POST; failure remains inline"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "validated boolean: policy_on or policy_off; reconcile queryKeys.settings.all; offer opposite secondary action"
+        }
+      ]
+    },
+    {
+      "id": "flow-policy-read-only",
+      "job": "job-recognition-policy",
+      "label": "Read-only snapshot or permission denial -> administrator explanation",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_read_only: show page-load On/Off/Unknown; no Settings fetch or write action"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_permission_denied: GET/POST capability denial removes writes; explain administrator access; never claim requested value saved"
+        }
+      ]
     }
   ],
   "domain_state_mappings": [
@@ -476,6 +615,22 @@
     {
       "domain_states": ["missing_image"],
       "canonical_state": "edge_input"
+    },
+    {
+      "domain_states": ["policy_on", "policy_off"],
+      "canonical_state": "default"
+    },
+    {
+      "domain_states": ["policy_unknown", "policy_permission_denied", "policy_read_only"],
+      "canonical_state": "degraded"
+    },
+    {
+      "domain_states": ["policy_saving", "policy_readback"],
+      "canonical_state": "loading"
+    },
+    {
+      "domain_states": ["policy_readback_error", "policy_rejected"],
+      "canonical_state": "error"
     }
   ],
   "slices": [

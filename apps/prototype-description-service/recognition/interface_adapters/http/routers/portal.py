@@ -172,7 +172,6 @@ class CreateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     lifetime_seconds: int | None = Field(default=None, gt=0)
-    rate_limit_tier: str | None = Field(default=None, min_length=1)
 
 
 class RotateKeyRequest(BaseModel):
@@ -971,7 +970,6 @@ async def create_portal_key(
             principal.tenant_id,
             idempotency_key=idempotency_key,
             lifetime_seconds=body.lifetime_seconds,
-            rate_limit_tier=body.rate_limit_tier,
         )
         await session.commit()
         return _issue_response(result, tenant_id=principal.tenant_id)

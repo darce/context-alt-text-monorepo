@@ -13,7 +13,8 @@
     "Confirm only after field acknowledgement and fresh validated settings readback: [FORM-08] Echo-back stored interpretation, Pattern Languages of Program Design, ch. 10. Keep local persistent actionable errors: [FORM-05] Inline actionable errors, Designing Interfaces, 3rd ed. No modal or confirm tab and no repeated opt-in prompt after a persisted choice.",
     "Producer contract verified from current bytes: RecognitionPolicy::DEFAULT=false; Settings GET requires boolean recognition_enabled (fetchSettings rejects missing/nonboolean); Settings POST may return HTTP 200 with result=error/partial and failed fields. Require result=ok, saved containing recognition_enabled and no matching failed field; HTTP success alone never confirms persistence.",
     "Send only {recognition_enabled: desiredBoolean}, never URL, api_key or allow_person_names. Share queryKeys.settings.all with SettingsPage; reconcile through fresh Settings GET. After an acknowledged write, failed/malformed/mismatched readback permits verification reads only; never replay the write. Unknown/rejected state also recovers through Settings GET.",
-    "Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action."
+    "Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action.",
+    "UXREC-1 design proposal awaiting map gate: default to current attention, with explicit audit history; preserve all audit records, reconciliation and existing naming-policy controls. This map is a target contract, not proof that the referenced components implement the proposal. See docs/assessments/current/UXREC-1-ux-inventory.md."
   ],
   "jobs": [
     {
@@ -195,8 +196,8 @@
     {
       "id": "workbench-dead-letter",
       "kind": "overlay",
-      "title": "Failed Sync Queue (Dead Letter)",
-      "purpose": "Inspect failed sync ops; retry or discard",
+      "title": "Changes — current attention / audit history (proposed)",
+      "purpose": "UXREC-1 proposed: open on current attention (unresolved pending/conflict/failed operations), with explicit History for acknowledged/discarded records. Current source timelineStatus defaults to all. Preserve status pagination, retry/discard guards and server audit records; no blanket erasure of July rows. Empty current attention is success, not empty history. Smallest frontend slice: default failed attention and explicit pending/conflict status choices, each with server-filtered pagination; no fabricated aggregate unresolved count or client filtering of one all-status page.",
       "route": "#/workbench?panel=dead-letter",
       "job_entry": false,
       "deep_link": true,
@@ -207,15 +208,21 @@
       "zones": [
         {
           "id": "z-dl-list",
-          "label": "Dead-letter items",
+          "label": "Current attention (proposed default): unresolved work only; each row keeps operation, cause, age and exact target; terminal audit records remain under History.",
           "role": "queue",
           "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-dl-actions",
-          "label": "Retry / discard",
+          "label": "Existing Retry / guarded Discard remain row-scoped. Retry announces queued, not recovered; failures stay actionable. History switching is read-only.",
           "role": "form",
           "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-dl-history",
+          "label": "History (proposed explicit view): all audit states with existing status filter and paging; no delete-on-hide; return to current attention retains context.",
+          "role": "nav",
+          "states": ["default", "loading", "empty", "error", "degraded"]
         }
       ]
     },
@@ -423,6 +430,26 @@
       "preview_required": false,
       "screen_id": "workbench-scan",
       "when": ["policy_unknown", "policy_readback_error", "policy_rejected"]
+    },
+    {
+      "id": "act-view-audit-history",
+      "verb": "Show History (proposed)",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-dead-letter"
+    },
+    {
+      "id": "act-view-current-attention",
+      "verb": "Show Current attention (proposed)",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-dead-letter"
     }
   ],
   "flows": [
@@ -638,7 +665,8 @@
     "**Scan costly action preview** — `act-scan-selected` requires preview_required surface",
     "**Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence",
     "**Dead-letter discard confirm** — destructive + irreversible path",
-    "**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])"
+    "**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])",
+    "UXREC-1 TIMELINE proposed: current-attention default and explicit audit history within DeadLetterPanel; do not delete history or repeat integrated DW3-UX0924-04 cleanup."
   ],
   "open_questions": [
     "Should Scan CTAs require selection count preview on the same surface before start? ([INT-07])",

@@ -8,7 +8,9 @@
     "Keep optional person_id and representative_face absence unresolved and visible without fabricating a person or representative image (rg-015, DDIA).",
     "Keep ungrouped residue in one Not yet grouped (N) section with every unresolved face; never render N Unnamed person cards or visually deduplicate faces (GPUFLOW-2 C5).",
     "Expose an N face groups badge when one person spans more than one face group, and let the chip expand into the existing face review panel.",
-    "Let chip name, avatar, and face-group-count buttons open the person workspace while preserving reversible roster merge behavior (INT-07, INT-09)."
+    "Let chip name, avatar, and face-group-count buttons open the person workspace while preserving reversible roster merge behavior (INT-07, INT-09).",
+    "UXREC-1 proposed repeated exact-face evidence disclosure awaiting map gate: link observations across groups without collapsing groups, changing mutation targets or inferring identity from filenames. The user supplies the Emma same-person ground truth; no new identity inference. See UXREC-1 inventory.",
+    "Source correction: ClusterPreview is a noninteractive thumbnail; IdentityClusterItem label enters naming. This pre-existing map describes target chip navigation, not a verified current avatar-to-workspace action. UXREC-1 must reuse available review navigation or request coordinated extension; never fabricate a merge control."
   ],
   "jobs": [
     {
@@ -25,14 +27,14 @@
       "id": "workbench-media-row-person-chips",
       "kind": "screen",
       "title": "Media row — person chips",
-      "purpose": "A media row renders one chip per resolved person: the representative face evidence comes first, followed by the person label and member +N count; unresolved faces remain available for face-group review in one Not yet grouped (N) section.",
+      "purpose": "Design target; referenced component does not establish implemented navigation. A media row renders one chip per resolved person: the representative face evidence comes first, followed by the person label and member +N count; unresolved faces remain available for face-group review in one Not yet grouped (N) section.",
       "route": "#/workbench?media=",
       "wp_page": "alt-context-workbench",
       "job_entry": true,
       "deep_link": true,
       "url_params": ["media"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx",
-      "primary_action_id": null,
+      "primary_action_id": "act-expand-person-chip",
       "states": ["default", "loading", "empty", "error", "degraded"],
       "zones": [
         {
@@ -73,6 +75,13 @@
           "label": "Person chip buttons (expand face-group review or open person workspace)",
           "role": "form",
           "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-repeated-face-summary",
+          "label": "Proposed compact repeated-evidence summary only when observed: same source face appears in N groups; expand to inspect source/crop/group references. Not a new guessed person label.",
+          "role": "ai_review",
+          "states": ["default", "loading", "empty", "error", "degraded"],
+          "evidence_linked": true
         }
       ]
     },
@@ -80,7 +89,7 @@
       "id": "workbench-media-row-face-group-badge",
       "kind": "screen",
       "title": "Media row — person with multiple face groups",
-      "purpose": "The same person keeps one chip when person_id spans several face groups; the chip adds an N face groups badge while retaining the representative avatar and member +N count.",
+      "purpose": "Design target; referenced component does not establish implemented navigation. The same person keeps one chip when person_id spans several face groups; the chip adds an N face groups badge while retaining the representative avatar and member +N count.",
       "route": "#/workbench?media=",
       "wp_page": "alt-context-workbench",
       "job_entry": false,
@@ -128,7 +137,7 @@
       "id": "workbench-media-row-current-face-fallback",
       "kind": "screen",
       "title": "Media row — current-face fallback",
-      "purpose": "When representative_face is absent or its image fields are unavailable, show the current face as a fallback and expose the representativeVocabulary copy “Representative image unavailable”; never synthesize representative evidence.",
+      "purpose": "Design target; referenced component does not establish implemented navigation. When representative_face is absent or its image fields are unavailable, show the current face as a fallback and expose the representativeVocabulary copy “Representative image unavailable”; never synthesize representative evidence.",
       "route": "#/workbench?media=",
       "wp_page": "alt-context-workbench",
       "job_entry": false,
@@ -169,7 +178,7 @@
       "id": "workbench-person-chip-expanded",
       "kind": "overlay",
       "title": "Expanded person chip — review faces",
-      "purpose": "The expanded chip enters the existing member review panel so the operator can inspect face evidence, show all members, remove a face, close the panel, or open the person workspace.",
+      "purpose": "Design target; referenced component does not establish implemented navigation. The expanded chip enters the existing member review panel so the operator can inspect face evidence, show all members, remove a face, close the panel, or open the person workspace. UXREC-1 proposed adjacent evidence disclosure shows source media, crop geometry, exact face/identity and group references, displayed/total counts and any incomplete coverage. Review remains navigation into existing cluster review, not a new merge UI.",
       "route": "#/workbench?media=&cluster=",
       "wp_page": "alt-context-workbench",
       "job_entry": false,
@@ -199,6 +208,13 @@
           "label": "Close face review / open person workspace",
           "role": "form",
           "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-repeated-face-evidence",
+          "label": "Proposed evidence: same source/crop reported in multiple groups; show aligned proportional thumbnails, visible source labels, exact group and face references in disclosure, displayed/available totals and Show all. No automatic identity merge.",
+          "role": "ai_review",
+          "states": ["default", "loading", "empty", "error", "degraded"],
+          "evidence_linked": true
         }
       ]
     },
@@ -206,7 +222,7 @@
       "id": "exit-roster",
       "kind": "exit",
       "title": "Person workspace",
-      "purpose": "Person chip name, avatar, or face-group-count button opens the named person's workspace and preserves the media-row context when the operator returns.",
+      "purpose": "Design target; referenced component does not establish implemented navigation. Person chip name, avatar, or face-group-count button opens the named person's workspace and preserves the media-row context when the operator returns.",
       "route": "#/roster?person=",
       "wp_page": "alt-context-roster",
       "job_entry": false,
@@ -229,7 +245,7 @@
       "id": "act-expand-person-chip",
       "verb": "Expand face-group review",
       "target": "workbench-person-chip-expanded",
-      "hierarchy": "secondary",
+      "hierarchy": "primary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,
@@ -343,13 +359,15 @@
     "Creating one person chip per face group",
     "Showing a guessed representative image when representative_face is absent",
     "Auto-merging people from a matching label without a preview",
-    "Pixel or token design; implementation uses the existing --acx-* system"
+    "Pixel or token design; implementation uses the existing --acx-* system",
+    "No auto-transitive similarity merge, filename-based identity, new merge endpoint, detector threshold tuning or backend activation. Camera/detector duplicate and identity-recall hypotheses require separate corpus evidence."
   ],
   "slices": [
     "Group media identities by optional person_id while preserving unresolved face groups",
     "Render representative face evidence, N face groups, and member +N chip states",
     "Render current-face fallback with canonical Representative image unavailable copy",
     "Connect chip actions to face review and the person workspace",
-    "Collapse ungrouped residue into one Not yet grouped (N) section without visually deduplicating faces"
+    "Collapse ungrouped residue into one Not yet grouped (N) section without visually deduplicating faces",
+    "UXREC-1 IDENTITY proposed: derive explicit cross-group repeated evidence alongside unchanged person/cluster grouping; review-only disclosure and wrapper tests preserve identityClusterIds and existing naming/mutation targets."
   ]
 }

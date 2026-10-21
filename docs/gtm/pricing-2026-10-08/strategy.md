@@ -454,6 +454,18 @@ The cash-flow benefit to test is lower review time and greater renewal/referral.
 
 Apply **[Benefit-and-Barrier dual test, STRAT-23](../../../../heuristics-canon-v0.25.6/lexicons/business-marketing.md#strat-23), 7 Powers (Helmer)**: measure a cash-flow benefit through review time, renewal and referrals, and separately establish a barrier to imitation. [Introduction distillation](../../../../heuristics-canon-research/distilled/business/seven-powers.md#intro). A small product at a small price is not automatically counter-positioning: *7 Powers*, ch. 3, requires reasons an incumbent cannot copy without damaging its business. No such evidence is established for Blackboard here. [Counter-positioning distillation](../../../../heuristics-canon-research/distilled/business/seven-powers.md#ch-3). If licensed Ally/Panorama supplies the same result, generic draft generation cannot earn the group premium.
 
+## Quebec and Europe expansion (added 21 October 2026)
+
+i18n has been a requirement since the first commit. The launch offer above is English only. Expansion to Quebec and Europe follows the first paying references in short order, and the operator sets the window (decision 18969). The [launch plan §3.1](../altcontext-productization-launch-plan.md#31-quebec-and-europe-expansion-added-2026-10-21-decision-18969) holds the sequence and the market-entry conditions. This section covers only what changes for pricing.
+
+- **Academic route.** Francophone Quebec universities need a French interface and French descriptions before a professor pilot is possible. Examples are Université de Montréal, Université Laval and the Université du Québec network. English-language Quebec universities can enter on the English offer. In the EU, the Web Accessibility Directive covers public-sector sites, including many public universities. Test that driver with the same interview script before assuming a budget.
+- **Currencies.** Show CAD and EUR prices as separate Stripe prices. Do not convert USD at checkout. Set them from interview evidence in each market, not from an exchange rate.
+- **Tax.** ADR-014 keeps tax with the seller, so the operator registers QST/GST for Quebec and EU VAT. EU B2C uses non-Union OSS; EU B2B uses reverse charge. Amounts in this document stay before sales taxes.
+- **Language billing.** Price a second description language per image or bundle, modelled on the competitor's +1 credit per language. Do this when the second language ships, not before.
+- **Readiness cost now.** None in price. The cost is architectural: every slice keeps a language add down to data and config (constitution sr-012), so French is a localization, not a rebuild.
+
+Heuristics Canon v0.26.2 GTM-14 ("Develop reference customers first") is the counter-case. Expansion follows reference customers in the first segment and never replaces them. PROD-60 ("Scope every system consumer") makes French and the francophone markets planned consumers before the offer freezes.
+
 ## Relationship to the existing launch plan
 
 For this session's launch audience, this recommendation replaces the earlier **$0/$19/$49** pricing hypothesis, 100-free-images-per-month offer, and WordPress-first acquisition sequence in the [July launch plan](../altcontext-productization-launch-plan.md). That document remains useful implementation and operational prior art. Its general claims about proprietary correction flywheels and competitors need the customer-specific tests above. This strategy changes no product code, live prices, billing configuration or external accounts.

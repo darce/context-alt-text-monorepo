@@ -4,13 +4,16 @@ Promotes the stored, already-gated prospective artifact with exactly four substi
 """
 import argparse
 import ast
+import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import json
 import os
 import re
+import stat
 import sys
-import tempfile
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -26,6 +29,8 @@ CANON = 'v0.26.2 RLSE-21 FLOW-01'
 PROSPECTIVE_NAME = 'incumbent-pilot-durable.prospective.json'
 REMOTE_NAME = 'incumbent-pilot-durable.remote.py'
 FORBIDDEN = ('KEY', 'workbay-sandbox', 'venv-lane', 'c8ddf610')
+# The prospective is the consumer's commit marker, so it is published last and rolled back first.
+PUBLISH_ORDER = (REMOTE_NAME, PROSPECTIVE_NAME)
 
 
 def load_runner():
@@ -71,7 +76,11 @@ def validate_prospective(p):
     need(p.get('execution_started') is False, 'execution_started must be false')
     recipe = p.get('executable_recipe')
     need(isinstance(recipe, str), 'executable_recipe must be a string')
-    digest = sha256(recipe.encode())
+    try:
+        encoded = recipe.encode('utf-8')
+    except UnicodeEncodeError as e:
+        raise Refusal(f'executable_recipe is not encodable as UTF-8: {e}') from e
+    digest = sha256(encoded)
     need(p.get('recipe_sha256') == digest, 'recipe_sha256 does not match executable_recipe')
     need(digest == SOURCE_RECIPE_SHA256, f'recipe digest {digest} is not the pinned incumbent recipe')
     contract = p.get('admission_contract')
@@ -161,38 +170,110 @@ def render(p, new, subs, subject):
     return {PROSPECTIVE_NAME: (json.dumps(doc, indent=2) + '\n').encode(), REMOTE_NAME: remote}, to_sha
 
 
-def plan_writes(out, files):
+def regular_bytes(path):
+    st = os.lstat(path)
+    need(stat.S_ISREG(st.st_mode), f'{path} is not a regular non-symlink file')
+    return path.read_bytes()
+
+
+@contextlib.contextmanager
+def writer_lock(out):
     need(not out.exists() or out.is_dir(), f'{out} exists and is not a directory')
+    out.mkdir(parents=True, exist_ok=True)
+    fd = os.open(out, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refusal(f'{out} is locked by another writer')
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def plan_writes(out, files):
     todo = {}
-    for name, data in files.items():
+    for name in PUBLISH_ORDER:
         target = out / name
         if os.path.lexists(target):
-            need(target.is_file() and target.read_bytes() == data, f'{target} exists with different bytes; refusing to overwrite')
+            need(regular_bytes(target) == files[name], f'{target} exists with different bytes; refusing to overwrite')
         else:
-            todo[name] = data
+            todo[name] = files[name]
     return todo
 
 
-def commit_writes(out, todo):
-    if not todo:
-        return
-    out.mkdir(parents=True, exist_ok=True)
-    staged = []
+def stage(tmp, data):
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, 'wb') as f:
+        os.fchmod(f.fileno(), 0o644)
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+        st = os.fstat(f.fileno())
+    return st.st_dev, st.st_ino
+
+
+def publish_one(dirfd, out, name, data, linked, temps):
+    dest = out / name
+    tmp = out / f'.{name}.{uuid.uuid4().hex}.tmp'
+    temps.append(tmp)
+    identity = stage(tmp, data)
     try:
-        for name, data in todo.items():
-            fd, tmp = tempfile.mkstemp(dir=out, prefix=f'.{name}.')
-            staged.append((tmp, out / name))
-            with os.fdopen(fd, 'wb') as f:
-                f.write(data)
-                f.flush()
-                os.fsync(f.fileno())
-            os.chmod(tmp, 0o644)
-        for tmp, target in staged:
-            os.replace(tmp, target)
-    finally:
-        for tmp, _ in staged:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+        os.link(tmp, dest)
+    except FileExistsError:
+        need(regular_bytes(dest) == data, f'{dest} appeared with different bytes during publication; refusing to overwrite (late conflict)')
+    else:
+        linked.append((dest, identity))
+    os.unlink(tmp)
+    os.fsync(dirfd)
+
+
+def unlink_if_present(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    return True
+
+
+def unlink_if_ours(path, identity):
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if (st.st_dev, st.st_ino) != identity:
+        return True
+    return unlink_if_present(path)
+
+
+def rollback(dirfd, linked, temps):
+    # Returns the paths that could not be cleared. Preexisting files are never in `linked`, so never touched.
+    stuck = []
+    for dest, identity in reversed(linked):
+        if not unlink_if_ours(dest, identity):
+            stuck.append(str(dest))
+    for tmp in temps:
+        if not unlink_if_present(tmp):
+            stuck.append(str(tmp))
+    os.fsync(dirfd)
+    return stuck
+
+
+def publish(dirfd, out, todo):
+    linked, temps = [], []
+    try:
+        for name in PUBLISH_ORDER:
+            if name in todo:
+                publish_one(dirfd, out, name, todo[name], linked, temps)
+    except BaseException as cause:
+        stuck = rollback(dirfd, linked, temps)
+        if stuck:
+            raise Refusal(f"rollback incomplete: {', '.join(stuck)}; publication failed: {cause}") from cause
+        raise
 
 
 def run(prospective, subject, out):
@@ -202,8 +283,9 @@ def run(prospective, subject, out):
     new, subs = rebind_text(old, subject)
     check_recipe(old, new, p['preserved_functions'])
     files, to_sha = render(p, new, subs, subject)
-    todo = plan_writes(out, files)
-    commit_writes(out, todo)
+    with writer_lock(out) as dirfd:
+        todo = plan_writes(out, files)
+        publish(dirfd, out, todo)
     return dict(status='REBOUND' if todo else 'ALREADY_REBOUND', recipe_sha256=to_sha, out=str(out))
 
 
@@ -216,7 +298,7 @@ def main(argv=None):
     out = Path(a.out)
     try:
         result = run(a.prospective, a.reviewed_subject, out)
-    except Refusal as e:
+    except (Refusal, OSError) as e:
         print(json.dumps(dict(status='REFUSED', recipe_sha256=None, out=str(out), reason=str(e))))
         return 3
     print(json.dumps(result))

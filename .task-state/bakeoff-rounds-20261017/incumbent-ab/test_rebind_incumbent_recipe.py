@@ -1,10 +1,12 @@
 """Tests for rebind_incumbent_recipe: stdlib only, no network, VM or recipe execution."""
 import ast
 import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -66,6 +68,20 @@ def sha256(data):
 
 def top_level(tree, name):
     return next(n.value for n in tree.body if isinstance(n, ast.Assign) and getattr(n.targets[0], 'id', None) == name)
+
+
+PIN = sha256(RECIPE.encode())
+# Runs the real main() in a child with the production pin patched to the synthetic recipe's digest.
+PIN_HARNESS = ('import sys; sys.path.insert(0, sys.argv[1]); import rebind_incumbent_recipe as rb; '
+               'rb.SOURCE_RECIPE_SHA256 = sys.argv[2]; sys.exit(rb.main(sys.argv[3:]))')
+
+
+def cli_subprocess(args, pinned=False):
+    if pinned:
+        cmd = [sys.executable, '-B', '-c', PIN_HARNESS, str(HERE), PIN, *args]
+    else:
+        cmd = [sys.executable, '-B', str(HERE / 'rebind_incumbent_recipe.py'), *args]
+    return subprocess.run(cmd, capture_output=True, text=True)
 
 
 class RebindTests(unittest.TestCase):
@@ -261,6 +277,177 @@ class RebindTests(unittest.TestCase):
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertEqual(json.loads(r.stdout)['status'], 'REFUSED')
         self.assertFalse(out.exists())
+
+    def publish_names(self, out):
+        return sorted(p.name for p in out.iterdir())
+
+    def one_refusal_line(self, r):
+        self.assertEqual(r.returncode, 3, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(len(lines), 1, r.stdout)
+        res = json.loads(lines[0])
+        self.assertEqual(res['status'], 'REFUSED')
+        return res
+
+    def test_fresh_publish_links_remote_then_prospective_and_leaves_only_outputs(self):
+        real_link = os.link
+        linked = []
+
+        def recording_link(src, dst, *args, **kwargs):
+            linked.append(Path(dst).name)
+            return real_link(src, dst, *args, **kwargs)
+
+        out = self.dir / 'out'
+        with mock.patch('os.link', side_effect=recording_link):
+            rc, res = self.cli(self.write('in.json', self.prospective()), out=str(out))
+        self.assertEqual((rc, res['status']), (0, 'REBOUND'))
+        self.assertEqual(linked, [rb.REMOTE_NAME, rb.PROSPECTIVE_NAME])
+        self.assertEqual(self.publish_names(out), sorted([rb.PROSPECTIVE_NAME, rb.REMOTE_NAME]))
+
+    def test_second_publication_failure_on_fresh_out_leaves_no_pair_and_no_temp(self):
+        real_link = os.link
+        attempts = []
+
+        def flaky_link(src, dst, *args, **kwargs):
+            attempts.append(Path(dst).name)
+            if len(attempts) == 2:
+                raise PermissionError(13, 'injected second link failure')
+            return real_link(src, dst, *args, **kwargs)
+
+        path = self.write('in.json', self.prospective())
+        out = self.dir / 'out'
+        with mock.patch('os.link', side_effect=flaky_link):
+            rc, res = self.cli(path, out=str(out))
+        self.assertEqual((rc, res['status']), (3, 'REFUSED'))
+        self.assertIn('injected second link failure', res['reason'])
+        self.assertEqual(attempts, [rb.REMOTE_NAME, rb.PROSPECTIVE_NAME])
+        self.assertEqual(self.publish_names(out), [])
+
+    def test_second_publication_failure_keeps_identical_preexisting_remote(self):
+        path = self.write('in.json', self.prospective())
+        ref = self.dir / 'ref'
+        self.assertEqual(self.cli(path, out=str(ref))[0], 0)
+        out = self.dir / 'out'
+        out.mkdir()
+        remote = out / rb.REMOTE_NAME
+        remote.write_bytes((ref / rb.REMOTE_NAME).read_bytes())
+        inode = remote.stat().st_ino
+        real_link = os.link
+
+        def failing_prospective_link(src, dst, *args, **kwargs):
+            if Path(dst).name == rb.PROSPECTIVE_NAME:
+                raise PermissionError(13, 'injected prospective link failure')
+            return real_link(src, dst, *args, **kwargs)
+
+        with mock.patch('os.link', side_effect=failing_prospective_link):
+            rc, res = self.cli(path, out=str(out))
+        self.assertEqual((rc, res['status']), (3, 'REFUSED'))
+        self.assertIn('injected prospective link failure', res['reason'])
+        self.assertEqual(remote.read_bytes(), (ref / rb.REMOTE_NAME).read_bytes())
+        self.assertEqual(remote.stat().st_ino, inode)
+        self.assertEqual(self.publish_names(out), [rb.REMOTE_NAME])
+
+    def test_late_conflict_refuses_keeps_competitor_bytes_and_unlinks_own_remote(self):
+        real_link = os.link
+        competitor = b'competing writer\n'
+
+        def racing_link(src, dst, *args, **kwargs):
+            if Path(dst).name == rb.PROSPECTIVE_NAME:
+                Path(dst).write_bytes(competitor)
+            return real_link(src, dst, *args, **kwargs)
+
+        path = self.write('in.json', self.prospective())
+        out = self.dir / 'out'
+        with mock.patch('os.link', side_effect=racing_link):
+            rc, res = self.cli(path, out=str(out))
+        self.assertEqual((rc, res['status']), (3, 'REFUSED'))
+        self.assertIn('different bytes', res['reason'])
+        self.assertEqual((out / rb.PROSPECTIVE_NAME).read_bytes(), competitor)
+        self.assertEqual(self.publish_names(out), [rb.PROSPECTIVE_NAME])
+
+    def test_rollback_failure_names_residual_path(self):
+        real_link, real_unlink = os.link, os.unlink
+
+        def failing_prospective_link(src, dst, *args, **kwargs):
+            if Path(dst).name == rb.PROSPECTIVE_NAME:
+                raise PermissionError(13, 'injected prospective link failure')
+            return real_link(src, dst, *args, **kwargs)
+
+        def stuck_unlink(path, *args, **kwargs):
+            if Path(path).name == rb.REMOTE_NAME:
+                raise PermissionError(13, 'injected unlink failure')
+            return real_unlink(path, *args, **kwargs)
+
+        path = self.write('in.json', self.prospective())
+        out = self.dir / 'out'
+        with mock.patch('os.link', side_effect=failing_prospective_link), mock.patch('os.unlink', side_effect=stuck_unlink):
+            rc, res = self.cli(path, out=str(out))
+        self.assertEqual((rc, res['status']), (3, 'REFUSED'))
+        self.assertIn(f'rollback incomplete: {out / rb.REMOTE_NAME}', res['reason'])
+        self.assertEqual(self.publish_names(out), [rb.REMOTE_NAME])
+
+    def test_identical_rerun_keeps_inodes_and_outputs(self):
+        path = self.write('in.json', self.prospective())
+        self.assertEqual(self.cli(path)[0], 0)
+        out = self.dir / 'out'
+        names = (rb.PROSPECTIVE_NAME, rb.REMOTE_NAME)
+        inodes = {n: (out / n).stat().st_ino for n in names}
+        rc, res = self.cli(path)
+        self.assertEqual((rc, res['status']), (0, 'ALREADY_REBOUND'))
+        self.assertEqual(inodes, {n: (out / n).stat().st_ino for n in names})
+        self.assertEqual(self.publish_names(out), sorted(names))
+
+    def test_symlink_destination_refuses_and_is_left_alone(self):
+        out = self.dir / 'out'
+        out.mkdir()
+        target = self.dir / 'elsewhere.json'
+        target.write_bytes(b'x')
+        (out / rb.PROSPECTIVE_NAME).symlink_to(target)
+        rc, res = self.cli(self.write('in.json', self.prospective()), out=str(out))
+        self.assertEqual((rc, res['status']), (3, 'REFUSED'))
+        self.assertIn('not a regular non-symlink file', res['reason'])
+        self.assertTrue((out / rb.PROSPECTIVE_NAME).is_symlink())
+        self.assertEqual(target.read_bytes(), b'x')
+        self.assertEqual(self.publish_names(out), [rb.PROSPECTIVE_NAME])
+
+    def test_busy_out_dir_refuses_from_subprocess_and_writes_nothing(self):
+        out = self.dir / 'out'
+        out.mkdir()
+        holder = os.open(out, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, holder)
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        path = self.write('in.json', self.prospective())
+        res = self.one_refusal_line(cli_subprocess(['--prospective', path, '--reviewed-subject', NEW, '--out', str(out)], pinned=True))
+        self.assertIn('locked by another writer', res['reason'])
+        self.assertEqual(self.publish_names(out), [])
+
+    def test_unpaired_surrogate_in_recipe_refuses_from_subprocess_with_one_json_line(self):
+        p = self.prospective()
+        p['executable_recipe'] = RECIPE + '# \ud800\n'
+        path = self.write('in.json', p)
+        out = self.dir / 'out'
+        res = self.one_refusal_line(cli_subprocess(['--prospective', path, '--reviewed-subject', NEW, '--out', str(out)], pinned=True))
+        self.assertIn('UTF-8', res['reason'])
+        self.assertFalse(out.exists())
+
+    def test_unreadable_or_invalid_json_input_refuses_with_one_json_line(self):
+        out = self.dir / 'out'
+        for label, path in [('invalid JSON', self.write('bad.json', '{not json')),
+                            ('missing file', str(self.dir / 'absent.json'))]:
+            with self.subTest(label):
+                rc, res = self.cli(path, out=str(out))
+                self.assertEqual((rc, res['status']), (3, 'REFUSED'))
+                self.assertFalse(out.exists())
+
+    def test_output_parent_is_regular_file_refuses_from_subprocess_and_leaves_input(self):
+        blocker = self.dir / 'blocker'
+        blocker.write_bytes(b'not a directory\n')
+        path = self.write('in.json', self.prospective())
+        before = Path(path).read_bytes()
+        res = self.one_refusal_line(cli_subprocess(['--prospective', path, '--reviewed-subject', NEW, '--out', str(blocker / 'out')], pinned=True))
+        self.assertIn('Not a directory', res['reason'])
+        self.assertEqual(Path(path).read_bytes(), before)
+        self.assertEqual(blocker.read_bytes(), b'not a directory\n')
 
 
 if __name__ == '__main__':

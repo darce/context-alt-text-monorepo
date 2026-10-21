@@ -82,6 +82,18 @@ INLINE_PROCESSING_HEARTBEAT_INTERVAL = timedelta(minutes=5)
 # stays server-side in the log record; 501 would tell the caller the endpoint does
 # not exist and change its retry/caching decision (API-08).
 INTERNAL_ERROR_DETAIL = "internal server error"
+JOB_STREAM_MAX_SECONDS = 300
+JOB_STREAM_MAX_PER_TENANT = 4
+JOB_STREAM_MAX_TOTAL = 12
+_job_stream_counts: dict[str | None, int] = {}
+_job_stream_total = 0
+
+
+def _reset_job_stream_limiter_for_tests() -> None:
+    global _job_stream_total
+    _job_stream_counts.clear()
+    _job_stream_total = 0
+
 _OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _IDENTITY_ENVELOPE_KEYS = frozenset({"tenant_id", "media_ids", "media_items", "operation_id", "idempotency_key"})
 MAX_ANALYZE_BODY_BYTES = 1_048_576
@@ -995,6 +1007,7 @@ async def acknowledge_projection(
 async def stream_job_progress(
     job_id: str,
     tenant_id: str = Header(alias="X-Tenant-ID"),
+    auth=Depends(require_auth),
     job_repo=Depends(get_job_repo),
     scan_repo=Depends(get_scan_queue_repo),
 ) -> EventSourceResponse:
@@ -1008,29 +1021,48 @@ async def stream_job_progress(
     Returns:
         SSE response streaming progress events.
     """
-    import asyncio
-    import time
+    time = _time
+
+    caller_tenant = _poll_tenant_authority(auth, x_tenant_id=tenant_id)
+    stream_tenant = caller_tenant if caller_tenant is not None else _canonical_tenant_id(tenant_id)
 
     async def event_generator():
+        global _job_stream_total
+        # No await between check and increment: atomic within the event loop.
+        count = _job_stream_counts.get(stream_tenant, 0)
+        if count >= JOB_STREAM_MAX_PER_TENANT or _job_stream_total >= JOB_STREAM_MAX_TOTAL:
+            yield {"event": "error", "data": "too_many_streams"}
+            return
+        _job_stream_counts[stream_tenant] = count + 1
+        _job_stream_total += 1
+        deadline = time.monotonic() + JOB_STREAM_MAX_SECONDS
         last_completed = -1
         last_emit = 0
         last_heartbeat = time.time()
         last_phase: str | None = None
 
+        poll_timeout = None
         try:
             while True:
-                # Poll DB for latest job state via general job repo
-                job = await job_repo.get(job_id)
-                if not job:
+                if time.monotonic() >= deadline:
+                    yield {"event": "timeout", "data": json.dumps({"job_id": job_id, "reconnect": True})}
+                    break
+                # Bound database/progress awaits by the same stream deadline.
+                async with asyncio.timeout(deadline - time.monotonic()) as poll_timeout:
+                    job = await job_repo.get(job_id)
+                    visible = job is not None and _job_is_visible(job=job, caller_tenant=caller_tenant)
+                    if visible:
+                        progress = await _job_to_pipeline_response(
+                            requested_job_id=job_id,
+                            domain_job=job,
+                            repo=job_repo,
+                            scan_repo=scan_repo,
+                            caller_tenant=caller_tenant,
+                        )
+                if not visible:
                     yield {"event": "error", "data": "Job not found"}
                     break
 
-                progress = await _job_to_pipeline_response(
-                    requested_job_id=job_id,
-                    domain_job=job,
-                    repo=job_repo,
-                    scan_repo=scan_repo,
-                )
                 progress_payload = progress.progress.model_dump(exclude_none=True) if progress.progress else {}
                 job_status = progress.status
                 current_completed = progress_payload.get("completed", job.progress_completed)
@@ -1081,13 +1113,24 @@ async def stream_job_progress(
                     }
                     break
 
-                await asyncio.sleep(0.1)  # 100ms polling for smooth UI
+                await asyncio.sleep(min(0.1, max(0, deadline - time.monotonic())))
         except asyncio.CancelledError:
             # Client disconnected
             pass
         except Exception as exc:
-            logger.exception("Error in SSE stream for job %s", job_id)
-            yield {"event": "error", "data": str(exc)}
+            if isinstance(exc, TimeoutError) and poll_timeout is not None and poll_timeout.expired():
+                yield {"event": "timeout", "data": json.dumps({"job_id": job_id, "reconnect": True})}
+            else:
+                logger.exception("Error in SSE stream for job %s", job_id)
+                yield {"event": "error", "data": INTERNAL_ERROR_DETAIL}
+
+        finally:
+            _job_stream_total -= 1
+            remaining = _job_stream_counts[stream_tenant] - 1
+            if remaining:
+                _job_stream_counts[stream_tenant] = remaining
+            else:
+                del _job_stream_counts[stream_tenant]
 
     return EventSourceResponse(event_generator())
 

@@ -274,6 +274,7 @@ async def _gpu_client(
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(state_path))
     monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(load_path))
     monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
+    monkeypatch.setenv("ACX_GPU_OPERATOR_TENANT_IDS", "11111111-1111-1111-1111-111111111111")
     monkeypatch.setattr(gpu_routes, "_now", lambda: NOW)
 
     writes: list[tuple[tuple[Any, ...], dict[str, Any]]] = []

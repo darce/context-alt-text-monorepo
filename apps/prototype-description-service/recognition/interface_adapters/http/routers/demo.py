@@ -16,9 +16,10 @@ import os
 import time
 from collections import deque
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.services.demo_provisioning_service import (
@@ -126,8 +127,10 @@ class DemoProvisionRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    label: str
-    seed: str = "default"
+    label: Annotated[str, StringConstraints(strip_whitespace=True)] = Field(
+        min_length=1, max_length=120
+    )
+    seed: str = Field(default="default", min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class DemoProvisionResponse(BaseModel):

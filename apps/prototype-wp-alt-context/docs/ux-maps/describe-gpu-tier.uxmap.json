@@ -3,9 +3,11 @@
   "product": "alt-context WP plugin admin SPA — describe run GPU tier + lifecycle state",
   "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/QueueDraftCell.tsx",
   "goals": [
-    "UXREC-1 target contract awaiting map gate: distinguish idle/unknown service observation, known blocked configuration, active warming/running, genuine failure, retry and remount. Existing code references are anchors, not implementation claims.",
-    "An accepted run exposes observed startup progress, its actual deadline, cancel and return-to-run; historical cold-start measurements are not a current ETA guarantee.",
-    "Existing CPU drafts remain reviewable with their reported item tier. Unknown GPU/capability never promises CPU continuation; CPU fallback is conditional on a usable configured adapter, not generic API health.",
+    "UXREC-1 target contract (proposed; not current source): unknown or stale GPU observation, an accepted warming or running run, and a genuine run failure are separate states. GPU status carries no configuration or capability field, so no surface infers configuration or CPU capability from unknown telemetry ([HAI-05] Imperceptible AI is not ethical, Human-Centered AI). Code references are anchors, not implementation claims.",
+    "An accepted run exposes its observed startup state, its actual startup bound, Cancel and return-to-run ([INT-10] Status–predict–stop, Human-Centered AI); historical cold-start measurements are not a current ETA.",
+    "Three outcomes stay distinct: GPU success (items report the final GPU tier); CPU completion after a warm-up timeout, only when a usable CPU adapter is configured (the run reports fallback reason gpu_warmup_timeout and items report the provisional CPU tier); typed warm-up failure with no CPU (FAILED terminal gpu_warmup_timeout, Retry only when retryable, no drafts). There is no automatic CPU-to-GPU draft upgrade, and draft review exists only when the run reports completed items.",
+    "Visible copy fix: the warming and degraded toasts (GPU_STATE_VOCABULARY warmingToast and degradedToast, emitted by useGpuStateToasts) name only the observed GPU state and never claim CPU drafts without returned evidence. Canonical state labels, dormant unavailable-toast suppression, real results and their review actions, and genuine failure, cancel and retry stay. Editing the unused gpuStateNotice / notReportedNotice helper is cleanup, not the visible fix.",
+    "endpoint_unconfigured copy belongs only where an actual unavailable envelope with that reason is received: the shared unavailable-reason copy table and its existing consumers (Settings GPU control and Retention, mapped elsewhere). The bulk describe-run submit returns no such envelope, and unknown or stale status telemetry never shows configuration copy; a status-contract configuration field is a separate backend task.",
     "Before Describe, disclose possible GPU warm-up and infrastructure charges separately from credits, with a Settings link (INT-07, NAV-11). Read failures retain saved rows and apply recovery, show a stale notice, and offer a read-only Retry (INT-10)."
   ],
   "jobs": [
@@ -27,7 +29,7 @@
       "id": "workbench-media-selection",
       "kind": "screen",
       "title": "Workbench › Media selection",
-      "purpose": "Select media and describe; UXREC-1 proposed quiet unknown consequence copy: GPU tier not reported. Description readiness is unconfirmed. No idle failure toast. Known configuration error is separate from an accepted run failure. Existing tenant-scoped operation storage resumes accepted run_id on remount without resubmission; this is source behavior, runtime acceptance pending.",
+      "purpose": "Select media and describe. UXREC-1 proposed quiet unknown copy: GPU tier not reported; description readiness is unconfirmed; no idle failure toast. Existing tenant-scoped operation storage resumes an accepted run_id on remount without resubmission; this is source behavior, runtime acceptance pending.",
       "route": "#/workbench",
       "job_entry": true,
       "deep_link": true,
@@ -38,26 +40,26 @@
       "zones": [
         {
           "id": "z-bulk-cta",
-          "label": "Describe selected; selection and service readiness are separate. Proposed unknown copy makes no CPU promise. Known blocked configuration names the service and Settings recovery without inventing a new readiness API or disabling otherwise legal submissions.",
+          "label": "Describe selected; selection and service readiness are separate. Unknown GPU copy makes no CPU or configuration claim and does not disable an otherwise legal submission; no new readiness API.",
           "role": "job",
           "states": ["default", "loading", "empty"]
         },
         {
           "id": "z-bulk-progress",
-          "label": "Accepted run only: starting/warming/running, observed deadline, Cancel and return-to-run; completed/cancelled outcome; genuine failure with cause and supported retry. CPU drafts appear only when actual results exist.",
+          "label": "Accepted run only: starting, warming or running with observed state, actual startup bound, Cancel and return-to-run. Terminal captions stay distinct: GPU success; CPU completion after warm-up timeout (reported fallback reason, provisional CPU items); typed warm-up failure with no drafts and Retry only when retryable. Cancelled and other failures keep their existing outcomes.",
           "role": "status",
           "evidence_linked": true,
           "states": ["default", "loading", "error", "degraded"]
         },
         {
           "id": "z-gpu-tier-chip",
-          "label": "GPU observation is not description readiness: idle unknown stays quiet; starting/warming/ready/degraded do not certify completed results. Proposed neutral unknown copy is owned by gpuStatePresentation.ts.",
+          "label": "GPU observation is not description readiness: unknown stays quiet with neutral copy; starting, warming, ready and degraded never certify results or CPU capability; canonical state labels are unchanged.",
           "role": "status",
           "states": ["default", "loading", "empty", "degraded"]
         },
         {
           "id": "z-review-link",
-          "label": "Review & apply drafts link — Hidden until the run is terminal; terminal runs link to #/workbench?hasDraft=1&run=<id>, regardless of item tier.",
+          "label": "Review & apply drafts link — only for a terminal run that reports completed items, linking #/workbench?hasDraft=1&run=<id>; absent after a failure that returned no drafts; shows the reported item tier and never promises an upgrade.",
           "role": "nav",
           "states": ["default", "empty", "degraded"]
         },
@@ -84,14 +86,14 @@
       "zones": [
         {
           "id": "z-item-tier-badge",
-          "label": "Per-image draft and saved-alt distinction, with version run/time provenance. Run result tier and naming provenance remain in the existing result API; this row does not infer a tier from failure status.",
+          "label": "Per-image draft and saved-alt distinction, with version run/time provenance. Shows the reported item tier (final GPU or provisional CPU) and naming provenance from the existing result API; never infers a tier from run failure or GPU state.",
           "role": "status",
           "evidence_linked": true,
           "states": ["default", "error", "degraded"]
         },
         {
           "id": "z-upgrade-notice",
-          "label": "Future lifecycle requirement (M03), not implemented in review: any upgrade notice requires explicit item upgrade state; GPU readiness alone never promises final descriptions.",
+          "label": "No upgrade notice: provisional CPU drafts stay as returned; there is no automatic CPU-to-GPU upgrade, and any GPU result comes only from a later, explicitly started run. GPU readiness never promises final descriptions.",
           "role": "status",
           "states": ["default", "loading", "empty"]
         }
@@ -129,7 +131,7 @@
       "id": "toast-gpu-transition",
       "kind": "overlay",
       "title": "Toast — GPU tier transition",
-      "purpose": "Preserve source suppression of dormant GPU_STATUS_UNAVAILABLE when runId is null. Genuine in-run failures and actual completion remain meaningful feedback. UXREC-1 proposed quiet unknown wording does not suppress failures or add per-poll notices.",
+      "purpose": "Preserve source suppression of dormant GPU_STATUS_UNAVAILABLE when runId is null; genuine in-run failures and actual completion remain meaningful feedback. UXREC-1 visible fix: the warming and degraded toasts name only the observed GPU state and never claim CPU drafts; no per-poll notices.",
       "route": "#/workbench (transient toast; no dedicated route)",
       "job_entry": false,
       "deep_link": false,
@@ -140,7 +142,7 @@
       "zones": [
         {
           "id": "z-toast-body",
-          "label": "Toast body — State vocabulary: info and success = default; error = error.",
+          "label": "Toast body — info and success = default; error = error. Done reports the actual completed count and offers Review drafts only when that count is above zero; failure names its typed cause, with Retry only when retryable.",
           "role": "status",
           "states": ["default", "error"]
         }
@@ -170,7 +172,7 @@
     },
     {
       "id": "keep-provisional",
-      "verb": "Review existing drafts (only when returned)",
+      "verb": "Review returned drafts (only when the run reports completed items)",
       "target": "navigate describe-run-apply",
       "hierarchy": "secondary",
       "costly": false,
@@ -223,50 +225,69 @@
     {
       "id": "bulk-describe-cold-gpu",
       "job": "bulk-describe",
-      "label": "Bulk describe when GPU is stopped",
+      "label": "GPU success: cold GPU becomes ready within the startup bound",
       "steps": [
         {
           "screen_id": "workbench-media-selection",
-          "branch_label": "select → readiness/cost preview; unknown is not a CPU capability claim"
+          "branch_label": "select → readiness/cost preview; unknown GPU observation is not a CPU or configuration claim"
         },
         {
           "screen_id": "workbench-media-selection",
-          "branch_label": "accepted run → observed starting/warming with actual bound and Cancel; no fixed current ETA"
+          "branch_label": "accepted run → observed starting/warming with its actual startup bound and Cancel; no fixed ETA"
         },
         {
           "screen_id": "workbench-media-selection",
-          "branch_label": "if actual CPU drafts arrive → review returned drafts; do not infer a CPU path from unknown GPU state"
-        },
-        {
-          "screen_id": "workbench-media-selection",
-          "branch_label": "GPU ready → describing-final → complete"
+          "branch_label": "GPU ready within the bound → describing on GPU → terminal; items report the final GPU tier"
         },
         {
           "screen_id": "toast-gpu-transition",
-          "branch_label": "only if operator left: announce actual results ready; GPU ready alone is not result completion"
+          "branch_label": "only if the operator left: Done reports the completed count; Review drafts only when that count is above zero"
         },
         {
           "screen_id": "describe-run-apply",
-          "branch_label": "Review each image draft, preview an earlier version, edit or explicitly accept; saved alt text changes only on approval"
+          "branch_label": "Review each returned draft, preview an earlier version, edit or explicitly accept; saved alt text changes only on approval"
         }
       ]
     },
     {
-      "id": "bulk-describe-gpu-degraded",
+      "id": "bulk-describe-warmup-cpu-completion",
       "job": "bulk-describe",
-      "label": "GPU fails to come up / unreachable",
+      "label": "Conditional CPU completion: warm-up times out and a usable CPU adapter is configured",
       "steps": [
         {
           "screen_id": "workbench-media-selection",
-          "branch_label": "startup bound expires or endpoint fails → conditional usable-CPU fallback; without one, typed retryable run failure"
+          "branch_label": "accepted run warming → the actual startup bound expires"
+        },
+        {
+          "screen_id": "workbench-media-selection",
+          "branch_label": "only with a usable configured CPU adapter: the run continues on CPU, reports fallback reason gpu_warmup_timeout, and items report the provisional CPU tier"
         },
         {
           "screen_id": "toast-gpu-transition",
-          "branch_label": "genuine run failure remains visible; keep any existing drafts; no dormant unavailable toast"
+          "branch_label": "only if the operator left: Done reports the completed count without a GPU-result claim; Review drafts only when that count is above zero"
         },
         {
           "screen_id": "describe-run-apply",
-          "branch_label": "Review reported per-item tiers without an automatic upgrade promise; apply safe drafts, opt in to overwrites, or return to full history"
+          "branch_label": "review provisional CPU drafts as returned; no automatic GPU upgrade; acceptance stays explicit"
+        }
+      ]
+    },
+    {
+      "id": "bulk-describe-warmup-failure-no-cpu",
+      "job": "bulk-describe",
+      "label": "Typed failure without CPU: warm-up times out and no usable CPU adapter exists",
+      "steps": [
+        {
+          "screen_id": "workbench-media-selection",
+          "branch_label": "accepted run warming → the actual startup bound expires with no usable CPU adapter"
+        },
+        {
+          "screen_id": "workbench-media-selection",
+          "branch_label": "run FAILED with typed warm-up timeout: no CPU drafts are created or promised, saved alt text is unchanged, Retry only when retryable"
+        },
+        {
+          "screen_id": "toast-gpu-transition",
+          "branch_label": "only if the operator left: the failure toast names the warm-up timeout, with Retry only when retryable; no draft review"
         }
       ]
     },
@@ -300,7 +321,7 @@
         },
         {
           "screen_id": "describe-run-apply",
-          "branch_label": "actual returned drafts become reviewable; acceptance is explicit, never automatic"
+          "branch_label": "only when the resumed run reports completed items: those returned drafts become reviewable; acceptance is explicit, never automatic"
         }
       ]
     }
@@ -314,6 +335,8 @@
   "not_doing": [
     "No confirm tab / modal before bulk describe (workbench not-doing inherited); cost disclosure lives in the CTA label + CTA hint.",
     "No per-poll toasts; no toast for provisional→final per item.",
-    "No GPU cost meter in the plugin (billing is operator-side, OCI)."
+    "No GPU cost meter in the plugin (billing is operator-side, OCI).",
+    "No automatic CPU-to-GPU draft upgrade, and no CPU-continuation promise from unknown, stale or degraded GPU state.",
+    "No backend status schema or configuration/capability field, GPU automation, authorization bypass, billing or credential change; operator-tenant GPU authorization and id path-segment encoding stay unchanged."
   ]
 }

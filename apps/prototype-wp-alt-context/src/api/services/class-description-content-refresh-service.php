@@ -185,10 +185,14 @@ class DescriptionContentRefreshService {
 				// candidates = intended writes; changed = verified durable writes.
 				$candidates += count( $pending_changed );
 				$post_id     = absint( $post->ID );
+				// wp_insert_post unslashes its input; slash so the \u escapes in
+				// block JSON (and any other backslashes in the post) survive.
 				$updated     = wp_update_post(
 					array(
 						'ID'           => $post_id,
-						'post_content' => $updated_content,
+						'post_content' => function_exists( 'wp_slash' )
+							? \wp_slash( $updated_content )
+							: addslashes( $updated_content ),
 					),
 					true
 				);

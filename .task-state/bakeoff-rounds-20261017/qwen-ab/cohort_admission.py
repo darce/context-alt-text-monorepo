@@ -60,12 +60,26 @@ for n in units:
 print(json.dumps(out))
 """
 
+SAMPLE_SECONDS = 10  # the NATIVE_SCRIPT CPU window; classify_native_units refuses a measured window outside [5, 30]
 NATIVE_SCRIPT = '''import json,pathlib,subprocess,time,os
 q=lambda *a:subprocess.check_output(a,text=True,timeout=8)
 b=pathlib.Path('/sys/fs/cgroup/user.slice/user-'+str(os.getuid())+'.slice')
-units=[]
+def num(x):
+ try:return int(x)
+ except(TypeError,ValueError):return None
+def sample(n):
+ try:return dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','ControlGroup','-p','CPUUsageNSec').splitlines()if '='in x)
+ except subprocess.SubprocessError:return {}
+units=[];first={}
 for line in q('systemctl','--user','list-units','--state=running','--no-legend','--plain','workbay-lane-*.scope','workbay-lane-*.service','workbay-custody-*.scope','workbay-custody-*.service').splitlines():
- n=line.split()[0];r=dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','CPUQuotaPerSecUSec','-p','MemoryMax').splitlines()if '='in x);r['unit']=n;units.append(r)
+ n=line.split()[0];r=dict(x.split('=',1)for x in q('systemctl','--user','show',n,'-p','CPUQuotaPerSecUSec','-p','MemoryMax','-p','ControlGroup','-p','CPUUsageNSec','-p','MemoryCurrent').splitlines()if '='in x);r['unit']=n;units.append(r);first[n]=num(r.get('CPUUsageNSec'))
+t0=time.monotonic()
+if units:time.sleep(10)
+t1=time.monotonic()
+for r in units:
+ v=sample(r['unit']);c=num(v.get('CPUUsageNSec'));a=first[r['unit']]
+ r['cpu_usage_nsec_delta']=None if v.get('ControlGroup')!=r.get('ControlGroup')or a is None or c is None or c<a else c-a
+ r['sample_seconds']=t1-t0
 i=dict(l.split(':',1)for l in pathlib.Path('/proc/meminfo').read_text().splitlines());s=dict(l.split()for l in (b/'memory.stat').read_text().splitlines())
 mx=(b/'memory.max').read_text().strip();w=None if mx=='max' else int(mx)-max(0,int((b/'memory.current').read_text())-int(s.get('inactive_file',0)))
 print(json.dumps({'at':time.time(),'units':units,'cpu':pathlib.Path('/proc/pressure/cpu').read_text(),'io':(b/'io.pressure').read_text(),'physical_mem_available':int(i['MemAvailable'].split()[0])*1024,'working_headroom':w}))
@@ -113,6 +127,29 @@ def owns(unit, key):
     return unit == key or re.fullmatch(re.escape(key) + r'(-r[0-9]+)?(-sv)?\.(scope|service)', unit) is not None
 
 
+CO_TENANT_CPU_FLOOR, CO_TENANT_CPU_FACTOR = .25, 2.  # RES-35 explicit per-unit reserve; PERF-13 burst headroom
+CO_TENANT_MEM_FLOOR, CO_TENANT_MEM_FACTOR = G, 2.    # memory is incompressible (OOM kills): a 1 GiB floor and 2x headroom
+
+
+def usable(x):
+    # A measurement counts only as a finite, non-negative number; anything else charges the declared cap.
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x >= 0
+
+
+def measured_cores(row):
+    # cores = delta / 1e9 / sample_seconds; a window outside [5, 30] seconds is no measurement.
+    delta, seconds = row.get('cpu_usage_nsec_delta'), row.get('sample_seconds')
+    return delta / 1e9 / seconds if usable(delta) and usable(seconds) and 5 <= seconds <= 30 else None
+
+
+def measured_bytes(row):
+    # MemoryCurrent is a decimal string from systemctl; [not set], a float, a bool or a negative value is no measurement.
+    value = row.get('MemoryCurrent')
+    if isinstance(value, str) and value.isdecimal():
+        value = int(value)
+    return value if isinstance(value, int) and usable(value) else None
+
+
 def classify_native_units(units, expected):
     owned = {k: [0., 0] for k in expected}
     co_tenant = []
@@ -128,7 +165,12 @@ def classify_native_units(units, expected):
         else:
             # RES-35: a co-tenant lane is reserved against, not refused for being unreconciled.
             require('co_tenant_unbounded', cpu is not None and mem is not None, 'unbounded co-tenant native unit: ' + unit)
-            co_tenant.append(dict(unit=unit, cpu=cpu, memory=mem))
+            # PERF-13 / RES-24: charge measured use with burst headroom, never above the declared cap; an unmeasured resource charges its cap.
+            cores, used = measured_cores(row), measured_bytes(row)
+            charged_cpu = cpu if cores is None else min(cpu, max(CO_TENANT_CPU_FLOOR, CO_TENANT_CPU_FACTOR * cores))
+            charged_memory = mem if used is None else min(mem, max(CO_TENANT_MEM_FLOOR, int(CO_TENANT_MEM_FACTOR * used)))
+            co_tenant.append(dict(unit=unit, cpu=cpu, memory=mem, measured_cpu=cores, measured_memory=used,
+                                  charged_cpu=charged_cpu, charged_memory=charged_memory))
     for k, (cpu, mem) in owned.items():
         require('owned_unit_over_quota', cpu <= expected[k][0] + 1e-8 and mem <= expected[k][1],
                 f'{k}: cpu {cpu} memory {mem} over caps {expected[k]}')
@@ -265,8 +307,9 @@ def evaluate(ledger, profile, root, native, now):
         memory += 4*G
     units = classify_native_units(native['units'], expected)
     co = units['co_tenant']
-    co_cpu = sum(c['cpu'] for c in co)
-    co_mem = sum(c['memory'] for c in co)
+    # COST-03: the ceilings sum the charge, and the receipt keeps the measured use beside it.
+    co_cpu = sum(c['charged_cpu'] for c in co)
+    co_mem = sum(c['charged_memory'] for c in co)
     # RES-35: the co-tenant reserve counts in every ceiling. A ceiling that fails without the reserve is ledger_state;
     # one that fails only with it is transient, because the co-tenant may finish. Plain ceilings go first, so a
     # deterministic failure is never masked by a transient one (NDM-06).
@@ -298,7 +341,9 @@ def evaluate(ledger, profile, root, native, now):
     return dict(at=now.timestamp(), ledger_sha256=hashlib.sha256(json.dumps(ledger, sort_keys=True).encode()).hexdigest(),
                 prospective_CPU=cpu + co_cpu + AURA_RUNTIME_CPU, prospective_RAM=memory + co_mem + AURA_RUNTIME_MEMORY,
                 projected_root=projected, pending=pending, owned=units['owned'],
-                co_tenant_reserve=dict(cpu=co_cpu, memory=co_mem, units=[c['unit'] for c in co]),
+                co_tenant_reserve=dict(cpu=co_cpu, memory=co_mem, units=[c['unit'] for c in co],
+                                       measured=[dict(unit=c['unit'], cpu=c['measured_cpu'], memory=c['measured_memory']) for c in co],
+                                       charged=[dict(unit=c['unit'], cpu=c['charged_cpu'], memory=c['charged_memory']) for c in co]),
                 classes_checked=list(EVALUATED))
 
 
@@ -347,7 +392,8 @@ def guard():
         root_named_units = ssh_json(probe_argv(HOST), ROOT_NAMED_SCRIPT.replace('UNITS', repr(root_units)), 30) if root_units else {}
         classify_root_named(root_named_units, root_units)
         root = ssh_json(probe_argv(HOST), (base.P/ROOT_PROBE).read_text() + '\n', 30)
-        native = ssh_json(probe_argv(base.d.HOST), NATIVE_SCRIPT, 30)
+        # The native probe holds a SAMPLE_SECONDS CPU window, so it gets a longer transport timeout than the root probes.
+        native = ssh_json(probe_argv(base.d.HOST), NATIVE_SCRIPT, 60)
         proof = evaluate(ledger, base.PROFILE, root, native, datetime.now(timezone.utc))
     except (KeyError, IndexError, TypeError, AttributeError, ValueError) as e:
         # A malformed payload is a labeled refusal, not an unlabeled exit 1. AdmissionRefusal is an AssertionError, so labeled refusals pass through.

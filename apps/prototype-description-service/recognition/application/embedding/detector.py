@@ -20,6 +20,8 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import httpx
+
+from recognition.shared.safe_fetch import SafeFetchError, fetch_public_image
 import imagehash
 import numpy as np
 from PIL import Image
@@ -255,14 +257,10 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
         try:
             if self._client is None:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    return response.content
-            response = await self._client.get(url)
-            response.raise_for_status()
-            return response.content
-        except httpx.HTTPError as e:
-            logger.error("Failed to fetch image from %s: %s", url[:100], e)
+                    return await fetch_public_image(url, client=client, timeout=self._timeout)
+            return await fetch_public_image(url, client=self._client, timeout=self._timeout)
+        except SafeFetchError as e:
+            logger.error("Failed to fetch image: %s", e)
             return None
 
     @staticmethod

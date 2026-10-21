@@ -257,15 +257,16 @@ def measured(name, cores=None, used=None, cpu='2s', mem=str(6*G), seconds=10.):
     return row
 
 
-def test_idle_co_tenant_is_charged_the_cpu_floor_and_the_memory_floor():
+def test_idle_co_tenant_is_charged_the_cpu_floor_and_its_declared_memory_cap():
+    # RES-35: memory is charged at the cap even though the co-tenant measures 200 MB; the measurement is kept as evidence.
     out = CA.classify_native_units([measured('abc', cores=.10, used=200*10**6)], OWN)
     assert out['co_tenant'] == [dict(unit='workbay-lane-other-abc.scope', cpu=2., memory=6*G, measured_cpu=pytest.approx(.10),
-                                     measured_memory=200*10**6, charged_cpu=.25, charged_memory=G)]
+                                     measured_memory=200*10**6, charged_cpu=.25, charged_memory=6*G)]
 
 
-def test_busy_co_tenant_is_charged_twice_its_measured_use():
+def test_busy_co_tenant_is_charged_twice_its_measured_cpu_and_its_declared_memory_cap():
     out = CA.classify_native_units([measured('abc', cores=1., used=2*G)], OWN)
-    assert out['co_tenant'][0]['charged_cpu'] == pytest.approx(2.) and out['co_tenant'][0]['charged_memory'] == 4*G
+    assert out['co_tenant'][0]['charged_cpu'] == pytest.approx(2.) and out['co_tenant'][0]['charged_memory'] == 6*G
 
 
 def test_measured_use_above_the_declared_cap_is_charged_the_cap():
@@ -282,11 +283,11 @@ def test_an_unmeasured_cpu_window_charges_the_declared_cpu_cap(field, value):
     row = with_field(measured('abc', cores=.10, used=200*10**6), field, value)
     out = CA.classify_native_units([row], OWN)['co_tenant'][0]
     assert out['measured_cpu'] is None
-    assert out['charged_cpu'] == 2. and out['charged_memory'] == G
+    assert out['charged_cpu'] == 2. and out['charged_memory'] == 6*G
 
 
 @pytest.mark.parametrize('value', [MISSING, None, '[not set]', '-1', 'banana', '1.5e9', float('nan'), 1.5e9, True])
-def test_an_unmeasured_memory_reading_charges_the_declared_memory_cap(value):
+def test_an_unreadable_memory_reading_is_no_evidence_and_charges_the_declared_memory_cap(value):
     row = with_field(measured('abc', cores=.10, used=200*10**6), 'MemoryCurrent', value)
     out = CA.classify_native_units([row], OWN)['co_tenant'][0]
     assert out['measured_memory'] is None
@@ -421,6 +422,7 @@ def test_native_script_reports_working_headroom_or_null(monkeypatch, capsys, tmp
 
 
 CO_A = 'workbay-lane-other-a.scope'
+CO_B = 'workbay-lane-other-b.scope'
 
 
 def shown_a(**over):
@@ -445,29 +447,40 @@ def fake_systemctl(shown, after):
     return check_output
 
 
-def fake_clock(monkeypatch, start=100.):
-    # The sample window is SAMPLE_SECONDS long on the monotonic clock; the sleep is recorded, not taken.
-    slept, ticks = [], iter([start, start + CA.SAMPLE_SECONDS])
+def fake_clock(monkeypatch, stamps):
+    # NATIVE_SCRIPT stamps the monotonic clock before each unit's first read and after its second, in unit order; the
+    # sleep is recorded, not taken. A stamp the script does not take fails loudly on the exhausted iterator.
+    slept, ticks = [], iter(stamps)
     monkeypatch.setattr(time, 'sleep', slept.append)
     monkeypatch.setattr(time, 'monotonic', lambda: next(ticks))
     return slept
 
 
-def test_native_script_compiles_and_reads_the_cgroup_counters_over_one_window():
+def test_native_script_compiles():
     compile(CA.NATIVE_SCRIPT, 'native', 'exec')
-    assert 'CPUUsageNSec' in CA.NATIVE_SCRIPT and 'MemoryCurrent' in CA.NATIVE_SCRIPT
-    assert f'time.sleep({CA.SAMPLE_SECONDS})' in CA.NATIVE_SCRIPT
 
 
 def test_native_script_samples_each_unit_over_one_window_and_classify_charges_it(monkeypatch, capsys, tmp_path):
-    slept = fake_clock(monkeypatch)
+    slept = fake_clock(monkeypatch, [100., 110.])
     out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296',
                             systemctl=fake_systemctl({CO_A: shown_a()}, {CO_A: dict(ControlGroup='/g/a', CPUUsageNSec='2000000000')}))
     assert slept == [CA.SAMPLE_SECONDS]
     assert out['units'][0]['cpu_usage_nsec_delta'] == 1_000_000_000
-    assert out['units'][0]['sample_seconds'] == pytest.approx(CA.SAMPLE_SECONDS)
+    assert out['units'][0]['sample_seconds'] == pytest.approx(10.)
     row = CA.classify_native_units(out['units'], {})['co_tenant'][0]
-    assert row['measured_cpu'] == pytest.approx(.10) and row['charged_cpu'] == .25 and row['charged_memory'] == G
+    assert row['measured_cpu'] == pytest.approx(.10) and row['charged_cpu'] == .25 and row['charged_memory'] == 6*G
+
+
+def test_native_script_gives_each_unit_its_own_window_over_one_shared_sleep(monkeypatch, capsys, tmp_path):
+    # Unit a starts first and ends first; each sample_seconds is that unit's own elapsed time, not the shared sleep's.
+    slept = fake_clock(monkeypatch, [100., 101., 110.5, 111.2])
+    systemctl = fake_systemctl({CO_A: shown_a(), CO_B: shown_a(ControlGroup='/g/b')},
+                               {CO_A: dict(ControlGroup='/g/a', CPUUsageNSec='2000000000'),
+                                CO_B: dict(ControlGroup='/g/b', CPUUsageNSec='3000000000')})
+    out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296', systemctl=systemctl)
+    assert slept == [CA.SAMPLE_SECONDS]
+    assert {u['unit']: u['sample_seconds'] for u in out['units']} == pytest.approx({CO_A: 10.5, CO_B: 10.2})
+    assert {u['unit']: u['cpu_usage_nsec_delta'] for u in out['units']} == {CO_A: 1_000_000_000, CO_B: 2_000_000_000}
 
 
 @pytest.mark.parametrize('first,after', [
@@ -478,7 +491,7 @@ def test_native_script_samples_each_unit_over_one_window_and_classify_charges_it
     ('[not set]', dict(ControlGroup='/g/a', CPUUsageNSec='2000000000')),
 ], ids=['vanished', 'second reading not set', 'cgroup replaced', 'counter reset', 'first reading not set'])
 def test_native_script_nulls_an_unusable_cpu_delta_so_the_cap_is_charged(monkeypatch, capsys, tmp_path, first, after):
-    fake_clock(monkeypatch)
+    fake_clock(monkeypatch, [100., 110.])
     out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296',
                             systemctl=fake_systemctl({CO_A: shown_a(CPUUsageNSec=first)}, {CO_A: after}))
     assert out['units'][0]['cpu_usage_nsec_delta'] is None
@@ -486,7 +499,7 @@ def test_native_script_nulls_an_unusable_cpu_delta_so_the_cap_is_charged(monkeyp
 
 
 def test_native_script_takes_no_sample_window_when_no_unit_runs(monkeypatch, capsys, tmp_path):
-    slept = fake_clock(monkeypatch)
+    slept = fake_clock(monkeypatch, [])
     out = run_native_script(monkeypatch, capsys, tmp_path, '4294967296')
     assert slept == [] and out['units'] == []
 
@@ -499,7 +512,7 @@ def test_evaluate_passes_healthy_fixture_with_proof_fields():
                 'co_tenant_reserve', 'classes_checked'):
         assert key in proof
     assert proof['ledger_sha256'] == hashlib.sha256(json.dumps(ledger(), sort_keys=True).encode()).hexdigest()
-    assert proof['co_tenant_reserve'] == dict(cpu=0., memory=0, units=[], measured=[], charged=[])
+    assert proof['co_tenant_reserve'] == dict(cpu=0., memory=0, charged_cpu=0., charged_memory=0, units=[], measured=[], charged=[])
 
 
 def test_evaluate_owned_unit_within_quota_passes():
@@ -510,7 +523,8 @@ def test_evaluate_owned_unit_within_quota_passes():
 
 def test_evaluate_one_small_bounded_co_tenant_passes_and_proof_shows_reserve():
     proof = healthy(native=native(units=[co('abc')]))
-    assert proof['co_tenant_reserve'] == dict(cpu=1.0, memory=4294967296, units=['workbay-lane-other-abc.scope'],
+    assert proof['co_tenant_reserve'] == dict(cpu=1.0, memory=4294967296, charged_cpu=1.0, charged_memory=4294967296,
+                                              units=['workbay-lane-other-abc.scope'],
                                               measured=[dict(unit='workbay-lane-other-abc.scope', cpu=None, memory=None)],
                                               charged=[dict(unit='workbay-lane-other-abc.scope', cpu=1.0, memory=4294967296)])
     assert proof['prospective_CPU'] == pytest.approx(1.25 + 1.0 + 1.5)
@@ -519,9 +533,10 @@ def test_evaluate_one_small_bounded_co_tenant_passes_and_proof_shows_reserve():
 def test_real_scenario_idle_co_tenant_is_admitted_and_the_receipt_lists_measured_and_charged():
     proof = healthy(ledger=ledger(OWN=owner_row(cpu=.5, mem=G)), native=native(units=[measured('abc', cores=.10, used=200*10**6)]))
     unit = 'workbay-lane-other-abc.scope'
-    assert proof['co_tenant_reserve'] == dict(cpu=.25, memory=G, units=[unit],
+    # The declared 6 GiB cap is what the reserve holds; the charge is the CPU floor and the same cap.
+    assert proof['co_tenant_reserve'] == dict(cpu=2., memory=6*G, charged_cpu=.25, charged_memory=6*G, units=[unit],
                                               measured=[dict(unit=unit, cpu=pytest.approx(.10), memory=200*10**6)],
-                                              charged=[dict(unit=unit, cpu=.25, memory=G)])
+                                              charged=[dict(unit=unit, cpu=.25, memory=6*G)])
     # .25 + profile .5 + owner .5 + the .5 source offer (no Aura_WP400_A row) + the idle co-tenant's charge + AURA_RUNTIME_CPU.
     assert proof['prospective_CPU'] == pytest.approx(1.75 + .25 + 1.5)
 
@@ -532,13 +547,17 @@ def test_busy_co_tenant_is_refused_transiently_as_co_tenant_reserve():
     assert e.value.cls == 'co_tenant_reserve' and e.value.transient
 
 
-def test_two_idle_co_tenants_are_admitted_and_three_busy_ones_are_refused():
-    idle = [measured(n, cores=.10, used=200*10**6) for n in 'ab']
-    assert healthy(ledger=ledger(OWN=owner_row(cpu=.5, mem=G)), native=native(units=idle))['co_tenant_reserve']['cpu'] == pytest.approx(.5)
-    busy = [measured(n, cores=1., used=2*G) for n in 'abc']
+def test_two_idle_small_co_tenants_are_admitted_on_their_charged_cpu():
+    idle = [measured(n, cores=.10, used=200*10**6, mem=str(G)) for n in 'ab']
+    assert healthy(ledger=ledger(OWN=owner_row(cpu=.5, mem=G)), native=native(units=idle))['co_tenant_reserve']['charged_cpu'] == pytest.approx(.5)
+
+
+def test_three_idle_six_gib_co_tenants_are_refused_on_the_memory_ceiling_though_their_cpu_fits():
+    # Memory is charged at the 6 GiB cap, so three of them exceed LANE_MEMORY_CEILING although each measures 200 MB.
+    idle = [measured(n, cores=.10, used=200*10**6) for n in 'abc']
     with pytest.raises(CA.AdmissionRefusal) as e:
-        healthy(ledger=ledger(OWN=owner_row(cpu=.5, mem=G)), native=native(units=busy))
-    assert e.value.cls == 'co_tenant_reserve'
+        healthy(ledger=ledger(OWN=owner_row(cpu=.5, mem=G)), native=native(units=idle))
+    assert e.value.cls == 'co_tenant_reserve' and 'memory ceiling' in e.value.detail
 
 
 REFUSALS = [

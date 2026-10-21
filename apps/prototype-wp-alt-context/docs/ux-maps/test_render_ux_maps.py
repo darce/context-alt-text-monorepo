@@ -572,6 +572,50 @@ class RendererBoundaryTests(unittest.TestCase):
             self.assertNotIn("Xo job running", rendered)
             renderer._validate_retained_contract(ref, rendered)
 
+    def test_code_references_inside_screens_fail_renderer_backed_check(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        # Rebuild the canvas bundle's order from the committed artifact: Code references
+        # between the Screens table and the first screen detail block (CURUX Q-R0-01).
+        block = original[original.index("## Code references\n"):original.index("## Screens\n")]
+        without = original.replace(block, "", 1)
+        first_detail = without.index("\n### ", without.index("## Screens\n")) + 1
+        upstream_order = without[:first_detail] + block + without[first_detail:]
+        self.assertEqual(renderer._relocate_code_references(upstream_order.split("\n")), original.split("\n"))
+        self.assertEqual(renderer._relocate_code_references(without.split("\n")), without.split("\n"))
+        with self.assertRaisesRegex(ValueError, "cannot relocate Code references"):
+            renderer._relocate_code_references(["## Code references", "- `screen:x` — `x.tsx`", ""])
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            (maps / f"{ref}.md").write_text(original)
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for rendered, status in [(original, 0), (upstream_order, 1)]:
+                    output = io.StringIO()
+                    with patch.object(renderer, "render", return_value=rendered), \
+                            contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(renderer.check([ref]), status, output.getvalue())
+            self.assertIn(
+                "freshly rendered Markdown: screen workbench-shell has a Screens table row but no detail block",
+                output.getvalue(),
+            )
+
+    def test_canvas_render_reproduces_markdown_accepted_by_typescript_consumer(self):
+        try:
+            renderer._load_renderer()
+        except renderer.OptionalRendererUnavailable:
+            self.skipTest("optional workbay_canvas_mcp renderer is not importable")
+        ref = "workbench-operator-loop"
+        rendered = renderer.render(ref)
+        self.assertEqual(rendered, SOURCE.with_name(f"{ref}.md").read_text())
+        expected, actual = renderer._check_projection(ref, rendered)
+        self.assertEqual(expected, actual)
+        with patch.object(renderer, "_relocate_code_references", side_effect=lambda bundle: bundle):
+            unrelocated = renderer.render(ref)
+        self.assertNotEqual(unrelocated, rendered)
+        with self.assertRaisesRegex(RuntimeError, "freshly rendered Markdown: screen workbench-shell has a Screens"):
+            renderer._check_projection(ref, unrelocated)
+
 
 if __name__ == "__main__":
     unittest.main()

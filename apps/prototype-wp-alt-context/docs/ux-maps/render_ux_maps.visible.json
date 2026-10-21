@@ -5,8 +5,8 @@
       "source_sha256": "4de444cbf7c7283ec6761a07344bd70b436f82b4553c8044243cbc9cce25f29f"
     },
     "describe-gpu-tier": {
-      "projection_sha256": "d5a9fbf98bc6d4e77678cc733d8334d286350ef02ff02789d35e4f7341aaf990",
-      "source_sha256": "c99a16589007ec408f88115f771bf9ea9d1a7e3424c5d7550624b110fd0f04c9"
+      "projection_sha256": "8bdd676cb5de2a1881823d26d82492e006e5b4bf22b8a629c963ac038f1fe0ce",
+      "source_sha256": "5c0bb19238c03c7fa4e7fcd876a95618944eb82840e748a3ec11e12f7235ea85"
     },
     "febt-1-job-error-states": {
       "projection_sha256": "3d179180800c5d1293240477022f00165164b5ffc238221a5d0b53b8932ea415",
@@ -37,12 +37,12 @@
       "source_sha256": "0c8ed4abe3ddf2be27e62b2af4a26d59c104b48ff9d7b8244c60a3caf3ac5b54"
     },
     "workbench-identity-chips": {
-      "projection_sha256": "2d72c73630f2374d637f43e37f5a1cfa69ee01d51028623d10f1c51905835aaf",
-      "source_sha256": "51a55b5baf0e59ff3bfd6c4a1154309abd26c7edcec8540eca9d6e0e14277318"
+      "projection_sha256": "af70ce92fd7bc2d38b965b435fd243cd1d50e5dc23bd7ec7d77dfb53c4397865",
+      "source_sha256": "5cc0554649793cd853e73c0fe42fa3cc3d86b60f853cf4ce24013b2ab70b8b52"
     },
     "workbench-operator-loop": {
-      "projection_sha256": "27af666643e496b3d49b38e3810c5dcb26e8327c5087d7fe2ebe3fffc4b6499d",
-      "source_sha256": "2c20d42116b1b1ba9d64e8bc885bc89f1343f0a6bb17ad9b60426c43e4a40da9"
+      "projection_sha256": "a4931bd3d99c60bd31564102b1ce17a8ec54cf2818fcad6b754fd60ce7ec3fc0",
+      "source_sha256": "3fc22bfb8dce7a2c7c084ef5d2f9f134efb449c23c636490062d44055d455e14"
     }
   },
   "version": 1

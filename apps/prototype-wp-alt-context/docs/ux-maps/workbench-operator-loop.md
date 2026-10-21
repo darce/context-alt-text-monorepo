@@ -15,7 +15,7 @@
 - Producer contract verified from current bytes: RecognitionPolicy::DEFAULT=false; Settings GET requires boolean recognition_enabled (fetchSettings rejects missing/nonboolean); Settings POST may return HTTP 200 with result=error/partial and failed fields. Require result=ok, saved containing recognition_enabled and no matching failed field; HTTP success alone never confirms persistence.
 - Send only {recognition_enabled: desiredBoolean}, never URL, api_key or allow_person_names. Share queryKeys.settings.all with SettingsPage; reconcile through fresh Settings GET. After an acknowledged write, failed/malformed/mismatched readback permits verification reads only; never replay the write. Unknown/rejected state also recovers through Settings GET.
 - Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action.
-- UXREC-1 design proposal awaiting map gate: default to current attention, with explicit audit history; preserve all audit records, reconciliation and existing naming-policy controls. This map is a target contract, not proof that the referenced components implement the proposal. See docs/assessments/current/UXREC-1-ux-inventory.md.
+- UXREC-1 design proposal (target contract, not current source): the Changes panel opens on Needs attention, which defaults to Failed and renders only the existing failed list; Pending and Conflict render only that status's server-filtered timeline; History renders the existing all/status timeline, read-only and apart from maintenance actions. Every count is the server total of the one query on screen; there is no combined attention total. This slice improves classification and navigation and removes duplicate presentation; it clears no records, so old failed rows (including the four July rows) stay failed attention until existing reconciliation or an operator action changes them. Preserve all audit records, reconciliation and existing naming-policy controls. See docs/assessments/current/UXREC-1-ux-inventory.md.
 
 ## Jobs
 - `job-clear-queue` — Clear media queue (scan / describe)
@@ -39,7 +39,7 @@
 | `workbench-shell` | screen | `#/workbench` | Workbench |
 | `workbench-scan` | screen | `#/workbench?tab=scan` | Scan media queue |
 | `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox |
-| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Changes — current attention / audit history (proposed) |
+| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Changes — Needs attention / History (proposed) |
 | `workbench-review-panel` | screen | `#/workbench?tab=scan&panel=review&cluster=` | Review these faces |
 | `exit-roster` | exit | `#/roster` | Roster (person workspace) |
 | `exit-settings` | exit | `#/settings` | Settings / service health |
@@ -245,9 +245,9 @@ code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.
 +------------------------------------------------------------+
 ```
 
-### Changes — current attention / audit history (proposed) (`workbench-dead-letter`)
+### Changes — Needs attention / History (proposed) (`workbench-dead-letter`)
 
-Purpose: UXREC-1 proposed: open on current attention (unresolved pending/conflict/failed operations), with explicit History for acknowledged/discarded records. Current source timelineStatus defaults to all. Preserve status pagination, retry/discard guards and server audit records; no blanket erasure of July rows. Empty current attention is success, not empty history. Smallest frontend slice: default failed attention and explicit pending/conflict status choices, each with server-filtered pagination; no fabricated aggregate unresolved count or client filtering of one all-status page.
+Purpose: UXREC-1 proposed. Current source starts with timelineStatus all and renders the failed list and a second all-status timeline together, so a failed row can appear twice with two action sets. Target: one list per view. Needs attention › Failed (default) renders only the existing failed list; Needs attention › Pending or Conflict renders only the server-filtered timeline for that status; History renders the existing timeline for All or one status, read-only. Switching views or filters is a read and never discards, retries or reconciles rows. No combined attention total, no locally filtered page presented as a global total, no age-only hiding.
 
 url_params: `panel`
 
@@ -257,50 +257,86 @@ deep_link: true
 primary_action_id: `act-retry-dead-letter`
 code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx`
 
+Action states: attention_failed, attention_pending, attention_conflict, history
+
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-dl-list` | Current attention (proposed default): unresolved work only; each row keeps operation, cause, age and exact target; terminal audit records remain under History. | queue | default, loading, empty, error |
-| `z-dl-actions` | Existing Retry / guarded Discard remain row-scoped. Retry announces queued, not recovered; failures stay actionable. History switching is read-only. | form | default, loading, empty, error |
-| `z-dl-history` | History (proposed explicit view): all audit states with existing status filter and paging; no delete-on-hide; return to current attention retains context. | nav | default, loading, empty, error, degraded |
+| `z-dl-attention-choice` | Needs attention status choice: Failed (default), Pending or Conflict as pressed-state buttons. Each choice is its own server query with its own total; no sum across them. The existing topology-command summary counts topology commands, not these rows, and is never presented as an attention total. | nav | default, loading, error |
+| `z-dl-list` | Failed view: the existing failed list only (failed-changes query, 20 per page, its own offset, Showing a–b of N failed changes from that query's server total). Rows keep operation, entity, attempts, age, last attempt, error and payload summary. Old failed rows stay listed until existing reconciliation or an operator Retry or Discard changes their status. No failed timeline is rendered beside it. | queue | default, loading, empty, error |
+| `z-dl-actions` | Failed view only: existing row Retry (non-terminal rows), row Discard with Confirm discard, Retry all failed (N) with arm and confirm, and Discard eligible failed changes older than 7 days with arm and confirm. Retry reports queued, not recovered; failures stay inline. Pending, Conflict and History render none of these controls. | form | default, loading, empty, error |
+| `z-dl-status-timeline` | Pending or Conflict view: only the existing timeline query with that one status (10 per page, offset reset to 0 on each choice, Showing a–b of N from that status's server total). Rows are read-only; an empty result says no changes have that status. | queue | default, loading, empty, error |
+| `z-dl-history` | History view: the existing timeline for All (default) or one of pending, acknowledged, conflict, failed, discarded; 10 per page, offset reset to 0 on each filter change, server total per filter. Read-only audit rows, including acknowledged and discarded records; no maintenance controls and no delete-on-hide. | content | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
-| Changes — current attention / audit history (proposed)  [\ |
-|   overlay]  #/workbench?panel=dead-letter                  |
-| UXREC-1 proposed: open on current attention (unresolved p\ |
-|   ending/conflict/failed operations), with explicit Histo\ |
-|   ry for acknowledged/discarded records. Current source t\ |
-|   imelineStatus defaults to all. Preserve status paginati\ |
-|   on, retry/discard guards and server audit records; no b\ |
-|   lanket erasure of July rows. Empty current attention is\ |
-|    success, not empty history. Smallest frontend slice: d\ |
-|   efault failed attention and explicit pending/conflict s\ |
-|   tatus choices, each with server-filtered pagination; no\ |
-|    fabricated aggregate unresolved count or client filter\ |
-|   ing of one all-status page.                              |
+| Changes — Needs attention / History (proposed)  [overlay]\ |
+|     #/workbench?panel=dead-letter                          |
+| UXREC-1 proposed. Current source starts with timelineStat\ |
+|   us all and renders the failed list and a second all-sta\ |
+|   tus timeline together, so a failed row can appear twice\ |
+|    with two action sets. Target: one list per view. Needs\ |
+|    attention › Failed (default) renders only the existing\ |
+|    failed list; Needs attention › Pending or Conflict ren\ |
+|   ders only the server-filtered timeline for that status;\ |
+|    History renders the existing timeline for All or one s\ |
+|   tatus, read-only. Switching views or filters is a read \ |
+|   and never discards, retries or reconciles rows. No comb\ |
+|   ined attention total, no locally filtered page presente\ |
+|   d as a global total, no age-only hiding.                 |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Current attention (proposed default): unresolved work\ |
-|    only; each row keeps operation, cause, age and exact t\ |
-|   arget; terminal audit records remain under History. (qu\ |
-|   eue) states=[default,loading,empty,error]                |
-|   - Existing Retry / guarded Discard remain row-scoped. R\ |
-|   etry announces queued, not recovered; failures stay act\ |
-|   ionable. History switching is read-only. (form) states=\ |
-|   [default,loading,empty,error]                            |
-|   - History (proposed explicit view): all audit states wi\ |
-|   th existing status filter and paging; no delete-on-hide\ |
-|   ; return to current attention retains context. (nav) st\ |
-|   ates=[default,loading,empty,error,degraded]              |
+|   - Needs attention status choice: Failed (default), Pend\ |
+|   ing or Conflict as pressed-state buttons. Each choice i\ |
+|   s its own server query with its own total; no sum acros\ |
+|   s them. The existing topology-command summary counts to\ |
+|   pology commands, not these rows, and is never presented\ |
+|    as an attention total. (nav) states=[default,loading,e\ |
+|   rror]                                                    |
+|   - Failed view: the existing failed list only (failed-ch\ |
+|   anges query, 20 per page, its own offset, Showing a–b o\ |
+|   f N failed changes from that query's server total). Row\ |
+|   s keep operation, entity, attempts, age, last attempt, \ |
+|   error and payload summary. Old failed rows stay listed \ |
+|   until existing reconciliation or an operator Retry or D\ |
+|   iscard changes their status. No failed timeline is rend\ |
+|   ered beside it. (queue) states=[default,loading,empty,e\ |
+|   rror]                                                    |
+|   - Failed view only: existing row Retry (non-terminal ro\ |
+|   ws), row Discard with Confirm discard, Retry all failed\ |
+|    (N) with arm and confirm, and Discard eligible failed \ |
+|   changes older than 7 days with arm and confirm. Retry r\ |
+|   eports queued, not recovered; failures stay inline. Pen\ |
+|   ding, Conflict and History render none of these control\ |
+|   s. (form) states=[default,loading,empty,error]           |
+|   - Pending or Conflict view: only the existing timeline \ |
+|   query with that one status (10 per page, offset reset t\ |
+|   o 0 on each choice, Showing a–b of N from that status's\ |
+|    server total). Rows are read-only; an empty result say\ |
+|   s no changes have that status. (queue) states=[default,\ |
+|   loading,empty,error]                                     |
+|   - History view: the existing timeline for All (default)\ |
+|    or one of pending, acknowledged, conflict, failed, dis\ |
+|   carded; 10 per page, offset reset to 0 on each filter c\ |
+|   hange, server total per filter. Read-only audit rows, i\ |
+|   ncluding acknowledged and discarded records; no mainten\ |
+|   ance controls and no delete-on-hide. (content) states=[\ |
+|   default,loading,empty,error]                             |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Retry failed op -> sync (costly,preview)       |
-|   [secondary] Show History (proposed) -> workbench-dead-l\ |
-|   etter                                                    |
-|   [secondary] Show Current attention (proposed) -> workbe\ |
-|   nch-dead-letter                                          |
-|   [DESTRUCTIVE] Discard failed op -> sync (costly,preview\ |
-|   ,irreversible)                                           |
+| when attention_failed                                      |
+|   [PRIMARY] Retry failed op                                |
+|   [destructive] Discard failed op                          |
+|   [secondary] Show Failed, Pending or Conflict (proposed)  |
+|   [secondary] Show History (proposed)                      |
+| when attention_pending                                     |
+|   [secondary] Show Failed, Pending or Conflict (proposed)  |
+|   [secondary] Show History (proposed)                      |
+| when attention_conflict                                    |
+|   [secondary] Show Failed, Pending or Conflict (proposed)  |
+|   [secondary] Show History (proposed)                      |
+| when history                                               |
+|   [secondary] Filter History by status (proposed)          |
+|   [secondary] Show Needs attention (proposed)              |
 +------------------------------------------------------------+
 | states: default | loading | empty | error                  |
 +------------------------------------------------------------+
@@ -420,16 +456,18 @@ Component pointers:
 | `act-open-conflicts` | Open Conflict Inbox | `workbench-conflicts` | secondary | no | no | no | `workbench-shell` | always |
 | `act-open-dead-letter` | Open Failed Sync Queue | `workbench-dead-letter` | secondary | no | no | no | `workbench-shell` | always |
 | `act-resolve-conflict` | Resolve conflict | `identity-store` | primary | yes | no | yes | `workbench-conflicts` | always |
-| `act-retry-dead-letter` | Retry failed op | `sync` | primary | yes | no | yes | `workbench-dead-letter` | always |
-| `act-discard-dead-letter` | Discard failed op | `sync` | destructive | yes | yes | yes | `workbench-dead-letter` | always |
+| `act-retry-dead-letter` | Retry failed op | `sync` | primary | yes | no | yes | `workbench-dead-letter` | attention_failed |
+| `act-discard-dead-letter` | Discard failed op | `sync` | destructive | yes | yes | yes | `workbench-dead-letter` | attention_failed |
 | `act-review-back` | Back to Review Suggestions | `workbench-scan` | primary | no | no | no | `workbench-review-panel` | always |
 | `act-goto-roster` | Go to Roster | `exit-roster` | secondary | no | no | no | `workbench-scan` | always |
 | `act-retry-projection` | Retry projection sync | `projection` | secondary | yes | no | yes | `workbench-shell` | always |
 | `act-enable-recognition` | Enable facial recognition | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_off |
 | `act-disable-recognition` | Disable facial recognition | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_on |
 | `act-retry-policy-read` | Retry status (read only) | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_unknown, policy_readback_error, policy_rejected |
-| `act-view-audit-history` | Show History (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | always |
-| `act-view-current-attention` | Show Current attention (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | always |
+| `act-choose-attention-status` | Show Failed, Pending or Conflict (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | attention_failed, attention_pending, attention_conflict |
+| `act-view-audit-history` | Show History (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | attention_failed, attention_pending, attention_conflict |
+| `act-filter-history-status` | Filter History by status (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | history |
+| `act-view-current-attention` | Show Needs attention (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | history |
 
 ## Flows
 ### Select media → scan → continue (`flow-scan-happy`)
@@ -487,20 +525,55 @@ flow: Sync failure → dead letter → retry/discard (flow-dead-l\
   etter-recover) job=job-recover-sync
   1. Workbench [workbench-shell]
      --degraded sync strip-->
-  2. Changes — current attention / audit history (proposed) [\
-  workbench-dead-letter]
-     --panel=dead-letter-->
+  2. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter]
+     --panel=dead-letter opens Needs attention › Failed: the \
+  existing failed list and its guarded actions only-->
   3. Workbench [workbench-shell] (visit 2)
 ```
 
 ```mermaid
 flowchart TD
   %% flow: Sync failure → dead letter → retry/discard job=job-recover-sync
-  %% steps: [{"screen_id":"workbench-shell","branch_label":"degraded sync strip"},{"screen_id":"workbench-dead-letter","branch_label":"panel=dead-letter"},{"screen_id":"workbench-shell","branch_label":"retry or discard complete"}]
+  %% steps: [{"screen_id":"workbench-shell","branch_label":"degraded sync strip"},{"screen_id":"workbench-dead-letter","branch_label":"panel=dead-letter opens Needs attention › Failed: the existing failed list and its guarded actions only"},{"screen_id":"workbench-shell","branch_label":"retry queued or discard complete; the failed list re-reads its server total"}]
   n_workbench_shell["Workbench (screen)"]
-  n_workbench_dead_letter["Changes — current attention / audit history (proposed) (overlay)"]
+  n_workbench_dead_letter["Changes — Needs attention / History (proposed) (overlay)"]
   n_workbench_shell -->|degraded sync strip| n_workbench_dead_letter
-  n_workbench_dead_letter -->|panel=dead-letter| n_workbench_shell
+  n_workbench_dead_letter -->|panel=dead-letter opens Needs attention › Failed: the existing failed list and its guarded actions only| n_workbench_shell
+```
+
+### Needs attention › Failed → Pending or Conflict → History → back to Needs attention (`flow-changes-attention-history`)
+
+```
+flow: Needs attention › Failed → Pending or Conflict → Histor\
+  y → back to Needs attention (flow-changes-attention-history\
+  ) job=job-recover-sync
+  1. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter]
+     --attention_failed: existing failed list, 20 per page wi\
+  th its own offset and server total; old failed rows stay un\
+  til reconciliation or operator action-->
+  2. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter] (visit 2)
+     --attention_pending or attention_conflict: server-filter\
+  ed timeline for that one status only, offset 0, read-only r\
+  ows-->
+  3. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter] (visit 3)
+     --history: existing timeline, All or one status, 10 per \
+  page, read-only; no maintenance controls-->
+  4. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter] (visit 4)
+```
+
+```mermaid
+flowchart TD
+  %% flow: Needs attention › Failed → Pending or Conflict → History → back to Needs attention job=job-recover-sync
+  %% steps: [{"screen_id":"workbench-dead-letter","branch_label":"attention_failed: existing failed list, 20 per page with its own offset and server total; old failed rows stay until reconciliation or operator action"},{"screen_id":"workbench-dead-letter","branch_label":"attention_pending or attention_conflict: server-filtered timeline for that one status only, offset 0, read-only rows"},{"screen_id":"workbench-dead-letter","branch_label":"history: existing timeline, All or one status, 10 per page, read-only; no maintenance controls"},{"screen_id":"workbench-dead-letter","branch_label":"Show Needs attention returns to the failed list; no view switch mutates or reconciles rows"}]
+  n_workbench_dead_letter["Changes — Needs attention / History (proposed) (overlay)"]
+  n_workbench_dead_letter -->|attention_failed: existing failed list, 20 per page with its own offset and server total; old failed rows stay until reconciliation or operator action| n_workbench_dead_letter
+  n_workbench_dead_letter -->|attention_pending or attention_conflict: server-filtered timeline for that one status only, offset 0, read-only rows| n_workbench_dead_letter
+  n_workbench_dead_letter -->|history: existing timeline, All or one status, 10 per page, read-only; no maintenance controls| n_workbench_dead_letter
 ```
 
 ### Scan → settings health (`flow-scan-to-settings`)
@@ -642,7 +715,7 @@ flowchart TD
 3. **Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence
 4. **Dead-letter discard confirm** — destructive + irreversible path
 5. **Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])
-6. UXREC-1 TIMELINE proposed: current-attention default and explicit audit history within DeadLetterPanel; do not delete history or repeat integrated DW3-UX0924-04 cleanup.
+6. UXREC-1 TIMELINE proposed: replace the INITIAL_STATE timelineStatus 'all' default and the always-rendered second timeline in DeadLetterPanel with Needs attention (Failed = existing failed list only; Pending or Conflict = server-filtered timeline only) and read-only History (existing all/status timeline), keeping deadLetterPanelReducer paging and the handleTimelineStatusChange offset reset. Fixtures cover old failed rows, genuine pending and conflict rows, and terminal acknowledged/discarded history. Do not delete history, hide by age, or repeat integrated DW3-UX0924-04 reconciliation.
 
 ## Domain state mapping
 
@@ -667,9 +740,9 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-recognition-policy z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-dl-history z-review-header z-review-faces z-roster-main z-settings-form
+Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-recognition-policy z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-attention-choice z-dl-list z-dl-actions z-dl-status-timeline z-dl-history z-review-header z-review-faces z-roster-main z-settings-form
 
-Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read act-view-audit-history act-view-current-attention
+Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read act-choose-attention-status act-view-audit-history act-filter-history-status act-view-current-attention
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -690,9 +763,11 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Conflict list
 - Conflict detail / candidates
 - Resolve / defer actions
-- Current attention (proposed default): unresolved work only; each row keeps operation, cause, age and exact target; terminal audit records remain under History.
-- Existing Retry / guarded Discard remain row-scoped. Retry announces queued, not recovered; failures stay actionable. History switching is read-only.
-- History (proposed explicit view): all audit states with existing status filter and paging; no delete-on-hide; return to current attention retains context.
+- Needs attention status choice: Failed (default), Pending or Conflict as pressed-state buttons. Each choice is its own server query with its own total; no sum across them. The existing topology-command summary counts topology commands, not these rows, and is never presented as an attention total.
+- Failed view: the existing failed list only (failed-changes query, 20 per page, its own offset, Showing a–b of N failed changes from that query's server total). Rows keep operation, entity, attempts, age, last attempt, error and payload summary. Old failed rows stay listed until existing reconciliation or an operator Retry or Discard changes their status. No failed timeline is rendered beside it.
+- Failed view only: existing row Retry (non-terminal rows), row Discard with Confirm discard, Retry all failed (N) with arm and confirm, and Discard eligible failed changes older than 7 days with arm and confirm. Retry reports queued, not recovered; failures stay inline. Pending, Conflict and History render none of these controls.
+- Pending or Conflict view: only the existing timeline query with that one status (10 per page, offset reset to 0 on each choice, Showing a–b of N from that status's server total). Rows are read-only; an empty result says no changes have that status.
+- History view: the existing timeline for All (default) or one of pending, acknowledged, conflict, failed, discarded; 10 per page, offset reset to 0 on each filter change, server total per filter. Read-only audit rows, including acknowledged and discarded records; no maintenance controls and no delete-on-hide.
 - Header + Back
 - Faces grid
 - Entries / clusters workspace

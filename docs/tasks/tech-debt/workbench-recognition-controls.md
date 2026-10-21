@@ -1,6 +1,6 @@
 # Workbench facial recognition controls
 
-**Status:** Deferred UI tech debt, registry item **#32**.
+**Status:** Promoted to [WBRC-1](../wbrc/WBRC-1-workbench-recognition-controls-task-plan.md), registry item **#32**. Source implementation is awaiting final independent review; exact LocalWP artifact acceptance remains separate.
 **Recorded:** 2026-10-20, at the operator's request.
 **Priority:** Next Workbench UX pass.
 **Owners:** WordPress frontend and recognition-policy owners; assign named owners when promoted.
@@ -37,7 +37,7 @@ Canon **v0.26.2**, verified against its release manifest during the investigatio
 
 ## Implementation boundaries and references
 
-Promote this entry to a dated implementation task before changing the UI. This entry records debt only. It does not change plugin behavior, the global default, production deployment, or description-service configuration.
+The [WBRC-1 implementation task](../wbrc/WBRC-1-workbench-recognition-controls-task-plan.md) now governs the source changes and their verification. This debt entry remains open until acceptance is complete. The global default, production deployment, and description-service configuration retain their existing contracts.
 
 - [Debt registry](current-debt.md)
 - [Current endpoint investigation and setting design assessment](../../../benchmarks/reports/auraface-endpoint-diagnosis-plan-20261020.md)

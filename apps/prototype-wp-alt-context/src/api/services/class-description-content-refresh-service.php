@@ -319,7 +319,7 @@ class DescriptionContentRefreshService {
 				}
 
 				$attributes['alt'] = $alt_text;
-				$encoded = json_encode( $attributes, JSON_UNESCAPED_SLASHES );
+				$encoded = self::serialize_block_attributes( $attributes );
 				if ( ! is_string( $encoded ) ) {
 					return (string) $matches[0];
 				}
@@ -330,6 +330,29 @@ class DescriptionContentRefreshService {
 		);
 
 		return is_string( $updated ) ? $updated : $content;
+	}
+
+	/**
+	 * Encode JSON for the HTML comment boundary, matching WordPress core.
+	 */
+	private static function serialize_block_attributes( array $attributes ): ?string {
+		if ( function_exists( 'serialize_block_attributes' ) ) {
+			return \serialize_block_attributes( $attributes );
+		}
+
+		$flags   = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+		$encoded = function_exists( 'wp_json_encode' )
+			? \wp_json_encode( $attributes, $flags )
+			: json_encode( $attributes, $flags );
+		if ( ! is_string( $encoded ) ) {
+			return null;
+		}
+
+		return str_replace(
+			array( '--', '<', '>', '&', '\\"' ),
+			array( '\\u002d\\u002d', '\\u003c', '\\u003e', '\\u0026', '\\u0022' ),
+			$encoded
+		);
 	}
 
 	/**

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.routing import APIRoute
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictBool, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.portal_billing import CheckoutAttemptStatus
@@ -48,6 +48,7 @@ from recognition.application.services.tenant_key_service import (
     KeyPage,
     TenantKeyService,
 )
+from recognition.config.security import RateLimitTier
 from recognition.domain.portal_contracts import BillingSubscriptionStatus, EntitlementStatus, PortalPrincipal
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
 from recognition.interface_adapters.http.deps.portal_auth import (
@@ -172,6 +173,16 @@ class CreateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     lifetime_seconds: int | None = Field(default=None, gt=0)
+    rate_limit_tier: str | None = Field(default=None, min_length=1)
+
+    @field_validator("rate_limit_tier")
+    @classmethod
+    def _only_server_default_tier(cls, value: str | None) -> str | None:
+        # The tier is server-owned; portal keys always get the default that a missing
+        # tier resolves to (tier_rpm(None) -> STANDARD), so no other value is accepted.
+        if value is not None and value.upper() != RateLimitTier.STANDARD.value:
+            raise ValueError("rate_limit_tier is assigned by the server")
+        return value
 
 
 class RotateKeyRequest(BaseModel):

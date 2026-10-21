@@ -205,7 +205,7 @@ class PreparationTests(unittest.TestCase):
                     self.assertEqual(count, 2 if mode == 'pilot' else (40 if candidate == 'gsq' else 30))
                     self.assertEqual(receipt['completion_POST_budget'], count * 3)
                     self.assertEqual(receipt['recipe_sha256'], p.sha(recipe.encode()))
-                    self.assertLessEqual(sum(receipt['phase_floors_seconds'].values()), 1800)
+                    self.assertLessEqual(receipt['start_reserve_seconds'] + sum(receipt['phase_floors_seconds'].values()), 1800)
                     self.assertTrue(receipt['no_execution'])
                     self.assertIn('candidate_configs=cohorts', recipe)
                     self.assertIn("manifest=Path(cohorts[0]['manifest']);cfg=json.loads", recipe)
@@ -259,10 +259,28 @@ class PreparationTests(unittest.TestCase):
             with self.subTest(cohorts=cohorts, seconds=seconds), self.assertRaises(ValueError):
                 make(mode='full', cohorts=cohorts, client_seconds=seconds)
         self.assertEqual(list(inspect.signature(p.prepare).parameters),
-                         ['root', 'candidate', 'mode', 'name', 'unit', 'cohorts', 'client_seconds'])
+                         ['root', 'candidate', 'mode', 'name', 'unit', 'cohorts', 'client_seconds', 'revision'])
         for name, unit in [('', 'workbay-test.scope'), ('TEST', ''), ('x;echo', 'workbay-test.scope')]:
             with self.assertRaises(ValueError):
                 p.prepare(REF, 'gsq', 'pilot', name, unit)
+
+    def test_lease_thresholds_fit_the_real_resume_window(self):
+        # PERF-09: every guard must be reachable on the 1800 s lease counted from START publication.
+        cases = [('pilot', None, 420, ['1160', '1020', '720']),
+                 ('full', ['qwen-gsq-01.json'], 650, ['1390', '1250', '950'])]
+        for mode, cohorts, client, thresholds in cases:
+            with self.subTest(mode=mode):
+                recipe, receipt = make(mode=mode, cohorts=cohorts)
+                self.assertEqual(receipt['whole_client_seconds'], client)
+                self.assertEqual(receipt['start_reserve_seconds'], 300)
+                self.assertEqual(re.findall(r"expires-time\.time\(\)>=(\d+),", recipe), thresholds)
+                self.assertIn('min(%d,int(expires-time.time()-270))' % client, recipe)
+                self.assertLessEqual(receipt['start_reserve_seconds'] + sum(receipt['phase_floors_seconds'].values()), 1800)
+
+    def test_start_reserve_bounds_the_full_client(self):
+        make(mode='full', cohorts=['qwen-gsq-01.json'], client_seconds=760)  # 300 + 740 + 760 = 1800 exactly
+        with self.assertRaisesRegex(ValueError, 'START reserve'):
+            make(mode='full', cohorts=['qwen-gsq-01.json'], client_seconds=761)  # 1801 s
 
     def test_wrong_hash_model_config_and_duplicate(self):
         plan = json.loads((REF / 'batch-plan.json').read_bytes())
@@ -808,6 +826,169 @@ class OwnerStageRebindTests(unittest.TestCase):
         self.assertEqual(generator.OLD_STAGE, '/root/owner-stop-contract-r3/procedure')
         self.assertEqual(generator.CURRENT_STAGE, p.OLD_OWNER_STAGE)
         self.assertEqual(generator.CURRENT_MANIFEST_SHA256, p.OLD_OWNER_MANIFEST_SHA256)
+
+
+OLD_038 = '648573b4d21c3e1b7d8029246ed20f5a516f685f6c698af2249109183cf524bd'
+NEW_038 = '710a6798653ef868338136da63e2c176e892d73bac342e395bf0df640e70022e'
+R1_DIR = '/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R1/images'
+R2_DIR = '/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-FROZEN-120-R2/corpus-revisions/r2'
+R2_IMAGE = R2_DIR + '/original-038.jpg'
+# Pilot (make()) and full (qwen-gsq-01.json) recipes recorded at the Part A commit; Part B must not change their bytes.
+PILOT_RECIPE_SHA256 = '1267ffc711ba352dda18a3ee14f4469ee24a205029ef4bcb4172e4172ddb8d51'
+FULL_RECIPE_SHA256 = '4abe6b7ef18a469670c8dceae96e9702e55e950afa819ad8e90dc9faf02a196e'
+
+
+def revision_record():
+    return {'schema': 'bakeoff-corpus-revision/v1', 'revision': 'r2', 'image_id': 'original-038',
+            'previous': {'image_id': 'original-038', 'path': 'corpus-original/original-038.jpg', 'sha256': OLD_038},
+            'replacement': {'image_id': 'original-038', 'path': 'corpus-revisions/r2/original-038.jpg',
+                            'sha256': NEW_038, 'context_pack': {}, 'present_identities': [],
+                            'dataset_revision': 'r2', 'replaces_sha256': OLD_038},
+            'old_outputs_reused_for_replacement': False,
+            'required_GPU_models': ['mimo', 'qwen-gsq', 'joy', 'incumbent']}
+
+
+class ReplacementTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.files = 0
+
+    def revision(self, record):
+        """Write a fixture revision and pin its digest to the fixture, so only the semantic checks can refuse it."""
+        self.files += 1
+        raw = (json.dumps(record, indent=2) + '\n').encode()
+        path = Path(self.tmp.name) / ('revision-%d.json' % self.files)
+        path.write_bytes(raw)
+        patcher = mock.patch.object(p, 'R2_REVISION_SHA256', p.sha(raw))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return path
+
+    def replacement(self, record, **kwargs):
+        return p.prepare(REF, 'gsq', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope',
+                         revision=self.revision(record), **kwargs)
+
+    def test_happy_path_builds_one_r2_image_and_binds_the_revision(self):
+        path = self.revision(revision_record())
+        recipe, receipt = p.prepare(REF, 'gsq', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope', revision=path)
+        revision_sha = p.sha(path.read_bytes())
+        self.assertEqual(receipt['mode'], 'replacement')
+        self.assertEqual(receipt['predecessor_binding'], 'late_bound_at_claim_refresh')
+        self.assertNotIn('actual_previous_AUTO', receipt)
+        self.assertEqual(receipt['replacement'], dict(image_id='original-038', old_sha256=OLD_038, new_sha256=NEW_038,
+                                                      path=R2_IMAGE, revision_sha256=revision_sha))
+        self.assertEqual((receipt['total_distinct_images'], receipt['completion_POST_budget'], receipt['whole_client_seconds']),
+                         (1, 3, 420))
+        self.assertEqual(list(receipt['configs']), ['qwen-gsq-02.json'])
+        _, pilot = make()
+        self.assertEqual(receipt['immutable_candidate_configs'], pilot['immutable_candidate_configs'])
+        self.assertEqual(receipt['resource_contracts'], command_resource_contracts(recipe))
+        self.assertEqual(receipt['recipe_sha256'], p.sha(recipe.encode()))
+
+        pins = ast.literal_eval(p.assignment(recipe, 'configs').value)
+        self.assertEqual(list(pins), ['qwen-gsq-02.json'])
+        pin = pins['qwen-gsq-02.json']
+        frozen = (REF / 'batch-configs' / 'qwen-gsq-02.json').read_bytes()
+        self.assertEqual(pin['immutable_source_sha256'], p.sha(frozen))
+        self.assertEqual(pin['selection'], 'r2-replacement-original-038')
+        self.assertEqual(pin['revision_sha256'], revision_sha)
+        raw = base64.b64decode(pin['b64'], validate=True)
+        self.assertEqual(pin['sha256'], p.sha(raw))
+        expected = json.loads(frozen)
+        expected['images'] = [dict(next(im for im in expected['images'] if im['image_id'] == 'original-038'),
+                                   path=R2_IMAGE, sha256=NEW_038)]
+        self.assertEqual(json.loads(raw), expected)
+
+        self.assertNotIn(R1_DIR, recipe)
+        self.assertEqual(recipe.count("path_image.parent==Path('" + R2_DIR + "')"), 1)
+        self.assertEqual(recipe.count("data=dict(images_dir='" + R2_DIR + "')"), 1)
+        self.assertEqual(re.findall(r"expires-time\.time\(\)>=(\d+),", recipe), ['1160', '1020', '720'])
+        self.assertIn('min(420,int(expires-time.time()-270))', recipe)
+        self.assertIn('assert len(seen)==1\n', recipe)
+        self.assertIn('len(all_items)==1', recipe)
+        self.assertIn('len(all_passes)==3', recipe)
+        self.assertIn('total_distinct_images=1', recipe)
+        self.assertIn('pilot_only=False', recipe)
+        self.assertIn("os.environ.get('QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256')", recipe)
+        self.assertEqual(recipe.count(p.LATE_BIND_BLOCK), 1)
+
+    def test_refuses_each_violated_revision_condition_alone(self):
+        def change(edit):
+            record = revision_record()
+            edit(record)
+            return record
+        cases = {
+            'wrong old sha': (lambda r: r['previous'].update(sha256='0' * 64), 'wrong old sha256'),
+            'replaces sha mismatch': (lambda r: r['replacement'].update(replaces_sha256='0' * 64), 'wrong old sha256'),
+            'wrong new sha': (lambda r: r['replacement'].update(sha256='1' * 64), 'wrong new sha256'),
+            'wrong image id': (lambda r: r.update(image_id='original-039'), 'wrong image id'),
+            'wrong nested image id': (lambda r: r['replacement'].update(image_id='original-039'), 'wrong image id'),
+            'two replacements': (lambda r: r.update(replacements=[r['replacement'], dict(r['replacement'])]),
+                                 'two replacements'),
+            'path outside R2 by parent': (lambda r: r['replacement'].update(path='../LEXICON-AB-FROZEN-120-R1/images/original-038.jpg'),
+                                          'outside the R2 dir'),
+            'path outside R2 by absolute': (lambda r: r['replacement'].update(path=R1_DIR + '/original-038.jpg'),
+                                            'outside the R2 dir'),
+            'revision r1': (lambda r: r.update(revision='r1'), 'bakeoff-corpus-revision/v1 r2'),
+            'wrong schema': (lambda r: r.update(schema='other/v1'), 'bakeoff-corpus-revision/v1 r2'),
+            'old outputs reused': (lambda r: r.update(old_outputs_reused_for_replacement=True), 'must not be reused'),
+            'context pack present': (lambda r: r['replacement'].update(context_pack={'identity': 'x'}), 'identity context'),
+            'identities present': (lambda r: r['replacement'].update(present_identities=['someone']), 'identity context'),
+            'not dataset r2': (lambda r: r['replacement'].update(dataset_revision='r1'), 'dataset revision r2'),
+            'qwen not required': (lambda r: r.update(required_GPU_models=['mimo', 'joy']), 'qwen-gsq must be'),
+        }
+        for name, (edit, message) in cases.items():
+            with self.subTest(refusal=name), self.assertRaisesRegex(ValueError, message):
+                self.replacement(change(edit))
+
+    def test_unpinned_revision_bytes_are_refused(self):
+        path = Path(self.tmp.name) / 'unpinned.json'
+        path.write_bytes((json.dumps(revision_record()) + '\n').encode())
+        with self.assertRaisesRegex(ValueError, 'pinned R2 record'):
+            p.prepare(REF, 'gsq', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope', revision=path)
+
+    def test_two_original_038_entries_in_the_frozen_config_are_refused(self):
+        real = p.validate_configs
+
+        def duplicated(root, plan, candidate):
+            model, configs = real(root, plan, candidate)
+            cfg = json.loads(dict(configs)['qwen-gsq-02.json'])
+            cfg['images'].append(next(im for im in cfg['images'] if im['image_id'] == 'original-038'))
+            return model, [(name, json.dumps(cfg).encode() if name == 'qwen-gsq-02.json' else raw)
+                           for name, raw in configs]
+
+        with mock.patch.object(p, 'validate_configs', duplicated), \
+                self.assertRaisesRegex(ValueError, 'exactly one original-038'):
+            self.replacement(revision_record())
+
+    def test_replacement_mode_argument_rules(self):
+        path = self.revision(revision_record())
+        with self.assertRaisesRegex(ValueError, 'gsq only'):
+            p.prepare(REF, 'ud', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope', revision=path)
+        with self.assertRaisesRegex(ValueError, 'gsq only'):
+            p.prepare(REF, 'gsq', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope',
+                      cohorts=['qwen-gsq-01.json'], revision=path)
+        with self.assertRaisesRegex(ValueError, 'revision is required'):
+            p.prepare(REF, 'gsq', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope')
+        with self.assertRaisesRegex(ValueError, 'replacement mode only'):
+            p.prepare(REF, 'gsq', 'pilot', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope', revision=path)
+        with self.assertRaisesRegex(ValueError, 'cohort impossible'):
+            p.prepare(REF, 'gsq', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope', revision=path,
+                      client_seconds=421)
+        _, receipt = p.prepare(REF, 'gsq', 'replacement', 'QWEN-R2-038', 'workbay-qwen-r2-038.scope', revision=path,
+                               client_seconds=420)
+        self.assertEqual(receipt['whole_client_seconds'], 420)
+
+
+class ByteIdentityTests(unittest.TestCase):
+    def test_pilot_and_full_recipes_are_byte_identical_across_part_b(self):
+        pilot, pilot_receipt = make()
+        full, full_receipt = make(mode='full', cohorts=['qwen-gsq-01.json'])
+        self.assertEqual(p.sha(pilot.encode()), PILOT_RECIPE_SHA256)
+        self.assertEqual(p.sha(full.encode()), FULL_RECIPE_SHA256)
+        self.assertNotIn('replacement', pilot_receipt)
+        self.assertNotIn('replacement', full_receipt)
 
 
 if __name__ == '__main__':

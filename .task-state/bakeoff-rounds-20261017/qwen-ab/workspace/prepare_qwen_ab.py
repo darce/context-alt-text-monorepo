@@ -27,6 +27,15 @@ PINS = {
 }
 SOURCES = {'gsq': 'QWEN38-GSQ-ALL38-LONG-R20C.execution.remote.py',
            'ud': 'QWEN38-27B-ALL38-LONG-R21.execution.remote.py'}
+# Owner-custody stage rebind (RLSE-21, FLOW-01). The immutable references keep the
+# pre-fix stage; only the prepared recipe moves to the restaged, reviewed procedure.
+OLD_OWNER_STAGE = '/root/bakeoff-owner-long-window-20261019-45c86daf3bc3/procedure'
+OWNER_STAGE = '/root/bakeoff-owner-long-window-20261020-cd399f1f0d55/procedure'
+OLD_OWNER_WINDOW_SHA256 = '033d187835c9243bd486b185167563c16ef24812eb26f174ea062fc46fe798e9'
+OWNER_WINDOW_SHA256 = '60c0cfdceedbf778be717300d7d0d5c071a07860be333abcd694e4e0c430281b'
+OLD_OWNER_MANIFEST_SHA256 = '45c86daf3bc312eea23ab1382965b56dcbc1c97dd1c82070decc6ee617d3c5ca'
+OWNER_MANIFEST_SHA256 = 'cd399f1f0d55fd1dbf4eb980d0accbdb6b2ac27536f4f11a222b3262bdcbb495'
+OWNER_STAGE_SOURCE_COMMIT = '27bf69d5349c44033f419ec4fa73e893b4dd6b2d'
 # Claim-time predecessor binding (decision 18673): the recipe refreshes the
 # owned window's AUTO before START, so the fresh publication is the fencing
 # token. Replaces the pinned template line `assert previous=='aa048fdb...'`.
@@ -102,6 +111,13 @@ def replace_once(source, old, new):
     return source.replace(old, new, 1)
 
 
+def rebind_owner_stage(recipe):
+    """Exactly three substitutions; each target must occur once in the recipe."""
+    recipe = replace_once(recipe, OLD_OWNER_STAGE, OWNER_STAGE)
+    recipe = replace_once(recipe, OLD_OWNER_WINDOW_SHA256, OWNER_WINDOW_SHA256)
+    return replace_once(recipe, OLD_OWNER_MANIFEST_SHA256, OWNER_MANIFEST_SHA256)
+
+
 def validate_configs(root, plan, candidate):
     model = plan['models']['qwen-' + candidate]
     rows = [r for r in plan['batches'] if r['model'] == 'qwen-' + candidate]
@@ -175,6 +191,7 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     for start, end, text in sorted(edits, reverse=True):
         lines[start - 1:end] = [text]
     recipe = ''.join(lines)
+    recipe = rebind_owner_stage(recipe)
     recipe = replace_once(recipe, "N='LEXICON-MIMO-40-LAST40-R1'", 'N=' + repr(name))
     recipe = replace_once(recipe, "N=" + repr(name), "assert " + repr(unit) + " in cg.parts, 'Declared root scope mismatch'\nN=" + repr(name))
     recipe = replace_once(recipe, "    assert previous=='aa048fdb-01cc-405d-9e2c-5af0063093fb','Continuation ownership changed; retain state and reconcile explicitly'\n", LATE_BIND_BLOCK)
@@ -233,6 +250,9 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     compile(recipe, '<prospective-recipe>', 'exec')
     receipt = dict(status='PROSPECTIVE_NOT_EXECUTED_NOT_QUALIFIED', name=name, unit=unit,
                    candidate=candidate, mode=mode, predecessor_binding='late_bound_at_claim_refresh',
+                   owner_stage=dict(path=OWNER_STAGE, manifest_sha256=OWNER_MANIFEST_SHA256,
+                                    owner_window_sha256=OWNER_WINDOW_SHA256,
+                                    source_commit=OWNER_STAGE_SOURCE_COMMIT),
                    model_contract=model, asset_spec_sha256=sha(json.dumps(spec, sort_keys=True).encode()),
                    preparer_sha256=sha(Path(__file__).read_bytes()),
                    recipe_sha256=sha(recipe.encode()), sources=PINS, configs={c: sha(r) for c, r in selected},

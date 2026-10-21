@@ -2,7 +2,9 @@
 import ast
 import base64
 import copy
+import difflib
 import hashlib
+import importlib.util
 import inspect
 import json
 from pathlib import Path
@@ -16,6 +18,7 @@ import textwrap
 import time
 import types
 import unittest
+from unittest import mock
 import uuid
 
 import prepare_qwen_ab as p
@@ -733,6 +736,78 @@ class DurableSourceTests(unittest.TestCase):
                 self.assertEqual(ast.dump(nodes[0].value), ast.dump(ast.parse(line).body[0].value))
         self.assertEqual(generated_line(recipe, 'workspace='),
                          generated_line((REF / 'LEXICON-MIMO-40-LAST40-R1.remote.py').read_text(), 'workspace='))
+
+
+class OwnerStageRebindTests(unittest.TestCase):
+    CASES = [('pilot', None), ('full', ['qwen-gsq-01.json'])]
+    GATE = 'QWEN_AB_SOL_XHIGH_GATE'
+
+    def unrebound(self, mode, cohorts):
+        with mock.patch.object(p, 'rebind_owner_stage', lambda recipe: recipe):
+            recipe, _ = make('gsq', mode, cohorts=cohorts)
+        return recipe
+
+    def test_rebind_is_three_substitutions_plus_the_derived_gate(self):
+        for mode, cohorts in self.CASES:
+            with self.subTest(mode=mode):
+                old = self.unrebound(mode, cohorts)
+                new, receipt = make('gsq', mode, cohorts=cohorts)
+                rebound = old.replace(p.OLD_OWNER_STAGE, p.OWNER_STAGE)
+                rebound = rebound.replace(p.OLD_OWNER_WINDOW_SHA256, p.OWNER_WINDOW_SHA256)
+                rebound = rebound.replace(p.OLD_OWNER_MANIFEST_SHA256, p.OWNER_MANIFEST_SHA256)
+                rebound_lines, new_lines = rebound.splitlines(True), new.splitlines(True)
+                self.assertEqual(len(rebound_lines), len(new_lines))
+                differing = [i for i, (a, b) in enumerate(zip(rebound_lines, new_lines)) if a != b]
+                # The gate hashes the recipe, so it is the only line the substitutions do not explain.
+                self.assertEqual(len(differing), 1)
+                self.assertIn(self.GATE, new_lines[differing[0]])
+                self.assertIn(receipt['gate_token'], new_lines[differing[0]])
+                hunks = [l for l in difflib.unified_diff(old.splitlines(True), new.splitlines(True), n=0)
+                         if l.startswith('@@')]
+                self.assertEqual(len(hunks), 3, hunks)
+
+    def test_rebound_recipe_no_longer_names_the_pre_fix_stage(self):
+        for mode, cohorts in self.CASES:
+            with self.subTest(mode=mode):
+                new, _ = make('gsq', mode, cohorts=cohorts)
+                self.assertEqual(new.count(p.OWNER_STAGE), 1)
+                self.assertEqual(new.count(p.OWNER_WINDOW_SHA256), 1)
+                self.assertEqual(new.count(p.OWNER_MANIFEST_SHA256), 1)
+                self.assertNotIn(p.OLD_OWNER_STAGE, new)
+                self.assertNotIn(p.OLD_OWNER_WINDOW_SHA256, new)
+                self.assertNotIn(p.OLD_OWNER_MANIFEST_SHA256, new)
+                self.assertNotIn('45c86daf3bc3', new)
+
+    def test_missing_or_duplicated_target_refuses(self):
+        recipe = self.unrebound('pilot', None)
+        for target in (p.OLD_OWNER_STAGE, p.OLD_OWNER_WINDOW_SHA256, p.OLD_OWNER_MANIFEST_SHA256):
+            with self.subTest(target=target[:24]):
+                with self.assertRaises(ValueError):
+                    p.rebind_owner_stage(recipe.replace(target, 'absent'))
+                with self.assertRaises(ValueError):
+                    p.rebind_owner_stage(recipe + '\n' + target + '\n')
+
+    def test_receipt_carries_owner_stage(self):
+        for candidate in ('gsq', 'ud'):
+            with self.subTest(candidate=candidate):
+                _, receipt = make(candidate, 'pilot')
+                self.assertEqual(receipt['owner_stage'], dict(
+                    path='/root/bakeoff-owner-long-window-20261020-cd399f1f0d55/procedure',
+                    manifest_sha256='cd399f1f0d55fd1dbf4eb980d0accbdb6b2ac27536f4f11a222b3262bdcbb495',
+                    owner_window_sha256='60c0cfdceedbf778be717300d7d0d5c071a07860be333abcd694e4e0c430281b',
+                    source_commit='27bf69d5349c44033f419ec4fa73e893b4dd6b2d'))
+
+    def test_preparer_constants_match_the_generator(self):
+        path = Path(__file__).resolve().parents[2] / 'owner-stage-r2' / 'build_long_window_native_r2.py'
+        spec = importlib.util.spec_from_file_location('build_long_window_native_r2', path)
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        self.assertEqual(generator.STAGE, p.OWNER_STAGE)
+        self.assertEqual(generator.MANIFEST_SHA256, p.OWNER_MANIFEST_SHA256)
+        self.assertEqual(generator.OWNER_WINDOW_SHA256, p.OWNER_WINDOW_SHA256)
+        self.assertEqual(generator.OLD_STAGE, '/root/owner-stop-contract-r3/procedure')
+        self.assertEqual(generator.CURRENT_STAGE, p.OLD_OWNER_STAGE)
+        self.assertEqual(generator.CURRENT_MANIFEST_SHA256, p.OLD_OWNER_MANIFEST_SHA256)
 
 
 if __name__ == '__main__':

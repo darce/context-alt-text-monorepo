@@ -1196,6 +1196,7 @@ class SettingsControllerTest extends TestCase
             $data['result'],
             'storage failure must not report ok for field: ' . $savedField
         );
+        $this->assertSame(200, $response->get_status(), 'HTTP success still requires inspecting the field result');
         $this->assertNotContains($savedField, $data['saved'] ?? []);
         $this->assertContains($savedField, $data['failed'] ?? []);
         // Option must not hold the intended post-write value.
@@ -1248,9 +1249,8 @@ class SettingsControllerTest extends TestCase
                 'acx_recognition_enabled',
                 'recognition_enabled',
             ],
-            // r2-S1-F2 [TEST-15]: DEFAULT is ON, so POST true + add_option
-            // failure must not report ok just because enabled() already
-            // matches the intended value on a missing row.
+            // Exercise failed add_option for opt-in as well as default-Off;
+            // neither requested value may report success without a stored row.
             'recognition_enabled_post_true' => [
                 ['recognition_enabled' => true],
                 'acx_recognition_enabled',

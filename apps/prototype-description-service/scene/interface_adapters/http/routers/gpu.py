@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import time
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
@@ -170,6 +172,8 @@ async def post_gpu_intent(
         repository=entitlement_repository,
         forbidden_detail="gpu_control_forbidden",
     )
+    if not _is_gpu_operator(auth):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="gpu_control_forbidden")
     now = _now()
     intent_path = resolve_gpu_intent_path()
     try:
@@ -187,6 +191,27 @@ async def post_gpu_intent(
             detail="gpu_intent_unavailable",
         ) from exc
     return _status_response(now=now)
+
+
+def _is_gpu_operator(auth: Any) -> bool:
+    """Authorize this global resource independently of paid entitlement."""
+    if auth is None or not getattr(auth, "enabled", False):
+        return True
+    tenant_claim = getattr(auth, "tenant_claim", None)
+    if not tenant_claim:
+        return bool(getattr(auth, "is_admin", False))
+    configured = os.environ.get("ACX_GPU_OPERATOR_TENANT_IDS", "").strip()
+    if not configured:
+        return False
+    try:
+        allowed = {UUID(entry.strip()) for entry in configured.split(",")}
+    except ValueError:
+        _logger.error("Invalid ACX_GPU_OPERATOR_TENANT_IDS configuration")
+        return False
+    try:
+        return UUID(str(tenant_claim).strip()) in allowed
+    except ValueError:
+        return False
 
 
 def _now() -> float:

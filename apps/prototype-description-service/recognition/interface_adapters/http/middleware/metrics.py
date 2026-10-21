@@ -5,7 +5,8 @@ in-flight gauge balanced per request — including on unhandled exceptions.
 
 The ``path`` label resolves to the FastAPI route template
 (``scope["route"].path``, e.g. ``/clusters/{cluster_id}``), not the raw URL.
-This caps histogram cardinality at the number of registered routes (PA-06).
+Unmatched requests share the ``unmatched`` label, bounding path cardinality
+at the number of registered routes plus one (PA-06).
 """
 
 from __future__ import annotations
@@ -138,7 +139,7 @@ def _resolve_path(scope: Scope) -> str:
     template = getattr(route, "path", None)
     if template:
         return template
-    return scope.get("path") or "unknown"
+    return "unmatched"
 
 
 class MetricsMiddleware:

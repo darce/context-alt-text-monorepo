@@ -1,3 +1,4 @@
+import { idPathSegment } from '../../utils/pathSegment';
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import { mapPendingMergeSuggestion } from './identitySuggestionMappers';
@@ -18,7 +19,7 @@ export async function acceptSuggestion(
   options: { signal?: AbortSignal } = {},
 ): Promise<SuggestionActionResponse> {
   const base = getEndpoint('recognitionSuggestions');
-  const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
+  const url = new URL(`${stripTrailingSlash(base)}/${idPathSegment(suggestionId)}/accept`, window.location.origin);
 
   return fetchRequiredApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',
@@ -114,7 +115,7 @@ export async function acceptMergeSuggestion(
   const { suggestionId, targetClusterId, signal }: AcceptMergeSuggestionRequest =
     typeof request === 'string' ? { suggestionId: request } : request;
   const base = getEndpoint('recognitionMergeSuggestions');
-  const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
+  const url = new URL(`${stripTrailingSlash(base)}/${idPathSegment(suggestionId)}/accept`, window.location.origin);
 
   // Narrow/validate — including optional authoritative source/target ids.
   const raw = await fetchRequiredApi<Record<string, unknown>>(url.toString(), {
@@ -135,7 +136,7 @@ export async function acceptMergeSuggestion(
 
 export const rejectSuggestion = async (suggestionId: string): Promise<SuggestionActionResponse> => {
   const base = getEndpoint('recognitionSuggestions');
-  const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/reject`, window.location.origin);
+  const url = new URL(`${stripTrailingSlash(base)}/${idPathSegment(suggestionId)}/reject`, window.location.origin);
 
   return fetchRequiredApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',
@@ -145,7 +146,7 @@ export const rejectSuggestion = async (suggestionId: string): Promise<Suggestion
 
 export const rejectMergeSuggestion = async (suggestionId: string): Promise<PendingMergeSuggestion> => {
   const base = getEndpoint('recognitionMergeSuggestions');
-  const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/reject`, window.location.origin);
+  const url = new URL(`${stripTrailingSlash(base)}/${idPathSegment(suggestionId)}/reject`, window.location.origin);
 
   const raw = await fetchRequiredApi<Record<string, unknown>>(url.toString(), {
     method: 'POST',
@@ -156,7 +157,7 @@ export const rejectMergeSuggestion = async (suggestionId: string): Promise<Pendi
 
 export const acceptNameSuggestion = async (suggestionId: string): Promise<SuggestionActionResponse> => {
   const base = getEndpoint('recognitionNameSuggestions');
-  const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
+  const url = new URL(`${stripTrailingSlash(base)}/${idPathSegment(suggestionId)}/accept`, window.location.origin);
 
   return fetchRequiredApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',
@@ -166,7 +167,7 @@ export const acceptNameSuggestion = async (suggestionId: string): Promise<Sugges
 
 export const rejectNameSuggestion = async (suggestionId: string): Promise<SuggestionActionResponse> => {
   const base = getEndpoint('recognitionNameSuggestions');
-  const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/reject`, window.location.origin);
+  const url = new URL(`${stripTrailingSlash(base)}/${idPathSegment(suggestionId)}/reject`, window.location.origin);
 
   return fetchRequiredApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',

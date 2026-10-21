@@ -228,6 +228,16 @@ target = "svc-vm"
 doc = "State older than this is unknown to the API and fails the deployment check.\ndomain: infra | source: service operator | consumer: scene GPU-state reader / snapshot check"
 
 [[var]]
+name = "ACX_GPU_OPERATOR_TENANT_IDS"
+class = "config"
+targets = ["svc-vm"]
+section = "GPU lifecycle"
+required = false
+example = ""
+values = { dev = "", staging = "", prod = "" }
+doc = "Comma-separated tenant UUIDs authorized to control the shared GPU. Empty or invalid lists deny all tenant keys.\ndomain: security | source: service operator | consumer: scene/interface_adapters/http/routers/gpu.py post_gpu_intent"
+
+[[var]]
 name = "ACX_DESCRIBE_LOAD_DIR"
 class = "config"
 targets = ["svc-vm"]

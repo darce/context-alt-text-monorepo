@@ -28,8 +28,6 @@ import weakref
 from typing import Any
 
 import httpx
-
-from recognition.shared.safe_fetch import SafeFetchError, fetch_public_image
 import numpy as np
 
 from db.settings import get_database_settings
@@ -81,6 +79,7 @@ from recognition.infrastructure.face_pipeline.provenance import (
     numeric_runtime_fingerprint,
 )
 from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
+from recognition.shared.safe_fetch import SafeFetchError, fetch_public_image
 
 logger = logging.getLogger(__name__)
 

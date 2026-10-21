@@ -21,6 +21,11 @@ def _require_global(address: str) -> None:
         raise SafeFetchError("Image destination is not public")
 
 
+async def _getaddrinfo(host: str, port: int, **kwargs):
+    """Default resolver seam; unit tests replace it so no live DNS is needed."""
+    return await asyncio.get_running_loop().getaddrinfo(host, port, **kwargs)
+
+
 async def fetch_public_image(
     url: str,
     *,
@@ -42,7 +47,7 @@ async def fetch_public_image(
             try:
                 ipaddress.ip_address(target.host)
             except ValueError:
-                resolve = resolver or asyncio.get_running_loop().getaddrinfo
+                resolve = resolver or _getaddrinfo
                 addresses = await resolve(
                     target.host, target.port or (443 if target.scheme == "https" else 80),
                     type=socket.SOCK_STREAM,

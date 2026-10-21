@@ -32,11 +32,55 @@ it('keeps policy mutation and read-only recovery beside scan without adding a pr
   const recovery = map.flows.find((flow: { id: string }) => flow.id === 'flow-policy-recover');
   expect(recovery.steps.every((step: { screen_id: string }) => step.screen_id === 'workbench-scan')).toBe(true);
   expect(recovery.steps.map((step: { branch_label: string }) => step.branch_label).join(' ')).toContain('never replay acknowledged POST');
-  const enable = map.flows.find((flow: { id: string }) => flow.id === 'flow-policy-enable');
-  const labels = enable.steps.map((step: { branch_label: string }) => step.branch_label);
-  expect(labels.findIndex((label: string) => label.startsWith('policy_readback:'))).toBeLessThan(
-    labels.findIndex((label: string) => label.startsWith('policy_on:')),
-  );
+});
+
+interface PolicyFlow {
+  id: string;
+  steps: { screen_id: string; branch_label: string }[];
+}
+
+const POLICY_WRITES = [
+  ['flow-policy-enable', 'policy_off', 'policy_on'],
+  ['flow-policy-disable', 'policy_on', 'policy_off'],
+] as const;
+
+const policyFlow = (id: string): PolicyFlow => {
+  const flow = (map.flows as PolicyFlow[]).find((candidate) => candidate.id === id);
+  if (!flow) throw new Error(`${id} is absent`);
+  return flow;
+};
+
+// FORM-08: claim the new value only after the write is acknowledged and read back.
+// Presence is checked first; a missing step must never satisfy an ordering comparison.
+const assertConfirmedAfterReadback = (flow: PolicyFlow, from: string, to: string): void => {
+  const states = flow.steps.map((step) => step.branch_label.split(':', 1)[0]);
+  const required = [from, 'policy_saving', 'policy_readback', to];
+  const missing = required.filter((state) => !states.includes(state));
+  if (missing.length > 0) throw new Error(`${flow.id} lacks ${missing.join(', ')}`);
+  if (states.join(' -> ') !== required.join(' -> ')) {
+    throw new Error(`${flow.id} runs ${states.join(' -> ')} instead of ${required.join(' -> ')}`);
+  }
+};
+
+it.each(POLICY_WRITES)('%s confirms %s -> %s only after acknowledgement and readback', (id, from, to) => {
+  expect(() => assertConfirmedAfterReadback(policyFlow(id), from, to)).not.toThrow();
+});
+
+it.each(POLICY_WRITES.flatMap(([id, from, to]) => ['policy_saving', 'policy_readback'].map((omitted) => [id, omitted, from, to] as const)))(
+  'rejects %s without its %s step',
+  (id, omitted, from, to) => {
+    const flow = policyFlow(id);
+    const mutant = { ...flow, steps: flow.steps.filter((step) => !step.branch_label.startsWith(`${omitted}:`)) };
+    expect(mutant.steps).toHaveLength(flow.steps.length - 1);
+    expect(() => assertConfirmedAfterReadback(mutant, from, to)).toThrow(`${id} lacks ${omitted}`);
+  },
+);
+
+it.each(POLICY_WRITES)('rejects %s confirming %s -> %s before readback', (id, from, to) => {
+  const flow = policyFlow(id);
+  const readback = flow.steps.find((step) => step.branch_label.startsWith('policy_readback:'))!;
+  const mutant = { ...flow, steps: [...flow.steps.filter((step) => step !== readback), readback] };
+  expect(() => assertConfirmedAfterReadback(mutant, from, to)).toThrow(`${id} runs ${from} -> policy_saving -> ${to} -> policy_readback`);
 });
 
 it('renders the complete policy inventory inside Screens, including conditional recovery', () => {

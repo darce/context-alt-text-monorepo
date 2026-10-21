@@ -1,118 +1,762 @@
 # UXREC-1 workbench recovery task plan
 
-**Design proposal — first author/classification dispatch; awaiting independent map gate. Not approved, running product work, deployed or accepted.** 2026-10-21. Objective: make current attention distinguishable from retained audit history, keep unknown service copy inside the supported operating envelope, and expose repeated face evidence without rewriting identity or action targets.
+> **Metadata**
+>
+> - **Date**: 2026-10-21 17:30 EST
+> - **Author**: claude-opus-5-5 (Opus 5.5, xhigh), second-author planning lane
+> - **Project**: `apps/prototype-wp-alt-context` (WordPress admin SPA)
+> - **Task ID**: `UXREC-1`
+> - **Task Plan Status**: `proposed`. Not approved, not running product work, not deployed, not accepted.
+> - **Target Branch**: `feature/uxrec-1` (the UXREC integration branch). Each slice is authored on its own lane branch and merged into `feature/uxrec-1`.
+> - **Review Coverage Target**: 1 independent planning review of the joined plan, inventory and maps before any slice starts.
+> - **Anchors verified at**: exact source `680982f59fb5be5874b3ff3b1e7ad193344c9171` on 2026-10-21. The checkout is history-stripped (sandbox HEAD `aa67fd9e`), so the coordinator asserts tree equivalence and the original commit objects are absent. Every `path:symbol` below was read in this checkout.
+> - **Upstream traceability**: shared adjudication contract decision 18920 (`uxrec_adjudication2_common_contract`); map import decision 18886; map filename anchor correction decision 18916. Review coverage, finding status and run history live in the handoff DB. Query them with `get_review_coverage(task_ref="UXREC-1")` and `review_findings(review={"operation":"list","task_ref":"UXREC-1"})`.
 
-Read [the inventory](../../assessments/current/UXREC-1-ux-inventory.md) for wide/narrow screens, source/target matrix, interaction outcomes, Canon citations and FIR research. Map JSON is SSOT; reuse the three existing maps. Design author owns only their JSON/derived Markdown, their three visible projection entries, this plan and the inventory. No production JS/TS/PHP/Python edits in this dispatch.
+Frontend paths below are relative to `apps/prototype-wp-alt-context/` unless they start with `apps/`.
 
-## Source and prior art
+## UXREC-1. Workbench recovery: needs-attention changes, evidence-bound GPU copy, repeated-region evidence
 
-Requested initial source `70cb608c5cc6ee7e1081eab1cc85626ccb96bf2f`; native sandbox starts `d4760d2ba12869b0283a25c342b005e3cdc1aff1` (history-stripped, remote-severed). Requested object is absent, so coordinator exact-source equivalence is an inherited assertion, not independently verified here. Do not fetch root main or inspect sibling trees to resolve it. Preserve the initial unrelated `uv.lock` edit. Source evidence comes from targeted producer reads because no graph tools are exposed. Supplied symbol anchors are graph-verified prior art; worker codemap remains typed `bad_json/unavailable`, not a successful call. UXREC-1 ONNX reinjection is `skipped:no_embeddings`; inherited MAINT and cross-task semantic packets remain evidence only.
+## Objective
 
-Source-fixed regressions to preserve: mandatory roster vs advisory suggestion loading, top-unlabeled object response/empty array, dormant unavailable-toast suppression, blur/Enter URL/key save plus acknowledged stored readback and subsequent health, tenant-scoped describe remount recovery, retention cause/checking/checked-at/real refetch, and actual GPU status refetch. Rebuilding these would duplicate integrated work and risk response-shape and credential regressions. DW3-UX0924-04 timeline reconciliation is INTEGRATED per supplied history and source mechanism; four July rows remain unverified. UX0924-03/DW3-UX0924-05 identity repair remains DEFERRED; CURUX is unmerged, no active implementation confirmed.
+Three independent frontend slices:
 
-Research prior art: `benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html` v13 caption and v12 AuraFace sections. Exact model-space/version/dimension/normalization/namespace requirements are recorded in the inventory. Repeated source/crop evidence cannot decide camera duplicate vs detector overlap vs model recall. User-supplied Emma ground truth is accepted, with no new naming from photos/file names. No corpus re-inference, threshold tuning or activation belongs to these slices.
+- **TIMELINE**: the Changes panel opens on **Needs attention › Failed**. A failed operation appears in only one list, and audit history moves to an explicit **History** view.
+- **GPU_STATUS**: GPU toasts stop claiming CPU drafts that the server has not returned. A received `endpoint_unconfigured` envelope gets configuration copy instead of the generic error.
+- **IDENTITY**: a face-group card can disclose in place that the same exact photo region is also listed under another loaded group. The disclosure does not change grouping, naming targets or removal targets.
 
-## Dependencies and ownership
+## Intake
 
-Applied Canon v0.26.2 from the pinned manifest; https://github.com/darce/heuristics-canon . [GRPH-01] **Model the work as a DAG, then topological-sort**, `lexicons/graph-theory.md#grph-01`, *The Algorithm Design Manual, ch. 7*: edges below mean actual prerequisites, not convenient scheduling. [GRPH-09] **Colour the conflict graph**, `lexicons/graph-theory.md#grph-09`, *Graph Theory with Applications, ch. 8*: file collisions are conflict edges, separate from data dependencies. No resource-count optimality is claimed. GRPH-07 was read but no capacity-limited worker assignment occurs here; no subagents were spawned.
+- **Key decisions**: decision 18920 fixes the shared bounded contract for TIMELINE, GPU and IDENTITY. This plan and the inventory follow it.
+- **Inventory and screens**: [UXREC-1 UX inventory](../../assessments/current/UXREC-1-ux-inventory.md).
+- **Map SSOT**: `docs/ux-maps/{workbench-operator-loop,describe-gpu-tier,workbench-identity-chips}.uxmap.json`. One map writer owns those maps, their generated `.md` and their three entries in `render_ux_maps.visible.json`. Product slice authors never write maps.
+- **Not doing**:
+  - No backend, PHP or Python change.
+  - No change to `GpuStatusResponse` or any other response shape.
+  - No GPU automation, actuation, auth bypass, billing or credential change.
+  - No combined attention status and no aggregate unresolved total.
+  - No clearing, hiding or age-only filtering of the four supplied July failed records.
+  - No new route, tab, panel, review callback, `ClusterReviewPanel` change or "Review faces" navigation.
+  - No new evidence crop or image.
+  - No IoU or similarity matching, automatic merge or transitive identity closure.
+  - No detector or recall repair claim, and no new identification of any person.
+  - No change to WBTRUST-5-reserved composition files.
+  - No map, render, projection or product-style edits by the authors of this plan.
+
+## Problem Statement
+
+- **TIMELINE.** `DeadLetterPanel` shows a failed operation twice, with recovery buttons both times. The panel always mounts the failed list (`useDeadLetterOperations`). It also mounts an all-status timeline (`useOutboxOperations`, default `timelineStatus: 'all'`), whose failed rows render Retry and Discard because `DeadLetterOperationRow` sets `showFailedRecovery` for any failed row. Current work and retained audit history share one screen, so an operator cannot tell what still needs action.
+- **GPU_STATUS.** The visible toasts promise CPU work that the server may never do. `useGpuStateToasts` (mounted by `js/admin/App.tsx`) shows `GPU_STATE_VOCABULARY.warmingToast` ("GPU warming — CPU drafts first") and `degradedToast` ("GPU unavailable — CPU drafts kept"). The degraded toast always offers "Review results". The worker continues on CPU only after a warm-up timeout, and only when a usable CPU adapter exists (`describe_run_worker.py:_apply_warmup_cpu_fallback`, `_usable_cpu_describe_one`). Otherwise the run fails with a typed terminal. Separately, `serviceUnavailable.ts:unavailableReasonCopy` has no entry for `endpoint_unconfigured`. That reason passes through the PHP GPU control proxy and falls back to "an unexpected error occurred (endpoint_unconfigured)" with a generic Retry hint.
+- **IDENTITY.** A repeated region is invisible. `groupIdentitiesByClusters` groups by person, then cluster, then ungrouped. It removes same-face overlaps only inside one group, so the same photo region listed under two groups shows as two unrelated cards with no cue. The supplied case is three crops the operator identifies as one person. `ClusterPreview` can show a representative from another photo, so the thumbnail is not evidence of which observation matched.
+
+## Constraints
+
+- Own only the paths in [Files and Surfaces to Change](#files-and-surfaces-to-change). The slices share no file. Other shared surfaces have exactly one writer (see [Lane Decomposition](#lane-decomposition-multi-agent)).
+- WBTRUST-5 reserves `pages/workbench/MediaSelection.tsx`, `ActivityStatusStrip.tsx`, `AdvancedDrawer.tsx`, `pages/WorkbenchPage.tsx`, `WorkbenchTwoPaneLayout.tsx`, `mediaFooterCtaState.ts`, `GpuTierStatus.tsx` and `styles/components/_workbench.scss` (`docs/tasks/v0.5.0/WBTRUST-5-control-placement-task-plan.md`, Files and Surfaces to Change). UXREC slices read them and never edit them.
+- WBTRUST-4 lists `identity-clusters/IdentityClusterList.tsx` and `identity-clusters/utils.ts` as owned paths (`docs/tasks/v0.5.0/WBTRUST-4-request-budget-task-plan.md`). IDENTITY and any WBTRUST-4 lane touching those files must not run at the same time (see [Conflict graph](#conflict-graph)).
+- Product styles: only IDENTITY may edit `js/admin/styles/components/_identity-cluster-list.scss`, and only for narrow wrapping and disclosure layout. TIMELINE and GPU reuse existing classes. Nobody edits `_cluster-panels.scss`.
+- `js/admin/pages/workbench/identity-clusters/__tests__/gettext-literals.test.ts` is a read-only localization guard. It scans every non-test `.ts`/`.tsx` under `identity-clusters/` and fails on a non-literal first argument to `__`/`_n`/`_x`/`_nx`. All new copy in every slice uses literal first arguments.
+- `js/admin/__tests__/banned-vocabulary.test.tsx` is a read-only guard. Its page sweep bans words such as `projection` and `dead-letter`, and bans UUIDs in rendered page text. It also bans `cluster`/`identity` words on review surfaces. New visible copy avoids those words (use "face group" and "face record"). Exact UUID references appear only inside the collapsed IDENTITY disclosure body. They never appear in a summary, heading, accessible name or toast.
+- Tests run on the VM only, from `apps/prototype-wp-alt-context`, with existing offline dependencies. Use `npm test -- <files> [-t '<name>']` (`vitest run`). Do not use `test:agent`: it swallows failures (`vitest run "$@" || true`).
+- Preserve the operator-tenant GPU authorization (`routers/gpu.py:_is_gpu_operator`, `authorize_operator_control`) and the `encodeURIComponent` run-path encoding in `js/admin/api/describeApi.ts`. No slice edits these files.
+
+## Workflow Principles
+
+- **RED before GREEN.** Add the named assertion, predict its failure message, and watch it fail against unchanged production source ([TEST-06] **Watch it fail once / predict the failure**, *Modern Software Engineering, ch. 8*). Then make the smallest owned change and rerun the same selector GREEN.
+- **One home per action.** A failed operation's Retry and Discard render in one list per view, never two at once ([INT-19] **One outcome per interaction**, *Microinteractions, ch. 1* + *Microinteractions, ch. 3*).
+- **Claims follow returned evidence.** Copy states what the server returned, not what might happen ([HAI-05] **Imperceptible AI is not ethical**, *Human-Centered AI*).
+- **Abstain rather than force.** The identity projection abstains on malformed or conflicting input ([CAL-02] **Unknown is a valid result**, *Designing Machine Learning Systems*).
+- **Reuse, then add.** Reuse the existing queries, mutations, guarded confirmations, vocabulary and native `<details>` pattern. New symbols are marked **(new)**.
+- **Source completion is not runtime acceptance.** Every slice closes on source tests. Deployed behaviour is accepted only in a separately granted runtime window (see [Verification Strategy](#verification-strategy)).
+
+## Terminology
+
+- **Needs attention**: the default Changes view. Its status choices are **Failed** (default), **Pending** and **Conflict**. The view has no combined status or total.
+- **History**: the existing all-status or single-status outbox timeline. It does not show the bulk maintenance zone.
+- **Maintenance zone**: the bulk controls `Retry all failed (N)` and `Discard N eligible` / `Discard eligible failed changes` (`data-testid="acx-zone-z-dl-actions"`), with their armed confirmations and results list.
+- **Returned drafts**: `ActivityStatus.draftCount`, which is `run.completed ?? 0` (`useActivityStatus.ts:describeDraftCount`). It counts results without tier proof.
+- **Observation**: one loaded `DetectedIdentity` record (`identity_id`, `media_id`, `bbox`, `person_id`, `cluster_id`), read before same-face dedup.
+- **Group key**: `person:<person_id>`, else `cluster:<cluster_id>`, else `ungrouped`. These are the keys `groupIdentitiesByClusters` already uses.
+- **Repeated region**: two or more eligible observations with the same positive `media_id` and exactly equal `x`/`y`/`width`/`height` under at least two different group keys.
+- **Loaded pool**: the identities passed to `IdentityClusterList` for one media row. No corpus total, completeness, title or hash field exists.
+
+## Current State Analysis
+
+### TIMELINE (`js/admin/pages/workbench/DeadLetterPanel.tsx`)
+
+- `TIMELINE_STATUSES` is `['all','pending','acknowledged','conflict','failed','discarded']`. `DeadLetterPanelState` has `offset` (failed list), `timelineOffset` and `timelineStatus`. `INITIAL_STATE.timelineStatus` is `'all'`.
+- `deadLetterPanelReducer` handles `setOffset`, `setTimelineOffset`, `setTimelineStatus` and the armed and discard actions. `handleTimelineStatusChange` sets the status and resets `timelineOffset` to 0.
+- `DeadLetterPanel` always calls three queries:
+  - `operationsQuery = useDeadLetterOperations({ limit: PAGE_SIZE (20), offset })`;
+  - `bulkDiscardPageQuery = useDeadLetterOperations({ limit: BULK_DISCARD_PAGE_SIZE (50), offset: 0 })`;
+  - `timelineQuery = useOutboxOperations({ limit: TIMELINE_PAGE_SIZE (10), offset: timelineOffset, status })`.
+- `useOutboxOperations` (`js/admin/hooks/useOutboxOperations.ts`) has no `enabled` option. It wraps `fetchOutboxOperations` (`js/admin/api/recognition/conflictApi.ts`), which sends a single optional `status`.
+- Render order: maintenance zone, then "Pending changes timeline" (h4, status buttons, rows with `variant="timeline"`), then the failed list (`variant="failed-list"`). Rows come from `DeadLetterOperationRow`. Its `showFailedRecovery = variant === 'failed-list' || isFailedOperation(operation)`, so failed timeline rows show Retry and Discard too.
+- When `operationsQuery` is loading or errors, the component returns early. The whole panel, timeline included, is then replaced by loading or error copy.
+- Mount: `js/admin/pages/WorkbenchPage.tsx` (WBTRUST-5-reserved) renders the panel under the overlay h2 "Failed Sync Queue".
+- Already integrated and kept: server-anchored failure age, the 7-day eligibility pages, armed bulk confirmations that disarm on timeout or total change, halt-on-4xx bulk discard, and row-identity announcements.
+- The four supplied July failed label-update records stay failed until existing reconciliation (`src/sovereign/sync/class-outbox-maintenance-service.php`) or an operator action changes their status. Unit fixtures cannot prove their eligibility.
+
+### GPU_STATUS
+
+- `js/admin/pages/workbench/gpuStatePresentation.ts:GPU_STATE_VOCABULARY` holds the visible strings `warmingToast` and `degradedToast`, and the latent strings `notReportedNotice` and `startingNotice`.
+- `gpuStateNotice` has no production caller. It is referenced only by `pages/workbench/__tests__/gpuStatePresentation.test.ts`. `ActivityStatusStrip.tsx:idleHeadline` uses only `readyNotice`, `degradedNotice` and `stoppedNotice`.
+- `js/admin/hooks/useGpuStateToasts.ts:useGpuStateToasts` has these branches:
+  - DEGRADED edge: `error(degradedToast)` with a "Review results" action to `/workbench`, whatever `draftCount` is;
+  - WARMING: `info(warmingToast)`;
+  - WARMING to DESCRIBING: `readyToast` with "Back to run";
+  - DONE: `doneToast` with "Review N drafts";
+  - FAILED: reason copy with Retry only when retryable, and dormant `GPU_STATUS_UNAVAILABLE` suppressed when `runId === null`.
+- Worker outcomes (`apps/prototype-description-service/scene/application/describe_run_worker.py`):
+  1. GPU ready: `_wait_for_gpu_ready` returns and describing proceeds on GPU.
+  2. Warm-up `TimeoutError` with a usable CPU adapter: `_apply_warmup_cpu_fallback` returns a continuation and the caller sets `gpu_policy = None`. `_persist_warmup_cpu_fallback_reason` records the fallback, and no later upgrade to GPU occurs.
+  3. Timeout without a usable adapter: the run fails with terminal code `gpu_warmup_timeout`.
+  4. `gpu_run_policy` returns `None` when no endpoint URL is set, so no warm-up runs.
+- Frontend evidence types (`js/admin/api/describeApi.ts`): `DescribeRunResponse.fallback_reason`, `DescribeRunResponse.terminal` (`DescribeRunTerminal.code` / `.retryable`), and item tiers `DESCRIBE_RESULT_TIER.PROVISIONAL_CPU` / `FINAL_GPU`.
+- `js/admin/utils/serviceUnavailable.ts`:
+  - `UNAVAILABLE_REASON` has 7 members with no `endpoint_unconfigured`.
+  - `unavailableReasonCopy` returns the generic fallback for unknown reasons.
+  - Consumers are `pages/settings/GpuControlCard.tsx` (it reads `readUnavailable(data) ?? readUnavailable(intentError) ?? readUnavailable(error)` and renders "%s is unavailable because %s." plus the fix) and `pages/RetentionPage.tsx`.
+- `src/api/class-gpu-control-controller.php:map_unavailable_reason` passes typed scene reasons through. The envelope shape is pinned by `tests/Unit/GpuControlControllerTest.php:testGetStatusPassesThroughUnknownServiceUnavailableReason`: `{reason:'endpoint_unconfigured', service:'scene', http_status:503, retry_after_seconds:null, checked_at:'2026-09-18T14:03:22Z'}`.
+- `scene/interface_adapters/http/routers/gpu.py:GpuStatusResponse` (`extra="forbid"`) has no configuration or capability field. The scene `/gpu/status` handler never emits `endpoint_unconfigured`. That reason comes from describe paths (`routers/describe.py`). `GpuControlCard` maps stale telemetry to `GPU_STATE.UNKNOWN` (`displayedState`). Unknown or stale telemetry therefore cannot be read as "not configured".
+
+### IDENTITY (`js/admin/pages/workbench/identity-clusters/`)
+
+- `utils.ts:groupIdentitiesByClusters` builds the group key inline (`identity.person_id || null`, then `cluster_id != null`, then `UNGROUPED_GROUP_KEY`). It records `identityClusterIds` and `clusterIds`, then drops a member only when `isSameFaceInMedia` matches an existing member of the same group (same `media_id`, both boxes usable with width and height > 1, IoU > `SAME_FACE_BBOX_IOU` 0.5).
+- `getEditableClusterId(cluster)` is the naming target. `IdentityClusterItem` removes with `mutations.reassign([representative.identity_id])`, where `representative = cluster.members[0]`.
+- `types/identity.ts:DetectedIdentity` has `identity_id`, `media_id`, `bbox: BoundingBox {x,y,width,height}`, `cluster_id`, `person_id?` and `cluster_label`. It has no content hash, source title or corpus total.
+- `IdentityClusterList` (props `identities`, `dataSource`, `isLoading`, `onRetry`) is mounted only by `MediaSelectionTableBody.tsx` with `item.identities` for one media row. It memoizes `groupIdentitiesByClusters(identities)`, renders one `IdentityClusterItem` per non-ungrouped group, and renders `UngroupedResidueSection` ("Not yet grouped (N)").
+- `IdentityClusterItem` renders `ClusterPreview` and a label button that calls `startEditing` (the existing primary naming action). It also renders `ClusterActions` ("Edit label" / "Name this person", "Remove from group") and a native `<details className="acx-identity-cluster__not-same-person">` for Split.
+- `ClusterPreview` prefers `representative_face` (possibly from another photo) over the row member. It is a thumbnail only and is non-interactive.
+- `ClusterPanelContext.tsx:readReviewFromParams` needs `panel=review&cluster=<id>`. `IdentityClusterList` has no review callback, and this plan adds none.
+- Existing list and item test fixtures default to 1×1 boxes (`identity()` / `member()` helpers), which are unusable regions. Existing tests therefore never produce a repeated region.
+
+## Target Outcome
+
+| Mode / surface | What renders | Query | Count shown | Offset | Actions |
+| --- | --- | --- | --- | --- | --- |
+| Needs attention › Failed (default) | Existing failed list, maintenance zone, bulk results, age notice, topology notice | Existing `useDeadLetterOperations` 20-row page and 50-row eligibility page | Existing "Showing %1$d-%2$d of %3$d failed changes." from `operationsQuery.data.total` | `offset` (step 20), kept across view changes | Existing guarded row Retry/Discard and armed bulk Retry all / Discard eligible |
+| Needs attention › Pending | Timeline section only | `useOutboxOperations({limit:10, offset:timelineOffset, status:'pending'})` | Existing timeline count line from that query's server `total` | `timelineOffset` reset to 0 on entry | None (non-failed rows already render none) |
+| Needs attention › Conflict | Timeline section only | Same query with `status:'conflict'` | As above | As above | None in this panel |
+| History | Timeline section with existing status filters (All default) | `useOutboxOperations({limit:10, offset:timelineOffset, status: timelineStatus==='all' ? undefined : timelineStatus})` | Existing timeline count line | `timelineOffset` reset to 0 on entry and on filter change | Existing guarded row Retry/Discard on rows whose status is `failed`. No maintenance zone. |
+
+- The failed timeline is never mounted alongside the failed list, so no row or action is duplicated.
+- No count is computed by filtering a page locally.
+- A view change never sends a mutation. It disarms bulk confirmations and clears a pending row discard.
+- A failed-list load error is confined to the Failed region, so History, Pending and Conflict stay reachable.
+- Old failed rows stay listed until the server changes their status. Nothing is hidden by age.
+- GPU toasts:
+  - The warming toast says the run is waiting for the description service.
+  - The degraded toast says no descriptions have been returned when `draftCount === 0`, with no review action.
+  - With `draftCount > 0` it names the count and keeps "Review results".
+  - The done, ready and failed toasts and dormant suppression are unchanged.
+- `GpuControlCard` renders configuration copy for a received `endpoint_unconfigured` envelope. Stale or unknown telemetry never shows that copy.
+- Identity cards stay exactly as grouped. A card whose observation shares an exact region with another loaded group shows one collapsed native `<details>`, "Same photo region is also listed in N other group(s)". Expanding it shows the limit statement, `Photo <media_id>` with the exact box, each matching observation's group reference and face record reference, and the loaded-pool accounting. Naming (`act-edit-person-name`) stays the primary action. The disclosure is the secondary in-place action `act-toggle-repeated-region-evidence`.
+
+## Context Loading
+
+- Rules: `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/testing-typescript.md`, `docs/workbay/templates/TASK_PLAN.template.md`. The repo-local `docs/workbay/rules/planning-review-guide.md` is absent in this checkout. Use the WorkBay payload copy `/home/gate/wb/agentic-protocol-monorepo/packages/workbay-system/workbay_system/payload/docs/workbay/rules/planning-review-guide.md`.
+- Design: [UXREC-1 UX inventory](../../assessments/current/UXREC-1-ux-inventory.md) and the three map JSON files named in Intake.
+- Reservations: `docs/tasks/v0.5.0/WBTRUST-5-control-placement-task-plan.md` and `docs/tasks/v0.5.0/WBTRUST-4-request-budget-task-plan.md` (Files and Surfaces to Change).
+- Slice anchors: the files in [Files and Surfaces to Change](#files-and-surfaces-to-change) and their current tests.
+- Canon v0.26.2, pinned at `/home/gate/heuristics-canon-v0.26.2` (project <https://github.com/darce/heuristics-canon>). Verify `meta/release-manifest.json` digests before citing rows.
+- Handoff state: `UXREC-1` decisions (18920 contract) and open findings via `review_findings(review={"operation":"list","status":"open","task_ref":"UXREC-1"})`.
+
+## Contract and Boundary Impact
+
+| Boundary | Owner | Current contract | Expected change | Compatibility needed? | Verification |
+| --- | --- | --- | --- | --- | --- |
+| `GET /acx/v1/recognition/outbox` (single `status`) | PHP `src/api/class-conflict-controller.php` route `/recognition/outbox` / frontend `conflictApi.ts:fetchOutboxOperations` | `OutboxListParams {limit, offset, status?}` → `OutboxListResponse {items,total,limit,offset}` | none. TIMELINE only changes which status the panel requests per mode. | no (unchanged) | `toHaveBeenLastCalledWith` assertions in `DeadLetterPanel.test.tsx` |
+| Failed outbox list (`/recognition/outbox/failed`) | `useDeadLetterOperations` / `fetchFailedOutboxOperations` | 20-row page plus 50-row eligibility page | none | no | existing bulk discard tests, `dw2-deadletter-1.test.tsx` |
+| Typed `unavailable` envelope | `class-gpu-control-controller.php:map_unavailable_reason` → `utils/http.ts` → `serviceUnavailable.ts:parseUnavailable` | `{reason, service, http_status, retry_after_seconds, checked_at}`; scene reasons pass through | none to shape. Frontend adds copy for the existing `endpoint_unconfigured` reason. | no | `serviceUnavailable.test.ts`, `GpuControlCard.test.tsx` with the PHP-pinned envelope |
+| `GET /scene/gpu/status` | description service `routers/gpu.py:GpuStatusResponse` | no configuration field (`extra="forbid"`) | none. A configuration or capability field is **deferred** to a separate status-contract task. | n/a | grep-level check that no slice touches `routers/gpu.py` |
+| Describe-run status | `describeApi.ts:DescribeRunResponse` | `completed`, `fallback_reason`, `terminal`, item `tier` | none. GPU copy reads only the existing `draftCount`. | no | `useGpuStateToasts.test.tsx` |
+| Media identities | `types/identity.ts:DetectedIdentity` | fields listed in Current State | none. IDENTITY reads existing fields only. | no | `repeatedRegionEvidence.test.ts` |
+
+There is no replicated, cached or cross-service write, and no schema change. TanStack Query caching is unchanged.
+
+## Proposed Solution
+
+### TIMELINE
+
+Add panel-local view state with a file-local timeline section in `DeadLetterPanel.tsx`.
+
+- The failed list stays the only source of failed-row recovery in Needs attention.
+- The timeline section mounts only for Pending, Conflict and History. Its `useOutboxOperations` call therefore runs only when the section renders, and no failed timeline exists in the default view.
+- The early loading and error returns become a region-scoped state inside the Failed region.
+- **Trade-off**: this sacrifices an at-a-glance combined attention count. Producing one needs either several queries or a backend aggregate (deferred). It also keeps History rows' existing row-level Retry/Discard instead of making History read-only, because row actions are existing guarded behaviour and appear once per view.
+
+### GPU_STATUS
+
+- Change two vocabulary strings and add one plural function. In the DEGRADED branch of `useGpuStateToasts`, choose copy and attach the "Review results" action only when `status.draftCount > 0`.
+- Add `ENDPOINT_UNCONFIGURED` to `UNAVAILABLE_REASON` with configuration copy. `GpuControlCard` already renders the copy, so no product change is needed there.
+- **Trade-off**: the warming toast no longer previews a possible CPU continuation. The UI cannot know whether a usable CPU adapter exists until the run returns `fallback_reason` or item tiers.
+
+### IDENTITY
+
+- Add a named shared group-key helper so grouping and evidence cannot drift.
+- Add a pure projection over the raw `identities` array, before dedup.
+- Add a small presentational native-`<details>` component, rendered by `IdentityClusterItem` and by `UngroupedResidueSection`.
+- **Trade-off**: exact numeric equality misses near-identical regions, such as re-scans with a one-pixel offset. That is deliberate. A threshold would be similarity tuning, so a miss is acceptable and a false link is not.
+
+### New symbol contracts
+
+```ts
+// js/admin/pages/workbench/DeadLetterPanel.tsx (file-local, all new)
+const PANEL_VIEW = { ATTENTION: 'attention', HISTORY: 'history' } as const;
+type PanelView = (typeof PANEL_VIEW)[keyof typeof PANEL_VIEW];
+const ATTENTION_STATUSES = ['failed', 'pending', 'conflict'] as const;
+type AttentionStatus = (typeof ATTENTION_STATUSES)[number];
+// DeadLetterPanelState gains: panelView: PanelView (INITIAL 'attention'); attentionStatus: AttentionStatus (INITIAL 'failed').
+// DeadLetterPanelAction gains: { type: 'setPanelView'; view: PanelView } | { type: 'setAttentionStatus'; status: AttentionStatus }.
+// Both reducer cases also set: timelineOffset: 0, pendingDiscardId: null, bulkRetryArmed: false, bulkDiscardArmed: false.
+interface DeadLetterTimelineSectionProps {
+  heading: string;                      // 'Pending changes' | 'Conflicted changes' | 'Change history'
+  status: Exclude<TimelineStatusFilter, 'all'> | undefined;  // value sent to useOutboxOperations
+  statusLabel: string;                  // %4$s of the existing count line
+  emptyCopy: string;
+  offset: number;
+  onOffsetChange: (offset: number) => void;
+  filters?: { selected: TimelineStatusFilter; onChange: (status: TimelineStatusFilter) => void }; // History only
+  displayNowMs: number;
+  pendingDiscardId: number | null;
+  mutationPending: boolean;
+  onRetry: (operation: OutboxOperation) => void;
+  onDiscard: (operation: OutboxOperation) => void;
+}
+const DeadLetterTimelineSection: (props: DeadLetterTimelineSectionProps) => React.JSX.Element; // calls useOutboxOperations({limit: TIMELINE_PAGE_SIZE, offset, status})
+```
+
+```ts
+// js/admin/pages/workbench/gpuStatePresentation.ts
+GPU_STATE_VOCABULARY.warmingToast            // value: 'GPU warming — this run is waiting for the description service'
+GPU_STATE_VOCABULARY.degradedToast           // value: 'GPU unavailable — no descriptions returned yet'
+GPU_STATE_VOCABULARY.degradedToastWithDrafts // (new) (draftCount: number) => string
+//   sprintf(_n('GPU unavailable — %d draft ready to review', 'GPU unavailable — %d drafts ready to review', draftCount, 'alt-context'), draftCount)
+
+// js/admin/utils/serviceUnavailable.ts
+UNAVAILABLE_REASON.ENDPOINT_UNCONFIGURED     // (new) 'endpoint_unconfigured'
+UNAVAILABLE_REASON_COPY[ENDPOINT_UNCONFIGURED] = {
+  why: __('its GPU endpoint is not configured', 'alt-context'),
+  fix: __('An administrator must set the GPU endpoint for the Description service. Retry only checks again; it does not change the setting.', 'alt-context'),
+};
+```
+
+```ts
+// js/admin/pages/workbench/identity-clusters/utils.ts
+export const identityGroupKey: (identity: Pick<DetectedIdentity, 'person_id' | 'cluster_id'>) => string; // (new)
+//   person_id || null → `person:${person_id}`; else cluster_id != null → `cluster:${cluster_id}`; else UNGROUPED_GROUP_KEY.
+//   groupIdentitiesByClusters must call it instead of its inline key expression (pure refactor).
+
+// js/admin/pages/workbench/identity-clusters/repeatedRegionEvidence.ts (new module)
+export interface RepeatedRegionObservation {
+  identityId: string;            // DetectedIdentity.identity_id, verbatim
+  mediaId: number;               // DetectedIdentity.media_id
+  bbox: Readonly<BoundingBox>;   // DetectedIdentity.bbox, verbatim numbers
+  groupKey: string;              // identityGroupKey(identity)
+  personId: string | null;       // identity.person_id || null
+  clusterId: string | null;      // identity.cluster_id ?? null
+}
+export interface RepeatedRegion {
+  regionKey: string;             // `${mediaId}|${x}|${y}|${width}|${height}` (String(n) per number)
+  mediaId: number;
+  bbox: Readonly<BoundingBox>;
+  groupKeys: readonly string[];  // ≥ 2 distinct, ascending code-unit order
+  observations: readonly RepeatedRegionObservation[]; // sorted by groupKey, then identityId (code-unit order)
+}
+export interface RepeatedRegionPool {
+  loadedObservationCount: number;     // distinct non-empty identity_id values in the input
+  eligibleObservationCount: number;   // distinct identity_ids that are non-conflicting with supported geometry
+  abstainedIdentityIds: readonly string[]; // identity_ids whose loaded copies disagree; ascending
+}
+export interface RepeatedRegionEvidence {
+  regions: readonly RepeatedRegion[]; // sorted by mediaId, x, y, width, height (numeric ascending)
+  byGroupKey: ReadonlyMap<string, readonly RepeatedRegion[]>; // each group key → its regions, in region order
+  pool: RepeatedRegionPool;
+}
+export interface RepeatedRegionEvidenceView {
+  groupKey: string;
+  regions: readonly RepeatedRegion[];             // non-empty
+  pool: RepeatedRegionPool;
+  groupLabels: ReadonlyMap<string, string | null>; // formatClusterLabel(...) per ClusterGroup.key
+}
+export const buildRepeatedRegionEvidence: (identities: readonly DetectedIdentity[]) => RepeatedRegionEvidence;
+export const repeatedRegionViewForGroup: (
+  evidence: RepeatedRegionEvidence,
+  groupKey: string,
+  groupLabels: ReadonlyMap<string, string | null>,
+) => RepeatedRegionEvidenceView | undefined; // undefined when the group has no region
+
+// js/admin/pages/workbench/identity-clusters/RepeatedRegionEvidenceDisclosure.tsx (new)
+export const RepeatedRegionEvidenceDisclosure: (props: { view: RepeatedRegionEvidenceView }) => React.JSX.Element;
+```
+
+**`buildRepeatedRegionEvidence` rules** (the slice tests pin each one):
+
+1. **Input stage.** Read the same raw `identities` array that `IdentityClusterList` passes to `groupIdentitiesByClusters`, before any dedup. Never mutate it.
+2. **Accounting.** Ignore records whose `identity_id` is not a non-empty string after `trim()`, and do not count them. Records with the same `identity_id` collapse to one observation when their signature `` `${media_id}|${groupKey}|${x}|${y}|${width}|${height}` `` matches. If two copies of an id disagree, add the id to `abstainedIdentityIds` and keep it out of every region.
+3. **Supported geometry.** `Number.isInteger(media_id) && media_id > 0`. `bbox` is a non-null object. `x`, `y`, `width` and `height` are numbers and `Number.isFinite`. `x >= 0`, `y >= 0`, `width > 1` and `height > 1`. Anything else is loaded but not eligible.
+4. **Predicate.** Eligible observations fall in the same region only when `mediaId` and all four box numbers are strictly equal. Exact equality is an equivalence on coordinates, not a similarity chain. A region is emitted only when it holds at least two distinct group keys. There is no IoU, no similarity, no cross-photo matching and no merge.
+5. **Ordering.** Regions, group keys and observations use the orderings in the type comments. Permuting the input must produce deep-equal output.
+6. **Claim limit.** The output describes loaded records with matching coordinates. It carries no person-identity, completeness or corpus claim.
+
+### Exact copy
+
+| Slice | Key / location | String (gettext literal, domain `alt-context`) |
+| --- | --- | --- |
+| TIMELINE | section `aria-label` (replaces "Failed changes panel") | `Changes panel` |
+| TIMELINE | view group `aria-label` / buttons | `Changes view` / `Needs attention`, `History` |
+| TIMELINE | attention group `aria-label` / buttons | `Needs attention status` / `Failed`, `Pending`, `Conflict` |
+| TIMELINE | region headings (h3) | `Failed changes` (existing), `Pending changes`, `Conflicted changes`, `Change history` (replaces h4 `Pending changes timeline`) |
+| TIMELINE | timeline loading / error | `Loading changes…` / `Unable to load changes.` (replace the "pending changes" variants) |
+| TIMELINE | timeline empty | `No pending changes.` / `No conflicted changes.` / `No changes found for this filter.` (History; replaces `No pending changes found for this filter.`) |
+| TIMELINE | count, filters, pager | unchanged: `Showing %1$d-%2$d of %3$d changes (%4$s).`, `All` + `formatStatusLabel(status)`, `Previous timeline page` / `Next timeline page` |
+| GPU | toasts | see New symbol contracts |
+| GPU | Settings card (rendered by existing `GpuControlCard`) | `Description service is unavailable because its GPU endpoint is not configured.` + fix sentence |
+| IDENTITY | `<summary>` | `_n('Same photo region is also listed in %d other group', 'Same photo region is also listed in %d other groups', n)`. `n` = distinct group keys in the view's regions, minus the current group. |
+| IDENTITY | limit statement | `Matching uses exact box coordinates in the face records loaded for this photo. It does not show that these faces are the same person, and nothing is merged or moved.` |
+| IDENTITY | region line | `Photo %1$d — box x %2$s, y %3$s, width %4$s, height %5$s` (`String(n)` per number) |
+| IDENTITY | observation line | `%1$s — face record %2$s`. `%2$s` is the verbatim `identity_id` inside `<code>`. |
+| IDENTITY | group display (`%1$s`) | `Person %s`; with a human label `%1$s (person %2$s)`; `Face group %s`; with a human label `%1$s (face group %2$s)`; ungrouped `Not yet grouped`. The id is verbatim inside `<code>`, and the label comes from `formatClusterLabel`. |
+| IDENTITY | pool line | `Checked %1$d of %2$d loaded face records with usable box coordinates.` |
+| IDENTITY | abstention line (only when > 0) | `_n('%d face record was skipped because its loaded copies disagree.', '%d face records were skipped because their loaded copies disagree.', n)` |
+
+## Files and Surfaces to Change
+
+| Surface | File | Symbol / Function | Change |
+| --- | --- | --- | --- |
+| frontend | `js/admin/pages/workbench/DeadLetterPanel.tsx` | `PANEL_VIEW`, `ATTENTION_STATUSES`, `PanelView`, `AttentionStatus` (new) | View and attention-status constants (`as const`) |
+| frontend | same | `DeadLetterPanelState`, `DeadLetterPanelAction`, `INITIAL_STATE`, `deadLetterPanelReducer` | Add `panelView` / `attentionStatus` and two actions. The reducer resets `timelineOffset`, `pendingDiscardId` and both armed flags on either action. `INITIAL_STATE.timelineStatus` stays `'all'` (History default). |
+| frontend | same | `handlePanelViewChange`, `handleAttentionStatusChange` (new); `handleTimelineStatusChange` (reuse) | Dispatch the new actions. History filters keep the existing handler. |
+| frontend | same | `DeadLetterTimelineSection` (new, file-local) | Move the existing timeline JSX (status line, rows, pager) here. It calls `useOutboxOperations` and wraps loading, error and count in one `aria-live="polite"` container (`data-testid="acx-dead-letter-timeline-status"`). History filter buttons switch from `disabled={selected}` to `aria-pressed={selected}`, so they match the new groups and stay focusable. Activating the already-selected filter does nothing. |
+| frontend | same | `DeadLetterPanel` | Remove the top-level `timelineQuery`. Render native `<button type="button" aria-pressed>` view and status groups (`role="group"` + `aria-label`). Mount exactly one region per mode (Target Outcome table). Move the loading and error early returns into the Failed region, keeping `aria-busy="true"` on the section while Needs attention › Failed is shown and `operationsQuery.isLoading`. Rename the section `aria-label` to `Changes panel`. |
+| frontend | same | `DeadLetterOperationRow` | **No change**. `showFailedRecovery` keeps current behaviour. |
+| tests | `js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx` | `describe('UXREC-1 needs attention')` (new); `getTimelinePanel` helper; listed existing tests | New RED tests; adapt existing timeline tests (see Slice T1) |
+| frontend | `js/admin/pages/workbench/gpuStatePresentation.ts` | `GPU_STATE_VOCABULARY.warmingToast`, `.degradedToast`, `.degradedToastWithDrafts` (new) | Copy per contracts |
+| frontend | `js/admin/hooks/useGpuStateToasts.ts` | `useGpuStateToasts` (DEGRADED branch only) | `status.draftCount > 0 ? degradedToastWithDrafts(status.draftCount) : degradedToast`. Attach the existing "Review results" action only when `draftCount > 0`. Keep `durationMs: null` and edge memory. |
+| frontend | `js/admin/utils/serviceUnavailable.ts` | `UNAVAILABLE_REASON`, `UNAVAILABLE_REASON_COPY` | Add `ENDPOINT_UNCONFIGURED` and its copy |
+| tests | `js/admin/hooks/__tests__/useGpuStateToasts.test.tsx` | `describe('UXREC-1 GPU toast evidence')` (new); `it.each(...)('always toasts %s to degraded with Review results even while mounted')` | New RED tests. The existing degraded case gets `draftCount: 1` and expects `degradedToastWithDrafts(1)`. |
+| tests | `js/admin/utils/__tests__/serviceUnavailable.test.ts` | `CLOSED_REASON_COPY`; `it('UXREC-1 endpoint_unconfigured maps to configuration copy')` (new) | Add the closed-set row (TypeScript `Record` requires it) and the RED test |
+| tests | `js/admin/pages/settings/__tests__/GpuControlCard.test.tsx` | `it('UXREC-1 endpoint_unconfigured envelope shows configuration copy')`, `it('UXREC-1 stale snapshot never shows configuration copy')` (new) | Consumer test with the PHP-pinned envelope via the existing `unavailableError` helper, plus a stale-telemetry guard |
+| frontend | `js/admin/pages/workbench/identity-clusters/utils.ts` | `identityGroupKey` (new); `groupIdentitiesByClusters` | Extract the key; call it from grouping |
+| frontend | `js/admin/pages/workbench/identity-clusters/repeatedRegionEvidence.ts` (new) | `buildRepeatedRegionEvidence`, `repeatedRegionViewForGroup` and the types above | Pure projection |
+| frontend | `js/admin/pages/workbench/identity-clusters/RepeatedRegionEvidenceDisclosure.tsx` (new) | `RepeatedRegionEvidenceDisclosure` | Native `<details className="acx-identity-cluster__repeated-region" data-testid="acx-repeated-region-evidence">`, closed by default. Renders `<summary>`, limit, regions (`<ul>`), observations (`<ul>`), pool and abstention lines with the exact copy. Renders no image, button or link. |
+| frontend | `js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx` | `IdentityClusterItemProps.repeatedRegionEvidence?: RepeatedRegionEvidenceView` (new); `IdentityClusterItem` | In display mode, render the disclosure last inside `acx-identity-cluster__info`, after the inline suggestion prompt and outside the `clusteringPending` guard. Never inside the label button. |
+| frontend | `js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx` | `IdentityClusterList`, `UngroupedResidueSection` (prop `repeatedRegionEvidence?: RepeatedRegionEvidenceView`) | `useMemo(() => buildRepeatedRegionEvidence(identities), [identities])`. Build `groupLabels` from `clusters`. Pass `repeatedRegionViewForGroup(evidence, cluster.key, groupLabels)` to each item and the `ungrouped` view to the residue section, which renders the disclosure under its heading. |
+| styles | `js/admin/styles/components/_identity-cluster-list.scss` | `.acx-identity-cluster__repeated-region` (new rules) | `flex-basis: 100%; min-width: 0`, token spacing, and `code { overflow-wrap: anywhere; }` so references wrap at 320 px |
+| tests | `js/admin/pages/workbench/identity-clusters/__tests__/repeatedRegionEvidence.test.ts` (new) | `describe('UXREC-1 buildRepeatedRegionEvidence')` | Pure projection fixtures |
+| tests | `.../__tests__/utils.test.ts` | `describe('UXREC-1 identityGroupKey')` (new) | Key parity |
+| tests | `.../__tests__/IdentityClusterItem.test.tsx` | `describe('UXREC-1 repeated region disclosure')` (new) | Render and keyboard |
+| tests | `.../__tests__/IdentityClusterList.test.tsx` | `describe('UXREC-1 repeated region wiring')` (new) | Wiring and unchanged targets |
+
+## Related Files
+
+| File | Note |
+| --- | --- |
+| `js/admin/hooks/useOutboxOperations.ts`, `useDeadLetterOperations.ts`, `api/recognition/conflictApi.ts` | Reused unchanged; single-status contract |
+| `js/admin/pages/WorkbenchPage.tsx` | WBTRUST-5-reserved. Its overlay h2 "Failed Sync Queue" remains. A later WorkbenchPage owner may retitle it; this plan does not. |
+| `js/admin/App.tsx` | Mounts `useGpuStateToasts`; unchanged |
+| `js/admin/hooks/useActivityStatus.ts` | `describeDraftCount`, `ACTIVITY_KIND`, `ACTIVITY_REASON`; read-only |
+| `js/admin/pages/workbench/ActivityStatusStrip.tsx` | WBTRUST-5-reserved consumer of `readyNotice`, `degradedNotice` and `stoppedNotice`, none of which change. `degradedNotice` ignores its count; this is recorded as a follow-up for the strip owner. |
+| `js/admin/pages/settings/GpuControlCard.tsx`, `js/admin/pages/RetentionPage.tsx` | Consumers of `unavailableReasonCopy`; no production change |
+| `js/admin/api/describeApi.ts` | `fallback_reason`, `terminal`, `DESCRIBE_RESULT_TIER`, `encodeURIComponent` run paths; read-only |
+| `apps/prototype-description-service/scene/application/describe_run_worker.py`, `scene/interface_adapters/http/routers/gpu.py` | Producer evidence; read-only |
+| `src/api/class-gpu-control-controller.php`, `tests/Unit/GpuControlControllerTest.php` | Envelope passthrough evidence; read-only |
+| `js/admin/pages/workbench/identity-clusters/ClusterPreview.tsx`, `ClusterActions.tsx`, `ClusterReviewPanel.tsx`, `pages/workbench/ClusterPanelContext.tsx` | Unchanged. The thumbnail is context only and is never the matching observation. |
+| `js/admin/pages/workbench/MediaSelectionTableBody.tsx` | WBTRUST-5 area; passes `item.identities`; unchanged |
+| `js/admin/pages/workbench/identity-clusters/__tests__/gettext-literals.test.ts`, `js/admin/__tests__/banned-vocabulary.test.tsx` | Read-only guards run as regressions. The page-sweep fixture renders `identities: []`, so it does not render the disclosure. |
+
+## Verification Strategy
+
+All selectors below are **future product-author commands**. This planning lane ran none of them. Run from `apps/prototype-wp-alt-context`.
+
+- Deterministic tests, per slice. The RED selectors are in Slice Delivery. Full-file GREEN commands:
+  - TIMELINE: `npm test -- js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx js/admin/pages/workbench/__tests__/dw2-deadletter-1.test.tsx`
+  - GPU: `npm test -- js/admin/hooks/__tests__/useGpuStateToasts.test.tsx js/admin/utils/__tests__/serviceUnavailable.test.ts js/admin/pages/settings/__tests__/GpuControlCard.test.tsx js/admin/pages/settings/__tests__/useGpuControl.test.tsx js/admin/pages/workbench/__tests__/gpuStatePresentation.test.ts js/admin/pages/workbench/__tests__/ActivityStatusStrip.test.tsx js/admin/pages/__tests__/RetentionPage.test.tsx`
+  - IDENTITY: `npm test -- js/admin/pages/workbench/identity-clusters/__tests__/repeatedRegionEvidence.test.ts js/admin/pages/workbench/identity-clusters/__tests__/utils.test.ts js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterList.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterList.provenance.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterList.twinChip.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.twinChip.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/ClusterPreview.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/gettext-literals.test.ts js/admin/__tests__/banned-vocabulary.test.tsx`
+  - Every slice: `npm run typecheck` and `npm run lint`. Lint findings follow the repo lint-deferral rule; they do not block.
+- Ownership check per slice: `git diff --name-only <slice-base>..HEAD` lists only that slice's owned paths. It never lists `docs/ux-maps/**`, `routers/gpu.py`, `describeApi.ts`, `gpuApi.ts`, `class-gpu-control-controller.php` or any WBTRUST-5-reserved file.
+- Contract and fixture checks: the TIMELINE `toHaveBeenLastCalledWith` status params, the GPU PHP-pinned envelope fixture, and the IDENTITY permutation and no-mutation tests.
+- Map join (run by the single map writer, not by slice authors): `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/gate/wb/agentic-protocol-monorepo/packages/mcp-workbay-canvas/src python3 docs/ux-maps/render_ux_maps.py --check workbench-operator-loop describe-gpu-tier workbench-identity-chips` and `npm test -- js/admin/__tests__/uxmap-one-primary.test.ts js/admin/__tests__/uxmap-parity.test.ts js/admin/__tests__/uxmap-render-parity.test.ts`.
+- Manual verification (later, in a browser, not a slice gate):
+  - Keyboard walk of the view and status groups and the disclosure (Tab, Enter/Space, visible focus, no trap).
+  - Reflow at 320 px and 200 % zoom with long `identity_id` values.
+  - Screen-reader check that the timeline count is announced once per view change.
+- Runtime acceptance (needs a returned runtime grant plus exact deployed build and tenant; **none is present**, and unit tests cannot substitute):
+  - Inspect the four July records' status and reconciliation eligibility without blanket deletion.
+  - Observe a real describe run reaching each of the three worker outcomes. Confirm the toasts match the returned `draftCount`, `fallback_reason` and terminal.
+  - Confirm the deployed GPU status path, and whether `endpoint_unconfigured` ever reaches the Settings card.
+  - Confirm a repeated region on real loaded rows, using only operator-supplied IDs.
+  - Retention upstream recovery stays a separate runtime item.
+
+## Slice Delivery
+
+### Slice T1: TIMELINE — Needs attention default and separate History
+
+**Goal**: one list per mode. A failed row and its actions never appear twice, and audit history sits behind History.
+
+Files/functions:
+
+- `js/admin/pages/workbench/DeadLetterPanel.tsx:PANEL_VIEW`, `ATTENTION_STATUSES` (new); `DeadLetterPanelState`, `DeadLetterPanelAction`, `INITIAL_STATE`, `deadLetterPanelReducer`, `handlePanelViewChange` (new), `handleAttentionStatusChange` (new), `DeadLetterTimelineSection` (new), `DeadLetterPanel`.
+- `js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx`.
+
+Fixtures, added to the test file with the existing `buildOperation`. All IDs are synthetic; these are not the live July records.
+
+- `OLD_FAILED`: id 701, `status: 'failed'`, `operation_type: 'cluster_label_updated'`, `entity_key: 'cluster-701'`, `created_at` and `first_failed_at: '2026-07-14T09:00:00Z'`, attempts 5, `last_error_code: 'dispatch_failed'`.
+- `PENDING_OP`: id 702, `status: 'pending'`, null error fields.
+- `CONFLICT_OP`: id 703, `status: 'conflict'`.
+- `ACKNOWLEDGED_OP`: id 704, with `acknowledged_at`.
+- `DISCARDED_OP`: id 705, `status: 'discarded'`, `last_error_code: 'auto_retry_exhausted'`.
+
+RED tests in `describe('UXREC-1 needs attention')`, each with its predicted failure:
+
+1. `defaults to Needs attention › Failed with the failed list only`
+   - Expect `Needs attention` and `Failed` to have `aria-pressed="true"`, `OLD_FAILED`'s entity text exactly once, `mockedUseOutboxOperations` not called, no `Change history` heading, and `Retry all failed (1)` present.
+   - Predicted RED: `Unable to find an accessible element with the role "button" and name "Needs attention"`.
+2. `Pending and Conflict render only the server-filtered timeline`
+   - After clicking `Pending`, expect `toHaveBeenLastCalledWith({limit:10, offset:0, status:'pending'})`, the `Pending changes` heading, no `Showing 1-1 of 1 failed changes.`, and no maintenance-zone buttons. Repeat for `Conflict`.
+3. `History renders the all-status timeline without maintenance actions`
+   - Expect `{limit:10, offset:0, status:undefined}`, acknowledged and discarded rows visible, no `Retry all failed` or `Discard … eligible` button, and no failed list.
+   - With the History filter `failed`, `OLD_FAILED` renders once with its guarded row Retry/Discard.
+4. `view changes reset the timeline offset and disarm confirmations`
+   - History Next page sends `offset:10`. Switching to Needs attention › Pending sends `offset:0`.
+   - Arm a row discard in Failed (`Confirm discard`), switch to History and back, and expect the button to read `Discard`. Arm `Retry all`, switch view, and expect it to be disarmed.
+5. `failed-list load error keeps History reachable`
+   - With `operationsQuery` erroring, the alert "Unable to load failed changes." shows in the Failed region, `History` is enabled, and clicking it renders `Change history`.
+6. `old failed rows stay in Needs attention until the server status changes`
+   - `OLD_FAILED` stays listed. No age-only filter applies. Bulk discard remains the existing armed, eligibility-based action.
+7. `view changes never send a mutation`
+   - After toggling every view and status, the retry, discard and bulk retry `mutateAsync` mocks have zero calls.
+8. `History filters expose pressed state and stay focusable`
+   - In History, `All` has `aria-pressed="true"` and is not disabled. After activating `failed`, that button is pressed and `All` is not.
+   - Activating the already-pressed `failed` again leaves the request offset unchanged.
+
+Intentional updates to existing tests (setup changes; assertions are preserved unless stated):
+
+- `getTimelinePanel`: look up the heading `Change history`.
+- `renders failed operations with metadata and payload summary`: `getAllByText('Cluster label update')`, `getAllByText('Entity: cluster-1 (cluster)')` and `getAllByText(/Last attempted:/)` change from length 2 to 1, because the default view no longer mounts the timeline.
+- Click `History` first in: `renders outbox timeline entries with status and acknowledgement metadata` (heading text becomes `Change history`), `updates the timeline filter and pagination controls`, `keeps non-failed timeline rows without error, attempts, or recovery actions`, `shows error code, attempts, and Retry/Discard on failed timeline rows`, `retries a failed timeline row through the shared retry mutation`, `discards a failed timeline row through the shared discard mutation`, `hides Retry on terminal failed timeline rows and keeps Discard` and `shows Will not retry for discarded timeline rows`.
+- `shows age per failed row and timeline entry`: assert `Age: 8 days` once in the default view and once after `History`.
+- `mounts the empty failed-changes status before announcing loading on the same node` and any other region query: use `{ name: 'Changes panel' }`.
+
+Proof:
+
+- Each RED selector fails as predicted on unchanged source: `npm test -- js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx -t 'UXREC-1 needs attention'`.
+- The same selector passes after the change. The full-file TIMELINE command, `npm run typecheck` and the ownership check pass.
+
+**Source-complete when** all of the above pass. **Not proven here**: the four live July records' state, or the deployed panel.
+
+### Slice G1: GPU_STATUS — evidence-bound toasts and `endpoint_unconfigured` copy
+
+**Goal**: no visible GPU copy claims CPU drafts or results that the server has not returned, and a received configuration error explains itself.
+
+Files/functions:
+
+- `js/admin/pages/workbench/gpuStatePresentation.ts:GPU_STATE_VOCABULARY` (`warmingToast`, `degradedToast`, `degradedToastWithDrafts` (new)).
+- `js/admin/hooks/useGpuStateToasts.ts:useGpuStateToasts`.
+- `js/admin/utils/serviceUnavailable.ts:UNAVAILABLE_REASON`, `UNAVAILABLE_REASON_COPY`.
+- Tests: `useGpuStateToasts.test.tsx`, `serviceUnavailable.test.ts`, `GpuControlCard.test.tsx`.
+
+RED tests (assert literal strings, so RED is a clean assertion failure):
+
+1. In `describe('UXREC-1 GPU toast evidence')`:
+   - `warming toast makes no CPU draft claim`: the kind change to WARMING gives info text `GPU warming — this run is waiting for the description service`, which does not match `/CPU/`. Predicted RED: `expected 'GPU warming — CPU drafts first' to be …`.
+   - `degraded toast without returned drafts offers no review`: READY → DEGRADED with `draftCount: 0` gives error text `GPU unavailable — no descriptions returned yet`, `options.action` undefined and `durationMs` null. Predicted RED: text mismatch, with the action present.
+   - `degraded toast with returned drafts names the count and keeps Review results`: `draftCount: 2` gives `GPU unavailable — 2 drafts ready to review` and action label `Review results`.
+   - Guards that pass before and after: `never toasts an unknown GPU state into degraded`, `does not toast a GPU status poll failure with no active run`, and the existing failed, ready and done cases.
+2. `serviceUnavailable.test.ts: UXREC-1 endpoint_unconfigured maps to configuration copy`: `unavailableReasonCopy('endpoint_unconfigured')` equals the contract copy, and `why` does not match `/unexpected error/`. Predicted RED: `{ why: 'an unexpected error occurred (endpoint_unconfigured)', … }`.
+3. In `GpuControlCard.test.tsx`:
+   - `UXREC-1 endpoint_unconfigured envelope shows configuration copy`: `mockControl(statusResponse(), { data: undefined, isError: true, error: unavailableError('2026-09-18T14:03:22Z', { reason: 'endpoint_unconfigured', http_status: 503, retry_after_seconds: null }), refetch })`. Expect the text `Description service is unavailable because its GPU endpoint is not configured.`, the fix sentence, no `/unexpected error/`, and the existing `Retry` button enabled.
+   - Guard: `UXREC-1 stale snapshot never shows configuration copy`: `mockControl({ ...statusResponse({ state: 'ready' }), snapshot_age_seconds: 240, snapshot_fresh: false })`, the same shape as the existing test `hides Start and Stop when the snapshot is stale and keeps Refresh`, renders no `/not configured/`.
+
+Intentional updates to existing tests:
+
+- `always toasts %s to degraded with Review results even while mounted`: add `draftCount: 1` to the DEGRADED status and expect `GPU_STATE_VOCABULARY.degradedToastWithDrafts(1)`.
+- `CLOSED_REASON_COPY`: add the `ENDPOINT_UNCONFIGURED` row. The distinct-`why` test then covers it.
+
+Proof:
+
+- RED selectors fail as predicted: `npm test -- js/admin/hooks/__tests__/useGpuStateToasts.test.tsx -t 'UXREC-1 GPU toast evidence'`, `npm test -- js/admin/utils/__tests__/serviceUnavailable.test.ts -t 'UXREC-1 endpoint_unconfigured'` and `npm test -- js/admin/pages/settings/__tests__/GpuControlCard.test.tsx -t 'UXREC-1'`.
+- After the change they pass, and so do the full GPU command, typecheck and the ownership check. The check confirms no change to `routers/gpu.py`, `describeApi.ts`, `gpuApi.ts`, PHP or `ActivityStatusStrip.tsx`.
+
+**Source-complete when** all of the above pass. **Not proven here**: live warm-up, CPU continuation availability, result delivery, or whether any deployed path emits `endpoint_unconfigured` to the card.
+
+### Slice I1: IDENTITY — repeated-region evidence disclosure
+
+**Goal**: show, in place and as text, that loaded face records in different groups share an exact photo region. Grouping, primary naming and removal targets are unchanged.
+
+Files/functions:
+
+- `identity-clusters/utils.ts:identityGroupKey` (new), `groupIdentitiesByClusters`.
+- `identity-clusters/repeatedRegionEvidence.ts` (new): `buildRepeatedRegionEvidence`, `repeatedRegionViewForGroup`.
+- `identity-clusters/RepeatedRegionEvidenceDisclosure.tsx` (new).
+- `IdentityClusterItem.tsx:IdentityClusterItem`.
+- `IdentityClusterList.tsx:IdentityClusterList`, `UngroupedResidueSection`.
+- `styles/components/_identity-cluster-list.scss`.
+- The four test files.
+
+Fixtures (pure; synthetic IDs; `R = {x: 12, y: 20, width: 40, height: 48}`):
+
+- `P1A`: `identity_id 'face-a'`, `person_id '1'`, `cluster_id 'c-1'`, media 10, R.
+- `P2B`: `'face-b'`, `person_id '2'`, media 10, R.
+- `C3C`: `'face-c'`, `person_id null`, `cluster_id 'c-3'`, media 10, R.
+- `UND`: `'face-u'`, `person_id null`, `cluster_id null`, media 10, R.
+
+RED tests in `repeatedRegionEvidence.test.ts` (`describe('UXREC-1 buildRepeatedRegionEvidence')`). Predicted RED: `Failed to resolve import "../repeatedRegionEvidence"`.
+
+- **Positive**: `[P1A, P2B]` gives one region with `groupKeys ['person:1','person:2']` and observation ids `['face-a','face-b']`.
+- **Three groups**: `[P1A, P2B, C3C]` gives one region whose group keys are ascending (`cluster:c-3`, `person:1`, `person:2`).
+- **Ungrouped participates**: `[C3C, UND]` gives `['cluster:c-3', 'ungrouped']`.
+- **Negatives** (zero regions; `eligibleObservationCount` as stated):
+  - same group, two ids, R;
+  - media 10 vs 11 with R;
+  - R vs `{x:13,…}` (IoU above 0.5, still no region);
+  - width 1, height 1, `x: -1`, `NaN`, `Infinity`, missing `bbox`, `media_id` 0, −3 or 1.5, and empty `identity_id` (excluded from `loadedObservationCount`).
+- **No chaining**: A and B share R, and C overlaps R without being equal. Only {A, B} form a region.
+- **Duplicates**: an identical `face-a` record twice counts once. `face-a` with two different boxes, or two different `person_id` values, goes to `abstainedIdentityIds` and joins no region.
+- **Partial pool**: the counts equal the distinct ids passed in. No field implies a total beyond the input.
+- **Determinism**: every permutation of `[P1A, P2B, C3C]` gives `toEqual` output.
+- **Purity**: a deep-frozen input does not throw. `groupIdentitiesByClusters(input)` deep-equals its value from before the call, including `members`, `identityClusterIds` and `clusterId` for every group. `getEditableClusterId(group)` and `group.members[0].identity_id` (naming and removal targets) are unchanged.
+
+Other RED tests:
+
+- `utils.test.ts`, `describe('UXREC-1 identityGroupKey')`:
+  - person precedence;
+  - cluster fallback;
+  - `ungrouped`;
+  - `person_id: ''` falls back like null;
+  - for every member, `groupIdentitiesByClusters(...).key === identityGroupKey(member)`.
+  - Predicted RED: `identityGroupKey is not a function` (import undefined).
+- `IdentityClusterItem.test.tsx`, `describe('UXREC-1 repeated region disclosure')`:
+  - With a view for `person:1`, the `<details>` is present and not `open`. The summary reads `Same photo region is also listed in 1 other group`.
+  - After `fireEvent.click(summary)`, `details.open` is true and the region line `Photo 10 — box x 12, y 20, width 40, height 48` shows.
+  - The observation list items (`within(details).getAllByRole('listitem')`) have `toHaveTextContent` `Person 1 — face record face-a` and `Person 2 — face record face-b`. Use `toHaveTextContent` because the ids sit in `<code>` children, which `getByText` does not join. The limit statement and `Checked 2 of 2 loaded face records with usable box coordinates.` are also present.
+  - With `groupLabels` mapping `person:1` to `bob`, the first item reads `bob (person 1) — face record face-a`.
+  - The label button keeps its accessible name and comes before the summary in DOM order. The disclosure contains no `img`, `button` or `a`.
+  - Without the prop, no `[data-testid="acx-repeated-region-evidence"]` renders.
+  - Predicted RED: `Unable to find an element with the text: Same photo region is also listed in 1 other group`.
+- `IdentityClusterList.test.tsx`, `describe('UXREC-1 repeated region wiring')`:
+  - `renderList([P1A, P2B])` gives two cards, each with one disclosure. The count of `Edit label` / `Name this person` buttons and of label buttons equals the count for the same two records with 1×1 boxes, which produce no disclosure.
+  - `[P1A, {...P1A, identity_id:'face-a2'}]` (same group) gives no disclosure.
+  - `[C3C, UND]` gives the disclosure under `Not yet grouped (1)`.
+  - Existing 1×1 fixtures render no disclosure.
+
+Keep green unchanged: the `groupIdentitiesByClusters same-face dedup (GPUFLOW-3 R1)` block, the twin-chip, provenance and suggestion-recovery suites, `gettext-literals.test.ts` and `banned-vocabulary.test.tsx`.
+
+Proof:
+
+- RED selectors fail as predicted:
+  - `npm test -- js/admin/pages/workbench/identity-clusters/__tests__/repeatedRegionEvidence.test.ts`
+  - `npm test -- js/admin/pages/workbench/identity-clusters/__tests__/utils.test.ts -t 'UXREC-1 identityGroupKey'`
+  - `npm test -- js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx -t 'UXREC-1 repeated region disclosure'`
+  - `npm test -- js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterList.test.tsx -t 'UXREC-1 repeated region wiring'`
+- After the change they pass, and so do the full IDENTITY command, typecheck and the ownership check.
+
+**Source-complete when** all of the above pass. **Not proven here**: whether the supplied same-person crops are same-photo exact regions, cross-photo duplicates or recall fragmentation. That diagnosis belongs to a separately granted CORPUS probe. Rendered browser reflow and assistive-technology behaviour are also unproven.
+
+## Lane Decomposition (Multi-Agent)
+
+### Lanes
+
+| Lane ID | Owned paths (repo-relative) | Upstream dependencies | Required tests |
+| --- | --- | --- | --- |
+| `uxrec-1-timeline` | `apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx`, `.../workbench/__tests__/DeadLetterPanel.test.tsx` | Joined plan + maps pass independent review | TIMELINE full-file command, typecheck |
+| `uxrec-1-gpu-status` | `.../workbench/gpuStatePresentation.ts`, `.../hooks/useGpuStateToasts.ts`, `.../utils/serviceUnavailable.ts`, `.../hooks/__tests__/useGpuStateToasts.test.tsx`, `.../utils/__tests__/serviceUnavailable.test.ts`, `.../pages/settings/__tests__/GpuControlCard.test.tsx` | Same | GPU full command, typecheck |
+| `uxrec-1-identity` | `.../identity-clusters/{utils.ts,repeatedRegionEvidence.ts,RepeatedRegionEvidenceDisclosure.tsx,IdentityClusterItem.tsx,IdentityClusterList.tsx}`, `.../identity-clusters/__tests__/{repeatedRegionEvidence.test.ts,utils.test.ts,IdentityClusterItem.test.tsx,IdentityClusterList.test.tsx}`, `.../styles/components/_identity-cluster-list.scss` | Same; not concurrent with a WBTRUST-4 lane on the shared files | IDENTITY full command, typecheck |
+
+Single writers outside these lanes:
+
+- **Map writer**: the three maps, their `.md` files and their `render_ux_maps.visible.json` entries. After slices merge, this writer alone updates map statuses.
+- **WBTRUST-5**: its reserved composition files.
+- **Plan and inventory**: this plan's owner.
+
+### Merge Order
+
+1. Planning gate: the joined plan, inventory and maps pass independent review ([GRPH-01] **Model the work as a DAG, then topological-sort**, *The Algorithm Design Manual, ch. 7*).
+2. `uxrec-1-timeline`, `uxrec-1-gpu-status` and `uxrec-1-identity` share no data or file edge and merge in any order. The second and third merge after a rebase and a rerun of their full commands.
+3. Branch review per slice, then the map writer's status update, then runtime acceptance under a separate grant.
 
 ```text
-MAP design ----> independent map gate ----> TIMELINE source/test slice ---+
-                                    +----> GPU_STATUS source/test slice -+-> source review
-                                    +----> IDENTITY source/test slice ---+
-CORPUS probe ------------------------------> identity diagnosis          |
-RUNTIME grant + deployed artifact/config ------------------------------> runtime acceptance
+plan+inventory (this lane) --+
+map writer (maps) -----------+--> independent planning review --+--> T1 timeline --+
+                                                                +--> G1 gpu ------+--> per-slice branch review --> map status update
+                                                                +--> I1 identity -+
+CORPUS probe (separate grant) ---------------------------------------------------------> identity-repair claims (not in this plan)
+RUNTIME grant + exact deployed build/config ----------------------------------------------> runtime acceptance
 ```
 
-DAG has no back edge. MAP/RUNTIME/CORPUS are independent initial lanes; no product owner waits for unrelated runtime configuration to write a truthful source test after the map gate. Corpus conclusions are required for identity-repair claims, not the evidence-only disclosure. Runtime acceptance requires a returned grant and exact deployed artifact/config evidence; neither is present. Independent source review can proceed before runtime acceptance, but cannot substitute for it.
+### Conflict graph
 
-| Candidate owner after map gate | Verified production files and focused tests (all under `apps/prototype-wp-alt-context/`) | Boundary / end state |
-| --- | --- | --- |
-| TIMELINE | `js/admin/pages/workbench/DeadLetterPanel.tsx`; `js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx` | Current attention defaults to failed; explicit pending/conflict status choices and explicit History; retain server records and existing guarded mutations. |
-| GPU_STATUS | `js/admin/pages/workbench/gpuStatePresentation.ts`; `js/admin/pages/workbench/__tests__/gpuStatePresentation.test.ts` | Unknown/null notice no longer promises CPU continuation. Preserve canonical labels, running/warming/error/retry behavior and existing drafts. |
-| IDENTITY | `js/admin/pages/workbench/identity-clusters/utils.ts`, `IdentityClusterItem.tsx`, **`IdentityClusterList.tsx`**; corresponding `__tests__/utils.test.ts`, `IdentityClusterItem.test.tsx`, `IdentityClusterList.test.tsx` | Separate repeated-evidence projection/disclosure from existing grouping. No arbitrary collapse; unchanged editable cluster/person and identity-specific mutation targets. |
+[GRPH-09] **Colour the conflict graph**, *Graph Theory with Applications, ch. 8*. The vertices are lanes and plans, and an edge means a shared writable path.
 
-Anchor correction: candidate `IdentityClusters` wrapper is actually `IdentityClusterList.tsx:405`, called from `MediaSelectionTableBody.tsx:598`. `ClusterPreview.tsx` is a noninteractive thumbnail; item label button enters naming. The pre-existing identity map describes target chip/workspace navigation, not an implemented avatar action. `ClusterReviewPanel.tsx:45` exists, takes one clusterId, and removes an identity via `removeClusterMember(identityId, true)`. Existing review navigation can be reused only where wired; no fake merge UI is accepted. If disclosure requires review wiring outside owned files, stop that extension for coordinated ownership and keep the independently useful evidence-only slice.
+- T1, G1 and I1 share no edges. One colour covers all three, so they run in parallel.
+- I1 and WBTRUST-4 share `IdentityClusterList.tsx` and `utils.ts`. That clique has size 2, so these two need two colours and run one after the other. Whichever merges second rebases and reruns its suite.
+- G1 has no edge with WBTRUST-5. G1 changes no string that `ActivityStatusStrip` reads, and it edits no reserved file.
+- The map writer has no edge with any slice.
 
-No pairwise production file conflicts among TIMELINE/GPU_STATUS/IDENTITY: they may proceed independently after the map gate. Shared maps are authored here and reviewed as one design batch, not concurrently rewritten by all three owners. MediaSelection, ActivityStatusStrip, AdvancedDrawer and WorkbenchPage remain reserved by WBTRUST5 plans. ScanTabContent/open-review lifecycle and ClusterReviewPanel are producer evidence, not granted new ownership. Cross-boundary requirements need an explicit coordinated extension, not silent file claims. Reaper, global environment, upstream WorkBay and foreign sandboxes are excluded.
+No capacity-limited assignment is made here, so GRPH-07 does not fire.
 
-## Smallest slices and RED before GREEN
+### Manifest
 
-Commands below are **future product-owner selectors**, not tests executed in this design dispatch. Run from `apps/prototype-wp-alt-context` using existing offline dependencies. Use `npm test --`, not `test:agent` (which suppresses failure). First add the named behavioral assertion and show RED against unchanged production source; then implement the smallest owned change and rerun the same selector GREEN. Finally run the full touched test files. The new test names below are proposed selectors; they do not falsely assert tests already exist.
-
-### TIMELINE: attention without deleting audit history
-
-Producer contract: `DeadLetterPanel.tsx:552` calls `useOutboxOperations({status,limit,offset})`; `js/admin/api/recognition/conflictApi.ts:100` sends a single status with bounded GET. Existing failed operations query is separate. Keep these exact response shapes. A synthetic `attention` status would be unsupported. Smallest slice changes panel-local view/default and gates the existing all-status timeline behind History. Attention exposes individual failed/pending/conflict choices with server-filtered pages. Do not filter one all-status page then present its count as the unresolved total. Preserve failed retry/discard confirmations and response announcements.
-
-```sh
-npm test -- js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx -t 'UXREC-1 current attention'
+```bash
+make lane-manifest-init TASK=UXREC-1 LANE_IDS='uxrec-1-timeline uxrec-1-gpu-status uxrec-1-identity' TASK_PLAN=docs/tasks/uxrec/UXREC-1-workbench-recovery-task-plan.md
 ```
 
-Proposed RED cases: initial view excludes acknowledged/discarded audit rows; explicit History reveals the unchanged fixtures; empty failed attention does not say history is empty; pending/conflict selection sends the actual single status; switching views resets/selects appropriate pagination and never sends POST; old audit records survive re-entry; retry says queued and discard remains guarded. Include failed refresh with retained history vs no-data failure, busy retry, focus retention and accessible view controls. GREEN must preserve all existing panel tests. Exact four live July records are runtime/data acceptance only, never unit-fixture proof.
+### Orchestration Mode
 
-### GPU_STATUS: truthful unknown notice
+- **Subagent or remote author**: brief each lane with its slice block, its owned paths and this plan's Constraints. Do not let lanes edit maps, other lanes' paths or reserved files.
+- **Shell fallback**: one worktree per lane branch with the same ownership, commands and evidence.
 
-Producer proof: `apps/prototype-description-service/api/main.py:_description_adapter_readiness` distinguishes adapter/profile availability and reason. `scene/application/describe_run_worker.py:_usable_cpu_describe_one` / `_apply_warmup_cpu_fallback` continue on CPU only when configured usable; otherwise typed failure. This supports removing the unconditional promise; it does not grant frontend inference of a capability from generic health.
+## Decomposition
 
-```sh
-npm test -- js/admin/pages/workbench/__tests__/gpuStatePresentation.test.ts -t 'UXREC-1 unknown capability'
+```json
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "s1",
+      "title": "TIMELINE: Needs attention default, separate History, no duplicate failed rows",
+      "independent": true,
+      "owns": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx"
+      ],
+      "depends": [],
+      "blast": "none"
+    },
+    {
+      "id": "s2",
+      "title": "GPU_STATUS: evidence-bound toasts and endpoint_unconfigured copy",
+      "independent": true,
+      "owns": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/gpuStatePresentation.ts",
+        "apps/prototype-wp-alt-context/js/admin/hooks/useGpuStateToasts.ts",
+        "apps/prototype-wp-alt-context/js/admin/utils/serviceUnavailable.ts",
+        "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useGpuStateToasts.test.tsx",
+        "apps/prototype-wp-alt-context/js/admin/utils/__tests__/serviceUnavailable.test.ts",
+        "apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx"
+      ],
+      "depends": [],
+      "blast": "none"
+    },
+    {
+      "id": "s3",
+      "title": "IDENTITY: repeated-region evidence disclosure",
+      "independent": true,
+      "owns": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/utils.ts",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/repeatedRegionEvidence.ts",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/RepeatedRegionEvidenceDisclosure.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/repeatedRegionEvidence.test.ts",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/utils.test.ts",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterList.test.tsx",
+        "apps/prototype-wp-alt-context/js/admin/styles/components/_identity-cluster-list.scss"
+      ],
+      "depends": [],
+      "blast": "none"
+    }
+  ]
+}
 ```
 
-Proposed RED: null and UNKNOWN notice make no promise to continue on CPU and explicitly leave description readiness unconfirmed. GREEN changes presentation copy only. Retain existing full-file tests for exhaustive states and consequence copy. No new orchestration, no broad copy rewrite, no state flattening: actual starting/running/overdue/failure remain visible; existing CPU drafts remain reviewable and item-tier truthful. Existing source-fixed dormant suppression and persistence are regression checks, not new feature claims.
+---
 
-Existing regression selectors (run only if relevant cross-file behavior is changed in a later coordinated slice):
+## Consolidated Checklist
 
-```sh
-npm test -- js/admin/hooks/__tests__/useBulkDescribe.test.tsx -t 'keeps a pending warmup across remount'
-npm test -- js/admin/hooks/__tests__/describeOperationStore.test.ts
-```
+## Context and Ownership
 
-### IDENTITY: explicit evidence, unchanged targets
+- [ ] Verified the Canon v0.26.2 manifest digests and read this plan, the inventory, the three maps and the WBTRUST-4/5 reservation lists.
+- [ ] Confirmed the lane owns exactly its Decomposition `owns` paths. Map JSON/MD/projection, WBTRUST-5-reserved files, backend, PHP and `ClusterReviewPanel.tsx` are untouched.
+- [ ] For I1, confirmed no WBTRUST-4 lane is concurrently editing `IdentityClusterList.tsx` or `utils.ts`.
+- [ ] Ran tests on the VM from `apps/prototype-wp-alt-context` with `npm test --`, never `test:agent`.
 
-`groupIdentitiesByClusters` preserves person-first/cluster-second grouping and identityClusterIds while deduplicating same-face within a group. Add a separate pure evidence projection if necessary; do not replace grouping with connected components, change the arbitrary first representative into a mutation target, or hide unresolved residue. Match only supported source/face correspondence; disclose geometry-based ambiguity. User-supplied same-person labels do not authorize automatic merge of other observations.
+### Checklist for Slice T1: TIMELINE
 
-```sh
-npm test -- js/admin/pages/workbench/identity-clusters/__tests__/utils.test.ts -t 'UXREC-1 repeated face evidence'
-npm test -- js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx -t 'UXREC-1 evidence disclosure'
-npm test -- js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterList.test.tsx -t 'UXREC-1 preserves group targets'
-```
+- [ ] Added the fixtures `OLD_FAILED`, `PENDING_OP`, `CONFLICT_OP`, `ACKNOWLEDGED_OP` and `DISCARDED_OP`, and the eight `UXREC-1 needs attention` tests. Recorded each predicted message and saw each one fail against unchanged `DeadLetterPanel.tsx`.
+- [ ] Added `PANEL_VIEW`, `ATTENTION_STATUSES`, the new state fields and actions, and reducer cases that reset `timelineOffset`, `pendingDiscardId`, `bulkRetryArmed` and `bulkDiscardArmed`.
+- [ ] Added `handlePanelViewChange` and `handleAttentionStatusChange`, and kept `handleTimelineStatusChange` for History filters.
+- [ ] Moved the timeline JSX into `DeadLetterTimelineSection`, which owns the `useOutboxOperations` call and one polite live container. History filters use `aria-pressed` and ignore re-selection. Removed the top-level `timelineQuery`.
+- [ ] Rendered the `aria-pressed` view and status groups and mounted one region per mode as the Target Outcome table specifies. The maintenance zone renders only in Failed.
+- [ ] Scoped the failed-list loading and error states to the Failed region, kept `aria-busy` while loading, and renamed the section label to `Changes panel`.
+- [ ] Applied the exact copy table, with literal gettext first arguments.
+- [ ] Made the listed intentional edits to existing tests and left `DeadLetterOperationRow` unchanged.
+- [ ] Captured GREEN for the RED selector and the TIMELINE full-file command, `npm run typecheck`, and the ownership `git diff --name-only`.
 
-Proposed RED: exact source/face evidence in two groups yields inspectable references, not one collapsed person; overlapping different boxes and different photos are not falsely exact duplicates; missing media/bbox/face refs stay unavailable; A~B~C never creates A=C identity; existing group order/member mappings/naming target/removal identity remain unchanged. Disclosure shows source label, proportional crops, exact group/face references, displayed/available counts and incomplete/truncated state. Compare actual same-face supplied fixtures without inventing corpus IDs. Keyboard disclosure, review focus return, narrow wrapping, mandatory-roster-ready/advisory-loading naming and backend_proxy read-only behavior remain valid. No merge control unless the source path truly supports it and its existing preview/mutation target survives.
+### Checklist for Slice G1: GPU_STATUS
 
-## Design validation receipt and review gate
+- [ ] Added the `UXREC-1 GPU toast evidence`, `UXREC-1 endpoint_unconfigured` and `UXREC-1 stale snapshot` tests with literal expected strings, and saw the RED tests fail as predicted.
+- [ ] Changed `warmingToast` and `degradedToast`, and added `degradedToastWithDrafts` with `_n`.
+- [ ] In the `useGpuStateToasts` DEGRADED branch, chose copy and attached "Review results" only when `status.draftCount > 0`. Left every other branch and the dormant suppression unchanged.
+- [ ] Added `UNAVAILABLE_REASON.ENDPOINT_UNCONFIGURED`, its `UNAVAILABLE_REASON_COPY` entry, and the `CLOSED_REASON_COPY` test row.
+- [ ] Updated the existing degraded test to `draftCount: 1`.
+- [ ] Captured GREEN for the RED selectors and the GPU full command, typecheck, and the ownership diff (nothing outside the six owned paths).
 
-Author window limit: 1800 seconds; all work stayed in this native VM with no subagents. VM-only, bounded to three maps; no npm installation/extraction needed because Node 22.23.1 handles the existing parity module with `--experimental-strip-types`. No JS unit suite or product runtime was run. Native `ux-map` executable absent (`command -v ux-map` returned no path); available source package `/home/gate/wb/agentic-protocol-monorepo/packages/mcp-workbay-canvas/src` imported `UxMap`, `render_markdown_bundle`, `critique_map` successfully. `/home/gate/canvas-reference-20261018` was not treated as code.
+### Checklist for Slice I1: IDENTITY
 
-Executed from repo root:
+- [ ] Added `repeatedRegionEvidence.test.ts` plus the `UXREC-1 identityGroupKey`, `UXREC-1 repeated region disclosure` and `UXREC-1 repeated region wiring` tests, and saw each fail as predicted.
+- [ ] Added `identityGroupKey` and switched `groupIdentitiesByClusters` to it. The existing utils and same-face dedup tests stay green.
+- [ ] Implemented `buildRepeatedRegionEvidence` and `repeatedRegionViewForGroup` to rules 1–6 and the types above. No IoU, no similarity, no image fields.
+- [ ] Implemented `RepeatedRegionEvidenceDisclosure` as native `<details>`/`<summary>`, closed by default, using text only and the exact copy. Exact references appear only inside the body.
+- [ ] Wired `IdentityClusterList`: a memoized evidence value, `groupLabels`, a per-item `repeatedRegionEvidence`, and the residue-section disclosure. `IdentityClusterItem` renders it last in display mode.
+- [ ] Added `.acx-identity-cluster__repeated-region` rules to `_identity-cluster-list.scss` using tokens and `overflow-wrap: anywhere` for `code`.
+- [ ] Captured GREEN for the RED selectors and the IDENTITY full command (including `gettext-literals.test.ts` and `banned-vocabulary.test.tsx`), typecheck, and the ownership diff.
 
-```sh
-PYTHONPATH=/home/gate/wb/agentic-protocol-monorepo/packages/mcp-workbay-canvas/src python apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py workbench-operator-loop describe-gpu-tier workbench-identity-chips
-PYTHONPATH=/home/gate/wb/agentic-protocol-monorepo/packages/mcp-workbay-canvas/src python apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py --check workbench-operator-loop describe-gpu-tier workbench-identity-chips
-PYTHONPATH=/home/gate/wb/agentic-protocol-monorepo/packages/mcp-workbay-canvas/src python /tmp/uxrec_validate.py
-```
+## Review Readiness
 
-Render and scoped producer/consumer parity passed, three maps. Renderer parity uses 10-second subprocess deadlines per map; whole command completed in seconds. `/tmp/uxrec_validate.py` is a non-product verification helper: it loads strict Canvas UxMap after stripping only the renderer's documented local extensions (`domain_state_mappings`, `slices`, action `when`, screen `action_states`), compares baseline/current critique, checks at most one primary per screen, checks all screen-detail headings remain inside `## Screens` before another level-two heading, and verifies pinned manifest digests. Initial helper expected bare-ID headings and failed; corrected to actual `### title (id)` format and passed. No renderer or global test source changed.
+- [ ] No slice changes a boundary. Each boundary row's verification evidence is attached: status params, the PHP-pinned envelope, and permutation and purity tests.
+- [ ] Each RED test's predicted and observed failure is recorded in the slice handoff decision, not in this file.
+- [ ] The runtime-acceptance items stay listed as unproven. No slice report claims deployed behaviour, July-record clearance, CPU availability or an identity diagnosis.
+- [ ] The map writer has reconciled map action IDs (`act-edit-person-name`, `act-toggle-repeated-region-evidence`, `act-view-current-attention`, `act-view-audit-history`, `act-retry-dead-letter`, `act-discard-dead-letter`) with the merged code references.
+- [ ] Each handoff decision records the change, its verification and "no contract change".
 
-Scoped automated critique uses Canvas's historical `uxmap-critique/1`, canon_revision `resume-20260912`. It is a structural proxy, **not Canon v0.26.2 rule authority**. Baseline/current results:
+## Stretch Goals
 
-| Map | Before → after | Classification |
-| --- | --- | --- |
-| workbench-operator-loop | 1 → 1 | Inherited HAI-01 high at workbench-scan / z-review-suggestions-group-card evidence_linked; unchanged outside this slice; do not mark evidence_linked true without evidence. |
-| describe-gpu-tier | 1 → 1 | Inherited INT-07 high on dashboard describe-single preview_required; unchanged dashboard action, outside GPU unknown-copy slice. |
-| workbench-identity-chips | 1 → 0 | Existing entry lacked primary; design selects existing review action as one primary. This is map intent, not proof of implemented navigation. |
+- [ ] **Cleanup, not the visible fix.** Delete the unused `gpuStatePresentation.ts:gpuStateNotice` and the entries only it reads (`notReportedNotice`, `startingNotice`, `warmingNotice`). Rewrite `gpuStatePresentation.test.ts` "owns the stopped and degraded consequence copy" and "returns notice copy for every canonical GPU state" to assert `stoppedNotice` and `degradedNotice` directly. This would add `gpuStatePresentation.test.ts` to G1's owned paths, which is still the single writer. Proof: `grep -rn gpuStateNotice js/admin` returns nothing, and the GPU full command passes.
 
-No new structural critique findings. Independent map gate must explicitly disposition the inherited highs and review proposed behavior before product work. Passing deterministic parity is not whole-product approval. Manual critique: the wide/narrow sketches keep source captions and crops together, visible error recovery and one contextual primary; exact corpus IDs are unavailable, so fixtures are explicitly symbolic. No decorative evidence, filename-based identity or hidden outcome-changing references. Compare rendered Screens/code-reference boundaries (Q-R0-01) before gate: existing relocation function keeps Code references ahead of Screens; every changed map's detail blocks were checked. No broad rebaseline or foreign-map edits.
+## Success Criteria
 
-Known inherited verification limits remain unclaimed: workbench-2pane red, historical Codex spawn EPERM8, ten unrelated map-hash drifts, inherited HAI01. No broad suite was rerun to absorb these into scope.
+- [ ] On first render, the Changes panel shows Needs attention › Failed. Each failed operation renders exactly once, with its guarded Retry/Discard, and no outbox timeline query runs.
+- [ ] Pending, Conflict and History each send exactly one server-filtered `useOutboxOperations` request with offset 0 on entry. Their count line uses that query's `total`. Only Failed shows the maintenance zone.
+- [ ] No view change sends a mutation, and a failed-list error leaves History reachable.
+- [ ] No GPU toast string contains "CPU". The degraded toast offers "Review results" only when `draftCount > 0`.
+- [ ] `unavailableReasonCopy('endpoint_unconfigured')` returns configuration copy, and `GpuControlCard` renders it for the PHP-pinned envelope. Stale telemetry never renders "not configured".
+- [ ] A repeated exact region across two loaded groups renders one collapsed native disclosure per involved card, with the region, references and pool counts. Same-group, cross-photo, overlapping, degenerate and conflicting inputs render none.
+- [ ] `groupIdentitiesByClusters` output, `getEditableClusterId` and `members[0].identity_id` are identical with and without the projection.
+- [ ] Every slice's full command and `npm run typecheck` pass on the VM, and each lane's diff lists only its owned paths.
 
-## Risks and runtime acceptance separation
+## Canon authority (Canon v0.26.2)
 
-- Single-status API cannot produce an accurate aggregate unresolved view without more bounded queries or backend contract work. This plan deliberately selects an existing failed default and explicit attention status choices. If a combined total is required, coordinate a separate contract slice.
-- Repeated visual evidence may expose duplicate membership without explaining its cause. Do not assert detector repair or recognition recall improvement; CORPUS owns diagnosis and independent evidence.
-- Reference paths in maps can outpace implemented navigation. All UXREC changes are marked proposed; existing identity-map navigation is explicitly target-only. Readiness integrations or reserved composition changes require a new ownership decision.
-- Stored run recovery can fail with storage restrictions, expired/mismatched tenant context or unavailable backend. Source tests cannot establish durability on the exact deployed site; show the actual storage limit.
-- Quiet unknown copy must not suppress genuine run errors, accepted-run deadlines, cancellation failure or existing drafts. Those remain regression acceptance requirements.
+Pinned at `/home/gate/heuristics-canon-v0.26.2`, from <https://github.com/darce/heuristics-canon>. All 53 manifest digests were verified (12 lexicons, 6 docs, 35 reasoning cards). Each row below cites the published rule name and its Source cell.
 
-RUNTIME has no returned service window grant. No deployment, GPU start/warmup, model switch, service restart, authenticated data mutation or credential generation in this dispatch. Later authorized acceptance must bind exact deployed build and tenant, capture service configuration/readiness separately from recognition/API health, test genuine starting/result completion, navigate/reload the accepted run without duplicate submit, verify cancellation/retry outcomes, verify retention Retry's new checked_at and actual upstream recovery, and inspect the four July records' eligibility/history without blanket deletion. Product unit tests cannot establish these outcomes. Billing and ADR014 provider decisions are excluded.
+| Decision | Rule |
+| --- | --- |
+| GPU copy states only returned evidence; unknown never becomes "not configured" | [HAI-05] **Imperceptible AI is not ethical**, `lexicons/interaction-ux.md#hai-05`, *Human-Centered AI* |
+| An accepted run keeps visible status, next step and existing cancel/retry | [INT-10] **Status–predict–stop**, `lexicons/interaction-ux.md#int-10`, *Human-Centered AI* |
+| Separate recovery (Needs attention) from audit (History) | [INT-19] **One outcome per interaction**, `#int-19`, *Microinteractions, ch. 1* + *Microinteractions, ch. 3* |
+| Toast text names the resulting state ("no descriptions returned yet", "N drafts ready") | [INT-22] **Explain the result**, `#int-22`, *Microinteractions, ch. 4* |
+| One disclosure per card; no new banner or toast for evidence | [PERC-10] **Least useful feedback**, `#perc-10`, *Microinteractions, ch. 4* |
+| A review action only where results exist; the thumbnail stays non-interactive | [INT-01] **Affordance match**, `#int-01`, *Designing Interfaces, 3rd ed.* |
+| Evidence shows data, comparison basis (exact box) and limit | [VIZ-23] **Show the evidence path**, `#viz-23`, *Richard Feynman's Mental Models, ch. 5* + *Envisioning Information, ch. 4* |
+| Pool accounting is loaded-only; the representative thumbnail is not the selection (J tier: a contextual judgment about the loaded pool) | [VIZ-41] **Reveal the image-selection pool**, `#viz-41`, *Visual Explanations, ch. 1* |
+| Exact equality only; no merge or transitive similarity closure | [GRPH-18] **Never trust the transitive closure of a raw similarity threshold**, `lexicons/graph-theory.md#grph-18`, *Introduction to Information Retrieval, § 17.2* |
+| Abstain on conflicting or malformed observations | [CAL-02] **Unknown is a valid result**, `lexicons/ml-systems.md#cal-02`, *Designing Machine Learning Systems* |
+| Loading, empty, error and unknown states are designed per mode | [RLSE-04] **Undesigned state is a bug**, `lexicons/engineering.md#rlse-04`, bootstrap (practice label) |
+| Work order is a DAG | [GRPH-01] **Model the work as a DAG, then topological-sort**, `graph-theory.md#grph-01`, *The Algorithm Design Manual, ch. 7* |
+| File collisions are conflict edges (I1 and WBTRUST-4) | [GRPH-09] **Colour the conflict graph**, `graph-theory.md#grph-09`, *Graph Theory with Applications, ch. 8* |
+| Every boundary has one ownership path | [TEAM-01] **Align org communication with intended architecture**, `lexicons/planning.md#team-01`, *Team Topologies* |
+| RED predicted before GREEN | [TEST-06] **Watch it fail once / predict the failure**, `lexicons/engineering.md#test-06`, *Modern Software Engineering, ch. 8* |
+| Native `<details>` and `aria-pressed` buttons, not custom widgets | [A11Y-12] **Native first, ARIA last (4.1.2)**, `lexicons/accessibility.md#a11y-12`, *Web Content Accessibility Guidelines 2.2, SC 4.1.2* |
+| Keyboard reachability of view groups and disclosure | [A11Y-11] **Keyboard walk (2.1.1/2.1.2/2.4.3/2.4.7)**, `#a11y-11`, *Web Content Accessibility Guidelines 2.2, SC 2.1.1* |
+| Timeline count announced politely on view change | [A11Y-21] **Announce status (4.1.3)**, `#a11y-21`, *Web Content Accessibility Guidelines 2.2, SC 4.1.3* |
+| Long references wrap at 320 px | [A11Y-08] **Reflow and resize (1.4.4/1.4.10/1.4.12)**, `#a11y-08`, *Web Content Accessibility Guidelines 2.2, SC 1.4.4* |
+| Discard stays confirmed | [A11Y-18] **Reversible, checked, or confirmed (3.3.4)**, `#a11y-18`, *Web Content Accessibility Guidelines 2.2, SC 3.3.4* |
 
-Review handoff: independent MAP gate first; TIMELINE/GPU_STATUS/IDENTITY remain independent candidate owners, not active/approved assignments. Commit only this design write-set with worktree-name-prefixed subject, no push to product/main.
+Cards opened for kept rules, in ascending slug order:
+
+- `constrained-domains-have-solved-it` (CARD-22, via A11Y-12): native elements are used, so no custom widget needs justification.
+- `designed-unknown` (CARD-03, via RLSE-04 and CAL-02): abstention and "no descriptions returned yet" are designed states.
+- `perceived-enforced-boundaries` (CARD-12, via HAI-05, INT-01, GRPH-18 and TEAM-01; Principle 10): the views, disclosure and toasts imply only boundaries that the data, actions and ownership enforce.
+
+LAY-27's trigger (repeated print pages) does not fire on this UI. GRPH-07 does not fire because no capacity-limited assignment is made.

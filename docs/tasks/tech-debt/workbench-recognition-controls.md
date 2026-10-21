@@ -1,6 +1,6 @@
 # Workbench facial recognition controls
 
-**Status:** Promoted to [WBRC-1](../wbrc/WBRC-1-workbench-recognition-controls-task-plan.md), registry item **#32**. Source implementation is awaiting final independent review; exact LocalWP artifact acceptance remains separate.
+**Status:** Promoted to [WBRC-1](../wbrc/WBRC-1-workbench-recognition-controls-task-plan.md), registry item **#32**. Source implementation passed independent remote review; exact LocalWP artifact acceptance remains separate.
 **Recorded:** 2026-10-20, at the operator's request.
 **Priority:** Next Workbench UX pass.
 **Owners:** WordPress frontend and recognition-policy owners; assign named owners when promoted.
@@ -46,3 +46,11 @@ The [WBRC-1 implementation task](../wbrc/WBRC-1-workbench-recognition-controls-t
 - Existing settings and authorization: `apps/prototype-wp-alt-context/src/api/class-settings-controller.php`
 - Workbench surface: `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
 - Enablement evidence: `/Volumes/Butter/CodexEvidence/auraface-clerk-key-20261020/recognition-enabled-20261020.json`
+
+## Source verification
+
+Independent remote `gpt-6.1-sol` xhigh review **1595** passed candidate `824be61dd268a85d866695319f8b56436c25b91b` with no material findings. It verified 74 focused UI tests, 27 renderer tests, 10 policy-map tests, TypeScript, targeted lint and the production build. Existing PHP policy/settings and localization evidence was reused only after exact file identity checks. Evidence: `/Volumes/Butter/CodexEvidence/wbrc-1-20261021/FINAL.result.json` and `FINAL.provenance.json`.
+
+The accepted implementation plan is preserved as the immutable baseline. Its embedded checkboxes are a non-authoritative cache; completed slices, resolved findings and the current landing receipt are recorded under **WBRC-1** in MCP handoff. This avoids rewriting an archived plan's checklist on main after the premature lifecycle archive.
+
+Source acceptance does not establish deployment or live behavior on LocalWP. Exact-artifact acceptance, a tagged tenant recognition smoke and production tenant onboarding remain separate follow-ups. Broad map verification retains the documented inherited two-pane failure, Python subprocess restrictions and unrelated renderer snapshot drift; no blanket suite pass is claimed.

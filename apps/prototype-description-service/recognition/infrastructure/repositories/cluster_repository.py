@@ -690,8 +690,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             return
         # Standard (non-concurrent) refresh. CONCURRENTLY lives in the
         # _concurrent variant, which requires a unique index on the MV.
+        # SECAUDIT-1: callers run inside tenant-bound transactions, so the
+        # SET LOCAL bypass must cover only the refresh and count, then revert.
         setting_result = await self._session.execute(text("SELECT current_setting('app.bypass_rls', true)"))
-        previous = setting_result.scalar()
+        previous = setting_result.scalar_one()
         await enable_rls_bypass(self._session)
         try:
             await self._session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))

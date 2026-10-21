@@ -24,6 +24,26 @@ export interface AdminUrlsConfig {
   mediaLibrary?: string;
 }
 
+/**
+ * Page-load snapshot of the site recognition policy plus a capability hint, as
+ * `Admin::localize_spa_config` publishes it. Nested so wp_localize_script keeps
+ * the booleans literal. Absent from bootstraps cached before WBRC-1.
+ */
+export interface RecognitionPolicyBootstrapWire {
+  enabled: boolean;
+  canManage: boolean;
+}
+
+/**
+ * The normalized snapshot: each field is a literal boolean or null (unknown).
+ * It is a hint, never authorization: the Settings REST routes check
+ * manage_options on every request, and administrators read the live value.
+ */
+export interface RecognitionPolicyBootstrap {
+  enabled: boolean | null;
+  canManage: boolean | null;
+}
+
 export interface ApiConfig {
   nonce: string;
   ajaxUrl: string;
@@ -34,6 +54,7 @@ export interface ApiConfig {
   max_media_per_batch?: number | string; // wp_localize_script may coerce to string
   devMode?: boolean | string | number; // wp_localize_script may convert to "1" or ""
   recognitionSource?: 'service' | 'local';
+  recognitionPolicy?: RecognitionPolicyBootstrapWire;
   effectiveTargetUrl?: string;
   guided_live_media_id?: unknown; // wp_localize_script stringifies numbers
 }
@@ -48,6 +69,7 @@ export interface NormalizedConfig {
   maxMediaPerBatch: number;
   devMode: boolean;
   recognitionSource: 'service' | 'local';
+  recognitionPolicy: RecognitionPolicyBootstrap;
   effectiveTargetUrl: string;
   /** Attachment the guided prototype describes live; null when unconfigured. */
   guidedLiveMediaId: number | null;
@@ -127,6 +149,25 @@ const softNonEmptyString = (value: unknown, field: string, requestLog: Logger): 
   return value;
 };
 
+const literalBoolean = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null);
+
+/**
+ * WBRC-1: only literal booleans count. A missing field (older cached bootstrap)
+ * is unknown, quietly. Any other shape is unknown too, and warns: a malformed
+ * state must never read as Off, nor a malformed capability as a grant.
+ */
+const normalizeRecognitionPolicy = (value: unknown, requestLog: Logger): RecognitionPolicyBootstrap => {
+  const fields: Record<string, unknown> =
+    value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const policy = { enabled: literalBoolean(fields.enabled), canManage: literalBoolean(fields.canManage) };
+  if (value !== undefined && (policy.enabled === null || policy.canManage === null)) {
+    requestLog.warn('AltContextAdmin configuration field "recognitionPolicy" is malformed; treating it as unknown.', {
+      field: 'recognitionPolicy',
+    });
+  }
+  return policy;
+};
+
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   // One normalization pass is one unit of work: every soft warning it emits
   // shares this id, and a later pass gets a different one (OBS-03). A
@@ -151,6 +192,7 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
     maxMediaPerBatch,
     devMode,
     recognitionSource: raw.recognitionSource === 'local' ? 'local' : 'service',
+    recognitionPolicy: normalizeRecognitionPolicy(raw.recognitionPolicy, requestLog),
     // RECOG-1: hosted service is the canonical target; do not fall back to a local
     // default. An unconfigured install reports an empty effective target.
     effectiveTargetUrl:

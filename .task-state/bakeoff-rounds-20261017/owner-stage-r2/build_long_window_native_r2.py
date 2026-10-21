@@ -6,7 +6,7 @@ against the pinned manifest, and writes BAKEOFF-LONG-WINDOW-NATIVE-R2.config.jso
 and BAKEOFF-LONG-WINDOW-NATIVE-R2.remote.py into --out-dir (no overwrite).
 It never runs the generated program and never touches the VM, GPU or services.
 
-Example: python3 build_long_window_native_r2.py --source <40-hex> --expect-ops 24 --out-dir <dir>
+Example: python3 build_long_window_native_r2.py --source <40-hex> --expect-ops 24 --predecessor-op <uuid> --out-dir <dir>
 """
 import argparse
 import ast
@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 PROCEDURE_DIR = '.task-state/bakeoff-rounds-20261017/qualifications/owner-resume-start-r4'
@@ -40,13 +41,20 @@ PROGRAM_NAME = 'BAKEOFF-LONG-WINDOW-NATIVE-R2.remote.py'
 PROGRAM_BODY = '''import base64,hashlib,importlib.util,json,os,pathlib,stat,sys,time,uuid
 P=pathlib.Path
 MAX=2*1024*1024
+ROOT_UID=0
 SCRIPTS=frozenset(('capacity-read.sh','final-stop.sh','guest-read.sh','observe.py','owner-custody.py','owner-window.py','root-flow.sh'))
 NAMES=SCRIPTS|{'approved-scripts.json'}
+PREDECESSOR='procedure-predecessor.json'
+PREDECESSOR_FIELDS=frozenset(('schema','window_id','window_path','procedure','manifest_sha256','owner_window_sha256','owner_custody_sha256'))
+PREDECESSOR_SCHEMA='acx-owner-procedure-predecessor/v1'
 EVIDENCE=None
 QUALIFIED=None
 def check(condition,message):
     if not condition: raise RuntimeError(message)
 def sha(raw): return hashlib.sha256(raw).hexdigest()
+def canonical_uuid(text):
+    try: return str(uuid.UUID(text))==text
+    except (TypeError,ValueError): return False
 def read_bounded(path):
     fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
     try:
@@ -62,11 +70,11 @@ def read_bounded(path):
     finally: os.close(fd)
 def regular(path,mode):
     raw,s=read_bounded(path)
-    check(s.st_uid==0 and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==mode,'unexpected root file: '+str(path))
+    check(s.st_uid==ROOT_UID and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==mode,'unexpected root file: '+str(path))
     return raw
 def root_directory(path):
     s=os.lstat(path)
-    check(stat.S_ISDIR(s.st_mode) and s.st_uid==0 and stat.S_IMODE(s.st_mode)==0o700,'root private directory required: '+str(path))
+    check(stat.S_ISDIR(s.st_mode) and s.st_uid==ROOT_UID and stat.S_IMODE(s.st_mode)==0o700,'root private directory required: '+str(path))
 def open_dir(path,dir_fd=None):
     return os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=dir_fd)
 def fsync_dir(path):
@@ -84,9 +92,27 @@ def write_new(dirfd,name,raw):
 def seal(name,value,base=None):
     raw=value if type(value) is bytes else (json.dumps(value,sort_keys=True,indent=2)+'\\n').encode()
     write_new(EVIDENCE if base is None else base,name,raw)
-def verify_procedure(path,manifest_sha256):
+def inventory_ok(names,bridged):
+    """Exact eight for R3 and the new stage before its proof; exact nine only for the bridged current stage."""
+    expected=NAMES|{PREDECESSOR} if bridged else NAMES
+    return names==expected
+def check_bridged_receipt(raw,window,old):
+    """Pure predicate over the receipt bytes: one JSON object and one newline, bound to the sealed window and R3 pins."""
+    check(raw.endswith(b'\\n') and raw.count(b'\\n')==1,'predecessor receipt must be one line')
+    try:
+        text=raw[:-1].decode()
+        receipt,end=json.JSONDecoder().raw_decode(text)
+    except ValueError: raise RuntimeError('predecessor receipt is not JSON')
+    check(type(receipt) is dict and end==len(text),'predecessor receipt must be one JSON object')
+    check(set(receipt)==PREDECESSOR_FIELDS and receipt['schema']==PREDECESSOR_SCHEMA,'bad predecessor receipt schema')
+    check(window['procedure']==OLD_STAGE,'predecessor receipt must bind the R3 procedure')
+    check((receipt['window_id'],receipt['window_path'],receipt['procedure'])==(window['id'],window['path'],window['procedure']),'predecessor receipt binding mismatch')
+    check((receipt['manifest_sha256'],receipt['owner_window_sha256'],receipt['owner_custody_sha256'])==(old['manifest_sha256'],old['files']['owner-window.py'],old['files']['owner-custody.py']),'predecessor receipt hash mismatch')
+    return receipt
+def verify_procedure(path,manifest_sha256,bridged=None):
+    """Exact eight files, or the bridged nine when bridged=(window, R3 result) is given."""
     root_directory(path)
-    check(set(os.listdir(path))==NAMES,'procedure inventory mismatch: '+path)
+    check(inventory_ok(set(os.listdir(path)),bridged is not None),'procedure inventory mismatch: '+path)
     manifest=regular(P(path)/'approved-scripts.json',0o400)
     check(sha(manifest)==manifest_sha256,'procedure manifest digest mismatch: '+path)
     pins=json.loads(manifest)
@@ -96,6 +122,7 @@ def verify_procedure(path,manifest_sha256):
         raw=regular(P(path)/name,0o400)
         check(sha(raw)==pins[name],'procedure pin mismatch: '+name)
         files[name]=sha(raw)
+    if bridged is not None: check_bridged_receipt(regular(P(path)/PREDECESSOR,0o400),bridged[0],bridged[1])
     return dict(manifest_sha256=manifest_sha256,files=files)
 def decode_files():
     embedded=v['files']
@@ -113,6 +140,7 @@ def validate_window():
     window=json.loads(regular(P(WINDOW)/'window.json',0o400))
     check(window==dict(id=WINDOW_ID,path=WINDOW,procedure=OLD_STAGE),'window does not name the expected predecessor')
     check(len(list((P(WINDOW)/'ops').iterdir()))==EXPECT_OPS,'window operation count mismatch')
+    return window
 def tree(root):
     out={}
     def walk(path):
@@ -151,9 +179,7 @@ def create_stage(files):
     fsync_dir(str(parent))
     sfd=open_dir(STAGE)
     try:
-        for name in sorted(files):
-            write_new(sfd,name,files[name])
-            seal(name,files[name],QUALIFIED)
+        for name in sorted(files): write_new(sfd,name,files[name])
     finally: os.close(sfd)
 def predecessor_proof(old):
     proof=dict(schema='acx-owner-procedure-predecessor/v1',window_id=WINDOW_ID,window_path=WINDOW,procedure=OLD_STAGE,
@@ -164,25 +190,47 @@ def predecessor_proof(old):
     try: write_new(sfd,'procedure-predecessor.json',raw)
     finally: os.close(sfd)
     seal('procedure-predecessor.json',raw)
-def load_custody():
-    spec=importlib.util.spec_from_file_location('owner_custody_stage',P(STAGE)/'owner-custody.py')
+def load_custody(path):
+    """Import only the sealed qualified-source copy, after re-verifying its pin."""
+    check(sha(regular(path,0o400))==OWNER_CUSTODY_SHA256,'qualified owner-custody pin mismatch')
+    sys.dont_write_bytecode=True
+    spec=importlib.util.spec_from_file_location('owner_custody_qualified',path)
     module=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    check(P(module.__file__)==P(STAGE)/'owner-custody.py','custody module origin changed')
+    check(P(module.__file__)==P(path),'custody module origin changed')
     return module
-def check_predecessor(c):
+def check_procedure(c,procedure):
     wfd,window=c.validate_window(WINDOW,WINDOW_ID)
-    try: c.validate_procedure(wfd,window,STAGE)
+    try: c.validate_procedure(wfd,window,procedure)
     finally: os.close(wfd)
-def readiness_check(c):
-    paths=c.Paths('/run/acx-write','/var/lib/acx-gpu','/var/lib/acx-gpu/lifecycle.lock','/tmp',
-                  writer_uid=10001,writer_gid=10001,controller_uid=1001,controller_gid=1001)
-    # Floor None keeps only the newest authority record, so the view stays under the job budget.
+def live_paths(c):
+    return c.Paths('/run/acx-write','/var/lib/acx-gpu','/var/lib/acx-gpu/lifecycle.lock','/tmp',
+                   writer_uid=10001,writer_gid=10001,controller_uid=1001,controller_gid=1001)
+def readiness_check(c,paths,window_path,wid,pred_op):
+    """Read-only. Projects the STOP view at the predecessor floor that the STOP guardian itself uses."""
+    check(canonical_uuid(pred_op),'predecessor operation must be a canonical UUID')
+    wfd,_=c.validate_window(window_path,wid)
+    try:
+        known=c.known_candidates(wfd)
+        check(pred_op in known,'predecessor operation is not a candidate')
+        ops=c.subdir(wfd,'ops')
+        try:
+            pf=c.subdir(ops,pred_op)
+            try: result=c.load_json(pf,'result.json')
+            except FileNotFoundError: raise RuntimeError('predecessor operation unresolved')
+            finally: os.close(pf)
+        finally: os.close(ops)
+        check(result['outcome']=='published','predecessor operation unpublished')
+        floor=known[pred_op]['sequence']
+        check(floor==max(record['sequence'] for record in known.values()),'predecessor operation is not the newest candidate')
+    finally: os.close(wfd)
     started=time.monotonic()
-    status,view=c.native_job(lambda:c.view(paths,'stop',None),5)
+    status,view=c.native_job(lambda:c.view(paths,'stop',floor),5)
     elapsed=time.monotonic()-started
     check(status==0 and view is not None,'read-only readiness view unknown')
-    return dict(status=status,elapsed_seconds=round(elapsed,3),view_sha256=sha(json.dumps(view,sort_keys=True).encode()))
+    raw=json.dumps(view,sort_keys=True).encode()
+    check(len(raw)<60000,'read-only readiness view over budget')
+    return dict(predecessor_op=pred_op,floor=floor,status=status,elapsed_seconds=round(elapsed,3),view_bytes=len(raw),view_sha256=sha(raw))
 def run():
     global EVIDENCE,QUALIFIED
     check(os.getuid()==os.geteuid()==0,'root required')
@@ -191,25 +239,27 @@ def run():
     EVIDENCE=open_dir(str(evidence))
     os.mkdir('qualified-source',0o700,dir_fd=EVIDENCE)
     QUALIFIED=open_dir('qualified-source',dir_fd=EVIDENCE)
-    validate_window()
+    window=validate_window()
     old=verify_procedure(OLD_STAGE,OLD_MANIFEST_SHA256)
-    current=verify_procedure(CURRENT_STAGE,CURRENT_MANIFEST_SHA256)
+    current=verify_procedure(CURRENT_STAGE,CURRENT_MANIFEST_SHA256,bridged=(window,old))
     seal('predecessors.json',dict(old=old,current=current))
     files=decode_files()
     before=snapshot()
+    for name in sorted(files): seal(name,files[name],QUALIFIED)
+    custody=load_custody(str(evidence/'qualified-source'/'owner-custody.py'))
+    check_procedure(custody,CURRENT_STAGE)
+    readiness=readiness_check(custody,live_paths(custody),WINDOW,WINDOW_ID,PRED_OP)
+    seal('readiness.json',readiness)
     create_stage(files)
     seal('stage-verified.json',verify_procedure(STAGE,MANIFEST_SHA256))
     predecessor_proof(old)
-    custody=load_custody()
-    check_predecessor(custody)
-    readiness=readiness_check(custody)
-    seal('readiness.json',readiness)
+    check_procedure(custody,STAGE)
     after=snapshot()
     seal('inventory-before.json',before)
     seal('inventory-after.json',after)
     check(json.dumps(before['window'],sort_keys=True)==json.dumps(after['window'],sort_keys=True),'window inventory changed; retain evidence')
     check(json.dumps(before['authority'],sort_keys=True)==json.dumps(after['authority'],sort_keys=True),'authority inventory changed; retain evidence')
-    terminal=dict(status='ROOT_STAGE_TERMINAL',exit_code=0,evidence=str(evidence),stage=STAGE,source=SOURCE,
+    terminal=dict(status='ROOT_STAGE_TERMINAL',exit_code=0,evidence=str(evidence),stage=STAGE,source=SOURCE,predecessor_op=PRED_OP,
                   manifest_sha256=MANIFEST_SHA256,readiness=readiness,window_unchanged=True,authority_unchanged=True,GPU_calls=0)
     seal('terminal.json',terminal)
     sys.stdout.write(json.dumps(terminal,sort_keys=True,indent=2)+'\\n')
@@ -230,17 +280,35 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def canonical_uuid(text):
+    try:
+        return str(uuid.UUID(text)) == text
+    except (TypeError, ValueError):
+        return False
+
+
 def git_tree(source):
-    """Return the procedure directory as {name: bytes}, read with git show."""
-    listing = subprocess.run(['git', 'ls-tree', f'{source}:{PROCEDURE_DIR}'],
-                             capture_output=True, text=True, check=True).stdout
+    """Return the eight pinned procedure files as {name: bytes}.
+
+    One ls-tree lists the direct children of the qualification directory. Only the
+    pinned names are selected, and each is read by blob oid. Every other entry is
+    ignored and never read.
+    """
+    listing = subprocess.run(['git', 'ls-tree', '-z', '--full-tree', source, '--', f'{PROCEDURE_DIR}/'],
+                             capture_output=True, check=True).stdout
+    entries = {}
+    for record in listing.split(b'\0'):
+        if record:
+            meta, path = record.split(b'\t', 1)
+            mode, kind, oid = meta.decode().split()
+            entries[path.decode()] = (mode, kind, oid)
     tree = {}
-    for line in listing.splitlines():
-        meta, name = line.split('\t', 1)
-        mode, kind, _ = meta.split()
-        refuse(kind == 'blob' and mode in ('100644', '100755'), 'non-regular procedure entry: ' + name)
-        tree[name] = subprocess.run(['git', 'show', f'{source}:{PROCEDURE_DIR}/{name}'],
-                                    capture_output=True, check=True).stdout
+    for name in sorted(EXPECTED_NAMES):
+        entry = entries.get(f'{PROCEDURE_DIR}/{name}')
+        refuse(entry is not None, 'missing procedure entry: ' + name)
+        mode, kind, oid = entry
+        refuse(kind == 'blob' and mode == '100644', 'non-regular procedure entry: ' + name)
+        tree[name] = subprocess.run(['git', 'cat-file', 'blob', oid], capture_output=True, check=True).stdout
     return tree
 
 
@@ -261,12 +329,13 @@ def verify_tree(tree):
     return tree
 
 
-def render_program(source, expect_ops, files):
+def render_program(source, expect_ops, predecessor_op, files):
     constants = [('SOURCE', source), ('EXPECT_OPS', expect_ops), ('STAGE', STAGE),
                  ('OLD_STAGE', OLD_STAGE), ('OLD_MANIFEST_SHA256', OLD_MANIFEST_SHA256),
                  ('CURRENT_STAGE', CURRENT_STAGE), ('CURRENT_MANIFEST_SHA256', CURRENT_MANIFEST_SHA256),
-                 ('WINDOW', WINDOW), ('WINDOW_ID', WINDOW_ID), ('MANIFEST_SHA256', MANIFEST_SHA256),
-                 ('OWNER_WINDOW_SHA256', OWNER_WINDOW_SHA256)]
+                 ('WINDOW', WINDOW), ('WINDOW_ID', WINDOW_ID), ('PRED_OP', predecessor_op),
+                 ('MANIFEST_SHA256', MANIFEST_SHA256), ('OWNER_WINDOW_SHA256', OWNER_WINDOW_SHA256),
+                 ('OWNER_CUSTODY_SHA256', OWNER_CUSTODY_SHA256)]
     header = ''.join(f'{name}={value!r}\n' for name, value in constants)
     embedded = {name: base64.b64encode(raw).decode() for name, raw in sorted(files.items())}
     program = header + f"v={{'files':{embedded!r}}}\n" + PROGRAM_BODY
@@ -288,11 +357,12 @@ def write_output(path, raw):
         os.close(fd)
 
 
-def build(source, expect_ops, out_dir, load_tree=git_tree):
+def build(source, expect_ops, out_dir, predecessor_op, load_tree=git_tree):
     refuse(re.fullmatch(r'[0-9a-f]{40}', source or '') is not None, 'full 40-hex source commit required')
     refuse(type(expect_ops) is int and expect_ops > 0, 'positive --expect-ops required')
+    refuse(canonical_uuid(predecessor_op), 'canonical --predecessor-op UUID required')
     files = verify_tree(load_tree(source))
-    program = render_program(source, expect_ops, files)
+    program = render_program(source, expect_ops, predecessor_op, files)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     program_path = (out / PROGRAM_NAME).absolute()
@@ -312,10 +382,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--source', required=True, help='40-hex commit that holds the reviewed procedure')
     parser.add_argument('--expect-ops', type=int, required=True, help='operation count the window must hold')
+    parser.add_argument('--predecessor-op', required=True,
+                        help='canonical UUID of the newest published operation (the STOP predecessor)')
     parser.add_argument('--out-dir', type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        config_path, program_path = build(args.source, args.expect_ops, args.out_dir)
+        config_path, program_path = build(args.source, args.expect_ops, args.out_dir, args.predecessor_op)
     except (Refused, OSError, subprocess.CalledProcessError, ValueError) as error:
         parser.exit(2, str(error) + '\n')
     print(config_path)

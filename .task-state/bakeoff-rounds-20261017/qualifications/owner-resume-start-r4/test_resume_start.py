@@ -133,11 +133,17 @@ def payload():
                 nonce='16e62c2d-2a5f-46d4-8178-a636225c34f3')
 
 
-def idle_view(previous):
+def raw_authority(previous):
+    """Native intent-authority.json bytes; the guard only sees its projection."""
     publication = {k: previous[k] for k in ('action', 'requested_at', 'expires_at',
                                            'ttl_seconds', 'requested_by', 'sequence')}
-    return dict(authority=dict(highest_sequence=4, rejected_sequences=[],
-                               intents={previous['nonce']: dict(sequence=4, publication=publication)}),
+    return dict(highest_sequence=4, rejected_sequences=[],
+                intents={previous['nonce']: dict(sequence=4, publication=publication)})
+
+
+def idle_view(previous):
+    raw = json.dumps(raw_authority(previous)).encode()
+    return dict(authority=load_custody().project_authority(raw, previous['sequence']),
                 publications={'unit/prod/gpu-intent.json': copy.deepcopy(previous)},
                 loads=[dict(written_at=time.time(), queue_depth=0, in_flight=0,
                             batch_in_progress=False, revision=1) for _ in load_custody().ENVS], deferred=None)
@@ -185,7 +191,8 @@ class ResumeControls(unittest.TestCase):
         c = load_custody()
         p = payload()
         self.assertEqual(c.guard(idle_view(p), p, {PREVIOUS: p}, ACTOR, 'start'), 4)
-        v = dict(authority=dict(highest_sequence=0, intents={}), publications={}, loads=idle_view(p)['loads'], deferred=None)
+        v = dict(authority=c.project_authority(b'{"highest_sequence":0,"intents":{}}', 0), publications={},
+                 loads=idle_view(p)['loads'], deferred=None)
         self.assertEqual(c.guard(v, None, {}, ACTOR, 'start'), 0)
         with self.assertRaisesRegex(RuntimeError, 'first-use changed'):
             c.guard(idle_view(p), None, {}, ACTOR, 'start')
@@ -259,14 +266,14 @@ class ResumeControls(unittest.TestCase):
                 os.close(ops)
                 paths = c.Paths(base / 'runtime', base / 'store', base / 'store/lifecycle.lock', base / 'markers')
                 v = idle_view(p)
-                (base / 'store/intent-authority.json').write_text(json.dumps(v['authority']))
+                (base / 'store/intent-authority.json').write_text(json.dumps(raw_authority(p)))
                 for env in c.ENVS:
                     target = base / 'runtime' / env
                     target.mkdir(mode=0o700)
                     (target / 'describe-load.json').write_text(json.dumps(v['loads'][0]))
                 (base / 'runtime/prod/gpu-intent.json').write_text(json.dumps(p))
                 if name == 'busy-marker': (base / 'markers/activity.lock').touch()
-                before = c.view(paths, 'start')
+                before = c.view(paths, 'start', p['sequence'])
                 signals = {s: signal.getsignal(s) for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)}
                 try:
                     c.guardian(wfd, ofd, paths, None, dict(id=op, action='start', previous=prior),
@@ -274,7 +281,7 @@ class ResumeControls(unittest.TestCase):
                     result = c.load_json(ofd, 'result.json')
                     self.assertEqual(result['outcome'], 'refused')
                     self.assertIn(reason, result['error'])
-                    self.assertEqual(c.view(paths, 'start'), before)
+                    self.assertEqual(c.view(paths, 'start', p['sequence']), before)
                     self.assertNotIn('candidate.json', os.listdir(ofd))
                     self.assertNotIn('writer-started.json', os.listdir(ofd))
                     print('UNIT guardian refused:', name, '/', result['error'])

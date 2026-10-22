@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from math import isfinite
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -633,6 +634,8 @@ async def list_cluster_members(
     cluster_repo = cluster_service.cluster_repository
 
     cluster = await cluster_repo.get_by_id(cluster_id)
+    if cluster is None or str(UUID(str(cluster.tenant_id))) != str(UUID(tenant_id)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for tenant")
     cluster_label = getattr(cluster, "label", None) if cluster else None
     cluster_is_auto_label = bool(getattr(cluster, "is_auto_label", False)) if cluster else False
     representative_id = getattr(cluster, "representative_identity_id", None) if cluster else None

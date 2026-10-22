@@ -12,6 +12,7 @@ require_once __DIR__ . '/../support/class-vite-manifest.php';
 
 use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\TenantIdentity;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Support\BatchLimits;
 use AltContext\Support\ViteManifest;
 
@@ -451,6 +452,11 @@ class Admin {
 					'tier'      => $tier,
 					'tenant_id' => TenantIdentity::resolve()['value'],
 					'recognitionSource' => $this->get_recognition_source(),
+					// Page-load snapshot and capability hint; REST still enforces authorization.
+					'recognitionPolicy' => array(
+						'enabled'   => RecognitionPolicy::enabled(),
+						'canManage' => current_user_can( 'manage_options' ),
+					),
 					'effectiveTargetUrl' => $this->get_effective_target_url(),
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
 					'guided_live_media_id' => $this->get_guided_live_media_id(),

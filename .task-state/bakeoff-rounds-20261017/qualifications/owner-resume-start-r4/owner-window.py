@@ -42,7 +42,7 @@ print(json.dumps({'files':{n:base64.b64encode(b).decode() for n,b in files.items
  v=json.loads(r.stdout); e=v['env']; c.check(e['ACX_ENV']=='prod' and e['ACX_DESCRIBE_LOAD_PATH']=='/run/acx-write/prod/describe-load.json' and e['ACX_GPU_INTENT_PATH'] in (None,'','/run/acx-write/prod/gpu-intent.json') and e['ACX_GPU_INTENT_DURABLE_PATH'] in (None,''),'installed topology changed')
  writer=base64.b64decode(v['files']['gpu_intent.py']); load=base64.b64decode(v['files']['describe_load.py']); c.load_writer(writer,load)
  raw_seal(wfd,'writer-source.py',writer); raw_seal(wfd,'load-source.py',load); c.seal(wfd,'installed-source-config.json',dict(writer_sha256=c.PIN,load_sha256=c.LOAD_PIN,env=e))
- status,view=c.native_job(lambda:c.view(paths,'inspect'),5); c.check(status==0 and view is not None,'read-only inspect unknown'); c.seal(wfd,'inspect.json',view)
+ status,view=c.native_job(lambda:c.view(paths,'inspect',None),5); c.check(status==0 and view is not None,'read-only inspect unknown'); c.seal(wfd,'inspect.json',view)
 
 def operation(wfd,w,action,previous):
  # Serialize creation as well as publication against checkpoint inventory.

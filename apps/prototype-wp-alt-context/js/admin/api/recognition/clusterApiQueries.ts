@@ -1,3 +1,4 @@
+import { idPathSegment } from '../../utils/pathSegment';
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import {
@@ -114,7 +115,7 @@ export const listRecognitionClusters = async (
 
 export const getRecognitionCluster = async (clusterId: string): Promise<ClusterSummary> => {
   const base = getEndpoint('recognitionClusters');
-  const url = `${stripTrailingSlash(base)}/${clusterId}`;
+  const url = `${stripTrailingSlash(base)}/${idPathSegment(clusterId)}`;
 
   return fetchRequiredApi<ClusterSummary>(url, {
     method: 'GET',

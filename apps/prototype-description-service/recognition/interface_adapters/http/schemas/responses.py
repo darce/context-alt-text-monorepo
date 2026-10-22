@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -291,6 +292,8 @@ class RetentionPolicyResponse(BaseModel):
 class AuditEventResponse(BaseModel):
     """Tenant-scoped retention audit event."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     event_type: str
     actor: str
@@ -298,6 +301,11 @@ class AuditEventResponse(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     result_status: str = "success"
     created_at: datetime
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def normalize_audit_event_uuid(cls, v: Any) -> Any:
+        return str(v) if isinstance(v, UUID) else v
 
     @field_validator("id")
     @classmethod

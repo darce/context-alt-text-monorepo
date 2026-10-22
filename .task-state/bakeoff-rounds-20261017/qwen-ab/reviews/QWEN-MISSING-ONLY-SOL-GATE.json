@@ -1,0 +1,104 @@
+{
+  "source": "0a811fd8e3da36a6860c57b5ce100c93c224cd73",
+  "independent_review": {
+    "status": "PASS",
+    "summary": "Source-only PASS; no blocking defects found. Exported output/result.json and output/review.md. Candidate unchanged.",
+    "source_sha": "0a811fd8e3da36a6860c57b5ce100c93c224cd73",
+    "changed_files": [],
+    "commits": [],
+    "findings": [],
+    "tests": [
+      {
+        "command": "Focused offline controls",
+        "exit_code": 0,
+        "summary": "Two preparation CLIs, 10 caller controls, 12 settler controls and one client-loop test passed. Retained 43 tests were not rerun."
+      }
+    ],
+    "limitations": [
+      "Ready to proceed through original native admission; real pilot custody and operational checks remain required.",
+      "No native execution, inference, completion or quality approval."
+    ]
+  },
+  "review_custody_sha256": "c7751ab3dba8648f20006b5b65795a86f6c0581ac6e082098e0874664fa11c1d",
+  "author_custody_sha256": "a56635a8444ae330440759ae2feb809114dbc75f4afc0ac4e23395d7aa9f3dfa",
+  "mechanical_path_mapping": [
+    {
+      "source": "0a811fd8:qwen-ab/prepare_qwen_ab.py",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/prepare_qwen_ab.py",
+      "sha256": "eb193f587e3cad15d690b2447e30e765151fcde80ee328c6c0abf233df3769d8"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/prepare_qwen_ab.py",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/workspace/prepare_qwen_ab.py",
+      "sha256": "eb193f587e3cad15d690b2447e30e765151fcde80ee328c6c0abf233df3769d8"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/run_qwen_cohort_operation.py",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/run_qwen_cohort_operation.py",
+      "sha256": "5295fa6824e9023594218596ba6384c22843c74d6915b914df167ee5db96eab7"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/test_missing_only.py",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/workspace/test_missing_only.py",
+      "sha256": "4a0161a691ecc44a37b771144df338f9069dfe9c08be48081b0afcc0315b0a21"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/test_prepare_qwen_ab.py",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/workspace/test_prepare_qwen_ab.py",
+      "sha256": "2c5d26a90604b4b284cb5552f159d83bbd90ca310009d32925476eb91f09184d"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/assemble_offline_fixtures.py",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/assemble_offline_fixtures.py",
+      "sha256": "1dc1b58fb54f3b5ebc4fc680c2ef7d0c96668ec4b049ec3ca464cff922376adf"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/MISSING-ONLY-EVIDENCE.md",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/MISSING-ONLY-EVIDENCE.md",
+      "sha256": "2876c153069ee69367dd22ea33f7befe0d7eca5979b6cf3f4e7bb330efca77f8"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/missing-only-evidence.json",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/missing-only-evidence.json",
+      "sha256": "8017dedd53c11239af59035982ff08b60266223081dbdc6e22e738f274aa35e8"
+    },
+    {
+      "source": "0a811fd8:tools/settle_qwen_candidate.py",
+      "target": ".task-state/bakeoff-rounds-20261017/tools/settle_qwen_candidate.py",
+      "sha256": "cf7264f0b3393556a7f88888f8ac1394c4f222600bbdd091866d3b6f589c0087"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/missing-inputs/MISSING-ID-PREP.json",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/missing-inputs/MISSING-ID-PREP.json",
+      "sha256": "17f5c9906badaaa3142fdc749f8603f33d8b8fb89e1552762360bb901bc781ae"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/missing-inputs/MISSING-ID-PREP.json",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/workspace/missing-inputs/MISSING-ID-PREP.json",
+      "sha256": "17f5c9906badaaa3142fdc749f8603f33d8b8fb89e1552762360bb901bc781ae"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/missing-inputs/protocol.json",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/missing-inputs/protocol.json",
+      "sha256": "9e33cf5284c2eef1947015d61efa31eae7a70d0b00901a68bef9ea6ad1764250"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/missing-inputs/protocol.json",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/workspace/missing-inputs/protocol.json",
+      "sha256": "9e33cf5284c2eef1947015d61efa31eae7a70d0b00901a68bef9ea6ad1764250"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/missing-inputs/corpus-active-120-r2.json",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/missing-inputs/corpus-active-120-r2.json",
+      "sha256": "05fe1b169be22c6a8e25d97769ef9aeb143dea1a5ffa7d0b09a48b25cc444a63"
+    },
+    {
+      "source": "0a811fd8:qwen-ab/missing-inputs/corpus-active-120-r2.json",
+      "target": ".task-state/bakeoff-rounds-20261017/qwen-ab/workspace/missing-inputs/corpus-active-120-r2.json",
+      "sha256": "05fe1b169be22c6a8e25d97769ef9aeb143dea1a5ffa7d0b09a48b25cc444a63"
+    }
+  ],
+  "reason_for_duplicate_generator": "Legacy bind_generator reads tracked qwen-ab/workspace/prepare_qwen_ab.py; new caller imports sibling prepare_qwen_ab. Both copies and both MISSING_INPUTS inventories are byte-identical to the reviewed native artifact. No source logic edited or tests/model runs performed on host.",
+  "source_tests": "43missing +465focused upstream; independent twoCLIs10caller12settler1client-loop",
+  "no_new_model_requests": 0
+}

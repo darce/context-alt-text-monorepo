@@ -1,3 +1,4 @@
+import { idPathSegment, InvalidIdPathSegmentError } from '../../utils/pathSegment';
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
@@ -121,7 +122,17 @@ export const parseRosterRoute = (searchParams: URLSearchParams): ParsedRosterRou
     };
   }
 
-  const clusterId = getRouteParam(searchParams, 'cluster');
+  let clusterId = searchParams.get('cluster');
+  if (clusterId) {
+    try {
+      idPathSegment(clusterId);
+    } catch (error) {
+      if (!(error instanceof InvalidIdPathSegmentError)) {
+        throw error;
+      }
+      clusterId = null;
+    }
+  }
   if (clusterId) {
     return {
       selectedClusterId: clusterId,

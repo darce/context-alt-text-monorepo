@@ -96,7 +96,7 @@ For this category, table stakes are:
 | Review/edit | Processed images have a history/review surface and manual edits do not spend credits | Beta UI table stake; should store provenance and not overwrite human edits by default. |
 | Post/page refresh | Existing content can be refreshed after Media Library alt text changes | Beta table stake. |
 | Context enrichment | SEO keyphrases, product data, language, style/detail, prefix/suffix | Differentiator when combined with roster/context, but should follow core visual-facts proof. |
-| Multilingual | WPML/Polylang/language handling | Later beta; important for parity but not MVP. |
+| Multilingual | WPML/Polylang/language handling | Later beta; important for parity but not MVP. The architecture stays i18n-ready from the start (constitution sr-012). French ships first, for the Quebec and Europe expansion (launch plan §3.1, decision 18969). |
 | Usage controls | Credits/rate/budget limits per key/site | Required before provider/BYOK or public beta. |
 | Error/status logs | Clear operational feedback for failed batches | Required before bulk. |
 

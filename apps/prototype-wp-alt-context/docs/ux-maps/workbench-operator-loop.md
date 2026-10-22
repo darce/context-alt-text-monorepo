@@ -15,6 +15,8 @@
 - Producer contract verified from current bytes: RecognitionPolicy::DEFAULT=false; Settings GET requires boolean recognition_enabled (fetchSettings rejects missing/nonboolean); Settings POST may return HTTP 200 with result=error/partial and failed fields. Require result=ok, saved containing recognition_enabled and no matching failed field; HTTP success alone never confirms persistence.
 - Send only {recognition_enabled: desiredBoolean}, never URL, api_key or allow_person_names. Share queryKeys.settings.all with SettingsPage; reconcile through fresh Settings GET. After an acknowledged write, failed/malformed/mismatched readback permits verification reads only; never replay the write. Unknown/rejected state also recovers through Settings GET.
 - Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action.
+- UXREC-1 design proposal (target contract, not current source): the Changes panel opens on Needs attention, which defaults to Failed and renders only the existing failed list; Pending and Conflict render only that status's server-filtered timeline; History renders the existing all/status timeline with existing guarded per-row Retry/Discard only on failed rows, once per view. Retry excludes terminal failures; Discard keeps Confirm discard. Bulk Retry/Discard stay attention_failed only, with existing confirmation, capability and age/clock guards preserved as applicable. [NAV-19] Keep related work adjacent, Source: About Face, ch. 12 (Canon v0.26.2, https://github.com/darce/heuristics-canon): act beside the inspected failed row instead of switching views to find it again. Every count is the server total of the one query on screen; there is no combined attention total. This slice improves classification and navigation and removes duplicate presentation; it clears no records, so old failed rows (including the four July rows) stay failed attention until existing reconciliation or an operator action changes them. Preserve all audit records, reconciliation and existing naming-policy controls. See docs/assessments/current/UXREC-1-ux-inventory.md.
+- UXREC-1 moved timeline count display only (proposed, within T1's existing two-file ownership): Use the verified WordPress admin HTML publisher, document.documentElement.lang, for these admin-control counts, not a per-post content-generation language. Supplied primary WordPress 7.1.3 core evidence traces admin-header.php to wp-admin/includes/template.php:_wp_admin_html_begin, which calls language_attributes(), then wp-includes/general-template.php:get_language_attributes() and get_bloginfo('language'), with the language_attributes filter publishing the HTML attributes. get_bloginfo uses the html_lang_attribute translation or determine_locale() with underscores replaced by hyphens; the published value still needs validation. At the display boundary, validate a non-empty BCP47 UI locale and runtime number-format support before explicitly passing that locale to Intl.NumberFormat. Missing, malformed or unsupported host locale, or unavailable/failing Intl, uses a deliberate non-throwing neutral raw-numeric fallback (String(count), no grouping), never claimed localized. Never assume English, use navigator.language or pass undefined to Intl. Keep the original numeric counts for _n plural selection, comparisons, accounting and predicates; only human display slots become strings. Gettext arguments remain literals in domain alt-context; Admin::enqueue_entry already calls wp_set_script_translations, which is separate from number formatting and proves no translation-bundle or deployed readiness. No service/request/schema locale field, shared formatter dependency or whole-app locale plumbing is added. Implementation symbols belong to the task plan. Canon v0.26.2 [REF-27] Don't program by coincidence, Source: The Pragmatic Programmer, ch. 7; https://github.com/darce/heuristics-canon.
 
 ## Jobs
 - `job-clear-queue` — Clear media queue (scan / describe)
@@ -38,7 +40,7 @@
 | `workbench-shell` | screen | `#/workbench` | Workbench |
 | `workbench-scan` | screen | `#/workbench?tab=scan` | Scan media queue |
 | `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox |
-| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
+| `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Changes — Needs attention / History (proposed) |
 | `workbench-review-panel` | screen | `#/workbench?tab=scan&panel=review&cluster=` | Review these faces |
 | `exit-roster` | exit | `#/roster` | Roster (person workspace) |
 | `exit-settings` | exit | `#/settings` | Settings / service health |
@@ -244,9 +246,9 @@ code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.
 +------------------------------------------------------------+
 ```
 
-### Failed Sync Queue (Dead Letter) (`workbench-dead-letter`)
+### Changes — Needs attention / History (proposed) (`workbench-dead-letter`)
 
-Purpose: Inspect failed sync ops; retry or discard
+Purpose: UXREC-1 proposed. Current source starts with timelineStatus all and renders the failed list and a second all-status timeline together, so a failed row can appear twice with two action sets. Target: one list per view. Needs attention › Failed (default) renders only the existing failed list; Needs attention › Pending or Conflict renders only the server-filtered timeline for that status; History renders the existing timeline for All or one status, retaining guarded per-row Retry/Discard only on failed rows, once per view. Retry excludes terminal failures; bulk controls stay in Failed attention only. Switching views or filters is a read and never discards, retries or reconciles rows. No combined attention total, no locally filtered page presented as a global total, no age-only hiding.
 
 url_params: `panel`
 
@@ -256,27 +258,117 @@ deep_link: true
 primary_action_id: `act-retry-dead-letter`
 code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx`
 
+Action states: attention_failed, attention_pending, attention_conflict, history
+
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-dl-list` | Dead-letter items | queue | default, loading, empty, error |
-| `z-dl-actions` | Retry / discard | form | default, loading, empty, error |
+| `z-dl-attention-choice` | Needs attention status choice: Failed (default), Pending or Conflict as pressed-state buttons. Each choice is its own server query with its own total; no sum across them. The existing topology-command summary counts topology commands, not these rows, and is never presented as an attention total. | nav | default, loading, error |
+| `z-dl-list` | Failed view: the existing failed list only (failed-changes query, 20 per page, its own offset, Showing a–b of N failed changes from that query's server total). Rows keep operation, entity, attempts, age, last attempt, error and payload summary. Old failed rows stay listed until existing reconciliation or an operator Retry or Discard changes their status. No failed timeline is rendered beside it. | queue | default, loading, empty, error |
+| `z-dl-actions` | Failed attention: existing row Retry only on non-terminal failed rows and row Discard with Confirm discard. Bulk Retry all failed (N) and Discard eligible failed changes older than 7 days stay attention_failed only. Preserve capability and pending-mutation guards, bulk arm/confirm and bulk-discard age/clock eligibility. Retry reports queued, not recovered; failures stay inline. Pending and Conflict show no recovery controls; History retains only its failed-row actions. | form | default, loading, empty, error |
+| `z-dl-status-timeline` | Pending or Conflict view: only the existing timeline query with that one status (10 per page, offset reset to 0 on each choice, Showing a–b of N from that status's server total). Rows are read-only; an empty result says no changes have that status. | queue | default, loading, empty, error |
+| `z-dl-history` | History view: the existing timeline for All (default) or one of pending, acknowledged, conflict, failed, discarded; 10 per page, offset reset to 0 on each filter change, server total per filter. Existing guarded per-row Retry only on non-terminal failed rows and Discard with Confirm discard only on failed rows, once per view. Other statuses have no row recovery actions. Preserve capability and pending-mutation guards; no bulk controls and no delete-on-hide. Filter display labels map existing TimelineStatusFilter machine IDs to literal gettext: all -> __('All', 'alt-context'), pending -> __('pending', 'alt-context'), acknowledged -> __('acknowledged', 'alt-context'), conflict -> __('conflict', 'alt-context'), failed -> __('failed', 'alt-context'), discarded -> __('discarded', 'alt-context'); keep their English appearance and query tokens unchanged. The moved timeline count line, also used for Pending/Conflict, uses _n('Showing %1$s-%2$s of %3$s change (%4$s).', 'Showing %1$s-%2$s of %3$s changes (%4$s).', total, 'alt-context'), with this query's raw numeric total selecting plural forms; %1$s/%2$s/%3$s display locale-formatted start/end/total under the verified host-UI-locale contract. For %4$s use literal __('all statuses', 'alt-context') for all or the same literal status-label mapping; never a variable gettext msgid or an unlocalized formatStatusLabel result. All still omits the status query parameter. Pager arithmetic, bounds and offsets remain numeric. Legacy row-status, age, timezone and failed-list count paths are outside this correction. | content | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
-| Failed Sync Queue (Dead Letter)  [overlay]  #/workbench?p\ |
-|   anel=dead-letter                                         |
-| Inspect failed sync ops; retry or discard                  |
+| Changes — Needs attention / History (proposed)  [overlay]\ |
+|     #/workbench?panel=dead-letter                          |
+| UXREC-1 proposed. Current source starts with timelineStat\ |
+|   us all and renders the failed list and a second all-sta\ |
+|   tus timeline together, so a failed row can appear twice\ |
+|    with two action sets. Target: one list per view. Needs\ |
+|    attention › Failed (default) renders only the existing\ |
+|    failed list; Needs attention › Pending or Conflict ren\ |
+|   ders only the server-filtered timeline for that status;\ |
+|    History renders the existing timeline for All or one s\ |
+|   tatus, retaining guarded per-row Retry/Discard only on \ |
+|   failed rows, once per view. Retry excludes terminal fai\ |
+|   lures; bulk controls stay in Failed attention only. Swi\ |
+|   tching views or filters is a read and never discards, r\ |
+|   etries or reconciles rows. No combined attention total,\ |
+|    no locally filtered page presented as a global total, \ |
+|   no age-only hiding.                                      |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Dead-letter items (queue) states=[default,loading,emp\ |
-|   ty,error]                                                |
-|   - Retry / discard (form) states=[default,loading,empty,\ |
-|   error]                                                   |
+|   - Needs attention status choice: Failed (default), Pend\ |
+|   ing or Conflict as pressed-state buttons. Each choice i\ |
+|   s its own server query with its own total; no sum acros\ |
+|   s them. The existing topology-command summary counts to\ |
+|   pology commands, not these rows, and is never presented\ |
+|    as an attention total. (nav) states=[default,loading,e\ |
+|   rror]                                                    |
+|   - Failed view: the existing failed list only (failed-ch\ |
+|   anges query, 20 per page, its own offset, Showing a–b o\ |
+|   f N failed changes from that query's server total). Row\ |
+|   s keep operation, entity, attempts, age, last attempt, \ |
+|   error and payload summary. Old failed rows stay listed \ |
+|   until existing reconciliation or an operator Retry or D\ |
+|   iscard changes their status. No failed timeline is rend\ |
+|   ered beside it. (queue) states=[default,loading,empty,e\ |
+|   rror]                                                    |
+|   - Failed attention: existing row Retry only on non-term\ |
+|   inal failed rows and row Discard with Confirm discard. \ |
+|   Bulk Retry all failed (N) and Discard eligible failed c\ |
+|   hanges older than 7 days stay attention_failed only. Pr\ |
+|   eserve capability and pending-mutation guards, bulk arm\ |
+|   /confirm and bulk-discard age/clock eligibility. Retry \ |
+|   reports queued, not recovered; failures stay inline. Pe\ |
+|   nding and Conflict show no recovery controls; History r\ |
+|   etains only its failed-row actions. (form) states=[defa\ |
+|   ult,loading,empty,error]                                 |
+|   - Pending or Conflict view: only the existing timeline \ |
+|   query with that one status (10 per page, offset reset t\ |
+|   o 0 on each choice, Showing a–b of N from that status's\ |
+|    server total). Rows are read-only; an empty result say\ |
+|   s no changes have that status. (queue) states=[default,\ |
+|   loading,empty,error]                                     |
+|   - History view: the existing timeline for All (default)\ |
+|    or one of pending, acknowledged, conflict, failed, dis\ |
+|   carded; 10 per page, offset reset to 0 on each filter c\ |
+|   hange, server total per filter. Existing guarded per-ro\ |
+|   w Retry only on non-terminal failed rows and Discard wi\ |
+|   th Confirm discard only on failed rows, once per view. \ |
+|   Other statuses have no row recovery actions. Preserve c\ |
+|   apability and pending-mutation guards; no bulk controls\ |
+|    and no delete-on-hide. Filter display labels map exist\ |
+|   ing TimelineStatusFilter machine IDs to literal gettext\ |
+|   : all -> __('All', 'alt-context'), pending -> __('pendi\ |
+|   ng', 'alt-context'), acknowledged -> __('acknowledged',\ |
+|    'alt-context'), conflict -> __('conflict', 'alt-contex\ |
+|   t'), failed -> __('failed', 'alt-context'), discarded -\ |
+|   > __('discarded', 'alt-context'); keep their English ap\ |
+|   pearance and query tokens unchanged. The moved timeline\ |
+|    count line, also used for Pending/Conflict, uses _n('S\ |
+|   howing %1$s-%2$s of %3$s change (%4$s).', 'Showing %1$s\ |
+|   -%2$s of %3$s changes (%4$s).', total, 'alt-context'), \ |
+|   with this query's raw numeric total selecting plural fo\ |
+|   rms; %1$s/%2$s/%3$s display locale-formatted start/end/\ |
+|   total under the verified host-UI-locale contract. For %\ |
+|   4$s use literal __('all statuses', 'alt-context') for a\ |
+|   ll or the same literal status-label mapping; never a va\ |
+|   riable gettext msgid or an unlocalized formatStatusLabe\ |
+|   l result. All still omits the status query parameter. P\ |
+|   ager arithmetic, bounds and offsets remain numeric. Leg\ |
+|   acy row-status, age, timezone and failed-list count pat\ |
+|   hs are outside this correction. (content) states=[defau\ |
+|   lt,loading,empty,error]                                  |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Retry failed op -> sync (costly,preview)       |
-|   [DESTRUCTIVE] Discard failed op -> sync (costly,preview\ |
-|   ,irreversible)                                           |
+| when attention_failed                                      |
+|   [PRIMARY] Retry non-terminal failed op                   |
+|   [destructive] Discard failed op (Confirm discard)        |
+|   [secondary] Show Failed, Pending or Conflict (proposed)  |
+|   [secondary] Show History (proposed)                      |
+| when attention_pending                                     |
+|   [secondary] Show Failed, Pending or Conflict (proposed)  |
+|   [secondary] Show History (proposed)                      |
+| when attention_conflict                                    |
+|   [secondary] Show Failed, Pending or Conflict (proposed)  |
+|   [secondary] Show History (proposed)                      |
+| when history                                               |
+|   [PRIMARY] Retry non-terminal failed op                   |
+|   [destructive] Discard failed op (Confirm discard)        |
+|   [secondary] Filter History by status (proposed)          |
+|   [secondary] Show Needs attention (proposed)              |
 +------------------------------------------------------------+
 | states: default | loading | empty | error                  |
 +------------------------------------------------------------+
@@ -396,14 +488,18 @@ Component pointers:
 | `act-open-conflicts` | Open Conflict Inbox | `workbench-conflicts` | secondary | no | no | no | `workbench-shell` | always |
 | `act-open-dead-letter` | Open Failed Sync Queue | `workbench-dead-letter` | secondary | no | no | no | `workbench-shell` | always |
 | `act-resolve-conflict` | Resolve conflict | `identity-store` | primary | yes | no | yes | `workbench-conflicts` | always |
-| `act-retry-dead-letter` | Retry failed op | `sync` | primary | yes | no | yes | `workbench-dead-letter` | always |
-| `act-discard-dead-letter` | Discard failed op | `sync` | destructive | yes | yes | yes | `workbench-dead-letter` | always |
+| `act-retry-dead-letter` | Retry non-terminal failed op | `sync` | primary | yes | no | yes | `workbench-dead-letter` | attention_failed, history |
+| `act-discard-dead-letter` | Discard failed op (Confirm discard) | `sync` | destructive | yes | yes | yes | `workbench-dead-letter` | attention_failed, history |
 | `act-review-back` | Back to Review Suggestions | `workbench-scan` | primary | no | no | no | `workbench-review-panel` | always |
 | `act-goto-roster` | Go to Roster | `exit-roster` | secondary | no | no | no | `workbench-scan` | always |
 | `act-retry-projection` | Retry projection sync | `projection` | secondary | yes | no | yes | `workbench-shell` | always |
 | `act-enable-recognition` | Enable facial recognition | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_off |
 | `act-disable-recognition` | Disable facial recognition | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_on |
 | `act-retry-policy-read` | Retry status (read only) | `recognition-policy-settings` | secondary | no | no | no | `workbench-scan` | policy_unknown, policy_readback_error, policy_rejected |
+| `act-choose-attention-status` | Show Failed, Pending or Conflict (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | attention_failed, attention_pending, attention_conflict |
+| `act-view-audit-history` | Show History (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | attention_failed, attention_pending, attention_conflict |
+| `act-filter-history-status` | Filter History by status (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | history |
+| `act-view-current-attention` | Show Needs attention (proposed) | `workbench-dead-letter` | secondary | no | no | no | `workbench-dead-letter` | history |
 
 ## Flows
 ### Select media → scan → continue (`flow-scan-happy`)
@@ -461,19 +557,57 @@ flow: Sync failure → dead letter → retry/discard (flow-dead-l\
   etter-recover) job=job-recover-sync
   1. Workbench [workbench-shell]
      --degraded sync strip-->
-  2. Failed Sync Queue (Dead Letter) [workbench-dead-letter]
-     --panel=dead-letter-->
+  2. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter]
+     --panel=dead-letter opens Needs attention › Failed: the \
+  existing failed list and its guarded actions only-->
   3. Workbench [workbench-shell] (visit 2)
 ```
 
 ```mermaid
 flowchart TD
   %% flow: Sync failure → dead letter → retry/discard job=job-recover-sync
-  %% steps: [{"screen_id":"workbench-shell","branch_label":"degraded sync strip"},{"screen_id":"workbench-dead-letter","branch_label":"panel=dead-letter"},{"screen_id":"workbench-shell","branch_label":"retry or discard complete"}]
+  %% steps: [{"screen_id":"workbench-shell","branch_label":"degraded sync strip"},{"screen_id":"workbench-dead-letter","branch_label":"panel=dead-letter opens Needs attention › Failed: the existing failed list and its guarded actions only"},{"screen_id":"workbench-shell","branch_label":"retry queued or discard complete; the failed list re-reads its server total"}]
   n_workbench_shell["Workbench (screen)"]
-  n_workbench_dead_letter["Failed Sync Queue (Dead Letter) (overlay)"]
+  n_workbench_dead_letter["Changes — Needs attention / History (proposed) (overlay)"]
   n_workbench_shell -->|degraded sync strip| n_workbench_dead_letter
-  n_workbench_dead_letter -->|panel=dead-letter| n_workbench_shell
+  n_workbench_dead_letter -->|panel=dead-letter opens Needs attention › Failed: the existing failed list and its guarded actions only| n_workbench_shell
+```
+
+### Needs attention › Failed → Pending or Conflict → History → back to Needs attention (`flow-changes-attention-history`)
+
+```
+flow: Needs attention › Failed → Pending or Conflict → Histor\
+  y → back to Needs attention (flow-changes-attention-history\
+  ) job=job-recover-sync
+  1. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter]
+     --attention_failed: existing failed list, 20 per page wi\
+  th its own offset and server total; old failed rows stay un\
+  til reconciliation or operator action-->
+  2. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter] (visit 2)
+     --attention_pending or attention_conflict: server-filter\
+  ed timeline for that one status only, offset 0, read-only r\
+  ows-->
+  3. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter] (visit 3)
+     --history: existing timeline, All or one status, 10 per \
+  page; guarded row Retry/Discard only on failed rows, once p\
+  er view (Retry excludes terminal failures; Discard requires\
+   confirmation); no bulk controls-->
+  4. Changes — Needs attention / History (proposed) [workbenc\
+  h-dead-letter] (visit 4)
+```
+
+```mermaid
+flowchart TD
+  %% flow: Needs attention › Failed → Pending or Conflict → History → back to Needs attention job=job-recover-sync
+  %% steps: [{"screen_id":"workbench-dead-letter","branch_label":"attention_failed: existing failed list, 20 per page with its own offset and server total; old failed rows stay until reconciliation or operator action"},{"screen_id":"workbench-dead-letter","branch_label":"attention_pending or attention_conflict: server-filtered timeline for that one status only, offset 0, read-only rows"},{"screen_id":"workbench-dead-letter","branch_label":"history: existing timeline, All or one status, 10 per page; guarded row Retry/Discard only on failed rows, once per view (Retry excludes terminal failures; Discard requires confirmation); no bulk controls"},{"screen_id":"workbench-dead-letter","branch_label":"Show Needs attention returns to the failed list; no view switch mutates or reconciles rows"}]
+  n_workbench_dead_letter["Changes — Needs attention / History (proposed) (overlay)"]
+  n_workbench_dead_letter -->|attention_failed: existing failed list, 20 per page with its own offset and server total; old failed rows stay until reconciliation or operator action| n_workbench_dead_letter
+  n_workbench_dead_letter -->|attention_pending or attention_conflict: server-filtered timeline for that one status only, offset 0, read-only rows| n_workbench_dead_letter
+  n_workbench_dead_letter -->|history: existing timeline, All or one status, 10 per page; guarded row Retry/Discard only on failed rows, once per view (Retry excludes terminal failures; Discard requires confirmation); no bulk controls| n_workbench_dead_letter
 ```
 
 ### Scan → settings health (`flow-scan-to-settings`)
@@ -615,6 +749,7 @@ flowchart TD
 3. **Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence
 4. **Dead-letter discard confirm** — destructive + irreversible path
 5. **Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])
+6. UXREC-1 TIMELINE proposed: replace the INITIAL_STATE timelineStatus 'all' default and the always-rendered second timeline in DeadLetterPanel with Needs attention (Failed = existing failed list only; Pending or Conflict = server-filtered timeline only) and History (existing all/status timeline with guarded row Retry/Discard only on failed rows, once per view), keeping deadLetterPanelReducer paging and the handleTimelineStatusChange offset reset. Bulk controls stay attention_failed only; preserve confirmation, capability, pending-mutation and bulk-discard age/clock guards. Proposed fixtures cover old failed rows, genuine pending and conflict rows, History failed rows with non-terminal-only Retry and confirmed Discard, and acknowledged/discarded history with no recovery actions. Do not delete history, hide by age, or repeat integrated DW3-UX0924-04 reconciliation. Localize only the History filter display labels and moved timeline count as annotated; retain literal _n singular/plural templates selected by raw server total and string slots for locale-formatted human numbers. Future product-author fixtures cover totals 0/1/2 (singular change, plural changes), en-US/ar-EG host lang, empty/malformed/unsupported host-locale fallback, and a Polish or Russian multi-form catalog stub receiving raw total; translated labels must still send the existing TimelineStatusFilter tokens. Keep All/pager behavior, numeric accounting, guarded failed-row History recovery and legacy row-status/age/timezone paths unchanged. Scratch checks are not product RED.
 
 ## Domain state mapping
 
@@ -639,9 +774,9 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-recognition-policy z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-review-header z-review-faces z-roster-main z-settings-form
+Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-recognition-policy z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-attention-choice z-dl-list z-dl-actions z-dl-status-timeline z-dl-history z-review-header z-review-faces z-roster-main z-settings-form
 
-Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read
+Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read act-choose-attention-status act-view-audit-history act-filter-history-status act-view-current-attention
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -662,8 +797,11 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Conflict list
 - Conflict detail / candidates
 - Resolve / defer actions
-- Dead-letter items
-- Retry / discard
+- Needs attention status choice: Failed (default), Pending or Conflict as pressed-state buttons. Each choice is its own server query with its own total; no sum across them. The existing topology-command summary counts topology commands, not these rows, and is never presented as an attention total.
+- Failed view: the existing failed list only (failed-changes query, 20 per page, its own offset, Showing a–b of N failed changes from that query's server total). Rows keep operation, entity, attempts, age, last attempt, error and payload summary. Old failed rows stay listed until existing reconciliation or an operator Retry or Discard changes their status. No failed timeline is rendered beside it.
+- Failed attention: existing row Retry only on non-terminal failed rows and row Discard with Confirm discard. Bulk Retry all failed (N) and Discard eligible failed changes older than 7 days stay attention_failed only. Preserve capability and pending-mutation guards, bulk arm/confirm and bulk-discard age/clock eligibility. Retry reports queued, not recovered; failures stay inline. Pending and Conflict show no recovery controls; History retains only its failed-row actions.
+- Pending or Conflict view: only the existing timeline query with that one status (10 per page, offset reset to 0 on each choice, Showing a–b of N from that status's server total). Rows are read-only; an empty result says no changes have that status.
+- History view: the existing timeline for All (default) or one of pending, acknowledged, conflict, failed, discarded; 10 per page, offset reset to 0 on each filter change, server total per filter. Existing guarded per-row Retry only on non-terminal failed rows and Discard with Confirm discard only on failed rows, once per view. Other statuses have no row recovery actions. Preserve capability and pending-mutation guards; no bulk controls and no delete-on-hide. Filter display labels map existing TimelineStatusFilter machine IDs to literal gettext: all -> __('All', 'alt-context'), pending -> __('pending', 'alt-context'), acknowledged -> __('acknowledged', 'alt-context'), conflict -> __('conflict', 'alt-context'), failed -> __('failed', 'alt-context'), discarded -> __('discarded', 'alt-context'); keep their English appearance and query tokens unchanged. The moved timeline count line, also used for Pending/Conflict, uses _n('Showing %1$s-%2$s of %3$s change (%4$s).', 'Showing %1$s-%2$s of %3$s changes (%4$s).', total, 'alt-context'), with this query's raw numeric total selecting plural forms; %1$s/%2$s/%3$s display locale-formatted start/end/total under the verified host-UI-locale contract. For %4$s use literal __('all statuses', 'alt-context') for all or the same literal status-label mapping; never a variable gettext msgid or an unlocalized formatStatusLabel result. All still omits the status query parameter. Pager arithmetic, bounds and offsets remain numeric. Legacy row-status, age, timezone and failed-list count paths are outside this correction.
 - Header + Back
 - Faces grid
 - Entries / clusters workspace

@@ -1,6 +1,6 @@
 # ADR-019: Person-anchored curation — names, stale references, roster, findings
 
-- **Status:** Proposed (needs operator acceptance before CURUX-2..5 slices and the WBTRUST-3 S2 amendment)
+- **Status:** Accepted 2026-10-18 (recorded operator acceptance of the independently reviewed contract; implementation, producer-verification and real-database gates remain open — see Status)
 - **Date:** 2026-10-16
 - **Context task:** CURUX-1
 - **Amends:** [ADR-003](ADR-003-wordpress-local-authority-and-durable-outbox-replay.md) rules 7 and 8 (stale references only); [WBTRUST-3](../tasks/v0.5.0/WBTRUST-3-naming-ux-and-persistence-task-plan.md) Slice S2 row content; [WBTRUST-2](../tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md) contextual commits, ordinary K>0 producer-readiness hold (rule 6) and the explicit stale-rebind context in rule 2e.
@@ -11,7 +11,20 @@
 
 ## Status
 
-Proposed, fourth corrective author revision. This bounded revision addresses CURUX1-ADR3-01: ordinary K>0 exclusions stay in an explained hold pending WBTRUST-2's owned, independently verified valid atomic exclusion producer. It preserves the third revision's eight independently closed residual contracts; it records no operator acceptance or implementation proof. Independent review of the resulting exact blobs is the next gate, followed by recorded operator acceptance before changed consumers land. AGT-13 ("No silent ADR override") applies to the proposed ADR-003, WBTRUST-2 and WBTRUST-3 amendments below. The historical source review and earlier corrected portions remain in force.
+Accepted. Operator acceptance was recorded on 2026-10-18 at 00:32:16 (handoff decision 18002, commit `eb06587939b441f91b50c83f82bbca926000ab84`, branch `feature/curux-1`). The operator was asked to accept the concrete reviewed contract. They replied "begin implementation asap, stop nitpicking over planning documents". That reply is recorded as explicit authorization to proceed with the reviewed contract, with no further planning-review loop.
+
+- **Accepted text.** The fourth corrective author revision, exact ADR blob `4e8c768e9bb88826c838f26a10fc1659cbf296ae`, together with the reviewed companion blobs: [CURUX-1 screens](../assessments/current/curux-1-identity-curation-screens-2026-10-16.md) `3aa17ccdc8f46fb6b2c7d9516cd81f3c27e7bf5b`, [WBTRUST-2](../tasks/v0.5.0/WBTRUST-2-cluster-curation-surface-task-plan.md) `71594b52002480c34f013858601cc8aa8c735c01` and [WBTRUST-3](../tasks/v0.5.0/WBTRUST-3-naming-ux-and-persistence-task-plan.md) `31fe8e4b6f4fdcece78c9bfbc05d483c4276ca1a`. That revision addresses CURUX1-ADR3-01: ordinary K>0 exclusions stay in an explained hold pending WBTRUST-2's owned, independently verified valid atomic exclusion producer. It preserves the third revision's eight independently closed residual contracts.
+- **Review basis.** Independent A2 review 1512 (source `eb065879`, tree `5bcaed11`; decision 17999) passed those exact blobs, verified all eight previous planning closures and left zero open planning findings.
+- **Scope of this status edit.** Only acceptance and status prose changed: this header, this section, and the amendment labels and status paragraph after Decision rule 8. Normative rules, the source-bounded inventory, rationale, guardrails and references are unchanged from the accepted blob.
+- **What acceptance covers.** The decision, its rules, and the ADR-003, WBTRUST-2 and WBTRUST-3 amendments below are the recorded planning authority. Implementation lanes may consume them without another planning or approval round. AGT-13 ("No silent ADR override") still applies to any later change of these choices.
+- **What acceptance does not cover.** These remain separate implementation gates, not planning debates:
+  - Every field, producer, command and result marked *proposed* below stays unimplemented until it is built and independently verified at its real seams. This includes `face_evidence_v1` and the namespace/lifecycle authority, the curation-intent journal and receipts, `review_source_ref`, the correspondence result and the ordinary K>0 exclusion producer. Until then, consumers abstain exactly as rules 2c–2e and 6 state, and automatic correspondence stays unavailable.
+  - The required atomic producer, result and consumer tests, identity counterexamples and test matrix (Guardrails) must pass before implementation acceptance.
+  - Schema-bearing slices also need real PostgreSQL migration, RLS and trigger qualification, plus independent review, before they land.
+  - Step 0 (rule 8) still precedes the first slice.
+- **No implementation proof.** This ADR records no implementation, readiness, live-database or served-build evidence.
+
+The historical source review and earlier corrected portions remain in force.
 
 ## Date
 
@@ -362,11 +375,11 @@ Prior art comes from `find_related_prior_work` (handoff ids). Each item was re-c
    - the roster `projection_status`;
    - for the four stale references, record UUID survival separately from immutable source proof, namespace compatibility and anchor eligibility under 2b–2c. UUID survival alone cannot establish correspondence; served reset/restore behavior remains an observation to obtain, not a source-read result.
 
-**Proposed ADR-003 amendment (rule 7, appended).** "A stale reference is an outbox operation or projected binding that targets a face group the backend no longer has, or whose membership/source correspondence changed or became unverified under a person binding. It is recorded as `stale_reference` and surfaced in Needs attention unless the rule 8 exception applies."
+**ADR-003 amendment (rule 7, appended; accepted with this ADR).** "A stale reference is an outbox operation or projected binding that targets a face group the backend no longer has, or whose membership/source correspondence changed or became unverified under a person binding. It is recorded as `stale_reference` and surfaced in Needs attention unless the rule 8 exception applies."
 
-**Proposed ADR-003 amendment (rule 8, appended).** "Exception: a stale reference may continue an existing WordPress binding intent automatically only when the successor is pure under ADR-019 rule 2d, correspondence is verified under rule 2c, intent is active and unsuppressed, and all person/group/membership/snapshot guards pass at commit. Historical anchors and human labels alone confer no matching authority. Resolution is audited, visible, undoable and switchable; Undo and intentional unlink persist suppression until new explicit binding intent. The local mutation, intent/anchor transition and durable outbox plan commit atomically. Service application remains version-checked, idempotent derived alignment, not a second person authority."
+**ADR-003 amendment (rule 8, appended; accepted with this ADR).** "Exception: a stale reference may continue an existing WordPress binding intent automatically only when the successor is pure under ADR-019 rule 2d, correspondence is verified under rule 2c, intent is active and unsuppressed, and all person/group/membership/snapshot guards pass at commit. Historical anchors and human labels alone confer no matching authority. Resolution is audited, visible, undoable and switchable; Undo and intentional unlink persist suppression until new explicit binding intent. The local mutation, intent/anchor transition and durable outbox plan commit atomically. Service application remains version-checked, idempotent derived alignment, not a second person authority."
 
-This written amendment and the binding-consumer changes remain proposed until the reconciled exact document blobs pass independent review and receive recorded operator acceptance. No plan or consumer silently substitutes these choices for accepted ADR-003/009 (AGT-13).
+This written amendment and the binding-consumer contract were accepted with this ADR on 2026-10-18 (see Status). The rule 7 and 8 text has not yet been appended to the ADR-003 document itself; that is a documentation follow-up, not another approval gate. Acceptance does not make any proposed field, producer or command current. Consumers that depend on them keep the abstentions and holds stated in rules 2c–2e and 6 until those producers are implemented and independently verified. No plan or consumer silently substitutes choices beyond this accepted text for ADR-003/009 (AGT-13).
 
 ### Target outcome
 

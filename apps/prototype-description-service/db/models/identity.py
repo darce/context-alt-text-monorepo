@@ -139,11 +139,14 @@ class FaceObservation(Base):
 
     No lifecycle attestation exists yet: these rows never authorize correspondence.
     No identity FK: deleting/recycling a face row cannot retarget this observation.
+    Tenant purge and tenant deletion are the only erasure paths (see db/README.md).
     """
 
     __tablename__ = "face_observations"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
     identity_namespace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     attachment_id: Mapped[int] = mapped_column(Integer, nullable=False)
     evidence: Mapped[dict] = mapped_column(_jsonb_compatible(), nullable=False)

@@ -133,6 +133,8 @@ interface DeadLetterPanelState {
   bulkDiscardRunning: boolean;
   bulkDiscardResults: readonly BulkDiscardRowResult[];
   actionStatus: string;
+  /** True while actionStatus only announces an armed row discard, not in-flight work. */
+  actionStatusConfirmationOnly: boolean;
   notice: string | null;
   mutationError: string | null;
 }
@@ -143,6 +145,7 @@ type DeadLetterPanelAction =
   | { type: 'setOffset'; offset: number }
   | { type: 'setTimelineOffset'; offset: number }
   | { type: 'setTimelineStatus'; status: TimelineStatusFilter }
+  | { type: 'armDiscard'; id: number; status: string }
   | { type: 'setPendingDiscardId'; id: number | null }
   | { type: 'setBulkRetryArmed'; armed: boolean }
   | { type: 'setBulkDiscardArmed'; armed: boolean }
@@ -164,36 +167,44 @@ const INITIAL_STATE: DeadLetterPanelState = {
   bulkDiscardRunning: false,
   bulkDiscardResults: [],
   actionStatus: '',
+  actionStatusConfirmationOnly: false,
   notice: null,
   mutationError: null,
 };
 
+// UXREC-1 TIMELINE_GATE-01: a view, filter or page change shows different rows, so every
+// confirmation armed against the old rows disarms with its confirmation-only announcement.
+// In-flight feedback (progress status, notice, error) is kept.
+const disarmConfirmations = (state: DeadLetterPanelState): DeadLetterPanelState => ({
+  ...state,
+  pendingDiscardId: null,
+  bulkRetryArmed: false,
+  bulkDiscardArmed: false,
+  ...(state.actionStatusConfirmationOnly ? { actionStatus: '', actionStatusConfirmationOnly: false } : {}),
+});
+
 const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterPanelAction): DeadLetterPanelState => {
   switch (action.type) {
     case 'setPanelView':
-      return {
-        ...state,
-        panelView: action.view,
-        timelineOffset: 0,
-        pendingDiscardId: null,
-        bulkRetryArmed: false,
-        bulkDiscardArmed: false,
-      };
+      return action.view === state.panelView
+        ? state
+        : { ...disarmConfirmations(state), panelView: action.view, timelineOffset: 0 };
     case 'setAttentionStatus':
-      return {
-        ...state,
-        attentionStatus: action.status,
-        timelineOffset: 0,
-        pendingDiscardId: null,
-        bulkRetryArmed: false,
-        bulkDiscardArmed: false,
-      };
+      return action.status === state.attentionStatus
+        ? state
+        : { ...disarmConfirmations(state), attentionStatus: action.status, timelineOffset: 0 };
     case 'setOffset':
-      return { ...state, offset: action.offset };
+      return action.offset === state.offset ? state : { ...disarmConfirmations(state), offset: action.offset };
     case 'setTimelineOffset':
-      return { ...state, timelineOffset: action.offset };
+      return action.offset === state.timelineOffset
+        ? state
+        : { ...disarmConfirmations(state), timelineOffset: action.offset };
     case 'setTimelineStatus':
-      return { ...state, timelineStatus: action.status };
+      return action.status === state.timelineStatus
+        ? state
+        : { ...disarmConfirmations(state), timelineStatus: action.status, timelineOffset: 0 };
+    case 'armDiscard':
+      return { ...state, pendingDiscardId: action.id, actionStatus: action.status, actionStatusConfirmationOnly: true };
     case 'setPendingDiscardId':
       return { ...state, pendingDiscardId: action.id };
     case 'setBulkRetryArmed':
@@ -217,7 +228,7 @@ const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterP
     case 'setBulkDiscardResults':
       return { ...state, bulkDiscardResults: action.results };
     case 'setActionStatus':
-      return { ...state, actionStatus: action.status };
+      return { ...state, actionStatus: action.status, actionStatusConfirmationOnly: false };
     case 'setNotice':
       return { ...state, notice: action.notice };
     case 'setMutationError':
@@ -888,9 +899,9 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     if (pendingDiscardId !== operation.id) {
       dispatch({ type: 'setMutationError', error: null });
       dispatch({ type: 'setNotice', notice: null });
-      dispatch({ type: 'setPendingDiscardId', id: operation.id });
       dispatch({
-        type: 'setActionStatus',
+        type: 'armDiscard',
+        id: operation.id,
         status: sprintf(
           __('Discard armed for %s. Activate Confirm discard to continue.', 'alt-context'),
           operationIdentity,
@@ -1093,11 +1104,15 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     }
   };
   const handleTimelineStatusChange = (status: TimelineStatusFilter): void => {
-    if (status === timelineStatus) {
-      return;
+    if (status !== timelineStatus) {
+      dispatch({ type: 'setTimelineStatus', status });
     }
-    dispatch({ type: 'setTimelineStatus', status });
-    dispatch({ type: 'setTimelineOffset', offset: 0 });
+  };
+  const retryOperation = (operation: OutboxOperation): void => {
+    void handleRetry(operation);
+  };
+  const discardOperation = (operation: OutboxOperation): void => {
+    void handleDiscard(operation);
   };
 
   const liveStatus =
@@ -1314,8 +1329,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                           displayNowMs={displayNowMs}
                           pendingDiscardId={pendingDiscardId}
                           mutationPending={mutationPending}
-                          onRetry={handleRetry}
-                          onDiscard={handleDiscard}
+                          onRetry={retryOperation}
+                          onDiscard={discardOperation}
                         />
                       </li>
                     ))}
@@ -1385,8 +1400,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
           displayNowMs={displayNowMs}
           pendingDiscardId={pendingDiscardId}
           mutationPending={mutationPending}
-          onRetry={handleRetry}
-          onDiscard={handleDiscard}
+          onRetry={retryOperation}
+          onDiscard={discardOperation}
         />
       )}
     </section>

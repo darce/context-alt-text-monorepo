@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { StepMap, STEP_MAP_VALUES, type StepMapValue } from '../components/ui/StepMap';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
+import { RecognitionPolicyControl } from './workbench/RecognitionPolicyControl';
 import { MediaSelection } from './workbench/MediaSelection';
 import { WorkbenchTwoPaneLayout } from './workbench/WorkbenchTwoPaneLayout';
 import { AdvancedDrawer } from './workbench/AdvancedDrawer';
@@ -217,6 +218,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
                 })}
                 onRetry={retryProjectionSync}
               />
+              <RecognitionPolicyControl />
               <ScanTabContent />
             </div>
           }

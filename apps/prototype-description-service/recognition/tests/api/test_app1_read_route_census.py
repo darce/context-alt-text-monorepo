@@ -67,6 +67,9 @@ class _CensusHarness:
     session: FakeSession
     owner_tenant: str
     other_tenant: str
+    owner_key_id: str
+    telemetry_key_ids: list[str]
+    telemetry_session_calls: list[None]
     admit_usage_calls: list[dict[str, object]] = field(default_factory=list)
 
 
@@ -129,6 +132,19 @@ def _census_harness(
 
     monkeypatch.setattr(auth_module, "_lookup_api_key", _fake_lookup)
 
+    telemetry_key_ids: list[str] = []
+    telemetry_session_calls: list[None] = []
+
+    async def _record_api_key_use(api_key_id, *, session_factory=None):
+        telemetry_key_ids.append(api_key_id)
+
+    def _forbid_telemetry_session():
+        telemetry_session_calls.append(None)
+        raise AssertionError("real API-key telemetry must not open a DB session")
+
+    monkeypatch.setattr(auth_module, "record_api_key_use", _record_api_key_use)
+    monkeypatch.setattr(auth_module, "async_session_factory", _forbid_telemetry_session)
+
     @asynccontextmanager
     async def _forbid_admit_usage(*args, **kwargs):  # noqa: ANN002, ANN003
         admit_usage_calls.append({"args": args, "kwargs": kwargs})
@@ -155,6 +171,9 @@ def _census_harness(
         session=session,
         owner_tenant=owner_tenant,
         other_tenant=other_tenant,
+        owner_key_id=key_map[OWNER_KEY][1],
+        telemetry_key_ids=telemetry_key_ids,
+        telemetry_session_calls=telemetry_session_calls,
         admit_usage_calls=admit_usage_calls,
     )
 
@@ -272,6 +291,8 @@ def test_owner_poll_returns_200_without_usage_admission(monkeypatch: pytest.Monk
     assert body["id"] == job.id
     assert body["type"] == "analyze"
     assert body["status"] == "running"
+    assert harness.telemetry_key_ids == [harness.owner_key_id]
+    assert harness.telemetry_session_calls == []
     assert harness.admission.reserves == []
     assert harness.admission.commits == []
     assert harness.admission.releases == []
@@ -299,16 +320,27 @@ def test_other_tenant_cannot_read_job_even_by_spoofing_query_tenant_id(
         params={"tenant_id": harness.owner_tenant},
         headers=_other_headers(),
     )
-    matching_other = harness.client.get(
+    spoofed_with_matching_header = harness.client.get(
         f"/recognition/jobs/{job.id}",
         params={"tenant_id": harness.owner_tenant},
         headers=_other_headers(harness.other_tenant),
     )
 
-    assert spoofed.status_code == 404, spoofed.text
-    assert spoofed.json()["detail"] == "Job not found"
-    assert matching_other.status_code == 404, matching_other.text
-    assert matching_other.json()["detail"] == "Job not found"
+    other_without_query = harness.client.get(
+        f"/recognition/jobs/{job.id}", headers=_other_headers(),
+    )
+    other_without_query_with_header = harness.client.get(
+        f"/recognition/jobs/{job.id}", headers=_other_headers(harness.other_tenant),
+    )
+
+    assert spoofed.status_code == 403, spoofed.text
+    assert spoofed.json()["detail"] == "tenant mismatch"
+    assert spoofed_with_matching_header.status_code == 403, spoofed_with_matching_header.text
+    assert spoofed_with_matching_header.json()["detail"] == "tenant mismatch"
+    assert other_without_query.status_code == 404, other_without_query.text
+    assert other_without_query.json()["detail"] == "Job not found"
+    assert other_without_query_with_header.status_code == 404, other_without_query_with_header.text
+    assert other_without_query_with_header.json()["detail"] == "Job not found"
     assert harness.admission.reserves == []
     assert harness.admit_usage_calls == []
 
@@ -345,10 +377,14 @@ def test_pipeline_followup_is_tenant_scoped_and_free(monkeypatch: pytest.MonkeyP
     )
 
     owner = harness.client.get(f"/recognition/jobs/{scan_job.id}", headers=_owner_headers(harness.owner_tenant))
-    other = harness.client.get(
+    other_with_spoofed_query = harness.client.get(
         f"/recognition/jobs/{scan_job.id}",
         params={"tenant_id": harness.owner_tenant},
         headers=_other_headers(harness.other_tenant),
+    )
+
+    other_without_query = harness.client.get(
+        f"/recognition/jobs/{scan_job.id}", headers=_other_headers(harness.other_tenant),
     )
 
     assert owner.status_code == 200
@@ -356,8 +392,10 @@ def test_pipeline_followup_is_tenant_scoped_and_free(monkeypatch: pytest.MonkeyP
     assert body["id"] == scan_job.id
     assert body["type"] == "clustering"
     assert body["status"] == "running"
-    assert other.status_code == 404, other.text
-    assert other.json()["detail"] == "Job not found"
+    assert other_with_spoofed_query.status_code == 403, other_with_spoofed_query.text
+    assert other_with_spoofed_query.json()["detail"] == "tenant mismatch"
+    assert other_without_query.status_code == 404, other_without_query.text
+    assert other_without_query.json()["detail"] == "Job not found"
     assert harness.admission.reserves == []
     assert harness.admit_usage_calls == []
 
@@ -413,23 +451,29 @@ def test_sql_fallback_job_is_tenant_fenced_without_rls(monkeypatch: pytest.Monke
         f"/recognition/jobs/{scan_job_id}",
         headers=_owner_headers(harness.owner_tenant),
     )
-    other = harness.client.get(
+    other_with_spoofed_query = harness.client.get(
         f"/recognition/jobs/{scan_job_id}",
         params={"tenant_id": harness.owner_tenant},
         headers=_other_headers(),
     )
 
+    other_without_query = harness.client.get(
+        f"/recognition/jobs/{scan_job_id}", headers=_other_headers(),
+    )
+
     assert owner.status_code == 200, owner.text
     assert owner.json()["id"] == str(scan_job_id)
     assert owner.json()["status"] == "running"
-    assert other.status_code == 404, other.text
-    assert other.json()["detail"] == "Job not found"
+    assert other_with_spoofed_query.status_code == 403, other_with_spoofed_query.text
+    assert other_with_spoofed_query.json()["detail"] == "tenant mismatch"
+    assert other_without_query.status_code == 404, other_without_query.text
+    assert other_without_query.json()["detail"] == "Job not found"
     assert harness.admission.reserves == []
     assert harness.admit_usage_calls == []
 
 
-def test_admin_header_can_read_job_query_cannot_override_key_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Proof: admin uses X-Tenant-ID; a tenant key ignores spoofed query tenant_id."""
+def test_admin_header_can_read_job_query_cannot_conflict_with_key_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proof: admin uses X-Tenant-ID; a tenant key rejects conflicting query tenant_id."""
     harness = _census_harness(monkeypatch, lookup=None)
     job = _seed_job(
         harness.mem_repo,
@@ -454,8 +498,8 @@ def test_admin_header_can_read_job_query_cannot_override_key_tenant(monkeypatch:
         headers=_admin_headers(harness.owner_tenant),
     )
 
-    assert owner_with_foreign_query.status_code == 200, owner_with_foreign_query.text
-    assert owner_with_foreign_query.json()["id"] == job.id
+    assert owner_with_foreign_query.status_code == 403, owner_with_foreign_query.text
+    assert owner_with_foreign_query.json()["detail"] == "tenant mismatch"
     assert admin_without_header.status_code == 403, admin_without_header.text
     assert admin_with_header.status_code == 200, admin_with_header.text
     assert admin_with_header.json()["id"] == job.id

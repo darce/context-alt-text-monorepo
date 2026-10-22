@@ -163,10 +163,23 @@ def test_row_before_any_family_heading_is_rejected(tmp_path: Path) -> None:
         load_depiction_lexicon(path, version="test")
 
 
-def test_rule_cell_without_the_arrow_contract_is_rejected(tmp_path: Path) -> None:
+def test_prose_rule_uses_trigger_and_preserves_body(tmp_path: Path) -> None:
+    body = "mark symbolic readings as editorial; do not present one reading as final"
+    prose = _ATTRIB_ROW.replace(
+        "pose invites will inference -> state visible cues only -> blocks false psychology", body
+    )
+    path = _write(tmp_path, _HEADER + _ATTRIB_HEADING + prose + "\n")
+    lex = load_depiction_lexicon(path, version="test")
+    assert lex.rules[0].when == "Depicted person is grammatical subject"
+    assert lex.rules[0].do == body
+    assert lex.rules[0].why == ""
+    assert body in lex.render()
+
+
+def test_arrow_rule_without_action_is_rejected(tmp_path: Path) -> None:
     broken = _ATTRIB_ROW.replace(
         "pose invites will inference -> state visible cues only -> blocks false psychology",
-        "pose invites will inference",
+        "pose invites will inference -> ",
     )
     path = _write(tmp_path, _HEADER + _ATTRIB_HEADING + broken + "\n")
     with pytest.raises(LexiconError, match="condition -> action contract"):
@@ -225,3 +238,31 @@ def test_real_canon_checkout_parses_both_families() -> None:
     assert len(lex.rules) >= 15
     assert lex.version.startswith("canon ")
     assert all(r.when and r.do and r.check for r in lex.rules)
+
+
+def test_version_uses_published_release_manifest(tmp_path: Path) -> None:
+    (tmp_path / "lexicons").mkdir()
+    (tmp_path / "meta").mkdir()
+    (tmp_path / "meta/release-manifest.json").write_text('{"version": "0.26.2"}')
+    path = _write(tmp_path / "lexicons", _HEADER + _ATTRIB_HEADING + _ATTRIB_ROW + "\n")
+    lex = load_depiction_lexicon(path)
+    assert lex.version == "canon v0.26.2"
+
+
+@pytest.mark.parametrize("manifest_text", ["{", "[]", '{"version": 26}', '{"version": "unreleased"}'])
+def test_invalid_manifest_falls_back_to_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest_text: str) -> None:
+    from types import SimpleNamespace
+    from scripts.eval_harness import depiction_lexicon
+    (tmp_path / "lexicons").mkdir()
+    (tmp_path / "meta").mkdir()
+    (tmp_path / "meta/release-manifest.json").write_text(manifest_text)
+    path = _write(tmp_path / "lexicons", _HEADER + _ATTRIB_HEADING + _ATTRIB_ROW + "\n")
+    monkeypatch.setattr(depiction_lexicon.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="legacy-tag"))
+    assert load_depiction_lexicon(path).version == "canon legacy-tag"
+
+
+def test_prose_rule_without_trigger_is_rejected(tmp_path: Path) -> None:
+    row = _ATTRIB_ROW.replace("Depicted person is grammatical subject", "").replace("pose invites will inference -> state visible cues only -> blocks false psychology", "state visible cues only")
+    path = _write(tmp_path, _HEADER + _ATTRIB_HEADING + row + "\n")
+    with pytest.raises(LexiconError, match="condition -> action contract"):
+        load_depiction_lexicon(path, version="test")

@@ -9,11 +9,10 @@ provenance, so a lexicon-on leg is reproducible without the rule text ever
 landing in git.
 
 The compiled block is a mechanical projection of the canon rows, not a rewrite:
-each row's Rule cell already carries the canon's own condition -> action ->
-consequence contract ("Reading a row" in the lexicon header), so the renderer
-splits on that contract and drops only the columns aimed at engineers
-(Trigger, Src) and the cross-lexicon ``↔`` tails that point at files this
-addendum does not carry.
+arrow-form Rule cells are split into condition, action and consequence.
+Prose-form Rule cells use the explicit Trigger column and retain the entire
+rule body. The projection omits the Source column and cross-lexicon ``↔``
+tails that point at files this addendum does not carry.
 
 Injection point is the prose-writing pass only. Pass-1 of the two-pass pipeline
 extracts objective JSON facts and asserts nothing about who is depicted, so it
@@ -24,6 +23,7 @@ makes claims.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 from collections.abc import Sequence
@@ -213,10 +213,18 @@ def _parse_row(line: str, *, family: str, path: Path, lineno: int) -> LexiconRul
         raise LexiconError(f"{path}:{lineno}: {rule_id} Rule cell has no **bold name**: lead")
     name = lead.group(1).replace("*", "").strip()
     body = lead.group(2).replace("*", "").strip()
-    parts = [p.strip(" ;.") for p in body.split("->")]
-    when = parts[0] if parts else ""
-    do = parts[1] if len(parts) > 1 else ""
-    why = parts[2] if len(parts) > 2 else ""
+    if "->" in body:
+        parts = [p.strip(" ;.") for p in body.split("->")]
+        when = parts[0] if parts else ""
+        do = parts[1] if len(parts) > 1 else ""
+        why = parts[2] if len(parts) > 2 else ""
+    else:
+        # Published rules can express the action as prose. Use the table's
+        # explicit trigger and retain the entire rule body without guessing
+        # sentence boundaries or rewriting the canonical instruction.
+        when = _clean(cells[1])
+        do = body
+        why = ""
     if not when or not do:
         raise LexiconError(
             f"{path}:{lineno}: {rule_id} Rule cell does not carry the canon condition -> action contract"
@@ -260,7 +268,14 @@ def _clean(cell: str) -> str:
 
 
 def _canon_version(path: Path) -> str:
-    """Best-effort canon tag for provenance; the sha256 is the hard identity."""
+    """Prefer the published manifest; Git describes legacy checkouts only."""
+    try:
+        manifest = json.loads((path.parent.parent / "meta/release-manifest.json").read_text(encoding="utf-8"))
+        version = manifest.get("version") if isinstance(manifest, dict) else None
+        if isinstance(version, str) and re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", version):
+            return f"canon v{version.removeprefix('v')}"
+    except (OSError, ValueError):
+        pass
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
             ["git", "-C", str(path.parent), "describe", "--tags", "--always", "--dirty"],  # noqa: S607

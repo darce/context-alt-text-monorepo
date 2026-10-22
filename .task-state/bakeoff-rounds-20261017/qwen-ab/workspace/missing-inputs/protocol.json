@@ -1,0 +1,3490 @@
+{
+  "schema": "description-lexicon-benchmark-protocol/v1",
+  "status": "INCOMPLETE",
+  "canon_version": "0.26.2",
+  "canon_sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+  "created_at": "2026-10-19T15:35:39.969078+00:00",
+  "full_contenders": [
+    "MiMo-V2.6-Distill-Qwen-9B Q4_K_M",
+    "JoyCaption Beta One Q8_0",
+    "Qwen3.8-27B GSQ-RCO IQ3_S"
+  ],
+  "reference_arms": {
+    "Qwen3.8-27B UD-Q4_K_XL": "30-image diagnostic subset, paired lexicon off/on; expand if material GSQ quality regressions",
+    "deployed Qwen3-VL-30B-A3B installed Q4": "120-image matched current-production reference",
+    "Florence-2-base-ft BF16 CPU": "30 prespecified balanced diagnostic images, native caption-only contract; selected before CPU generation for proportionate baseline cost"
+  },
+  "identity_policy": "Withhold all identity aliases and inferred identities until separate AuraFace FIR integration round. Empty context_pack and present_identities; opaque filenames; preserve original private mapping unchanged.",
+  "corpus": {
+    "target": 120,
+    "legacy": 38,
+    "new_target": 82,
+    "legacy_manifest": "corpus-original.json",
+    "new_manifest": "corpus-new/manifest.json",
+    "strata": [
+      "objects/products",
+      "animals",
+      "landscapes",
+      "people/activity",
+      "text/signage",
+      "diagrams/charts/screenshots",
+      "artwork/reproduction",
+      "crowds/occlusion",
+      "low-light/blur",
+      "crop/framing ambiguity"
+    ],
+    "classification": "contact-sheet reviewed provisional strata, not human fact gold",
+    "provenance": "each public file has source page, license, attribution, source URL, exact local SHA256 and dimensions",
+    "sampling": "purposive challenge corpus, not tenant prevalence estimate",
+    "independent_unit": "source image/series cluster; crops from same image do not increase independent N",
+    "freeze": "final corpus, purposes and diagnostic subset sealed before generation",
+    "freeze_manifest": "corpus-frozen-120.json",
+    "development_ids": [
+      "original-001",
+      "original-002"
+    ],
+    "comparison_audit": "corpus-120-vs-golden150-audit.json",
+    "canon_assessment": "corpus-canon-assessment.json",
+    "coverage_audit": "corpus-lexicon-coverage-audit.json",
+    "golden150_note": "Recognition selection and caption-bearing draft are distinct snapshots sharing86 exact files. Neither supplies verified general caption fact gold. Zero exactSHA overlap with120; source-scene overlap unresolved. Current120 retained as exploratory corpus; no new cohort or promotion claim."
+  },
+  "pairing": {
+    "off": "existing frozen v3 generation without lexicon addendum",
+    "on": "identical generation plus pinned ATTRIB+BOUND lexicon, full detail, all17 B/S/J rows",
+    "controls": [
+      "same image bytes",
+      "same preprocessing",
+      "same model/projector/runtime hashes",
+      "seed0 temperature0 no-think",
+      "standard title/alt/caption bands",
+      "no identities or source-page metadata in prompts"
+    ],
+    "scope": "generation-time pass-2 prose guidance; pass-1 extraction held fixed and recorded",
+    "method": "Reuse the exact committed pass-1 facts for both writing arms, with the same image included in both _weave_messages calls. Do not pair a live image weave against text-only weave-bench: that would change two variables. Counterbalance writing-arm order, preserve errors and separate shared extraction clocks.",
+    "failed_pairs": "retain parse errors, timeouts and raw outputs in denominator; no selective retries",
+    "runtime": "one GPU model resident at a time; new bounded maintenance window, restore original service and STOP/AUTO after each residency; no old queues resumed"
+  },
+  "quality": {
+    "primary": "blinded usable-description rate: valid contract, no materially unsupported claim, all purpose-critical facts retained",
+    "report_components": [
+      "visible fact precision",
+      "purpose-critical fact recall",
+      "unsupported psychology/agency/identity/causality",
+      "spatial/count/OCR correctness",
+      "canon representation and attribution errors",
+      "title/alt/caption validity",
+      "verbosity and omissions",
+      "blinded preference with ties"
+    ],
+    "annotation": "human required/allowed/prohibited fact units from pixels and permitted context before viewing candidate outputs; two raters with adjudication; Luna metadata classification is not human gold",
+    "analysis": "paired on-minus-off effects per model; source-cluster uncertainty intervals and discordant pairs; original/new split and per-stratum denominators",
+    "margin": "proposed5percentage-point usable-rate margin requires owner ratification and sample/power assessment before a confirmatory promotion gate",
+    "sample_size_limit": "120 is an exploratory coverage target, not a powered parity claim",
+    "promotion": "no automatic promotion or unvalidated model judge; choose lower latency among candidates meeting ratified quality floors; retain uncertainty and expand if unresolved",
+    "pixel_observation_draft": {
+      "file": "draft-pixel-observations-120.json",
+      "sha256": "629d368d764a8c5c6550afec1ce71a7ee5dcf4de4461739a3290c418ffe90675",
+      "rows": 120,
+      "observations": 488,
+      "model": "gpt-6-luna",
+      "reasoning_effort": "max",
+      "status": "AI draft; human verification pending",
+      "used_as_prompt_input": false,
+      "human_verified_rows": 0
+    }
+  },
+  "performance": [
+    "p50/p95 per-image client latency",
+    "shared extraction and per-arm writing separately",
+    "cold-load/model-switch time",
+    "prompt/completion tokens",
+    "timeouts and parsing failures",
+    "peak GPU memory",
+    "actual billed uptime/cost per attempted and usable output when billing evidence is available"
+  ],
+  "old_performance": "historical38 timing is contextual/nonisolated; historical named-context outputs are not the new identity-withheld off arm",
+  "joy": {
+    "decision_id": 18666,
+    "status": "BLOCKED",
+    "reason": "native clock lease unqualified",
+    "evidence": {
+      "record_type": "decision",
+      "record_id": 18666,
+      "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+      "lane_id": null,
+      "status": null,
+      "snippet": "claude_joy_lease_g5_pass_designed_unknown_joy_live_blocked_20261020 JOY...",
+      "decision": "claude_joy_lease_g5_pass_designed_unknown_joy_live_blocked_20261020",
+      "rationale": "JOY-LEASE-G5 (codex gpt-6.1-sol xhigh, independent) PASS on R6 head ddd3da7e: actual guest.py clock entry reports clock_bounds_unavailable; lifecycle refuses before START/POST/lease/unit incl. except/finally; G2/G3/G4 intact; no deadline extension; 6 independent checks + 5 clock mutants detected. One low advisory (JOY-LEASE-G5-ADV-01, test gap, no prod change; deferred). G5 advisory: A and B rejections sound; only rigorous alternative is a same-clock nonrenewable expiry fence with qualified revocation latency, which no supplied primitive provides (architecture/producer-contract change). CANON PROPOSAL (AGT-12 timebox after 6 authors at same obstacle; AGT-10 degrade loudly; CARD-03 designed-unknown; AGT-08 precondition at caller): Joy live acquisition is NOT admissible; report Joy actual rows as 'blocked: native clock lease unqualified' with the PASS-verified refusal evidence, never fabricate or substitute rows; do not spend further author/gate cycles on Joy admission without a user-authorized architecture change (same-clock fence). JOY-AB-ADJ-R3 (dispatched 04:19Z) allowed to settle (sunk, cheap) but its 4th-dispatch Sol gate is deferred: no consumer until Joy acquisition is admissible. Bakeoff priority shifts to Qwen/Inc/MiMo038 rows (blocked on VM root-disk guard, operator cleanup)."
+    },
+    "later_acquisition_is_not_description_rows": true
+  },
+  "compatibility_issue": {
+    "status": "Superseded for matched supplied runs only",
+    "per_run_evidence": "finalized-evidence.json",
+    "operations": [
+      "LEXICON-MIMO-40-LAST40-R1",
+      "LEXICON-MIMO-40-NEXT40-R1",
+      "LEXICON-MIMO-40-R2",
+      "LEXICON-MIMO-R2-038-R9",
+      "LEXICON-QWEN-GSQ-20-C01-R6",
+      "LEXICON-QWEN-GSQ-20-C02-R6",
+      "LEXICON-QWEN-GSQ-20-C03-R6",
+      "LEXICON-QWEN-GSQ-20-C04-R6",
+      "LEXICON-QWEN-GSQ-20-C05-R6",
+      "LEXICON-QWEN-GSQ-20-C06-R6",
+      "LEXICON-QWEN-GSQ-R2-038-R6",
+      "LEXICON-QWEN-UD-30-R1",
+      "LEXICON-QWEN-UD-PILOT-R2"
+    ]
+  },
+  "baseline_rationale": "Matched incumbent is necessary to judge replacement. Florence remains a separate CPU caption reference; no forced three-surface or lexicon contract. Empty-context heuristic baseline adds no information in this identity-withheld experiment; explicitly exempted.",
+  "canon_decisions": [
+    {
+      "id": "SERVE-07",
+      "name": "Quality-gate behaviour-changing serving optimizations",
+      "source": "AI Engineering",
+      "application": "Qwen efficiency choice conditional on factual regression evaluation"
+    },
+    {
+      "id": "EVAL-04",
+      "name": "Slice-based gate",
+      "source": "Designing Machine Learning Systems",
+      "application": "report difficult image classes separately"
+    },
+    {
+      "id": "EVAL-11",
+      "name": "Open-ended tasks need the right scorer",
+      "source": "AI Engineering",
+      "application": "fact-unit rubric, no sole string match"
+    },
+    {
+      "id": "EVAL-12",
+      "name": "Validate the judge against humans",
+      "source": "AI Engineering",
+      "application": "Luna assistance cannot establish a production winner"
+    },
+    {
+      "id": "ATTRIB-01",
+      "name": "Bearer, not the depicted",
+      "source": "Ways of Seeing, ch. 3 + other sources in canonical row",
+      "application": "count unsupported inner-state or intention claims"
+    },
+    {
+      "id": "BOUND-01",
+      "name": "Assertable set is bounded",
+      "source": "Ways of Seeing, ch. 1 + other sources in canonical row",
+      "application": "separate visible facts from cause/fate/off-frame assertions"
+    },
+    {
+      "id": "EXP-23",
+      "name": "Pseudoreplication check",
+      "source": "Statistics Done Wrong, ch. 3",
+      "application": "source image/series clusters are independent units, not repeated model outputs"
+    }
+  ],
+  "OCI_two_models": {
+    "answer": "Yes: authenticated tenant-to-model routing with separate model IDs and provenance.",
+    "single_A10": "Use bounded queues and model switching, or CPU/GPU service tiers. Simultaneous residency requires measured joint weights+projectors+KV+workspace fit; it is not established here.",
+    "requirements": [
+      "tenant model allowlists",
+      "per-tenant queue/cache isolation",
+      "actual model/version on every response",
+      "mixed-tenant latency and switch-cost measurements",
+      "backpressure and concurrency bounds"
+    ],
+    "deployment": "no routing changes deployed",
+    "source": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#using-multiple-models"
+  },
+  "production_promotion": false,
+  "compiled_lexicon": "lexicon-on-addendum.txt",
+  "compiled_lexicon_sha256": "ee3a73a40540c41008f9bd11a3f4294f1b81218ae5be0327e572488d8e3827f5",
+  "runtime_note": "MiMo-V2.6-Distill-Qwen-9B Q4_K_M: 120/120 evaluated, 114 valid, 6 model-output errors; 0 pending/not evaluated (FULL_COMPLETE). Qwen3.8-27B GSQ-RCO IQ3_S: 119/120 evaluated, 117 valid, 2 model-output errors; 1 pending/not evaluated (INCOMPLETE). JoyCaption Beta One Q8_0: 0/120 evaluated, 0 valid, 0 model-output errors; 120 pending/not evaluated (BLOCKED_NATIVE_CLOCK_LEASE_UNQUALIFIED). Qwen3-VL-30B-A3B installed Q4: 0/120 evaluated, 0 valid, 0 model-output errors; 120 pending/not evaluated (NOT_RUN). Qwen3.8-27B UD-Q4_K_XL: 26/30 evaluated, 23 valid, 3 model-output errors; 4 pending/not evaluated (INCOMPLETE).",
+  "new_CPU_reference_images": 30,
+  "updated_at": "2026-10-21T17:04:44+00:00",
+  "report_layout": "Image-first; independent horizontal model/arm columns for each frozen image; development labels separate.",
+  "dataset_revision": "r2",
+  "active_manifest": "corpus-active-120-r2.json",
+  "active_manifest_sha256": "05fe1b169be22c6a8e25d97769ef9aeb143dea1a5ffa7d0b09a48b25cc444a63",
+  "active_full_GPU_completion_POSTs": 777,
+  "active_full_AB_valid_pairs": 254,
+  "replacement_input_GPU_status": {
+    "mimo": [],
+    "qwen-gsq": [],
+    "joy": [
+      "original-038"
+    ],
+    "incumbent": [
+      "original-038"
+    ],
+    "qwen-ud": []
+  },
+  "active_GPU_completion_POSTs": 795,
+  "active_AB_image_pairs": 260,
+  "qwen_full": {
+    "cohorts_returned": 6,
+    "replacement_returned": true,
+    "attempted": 119,
+    "valid_pairs": 117,
+    "errors": 2,
+    "completion_POSTs": 353,
+    "operations": [
+      "LEXICON-QWEN-GSQ-20-C01-R6",
+      "LEXICON-QWEN-GSQ-20-C02-R6",
+      "LEXICON-QWEN-GSQ-20-C03-R6",
+      "LEXICON-QWEN-GSQ-20-C04-R6",
+      "LEXICON-QWEN-GSQ-20-C05-R6",
+      "LEXICON-QWEN-GSQ-20-C06-R6",
+      "LEXICON-QWEN-GSQ-R2-038-R6"
+    ],
+    "speed_common_valid": {
+      "mimo": {
+        "n": 111,
+        "p50": 10.342,
+        "p95": 14.214,
+        "shared": 3.569,
+        "off": 3.403,
+        "on": 3.359
+      },
+      "qwen": {
+        "n": 111,
+        "p50": 25.308,
+        "p95": 38.02,
+        "shared": 8.674,
+        "off": 8.324,
+        "on": 7.916
+      }
+    }
+  },
+  "finalized_coverage": [
+    {
+      "model_key": "mimo",
+      "label": "MiMo-V2.6-Distill-Qwen-9B Q4_K_M",
+      "target_images": 120,
+      "attempted_images": 120,
+      "valid_pairs": 114,
+      "image_errors": 6,
+      "legacy_attempted": 38,
+      "public_attempted": 82,
+      "public_valid_pairs": 76,
+      "completion_POSTs": 348,
+      "pilot_images": 2,
+      "pilot_valid_pairs": 2,
+      "pilot_completion_POSTs": 6,
+      "status": "FULL_COMPLETE",
+      "pending_images": 0,
+      "evaluated_images": 120,
+      "missing_images": [],
+      "missing_images_count": 0,
+      "pending_image_ids": [],
+      "main_target_images": 118,
+      "main_evaluated_images": 118,
+      "main_valid_pairs": 112,
+      "main_image_errors": 6,
+      "full_target_includes_pilot_ids": [
+        "original-001",
+        "original-002"
+      ]
+    },
+    {
+      "model_key": "qwen-gsq",
+      "label": "Qwen3.8-27B GSQ-RCO IQ3_S",
+      "target_images": 120,
+      "attempted_images": 119,
+      "valid_pairs": 117,
+      "image_errors": 2,
+      "legacy_attempted": 38,
+      "public_attempted": 81,
+      "public_valid_pairs": 79,
+      "completion_POSTs": 353,
+      "pilot_images": 2,
+      "pilot_valid_pairs": 2,
+      "pilot_completion_POSTs": 6,
+      "status": "INCOMPLETE",
+      "evaluated_images": 119,
+      "missing_images": [
+        "c064"
+      ],
+      "missing_images_count": 1,
+      "pending_images": 1,
+      "pending_image_ids": [
+        "c064"
+      ],
+      "main_target_images": 118,
+      "main_evaluated_images": 117,
+      "main_valid_pairs": 115,
+      "main_image_errors": 2,
+      "full_target_includes_pilot_ids": [
+        "original-001",
+        "original-002"
+      ]
+    },
+    {
+      "model_key": "joy",
+      "label": "JoyCaption Beta One Q8_0",
+      "target_images": 120,
+      "attempted_images": 0,
+      "valid_pairs": 0,
+      "image_errors": 0,
+      "legacy_attempted": 0,
+      "public_attempted": 0,
+      "public_valid_pairs": 0,
+      "completion_POSTs": 0,
+      "pilot_images": 0,
+      "pilot_valid_pairs": 0,
+      "pilot_completion_POSTs": 0,
+      "status": "BLOCKED_NATIVE_CLOCK_LEASE_UNQUALIFIED",
+      "evaluated_images": 0,
+      "missing_images": [
+        "c001",
+        "c002",
+        "c003",
+        "c004",
+        "c005",
+        "c006",
+        "c007",
+        "c008",
+        "c009",
+        "c010",
+        "c011",
+        "c012",
+        "c013",
+        "c014",
+        "c015",
+        "c016",
+        "c017",
+        "c018",
+        "c019",
+        "c020",
+        "c021",
+        "c022",
+        "c023",
+        "c024",
+        "c025",
+        "c026",
+        "c027",
+        "c028",
+        "c029",
+        "c030",
+        "c031",
+        "c032",
+        "c033",
+        "c034",
+        "c035",
+        "c036",
+        "c037",
+        "c038",
+        "c048",
+        "c049",
+        "c050",
+        "c051",
+        "c052",
+        "c053",
+        "c054",
+        "c055",
+        "c056",
+        "c057",
+        "c058",
+        "c059",
+        "c060",
+        "c061",
+        "c062",
+        "c063",
+        "c064",
+        "c065",
+        "c066",
+        "c067",
+        "c068",
+        "c069",
+        "c070",
+        "c071",
+        "c072",
+        "c073",
+        "c074",
+        "c075",
+        "c076",
+        "c077",
+        "c078",
+        "c079",
+        "c080",
+        "c081",
+        "c082",
+        "c083",
+        "c084",
+        "n040",
+        "n041",
+        "n043",
+        "n044",
+        "n045",
+        "n046",
+        "n047",
+        "original-001",
+        "original-002",
+        "original-003",
+        "original-004",
+        "original-005",
+        "original-006",
+        "original-007",
+        "original-008",
+        "original-009",
+        "original-010",
+        "original-011",
+        "original-012",
+        "original-013",
+        "original-014",
+        "original-015",
+        "original-016",
+        "original-017",
+        "original-018",
+        "original-019",
+        "original-020",
+        "original-021",
+        "original-022",
+        "original-023",
+        "original-024",
+        "original-025",
+        "original-026",
+        "original-027",
+        "original-028",
+        "original-029",
+        "original-030",
+        "original-031",
+        "original-032",
+        "original-033",
+        "original-034",
+        "original-035",
+        "original-036",
+        "original-037",
+        "original-038"
+      ],
+      "missing_images_count": 120,
+      "pending_images": 120,
+      "pending_image_ids": [
+        "c001",
+        "c002",
+        "c003",
+        "c004",
+        "c005",
+        "c006",
+        "c007",
+        "c008",
+        "c009",
+        "c010",
+        "c011",
+        "c012",
+        "c013",
+        "c014",
+        "c015",
+        "c016",
+        "c017",
+        "c018",
+        "c019",
+        "c020",
+        "c021",
+        "c022",
+        "c023",
+        "c024",
+        "c025",
+        "c026",
+        "c027",
+        "c028",
+        "c029",
+        "c030",
+        "c031",
+        "c032",
+        "c033",
+        "c034",
+        "c035",
+        "c036",
+        "c037",
+        "c038",
+        "c048",
+        "c049",
+        "c050",
+        "c051",
+        "c052",
+        "c053",
+        "c054",
+        "c055",
+        "c056",
+        "c057",
+        "c058",
+        "c059",
+        "c060",
+        "c061",
+        "c062",
+        "c063",
+        "c064",
+        "c065",
+        "c066",
+        "c067",
+        "c068",
+        "c069",
+        "c070",
+        "c071",
+        "c072",
+        "c073",
+        "c074",
+        "c075",
+        "c076",
+        "c077",
+        "c078",
+        "c079",
+        "c080",
+        "c081",
+        "c082",
+        "c083",
+        "c084",
+        "n040",
+        "n041",
+        "n043",
+        "n044",
+        "n045",
+        "n046",
+        "n047",
+        "original-001",
+        "original-002",
+        "original-003",
+        "original-004",
+        "original-005",
+        "original-006",
+        "original-007",
+        "original-008",
+        "original-009",
+        "original-010",
+        "original-011",
+        "original-012",
+        "original-013",
+        "original-014",
+        "original-015",
+        "original-016",
+        "original-017",
+        "original-018",
+        "original-019",
+        "original-020",
+        "original-021",
+        "original-022",
+        "original-023",
+        "original-024",
+        "original-025",
+        "original-026",
+        "original-027",
+        "original-028",
+        "original-029",
+        "original-030",
+        "original-031",
+        "original-032",
+        "original-033",
+        "original-034",
+        "original-035",
+        "original-036",
+        "original-037",
+        "original-038"
+      ],
+      "main_target_images": 118,
+      "main_evaluated_images": 0,
+      "main_valid_pairs": 0,
+      "main_image_errors": 0,
+      "full_target_includes_pilot_ids": [
+        "original-001",
+        "original-002"
+      ],
+      "blocked_reason": "native clock lease unqualified",
+      "decision_id": 18666,
+      "admission_status": "BLOCKED",
+      "further_rounds": "Prohibited without user-authorized architecture change"
+    },
+    {
+      "model_key": "incumbent",
+      "label": "Qwen3-VL-30B-A3B installed Q4",
+      "target_images": 120,
+      "attempted_images": 0,
+      "valid_pairs": 0,
+      "image_errors": 0,
+      "legacy_attempted": 0,
+      "public_attempted": 0,
+      "public_valid_pairs": 0,
+      "completion_POSTs": 0,
+      "pilot_images": 0,
+      "pilot_valid_pairs": 0,
+      "pilot_completion_POSTs": 0,
+      "status": "NOT_RUN",
+      "evaluated_images": 0,
+      "missing_images": [
+        "c001",
+        "c002",
+        "c003",
+        "c004",
+        "c005",
+        "c006",
+        "c007",
+        "c008",
+        "c009",
+        "c010",
+        "c011",
+        "c012",
+        "c013",
+        "c014",
+        "c015",
+        "c016",
+        "c017",
+        "c018",
+        "c019",
+        "c020",
+        "c021",
+        "c022",
+        "c023",
+        "c024",
+        "c025",
+        "c026",
+        "c027",
+        "c028",
+        "c029",
+        "c030",
+        "c031",
+        "c032",
+        "c033",
+        "c034",
+        "c035",
+        "c036",
+        "c037",
+        "c038",
+        "c048",
+        "c049",
+        "c050",
+        "c051",
+        "c052",
+        "c053",
+        "c054",
+        "c055",
+        "c056",
+        "c057",
+        "c058",
+        "c059",
+        "c060",
+        "c061",
+        "c062",
+        "c063",
+        "c064",
+        "c065",
+        "c066",
+        "c067",
+        "c068",
+        "c069",
+        "c070",
+        "c071",
+        "c072",
+        "c073",
+        "c074",
+        "c075",
+        "c076",
+        "c077",
+        "c078",
+        "c079",
+        "c080",
+        "c081",
+        "c082",
+        "c083",
+        "c084",
+        "n040",
+        "n041",
+        "n043",
+        "n044",
+        "n045",
+        "n046",
+        "n047",
+        "original-001",
+        "original-002",
+        "original-003",
+        "original-004",
+        "original-005",
+        "original-006",
+        "original-007",
+        "original-008",
+        "original-009",
+        "original-010",
+        "original-011",
+        "original-012",
+        "original-013",
+        "original-014",
+        "original-015",
+        "original-016",
+        "original-017",
+        "original-018",
+        "original-019",
+        "original-020",
+        "original-021",
+        "original-022",
+        "original-023",
+        "original-024",
+        "original-025",
+        "original-026",
+        "original-027",
+        "original-028",
+        "original-029",
+        "original-030",
+        "original-031",
+        "original-032",
+        "original-033",
+        "original-034",
+        "original-035",
+        "original-036",
+        "original-037",
+        "original-038"
+      ],
+      "missing_images_count": 120,
+      "pending_images": 120,
+      "pending_image_ids": [
+        "c001",
+        "c002",
+        "c003",
+        "c004",
+        "c005",
+        "c006",
+        "c007",
+        "c008",
+        "c009",
+        "c010",
+        "c011",
+        "c012",
+        "c013",
+        "c014",
+        "c015",
+        "c016",
+        "c017",
+        "c018",
+        "c019",
+        "c020",
+        "c021",
+        "c022",
+        "c023",
+        "c024",
+        "c025",
+        "c026",
+        "c027",
+        "c028",
+        "c029",
+        "c030",
+        "c031",
+        "c032",
+        "c033",
+        "c034",
+        "c035",
+        "c036",
+        "c037",
+        "c038",
+        "c048",
+        "c049",
+        "c050",
+        "c051",
+        "c052",
+        "c053",
+        "c054",
+        "c055",
+        "c056",
+        "c057",
+        "c058",
+        "c059",
+        "c060",
+        "c061",
+        "c062",
+        "c063",
+        "c064",
+        "c065",
+        "c066",
+        "c067",
+        "c068",
+        "c069",
+        "c070",
+        "c071",
+        "c072",
+        "c073",
+        "c074",
+        "c075",
+        "c076",
+        "c077",
+        "c078",
+        "c079",
+        "c080",
+        "c081",
+        "c082",
+        "c083",
+        "c084",
+        "n040",
+        "n041",
+        "n043",
+        "n044",
+        "n045",
+        "n046",
+        "n047",
+        "original-001",
+        "original-002",
+        "original-003",
+        "original-004",
+        "original-005",
+        "original-006",
+        "original-007",
+        "original-008",
+        "original-009",
+        "original-010",
+        "original-011",
+        "original-012",
+        "original-013",
+        "original-014",
+        "original-015",
+        "original-016",
+        "original-017",
+        "original-018",
+        "original-019",
+        "original-020",
+        "original-021",
+        "original-022",
+        "original-023",
+        "original-024",
+        "original-025",
+        "original-026",
+        "original-027",
+        "original-028",
+        "original-029",
+        "original-030",
+        "original-031",
+        "original-032",
+        "original-033",
+        "original-034",
+        "original-035",
+        "original-036",
+        "original-037",
+        "original-038"
+      ],
+      "main_target_images": 118,
+      "main_evaluated_images": 0,
+      "main_valid_pairs": 0,
+      "main_image_errors": 0,
+      "full_target_includes_pilot_ids": [
+        "original-001",
+        "original-002"
+      ]
+    },
+    {
+      "model_key": "qwen-ud",
+      "label": "Qwen3.8-27B UD-Q4_K_XL",
+      "target_images": 30,
+      "attempted_images": 26,
+      "valid_pairs": 23,
+      "image_errors": 3,
+      "legacy_attempted": 0,
+      "public_attempted": 26,
+      "public_valid_pairs": 23,
+      "completion_POSTs": 76,
+      "pilot_images": 2,
+      "pilot_valid_pairs": 2,
+      "pilot_completion_POSTs": 6,
+      "status": "INCOMPLETE",
+      "evaluated_images": 26,
+      "missing_images": [
+        "c055",
+        "c061",
+        "c062",
+        "c071"
+      ],
+      "missing_images_count": 4,
+      "pending_images": 4,
+      "pending_image_ids": [
+        "c055",
+        "c061",
+        "c062",
+        "c071"
+      ],
+      "main_target_images": null,
+      "main_evaluated_images": 26,
+      "main_valid_pairs": 23,
+      "main_image_errors": 3,
+      "full_target_includes_pilot_ids": []
+    }
+  ],
+  "not_evaluated": [
+    {
+      "model_key": "qwen-gsq",
+      "image_id": "c064",
+      "status": "NOT_EVALUATED_CLIENT_TIMEOUT",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c001",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c002",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c003",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c004",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c005",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c006",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c007",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c008",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c009",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c010",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c011",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c012",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c013",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c014",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c015",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c016",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c017",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c018",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c019",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c020",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c021",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c022",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c023",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c024",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c025",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c026",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c027",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c028",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c029",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c030",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c031",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c032",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c033",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c034",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c035",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c036",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c037",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c038",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c048",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c049",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c050",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c051",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c052",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c053",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c054",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c055",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c056",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c057",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c058",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c059",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c060",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c061",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c062",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c063",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c064",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c065",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c066",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c067",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c068",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c069",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c070",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c071",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c072",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c073",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c074",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c075",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c076",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c077",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c078",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c079",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c080",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c081",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c082",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c083",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "c084",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "n040",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "n041",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "n043",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "n044",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "n045",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "n046",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "n047",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-001",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-002",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-003",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-004",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-005",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-006",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-007",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-008",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-009",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-010",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-011",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-012",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-013",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-014",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-015",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-016",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-017",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-018",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-019",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-020",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-021",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-022",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-023",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-024",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-025",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-026",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-027",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-028",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-029",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-030",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-031",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-032",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-033",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-034",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-035",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-036",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-037",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "joy",
+      "image_id": "original-038",
+      "status": "PENDING_REPLACEMENT",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c001",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c002",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c003",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c004",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c005",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c006",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c007",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c008",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c009",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c010",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c011",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c012",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c013",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c014",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c015",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c016",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c017",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c018",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c019",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c020",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c021",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c022",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c023",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c024",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c025",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c026",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c027",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c028",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c029",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c030",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c031",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c032",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c033",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c034",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c035",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c036",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c037",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c038",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c048",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c049",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c050",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c051",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c052",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c053",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c054",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c055",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c056",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c057",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c058",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c059",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c060",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c061",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c062",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c063",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c064",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c065",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c066",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c067",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c068",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c069",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c070",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c071",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c072",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c073",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c074",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c075",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c076",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c077",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c078",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c079",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c080",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c081",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c082",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c083",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "c084",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "n040",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "n041",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "n043",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "n044",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "n045",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "n046",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "n047",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-001",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-002",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-003",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-004",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-005",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-006",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-007",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-008",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-009",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-010",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-011",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-012",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-013",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-014",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-015",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-016",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-017",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-018",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-019",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-020",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-021",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-022",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-023",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-024",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-025",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-026",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-027",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-028",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-029",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-030",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-031",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-032",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-033",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-034",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-035",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-036",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-037",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "incumbent",
+      "image_id": "original-038",
+      "status": "PENDING_REPLACEMENT",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "qwen-ud",
+      "image_id": "c055",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "qwen-ud",
+      "image_id": "c061",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "qwen-ud",
+      "image_id": "c062",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    },
+    {
+      "model_key": "qwen-ud",
+      "image_id": "c071",
+      "status": "NOT_EVALUATED",
+      "counted_as_model_output_error": false
+    }
+  ],
+  "active_aggregates": {
+    "scope": "Recomputed from mapped rows whose input SHA-256 matches the active corpus. full120 = Frozen120 comparison rows, one per model and image. pilot = separately identified development/pilot executions on pilot ids already inside the 120; they add no unique images and are excluded from the full120 and main118 estimands. all_execution = full120 + pilot; it counts executions, not unique images.",
+    "unique_image_target": 120,
+    "main_image_target": 118,
+    "pilot_overlap_ids": [
+      "original-001",
+      "original-002"
+    ],
+    "full120_comparison_rows": 265,
+    "full120_GPU_completion_POSTs": 777,
+    "full120_AB_valid_pairs": 254,
+    "pilot_execution_rows": 6,
+    "pilot_execution_unique_image_ids": [
+      "c001",
+      "c002",
+      "original-001",
+      "original-002"
+    ],
+    "pilot_GPU_completion_POSTs": 18,
+    "pilot_AB_valid_pairs": 6,
+    "all_execution_GPU_completion_POSTs": 795,
+    "all_execution_AB_valid_pairs": 260,
+    "excluded_superseded_rows": [
+      {
+        "model_key": "mimo",
+        "image_id": "original-038",
+        "operation": "LEXICON-MIMO-40-R2"
+      },
+      {
+        "model_key": "qwen-gsq",
+        "image_id": "original-038",
+        "operation": "LEXICON-QWEN-GSQ-20-C02-R6"
+      }
+    ]
+  },
+  "historical_aggregates": {
+    "scope": "Historical, not current r2 coverage: MiMo original120 comparison plus MiMo and Qwen GSQ development/pilot executions, recorded before original-038 was superseded and before Qwen GSQ full rows were integrated; superseded_* covers the MiMo original-038 row only. Current totals: active_aggregates.",
+    "new_GPU_completion_POSTs": 360,
+    "new_AB_image_pairs": 118,
+    "historical_GPU_completion_POSTs": 360,
+    "superseded_full_GPU_completion_POSTs": 3,
+    "superseded_valid_pairs": 1
+  },
+  "per_run_loader_provenance": [
+    {
+      "operation": "LEXICON-QWEN-GSQ-20-C01-R6",
+      "archive_sha256": "a8095472972fa5d267ce45b1d75cd4a1fcff16ade9909230d0c1185bc77902ce",
+      "raw_member": "permanent/qwen-gsq-01/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "original-001",
+        "original-002",
+        "original-003",
+        "original-004",
+        "original-005",
+        "original-006",
+        "original-007",
+        "original-008",
+        "original-009",
+        "original-010",
+        "original-011",
+        "original-012",
+        "original-013",
+        "original-014",
+        "original-015",
+        "original-016",
+        "original-017",
+        "original-018",
+        "original-019",
+        "original-020"
+      ],
+      "completed": true,
+      "valid_pairs": 20,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-GSQ-20-C02-R6",
+      "archive_sha256": "370a336aa9329f40c9ab2e8e66bdb8ddad597edc0d52f98ba690f0c42d1f3443",
+      "raw_member": "permanent/qwen-gsq-02/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "original-021",
+        "original-022",
+        "original-023",
+        "original-024",
+        "original-025",
+        "original-026",
+        "original-027",
+        "original-028",
+        "original-029",
+        "original-030",
+        "original-031",
+        "original-032",
+        "original-033",
+        "original-034",
+        "original-035",
+        "original-036",
+        "original-037",
+        "original-038",
+        "c001",
+        "c002"
+      ],
+      "completed": true,
+      "valid_pairs": 20,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-GSQ-20-C03-R6",
+      "archive_sha256": "67c59e69712ee5f519442919088d41594ab084e8e9ac1ea493020f1a4aa95172",
+      "raw_member": "permanent/qwen-gsq-03/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c003",
+        "c004",
+        "c005",
+        "c006",
+        "c007",
+        "c008",
+        "c009",
+        "c010",
+        "c011",
+        "c012",
+        "c013",
+        "c014",
+        "c015",
+        "c016",
+        "c017",
+        "c018",
+        "c019",
+        "c020",
+        "c021",
+        "c022"
+      ],
+      "completed": true,
+      "valid_pairs": 19,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-GSQ-20-C04-R6",
+      "archive_sha256": "27f2902cb7237c3cd020044e99df9d7b025c2ea8ac1e9e4f61999c9fd87d87c6",
+      "raw_member": "permanent/qwen-gsq-04/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c023",
+        "c024",
+        "c025",
+        "c026",
+        "c027",
+        "c028",
+        "c029",
+        "c030",
+        "c031",
+        "c032",
+        "c033",
+        "c034",
+        "c035",
+        "c036",
+        "c037",
+        "c038",
+        "n040",
+        "n041",
+        "n043",
+        "n044"
+      ],
+      "completed": true,
+      "valid_pairs": 19,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-GSQ-20-C05-R6",
+      "archive_sha256": "ee17415108a4fc7e462258c9d8e7e4d28a1831e573396d84436264cb5039f042",
+      "raw_member": "permanent/qwen-gsq-05/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "n045",
+        "n046",
+        "n047",
+        "c048",
+        "c049",
+        "c050",
+        "c051",
+        "c052",
+        "c053",
+        "c054",
+        "c055",
+        "c056",
+        "c057",
+        "c058",
+        "c059",
+        "c060",
+        "c061",
+        "c062",
+        "c063"
+      ],
+      "completed": false,
+      "valid_pairs": null,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-GSQ-20-C06-R6",
+      "archive_sha256": "732f74ac08888fea19d70ecc61e4307ce264e5d3cc8e71b7812c42fb826ef5d6",
+      "raw_member": "permanent/qwen-gsq-06/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c065",
+        "c066",
+        "c067",
+        "c068",
+        "c069",
+        "c070",
+        "c071",
+        "c072",
+        "c073",
+        "c074",
+        "c075",
+        "c076",
+        "c077",
+        "c078",
+        "c079",
+        "c080",
+        "c081",
+        "c082",
+        "c083",
+        "c084"
+      ],
+      "completed": true,
+      "valid_pairs": 20,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-GSQ-R2-038-R6",
+      "archive_sha256": "cc6abdf4922dccbce11a36e5fb223d72976d19763ab0650c840b776030b7a2c0",
+      "raw_member": "permanent/qwen-gsq-02/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "original-038"
+      ],
+      "completed": true,
+      "valid_pairs": 1,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-MIMO-40-R2",
+      "archive_sha256": "5de3f6df537ab89fbc530c54bc03184892d868c536de8b0506cbc9d60ba08e0b",
+      "raw_member": "permanent/mimo-01/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "original-001",
+        "original-002",
+        "original-003",
+        "original-004",
+        "original-005",
+        "original-006",
+        "original-007",
+        "original-008",
+        "original-009",
+        "original-010",
+        "original-011",
+        "original-012",
+        "original-013",
+        "original-014",
+        "original-015",
+        "original-016",
+        "original-017",
+        "original-018",
+        "original-019",
+        "original-020"
+      ],
+      "completed": true,
+      "valid_pairs": 20,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-MIMO-40-R2",
+      "archive_sha256": "5de3f6df537ab89fbc530c54bc03184892d868c536de8b0506cbc9d60ba08e0b",
+      "raw_member": "permanent/mimo-02/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "original-021",
+        "original-022",
+        "original-023",
+        "original-024",
+        "original-025",
+        "original-026",
+        "original-027",
+        "original-028",
+        "original-029",
+        "original-030",
+        "original-031",
+        "original-032",
+        "original-033",
+        "original-034",
+        "original-035",
+        "original-036",
+        "original-037",
+        "original-038",
+        "c001",
+        "c002"
+      ],
+      "completed": true,
+      "valid_pairs": 20,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-MIMO-40-NEXT40-R1",
+      "archive_sha256": "3544a434374fd387ee8ccae5e8871386517ce031c8391a5d286f2c67301666a9",
+      "raw_member": "permanent/mimo-03/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c003",
+        "c004",
+        "c005",
+        "c006",
+        "c007",
+        "c008",
+        "c009",
+        "c010",
+        "c011",
+        "c012",
+        "c013",
+        "c014",
+        "c015",
+        "c016",
+        "c017",
+        "c018",
+        "c019",
+        "c020",
+        "c021",
+        "c022"
+      ],
+      "completed": true,
+      "valid_pairs": 19,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-MIMO-40-NEXT40-R1",
+      "archive_sha256": "3544a434374fd387ee8ccae5e8871386517ce031c8391a5d286f2c67301666a9",
+      "raw_member": "permanent/mimo-04/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c023",
+        "c024",
+        "c025",
+        "c026",
+        "c027",
+        "c028",
+        "c029",
+        "c030",
+        "c031",
+        "c032",
+        "c033",
+        "c034",
+        "c035",
+        "c036",
+        "c037",
+        "c038",
+        "n040",
+        "n041",
+        "n043",
+        "n044"
+      ],
+      "completed": true,
+      "valid_pairs": 19,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-MIMO-40-LAST40-R1",
+      "archive_sha256": "4b390754854901842d1883b0b07a06123363a6040956a2a4c46de847602cd9e8",
+      "raw_member": "permanent/mimo-05/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "n045",
+        "n046",
+        "n047",
+        "c048",
+        "c049",
+        "c050",
+        "c051",
+        "c052",
+        "c053",
+        "c054",
+        "c055",
+        "c056",
+        "c057",
+        "c058",
+        "c059",
+        "c060",
+        "c061",
+        "c062",
+        "c063",
+        "c064"
+      ],
+      "completed": true,
+      "valid_pairs": 17,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-MIMO-40-LAST40-R1",
+      "archive_sha256": "4b390754854901842d1883b0b07a06123363a6040956a2a4c46de847602cd9e8",
+      "raw_member": "permanent/mimo-06/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c065",
+        "c066",
+        "c067",
+        "c068",
+        "c069",
+        "c070",
+        "c071",
+        "c072",
+        "c073",
+        "c074",
+        "c075",
+        "c076",
+        "c077",
+        "c078",
+        "c079",
+        "c080",
+        "c081",
+        "c082",
+        "c083",
+        "c084"
+      ],
+      "completed": true,
+      "valid_pairs": 19,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-UD-PILOT-R2",
+      "archive_sha256": "236990be2ea94ce4a9df5527ca7bf2bf28c6689016304b6fffeb0027da1f7d10",
+      "raw_member": "permanent/qwen-ud-01/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c001",
+        "c002"
+      ],
+      "completed": true,
+      "valid_pairs": 2,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-UD-30-R1",
+      "archive_sha256": "5135a900a9179797fbef3fcdff3dc713b0ac1dca7abbfe08a0638327e5c1c88e",
+      "raw_member": "permanent/qwen-ud-01/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c001",
+        "c002",
+        "c003",
+        "c004",
+        "c006",
+        "c007",
+        "c008",
+        "c009",
+        "c010",
+        "c011",
+        "c018",
+        "c019",
+        "c020",
+        "c025",
+        "c026",
+        "c029",
+        "c031",
+        "c035",
+        "c036",
+        "c037"
+      ],
+      "completed": true,
+      "valid_pairs": 18,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-QWEN-UD-30-R1",
+      "archive_sha256": "5135a900a9179797fbef3fcdff3dc713b0ac1dca7abbfe08a0638327e5c1c88e",
+      "raw_member": "permanent/qwen-ud-02/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "c038",
+        "n044",
+        "c048",
+        "c049",
+        "c051",
+        "c054"
+      ],
+      "completed": false,
+      "valid_pairs": null,
+      "mapped_operation_verified": true
+    },
+    {
+      "operation": "LEXICON-MIMO-R2-038-R9",
+      "archive_sha256": "23f8e1ba39a571353fe0a04267b3f53e2b5abc2dbffa5c91deb2a5cfa549fe79",
+      "raw_member": "permanent/mimo-02/raw.json",
+      "canon": {
+        "version": "canon v0.26.2",
+        "source_path": "/home/gate/bakeoff-rounds-20261017-inputs/results/LEXICON-AB-PILOT-INPUTS-R1/canon/lexicons/depiction.md",
+        "sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "families": [
+          "ATTRIB",
+          "BOUND"
+        ],
+        "tiers": [
+          "B",
+          "S",
+          "J"
+        ],
+        "detail": "full",
+        "rule_ids": [
+          "ATTRIB-01",
+          "ATTRIB-02",
+          "ATTRIB-03",
+          "ATTRIB-04",
+          "ATTRIB-05",
+          "ATTRIB-06",
+          "ATTRIB-07",
+          "ATTRIB-08",
+          "ATTRIB-09",
+          "ATTRIB-10",
+          "BOUND-01",
+          "BOUND-02",
+          "BOUND-03",
+          "BOUND-04",
+          "BOUND-05",
+          "BOUND-07",
+          "BOUND-08"
+        ],
+        "rule_count": 17,
+        "rendered_chars": 9805
+      },
+      "loader_sha256": "4ac52b4f22fb426eb10067a6cb465f310c9240989166fd395b11b0a491079f68",
+      "input_ids": [
+        "original-038"
+      ],
+      "completed": true,
+      "valid_pairs": 1,
+      "mapped_operation_verified": true
+    }
+  ]
+}

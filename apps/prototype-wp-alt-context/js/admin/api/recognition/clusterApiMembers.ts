@@ -1,3 +1,4 @@
+import { idPathSegment } from '../../utils/pathSegment';
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import type { ClusterIdentity, ClusterMembersResponse } from './types';
@@ -36,7 +37,7 @@ export const fetchClusterMembers = async (
   params: FetchClusterMembersParams = {},
 ): Promise<ClusterMembersResponse> => {
   const base = getEndpoint('recognitionClusters');
-  const url = new URL(`${stripTrailingSlash(base)}/${clusterId}/members`, window.location.origin);
+  const url = new URL(`${stripTrailingSlash(base)}/${idPathSegment(clusterId)}/members`, window.location.origin);
   if (params.limit !== undefined && Number.isFinite(params.limit)) {
     url.searchParams.set('limit', String(params.limit));
   }

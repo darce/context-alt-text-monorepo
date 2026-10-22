@@ -6,7 +6,16 @@
     "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
     "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
     "Operator clears media queue via Scan and resolves identity conflicts without losing place",
-    "Decompose Workbench UI tasks from screens/zones/states/flows instead of inventing IA mid-plan"
+    "Decompose Workbench UI tasks from screens/zones/states/flows instead of inventing IA mid-plan",
+    "WBRC-1 proposed interaction contract, not evidence of implemented or live-accepted UI. Canon v0.26.2: policy is site-wide; connection health, enabled policy and completed inference are separate facts (CARD-12 / Principle 10; [CLM-03] The policy is a contract, bootstrap practice label).",
+    "Keep the policy beside scan actions: [NAV-06] Frequency elevates chrome, Designing Interfaces, 3rd ed. + Microinteractions, ch. 2. Enable and Disable occupy the same secondary control position: [SECD-08] Make the safe path the easy path, Security Engineering.",
+    "Cold-start policy remains false until affirmative opt-in: [SECD-12] Biometric opt-in default, Face Recognition Technology (Compulsory Visibility), ch. 2. A missing/malformed page-load snapshot is Unknown, never silently Off. recognitionPolicy.enabled and canManage are bootstrap hints, not a second store or authorization grant.",
+    "Confirm only after field acknowledgement and fresh validated settings readback: [FORM-08] Echo-back stored interpretation, Pattern Languages of Program Design, ch. 10. Keep local persistent actionable errors: [FORM-05] Inline actionable errors, Designing Interfaces, 3rd ed. No modal or confirm tab and no repeated opt-in prompt after a persisted choice.",
+    "Producer contract verified from current bytes: RecognitionPolicy::DEFAULT=false; Settings GET requires boolean recognition_enabled (fetchSettings rejects missing/nonboolean); Settings POST may return HTTP 200 with result=error/partial and failed fields. Require result=ok, saved containing recognition_enabled and no matching failed field; HTTP success alone never confirms persistence.",
+    "Send only {recognition_enabled: desiredBoolean}, never URL, api_key or allow_person_names. Share queryKeys.settings.all with SettingsPage; reconcile through fresh Settings GET. After an acknowledged write, failed/malformed/mismatched readback permits verification reads only; never replay the write. Unknown/rejected state also recovers through Settings GET.",
+    "Policy toggle submits no media, starts no scan/GPU, deletes no identities and cancels no accepted jobs. Existing manage_options server enforcement remains authoritative; permission denial removes writes and explains administrator access. Nonadmins see only the page-load snapshot (On/Off/Unknown) with an administrator explanation and no settings fetch/write action.",
+    "UXREC-1 design proposal (target contract, not current source): the Changes panel opens on Needs attention, which defaults to Failed and renders only the existing failed list; Pending and Conflict render only that status's server-filtered timeline; History renders the existing all/status timeline with existing guarded per-row Retry/Discard only on failed rows, once per view. Retry excludes terminal failures; Discard keeps Confirm discard. Bulk Retry/Discard stay attention_failed only, with existing confirmation, capability and age/clock guards preserved as applicable. [NAV-19] Keep related work adjacent, Source: About Face, ch. 12 (Canon v0.26.2, https://github.com/darce/heuristics-canon): act beside the inspected failed row instead of switching views to find it again. Every count is the server total of the one query on screen; there is no combined attention total. This slice improves classification and navigation and removes duplicate presentation; it clears no records, so old failed rows (including the four July rows) stay failed attention until existing reconciliation or an operator action changes them. Preserve all audit records, reconciliation and existing naming-policy controls. See docs/assessments/current/UXREC-1-ux-inventory.md.",
+    "UXREC-1 moved timeline count display only (proposed, within T1's existing two-file ownership): Use the verified WordPress admin HTML publisher, document.documentElement.lang, for these admin-control counts, not a per-post content-generation language. Supplied primary WordPress 7.1.3 core evidence traces admin-header.php to wp-admin/includes/template.php:_wp_admin_html_begin, which calls language_attributes(), then wp-includes/general-template.php:get_language_attributes() and get_bloginfo('language'), with the language_attributes filter publishing the HTML attributes. get_bloginfo uses the html_lang_attribute translation or determine_locale() with underscores replaced by hyphens; the published value still needs validation. At the display boundary, validate a non-empty BCP47 UI locale and runtime number-format support before explicitly passing that locale to Intl.NumberFormat. Missing, malformed or unsupported host locale, or unavailable/failing Intl, uses a deliberate non-throwing neutral raw-numeric fallback (String(count), no grouping), never claimed localized. Never assume English, use navigator.language or pass undefined to Intl. Keep the original numeric counts for _n plural selection, comparisons, accounting and predicates; only human display slots become strings. Gettext arguments remain literals in domain alt-context; Admin::enqueue_entry already calls wp_set_script_translations, which is separate from number formatting and proves no translation-bundle or deployed readiness. No service/request/schema locale field, shared formatter dependency or whole-app locale plumbing is added. Implementation symbols belong to the task plan. Canon v0.26.2 [REF-27] Don't program by coincidence, Source: The Pragmatic Programmer, ch. 7; https://github.com/darce/heuristics-canon."
   ],
   "jobs": [
     {
@@ -24,6 +33,10 @@
     {
       "id": "job-assign-people",
       "label": "Assign people (exit to Roster)"
+    },
+    {
+      "id": "job-recognition-policy",
+      "label": "Inspect or explicitly change the site-wide recognition policy without running scan"
     }
   ],
   "screens": [
@@ -84,7 +97,7 @@
       "url_params": ["tab", "status", "media", "s", "p", "perPage", "rq", "panel", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-scan-selected",
-      "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],
+      "states": ["default", "loading", "empty", "error", "first_time", "edge_input", "degraded"],
       "zones": [
         {
           "id": "z-review-queue",
@@ -119,6 +132,12 @@
           "states": ["default", "loading", "error"]
         },
         {
+          "id": "z-recognition-policy",
+          "label": "Facial recognition: On / Off / Unknown; site-wide policy beside scan actions. Same-position secondary Enable (Off) / Disable (On); loading = saving or verifying (mutation unavailable); error = rejected write or readback failure with inline Retry status; degraded = unknown, permission denied or read-only snapshot with administrator explanation. On confirms policy only, not connection or inference.",
+          "role": "form",
+          "states": ["default", "loading", "error", "degraded"]
+        },
+        {
           "id": "z-identity-preview",
           "label": "Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows)",
           "role": "ai_review",
@@ -137,7 +156,8 @@
           "role": "ai_review",
           "states": ["default", "loading", "error", "degraded", "edge_input"]
         }
-      ]
+      ],
+      "action_states": ["policy_off", "policy_on", "policy_unknown", "policy_saving", "policy_readback", "policy_readback_error", "policy_permission_denied", "policy_read_only", "policy_rejected"]
     },
     {
       "id": "workbench-conflicts",
@@ -177,8 +197,8 @@
     {
       "id": "workbench-dead-letter",
       "kind": "overlay",
-      "title": "Failed Sync Queue (Dead Letter)",
-      "purpose": "Inspect failed sync ops; retry or discard",
+      "title": "Changes — Needs attention / History (proposed)",
+      "purpose": "UXREC-1 proposed. Current source starts with timelineStatus all and renders the failed list and a second all-status timeline together, so a failed row can appear twice with two action sets. Target: one list per view. Needs attention › Failed (default) renders only the existing failed list; Needs attention › Pending or Conflict renders only the server-filtered timeline for that status; History renders the existing timeline for All or one status, retaining guarded per-row Retry/Discard only on failed rows, once per view. Retry excludes terminal failures; bulk controls stay in Failed attention only. Switching views or filters is a read and never discards, retries or reconciles rows. No combined attention total, no locally filtered page presented as a global total, no age-only hiding.",
       "route": "#/workbench?panel=dead-letter",
       "job_entry": false,
       "deep_link": true,
@@ -188,18 +208,37 @@
       "states": ["default", "loading", "empty", "error"],
       "zones": [
         {
+          "id": "z-dl-attention-choice",
+          "label": "Needs attention status choice: Failed (default), Pending or Conflict as pressed-state buttons. Each choice is its own server query with its own total; no sum across them. The existing topology-command summary counts topology commands, not these rows, and is never presented as an attention total.",
+          "role": "nav",
+          "states": ["default", "loading", "error"]
+        },
+        {
           "id": "z-dl-list",
-          "label": "Dead-letter items",
+          "label": "Failed view: the existing failed list only (failed-changes query, 20 per page, its own offset, Showing a–b of N failed changes from that query's server total). Rows keep operation, entity, attempts, age, last attempt, error and payload summary. Old failed rows stay listed until existing reconciliation or an operator Retry or Discard changes their status. No failed timeline is rendered beside it.",
           "role": "queue",
           "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-dl-actions",
-          "label": "Retry / discard",
+          "label": "Failed attention: existing row Retry only on non-terminal failed rows and row Discard with Confirm discard. Bulk Retry all failed (N) and Discard eligible failed changes older than 7 days stay attention_failed only. Preserve capability and pending-mutation guards, bulk arm/confirm and bulk-discard age/clock eligibility. Retry reports queued, not recovered; failures stay inline. Pending and Conflict show no recovery controls; History retains only its failed-row actions.",
           "role": "form",
           "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-dl-status-timeline",
+          "label": "Pending or Conflict view: only the existing timeline query with that one status (10 per page, offset reset to 0 on each choice, Showing a–b of N from that status's server total). Rows are read-only; an empty result says no changes have that status.",
+          "role": "queue",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "z-dl-history",
+          "label": "History view: the existing timeline for All (default) or one of pending, acknowledged, conflict, failed, discarded; 10 per page, offset reset to 0 on each filter change, server total per filter. Existing guarded per-row Retry only on non-terminal failed rows and Discard with Confirm discard only on failed rows, once per view. Other statuses have no row recovery actions. Preserve capability and pending-mutation guards; no bulk controls and no delete-on-hide. Filter display labels map existing TimelineStatusFilter machine IDs to literal gettext: all -> __('All', 'alt-context'), pending -> __('pending', 'alt-context'), acknowledged -> __('acknowledged', 'alt-context'), conflict -> __('conflict', 'alt-context'), failed -> __('failed', 'alt-context'), discarded -> __('discarded', 'alt-context'); keep their English appearance and query tokens unchanged. The moved timeline count line, also used for Pending/Conflict, uses _n('Showing %1$s-%2$s of %3$s change (%4$s).', 'Showing %1$s-%2$s of %3$s changes (%4$s).', total, 'alt-context'), with this query's raw numeric total selecting plural forms; %1$s/%2$s/%3$s display locale-formatted start/end/total under the verified host-UI-locale contract. For %4$s use literal __('all statuses', 'alt-context') for all or the same literal status-label mapping; never a variable gettext msgid or an unlocalized formatStatusLabel result. All still omits the status query parameter. Pager arithmetic, bounds and offsets remain numeric. Legacy row-status, age, timezone and failed-list count paths are outside this correction.",
+          "role": "content",
+          "states": ["default", "loading", "empty", "error"]
         }
-      ]
+      ],
+      "action_states": ["attention_failed", "attention_pending", "attention_conflict", "history"]
     },
     {
       "id": "workbench-review-panel",
@@ -325,23 +364,25 @@
     },
     {
       "id": "act-retry-dead-letter",
-      "verb": "Retry failed op",
+      "verb": "Retry non-terminal failed op",
       "target": "sync",
       "hierarchy": "primary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,
-      "screen_id": "workbench-dead-letter"
+      "screen_id": "workbench-dead-letter",
+      "when": ["attention_failed", "history"]
     },
     {
       "id": "act-discard-dead-letter",
-      "verb": "Discard failed op",
+      "verb": "Discard failed op (Confirm discard)",
       "target": "sync",
       "hierarchy": "destructive",
       "costly": true,
       "irreversible": true,
       "preview_required": true,
-      "screen_id": "workbench-dead-letter"
+      "screen_id": "workbench-dead-letter",
+      "when": ["attention_failed", "history"]
     },
     {
       "id": "act-review-back",
@@ -372,6 +413,83 @@
       "irreversible": false,
       "preview_required": true,
       "screen_id": "workbench-shell"
+    },
+    {
+      "id": "act-enable-recognition",
+      "verb": "Enable facial recognition",
+      "target": "recognition-policy-settings",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan",
+      "when": ["policy_off"]
+    },
+    {
+      "id": "act-disable-recognition",
+      "verb": "Disable facial recognition",
+      "target": "recognition-policy-settings",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan",
+      "when": ["policy_on"]
+    },
+    {
+      "id": "act-retry-policy-read",
+      "verb": "Retry status (read only)",
+      "target": "recognition-policy-settings",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan",
+      "when": ["policy_unknown", "policy_readback_error", "policy_rejected"]
+    },
+    {
+      "id": "act-choose-attention-status",
+      "verb": "Show Failed, Pending or Conflict (proposed)",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-dead-letter",
+      "when": ["attention_failed", "attention_pending", "attention_conflict"]
+    },
+    {
+      "id": "act-view-audit-history",
+      "verb": "Show History (proposed)",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-dead-letter",
+      "when": ["attention_failed", "attention_pending", "attention_conflict"]
+    },
+    {
+      "id": "act-filter-history-status",
+      "verb": "Filter History by status (proposed)",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-dead-letter",
+      "when": ["history"]
+    },
+    {
+      "id": "act-view-current-attention",
+      "verb": "Show Needs attention (proposed)",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-dead-letter",
+      "when": ["history"]
     }
   ],
   "flows": [
@@ -428,11 +546,34 @@
         },
         {
           "screen_id": "workbench-dead-letter",
-          "branch_label": "panel=dead-letter"
+          "branch_label": "panel=dead-letter opens Needs attention › Failed: the existing failed list and its guarded actions only"
         },
         {
           "screen_id": "workbench-shell",
-          "branch_label": "retry or discard complete"
+          "branch_label": "retry queued or discard complete; the failed list re-reads its server total"
+        }
+      ]
+    },
+    {
+      "id": "flow-changes-attention-history",
+      "job": "job-recover-sync",
+      "label": "Needs attention › Failed → Pending or Conflict → History → back to Needs attention",
+      "steps": [
+        {
+          "screen_id": "workbench-dead-letter",
+          "branch_label": "attention_failed: existing failed list, 20 per page with its own offset and server total; old failed rows stay until reconciliation or operator action"
+        },
+        {
+          "screen_id": "workbench-dead-letter",
+          "branch_label": "attention_pending or attention_conflict: server-filtered timeline for that one status only, offset 0, read-only rows"
+        },
+        {
+          "screen_id": "workbench-dead-letter",
+          "branch_label": "history: existing timeline, All or one status, 10 per page; guarded row Retry/Discard only on failed rows, once per view (Retry excludes terminal failures; Discard requires confirmation); no bulk controls"
+        },
+        {
+          "screen_id": "workbench-dead-letter",
+          "branch_label": "Show Needs attention returns to the failed list; no view switch mutates or reconciles rows"
         }
       ]
     },
@@ -448,6 +589,94 @@
         {
           "screen_id": "exit-settings",
           "branch_label": null
+        }
+      ]
+    },
+    {
+      "id": "flow-policy-enable",
+      "job": "job-recognition-policy",
+      "label": "Off -> explicit Enable -> acknowledgement -> readback -> confirmed On",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_off: explicit secondary Enable sends only recognition_enabled=true"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_saving: prevent further mutation; HTTP200 field failure goes to policy_rejected"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_readback: acknowledged write; fresh Settings GET, no success claim yet"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_on: matching boolean confirmed; secondary Disable in same position; scan requires separate explicit action"
+        }
+      ]
+    },
+    {
+      "id": "flow-policy-disable",
+      "job": "job-recognition-policy",
+      "label": "On -> explicit Disable -> acknowledgement -> readback -> confirmed Off",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_on: explicit secondary Disable sends only recognition_enabled=false"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_saving: no further mutation; no identity deletion or job cancellation"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_readback: verify persisted false through fresh Settings GET"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_off: matching boolean confirmed; secondary Enable in same position"
+        }
+      ]
+    },
+    {
+      "id": "flow-policy-recover",
+      "job": "job-recognition-policy",
+      "label": "Unknown / rejected / failed readback -> Retry status reads only",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_unknown: absent or malformed bootstrap; no toggle; admin may Retry status"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_rejected: HTTP failure or HTTP200 result/failed/saved field failure; inline error; Retry status GET before another explicit choice"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_readback_error: acknowledged write but failed/malformed/mismatched readback; no toggle or saved claim"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "Retry status: fresh GET only; never replay acknowledged POST; failure remains inline"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "validated boolean: policy_on or policy_off; reconcile queryKeys.settings.all; offer opposite secondary action"
+        }
+      ]
+    },
+    {
+      "id": "flow-policy-read-only",
+      "job": "job-recognition-policy",
+      "label": "Read-only snapshot or permission denial -> administrator explanation",
+      "steps": [
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_read_only: show page-load On/Off/Unknown; no Settings fetch or write action"
+        },
+        {
+          "screen_id": "workbench-scan",
+          "branch_label": "policy_permission_denied: GET/POST capability denial removes writes; explain administrator access; never claim requested value saved"
         }
       ]
     }
@@ -476,6 +705,22 @@
     {
       "domain_states": ["missing_image"],
       "canonical_state": "edge_input"
+    },
+    {
+      "domain_states": ["policy_on", "policy_off"],
+      "canonical_state": "default"
+    },
+    {
+      "domain_states": ["policy_unknown", "policy_permission_denied", "policy_read_only"],
+      "canonical_state": "degraded"
+    },
+    {
+      "domain_states": ["policy_saving", "policy_readback"],
+      "canonical_state": "loading"
+    },
+    {
+      "domain_states": ["policy_readback_error", "policy_rejected"],
+      "canonical_state": "error"
     }
   ],
   "slices": [
@@ -483,7 +728,8 @@
     "**Scan costly action preview** — `act-scan-selected` requires preview_required surface",
     "**Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence",
     "**Dead-letter discard confirm** — destructive + irreversible path",
-    "**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])"
+    "**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])",
+    "UXREC-1 TIMELINE proposed: replace the INITIAL_STATE timelineStatus 'all' default and the always-rendered second timeline in DeadLetterPanel with Needs attention (Failed = existing failed list only; Pending or Conflict = server-filtered timeline only) and History (existing all/status timeline with guarded row Retry/Discard only on failed rows, once per view), keeping deadLetterPanelReducer paging and the handleTimelineStatusChange offset reset. Bulk controls stay attention_failed only; preserve confirmation, capability, pending-mutation and bulk-discard age/clock guards. Proposed fixtures cover old failed rows, genuine pending and conflict rows, History failed rows with non-terminal-only Retry and confirmed Discard, and acknowledged/discarded history with no recovery actions. Do not delete history, hide by age, or repeat integrated DW3-UX0924-04 reconciliation. Localize only the History filter display labels and moved timeline count as annotated; retain literal _n singular/plural templates selected by raw server total and string slots for locale-formatted human numbers. Future product-author fixtures cover totals 0/1/2 (singular change, plural changes), en-US/ar-EG host lang, empty/malformed/unsupported host-locale fallback, and a Polish or Russian multi-form catalog stub receiving raw total; translated labels must still send the existing TimelineStatusFilter tokens. Keep All/pager behavior, numeric accounting, guarded failed-row History recovery and legacy row-status/age/timezone paths unchanged. Scratch checks are not product RED."
   ],
   "open_questions": [
     "Should Scan CTAs require selection count preview on the same surface before start? ([INT-07])",

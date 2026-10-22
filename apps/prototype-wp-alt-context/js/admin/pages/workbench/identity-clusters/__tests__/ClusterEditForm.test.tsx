@@ -120,20 +120,39 @@ describe('ClusterEditForm', () => {
 
   it('CURATION-PERSON-P1 keeps real producer IDs ambiguous until person 42 is chosen explicitly', () => {
     const built = buildNamingOptions({
-      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 42, name: 'Alex Rivera' }],
+      rosterEntries: [
+        { id: 41, name: 'Alex Rivera' },
+        { id: 42, name: 'Alex Rivera' },
+      ],
       labelMatches: [],
       filter: 'Alex Rivera',
     });
     const options = selectClusterSuggestions({
       namingOptions: built.options,
-      identityProjection: [{ clusterId: 'cluster-for-42', label: 'Alex Rivera', similarity: 0.8, identityCount: 2 }],
+      identityProjection: [
+        {
+          identityId: 'identity-under-review',
+          clusterId: 'cluster-for-42',
+          label: 'Alex Rivera',
+          similarity: 0.8,
+          identityCount: 2,
+        },
+      ],
       labelInput: 'Alex Rivera',
     });
     const onSave = vi.fn();
     const onPersonSelect = vi.fn();
     const onConfirmSuggestion = vi.fn();
-    render(<ClusterEditForm {...defaultProps} labelInput="Alex Rivera" options={options}
-      onSave={onSave} onPersonSelect={onPersonSelect} onConfirmSuggestion={onConfirmSuggestion} />);
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Alex Rivera"
+        options={options}
+        onSave={onSave}
+        onPersonSelect={onPersonSelect}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
     const input = screen.getByRole('combobox');
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onPersonSelect).not.toHaveBeenCalled();
@@ -241,9 +260,7 @@ describe('ClusterEditForm', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-    await waitFor(() =>
-      expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B', undefined),
-    );
+    await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B', undefined));
   });
 
   it('clicking the second of two same-fold people binds that roster id (UXW2-3-R3-12)', async () => {
@@ -389,9 +406,7 @@ describe('ClusterEditForm', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
-    await waitFor(() =>
-      expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob', undefined),
-    );
+    await waitFor(() => expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob', undefined));
   });
 
   it('roster-only Library overlay is headed People (UXW2-3-R1-16b)', () => {
@@ -499,12 +514,7 @@ describe('ClusterEditForm', () => {
     expect(options[0]?.suggestion_id).toBe('sug-real-alice');
 
     render(
-      <ClusterEditForm
-        {...defaultProps}
-        labelInput="A"
-        options={options}
-        onRejectSuggestion={onRejectSuggestion}
-      />,
+      <ClusterEditForm {...defaultProps} labelInput="A" options={options} onRejectSuggestion={onRejectSuggestion} />,
     );
     openNamingList();
 
@@ -513,15 +523,7 @@ describe('ClusterEditForm', () => {
   });
 
   it('shows an at-rest incomplete-list hint from envelope total, not option count (REV1-01)', () => {
-    render(
-      <ClusterEditForm
-        {...defaultProps}
-        labelInput=""
-        atRestTruncated
-        atRestTotal={80}
-        isAtRestMode
-      />,
-    );
+    render(<ClusterEditForm {...defaultProps} labelInput="" atRestTruncated atRestTotal={80} isAtRestMode />);
 
     expect(screen.getByText('Showing 2 of 80 labels — type to search for more')).toBeInTheDocument();
   });
@@ -547,7 +549,9 @@ describe('ClusterEditForm', () => {
     openNamingList();
 
     const renderedOptionRows = screen.getAllByRole('option', { name: /confirm match/i });
-    expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
+    expect(
+      screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`),
+    ).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       `Showing ${renderedOptionRows.length} of 80 labels — type to search for more`,
     );
@@ -557,22 +561,10 @@ describe('ClusterEditForm', () => {
     render(
       <>
         <div data-testid="form-a">
-          <ClusterEditForm
-            {...defaultProps}
-            labelInput=""
-            atRestTruncated
-            atRestTotal={80}
-            isAtRestMode
-          />
+          <ClusterEditForm {...defaultProps} labelInput="" atRestTruncated atRestTotal={80} isAtRestMode />
         </div>
         <div data-testid="form-b">
-          <ClusterEditForm
-            {...defaultProps}
-            labelInput=""
-            atRestTruncated
-            atRestTotal={40}
-            isAtRestMode
-          />
+          <ClusterEditForm {...defaultProps} labelInput="" atRestTruncated atRestTotal={40} isAtRestMode />
         </div>
       </>,
     );
@@ -592,28 +584,13 @@ describe('ClusterEditForm', () => {
   });
 
   it('hides the at-rest incomplete-list hint once the loader leaves at-rest mode', () => {
-    render(
-      <ClusterEditForm
-        {...defaultProps}
-        labelInput="To"
-        atRestTruncated
-        atRestTotal={80}
-        isAtRestMode={false}
-      />,
-    );
+    render(<ClusterEditForm {...defaultProps} labelInput="To" atRestTruncated atRestTotal={80} isAtRestMode={false} />);
 
     expect(screen.queryByText(/Showing \d+ of \d+ labels — type to search for more/)).not.toBeInTheDocument();
   });
 
   it('does not invent an incomplete-list hint when the at-rest page is complete', () => {
-    render(
-      <ClusterEditForm
-        {...defaultProps}
-        labelInput=""
-        atRestTruncated={false}
-        atRestTotal={12}
-      />,
-    );
+    render(<ClusterEditForm {...defaultProps} labelInput="" atRestTruncated={false} atRestTotal={12} />);
 
     expect(screen.queryByText(/Showing \d+ of \d+ labels/)).not.toBeInTheDocument();
   });
@@ -662,11 +639,7 @@ describe('ClusterEditForm', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() =>
-      expect(onConfirmSuggestion).toHaveBeenCalledWith(
-        'cluster-alice',
-        'Alice',
-        'sug-confirm-alice',
-      ),
+      expect(onConfirmSuggestion).toHaveBeenCalledWith('cluster-alice', 'Alice', 'sug-confirm-alice'),
     );
   });
 

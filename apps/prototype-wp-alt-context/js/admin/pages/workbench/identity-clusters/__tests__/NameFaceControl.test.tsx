@@ -97,16 +97,25 @@ const TypedNameFace = ({
 describe('curated person picker choices', () => {
   it('CURATION-PERSON-P1 preserves the cluster callback through the real builder and selector', () => {
     const built = buildNamingOptions({
-      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 42, name: 'Alex Rivera' }],
+      rosterEntries: [
+        { id: 41, name: 'Alex Rivera' },
+        { id: 42, name: 'Alex Rivera' },
+      ],
       labelMatches: [],
       filter: 'Alex',
     });
     const options = selectClusterSuggestions({
       namingOptions: built.options,
-      identityProjection: [{
-        clusterId: 'cluster-for-42', label: 'Alex Rivera', similarity: 0.8,
-        identityCount: 2, suggestionId: 'suggestion-for-42', identityId: 'source-face',
-      }],
+      identityProjection: [
+        {
+          clusterId: 'cluster-for-42',
+          label: 'Alex Rivera',
+          similarity: 0.8,
+          identityCount: 2,
+          suggestionId: 'suggestion-for-42',
+          identityId: 'source-face',
+        },
+      ],
       editableClusterId: 'edited-cluster',
       labelInput: 'Alex',
     });
@@ -119,9 +128,7 @@ describe('curated person picker choices', () => {
     // turns this choice of cluster-for-42 into an immediate binding to 41.
     expect(onCommit).not.toHaveBeenCalled();
     expect(onOptionConfirm).toHaveBeenCalledExactlyOnceWith(options[0]);
-    expect(options.map(option => option.value)).toEqual([
-      'cluster:cluster-for-42', 'person:41', 'person:42',
-    ]);
+    expect(options.map((option) => option.value)).toEqual(['cluster:cluster-for-42', 'person:41', 'person:42']);
     expect(screen.getAllByRole('option')).toHaveLength(3);
     expect(screen.queryByText('Person')).not.toBeInTheDocument();
     expect(screen.queryByText('Group')).not.toBeInTheDocument();
@@ -132,12 +139,23 @@ describe('curated person picker choices', () => {
 
   it('CURATION-PERSON-P1 collapses repeated person IDs while preserving an unproved group', () => {
     const built = buildNamingOptions({
-      rosterEntries: [{ id: 41, name: 'Alex Rivera' }, { id: 41, name: 'Alex Rivera' }],
+      rosterEntries: [
+        { id: 41, name: 'Alex Rivera' },
+        { id: 41, name: 'Alex Rivera' },
+      ],
       labelMatches: [],
     });
     const options = selectClusterSuggestions({
       namingOptions: built.options,
-      identityProjection: [{ clusterId: 'mirrored', label: 'Alex Rivera', similarity: 0.8, identityCount: 2 }],
+      identityProjection: [
+        {
+          identityId: 'identity-under-review',
+          clusterId: 'mirrored',
+          label: 'Alex Rivera',
+          similarity: 0.8,
+          identityCount: 2,
+        },
+      ],
     });
     const onOptionConfirm = vi.fn();
     const { onCommit } = renderControl({ options, value: 'Alex', onOptionConfirm });
@@ -198,10 +216,14 @@ describe('curated person picker choices', () => {
     const second = person(42, 'Alex Rivera');
     const options: ComboboxOption[] = [
       { value: 'cluster:ambiguous', label: 'Alex Rivera', source: 'cluster', group: NAMING_GROUP_SUGGESTED },
-      first, first, second,
+      first,
+      first,
+      second,
     ];
     expect(resolveNameFaceInput(options, 'Alex Rivera')).toEqual({
-      kind: 'ambiguous', name: 'Alex Rivera', matches: [first, second],
+      kind: 'ambiguous',
+      name: 'Alex Rivera',
+      matches: [first, second],
     });
     const { onCommit } = renderControl({ options, value: 'Alex Rivera' });
     fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
@@ -210,7 +232,9 @@ describe('curated person picker choices', () => {
     fireEvent.click(screen.getAllByRole('option')[2]);
     expect(onCommit).toHaveBeenCalledWith({ kind: 'roster', rosterEntryId: 42, name: 'Alex Rivera' });
     expect(resolveNameFaceInput([first, first], 'Alex Rivera')).toEqual({
-      kind: 'roster', rosterEntryId: 41, name: 'Alex Rivera',
+      kind: 'roster',
+      rosterEntryId: 41,
+      name: 'Alex Rivera',
     });
   });
 });
@@ -259,16 +283,10 @@ describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
 
     input.focus();
     await user.keyboard('{ArrowDown}{End}');
-    expect(input).toHaveAttribute(
-      'aria-activedescendant',
-      screen.getByRole('option', { name: /Alan Turing/ }).id,
-    );
+    expect(input).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: /Alan Turing/ }).id);
 
     await user.keyboard('{Home}');
-    expect(input).toHaveAttribute(
-      'aria-activedescendant',
-      screen.getByRole('option', { name: /Ada Lovelace/ }).id,
-    );
+    expect(input).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: /Ada Lovelace/ }).id);
 
     await user.keyboard('{Escape}{Escape}');
     expect(onCancel).toHaveBeenCalled();
@@ -439,9 +457,7 @@ describe('NameFaceControl live region (UXW2-3-R1-14)', () => {
   });
 
   it('announces the true match total after debounce, pluralised', () => {
-    const options = [
-      ...Array.from({ length: 8 }, (_, index) => person(index + 1, `Pat ${index}`)),
-    ];
+    const options = [...Array.from({ length: 8 }, (_, index) => person(index + 1, `Pat ${index}`))];
     renderControl({ options, value: 'Pat' });
 
     expect(screen.getByRole('status')).not.toHaveTextContent('8 naming options');

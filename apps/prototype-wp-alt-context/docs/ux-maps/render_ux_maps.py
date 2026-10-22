@@ -396,6 +396,31 @@ def _restore_kept(generated: str, kept: list[tuple[str | None, str]]) -> str:
     return restored
 
 
+def _relocate_code_references(bundle: list[str]) -> list[str]:
+    """Move upstream's `## Code references` list ahead of `## Screens`.
+
+    The canvas bundle emits it between the Screens table and the per-screen detail
+    blocks. Any level-two heading ends the Screens section for renderParity.ts, which
+    then rejects every table row as having no detail block (CURUX Q-R0-01).
+    """
+    heading = "## Code references"
+    if heading not in bundle:
+        return bundle
+    start = bundle.index(heading)
+    end = start + 1
+    while end < len(bundle) and bundle[end].startswith("- "):
+        end += 1
+    if end < len(bundle) and bundle[end] == "":
+        end += 1
+    moved, rest = bundle[start:end], bundle[:start] + bundle[end:]
+    if heading in rest or "## Screens" not in rest:
+        raise ValueError("cannot relocate Code references outside the Screens section")
+    if moved[-1] != "":
+        moved.append("")
+    target = rest.index("## Screens")
+    return rest[:target] + moved + rest[target:]
+
+
 def render(map_ref: str) -> str:
     ux_map_model, render_markdown_bundle = _load_renderer()
     doc = json.loads((MAPS_DIR / f"{map_ref}.uxmap.json").read_text(encoding="utf8"))
@@ -405,7 +430,9 @@ def render(map_ref: str) -> str:
     canonical_doc = {key: value for key, value in doc.items() if key not in {"domain_state_mappings", "slices"}}
     canonical_doc["actions"] = [{k: v for k, v in action.items() if k != "when"} for action in doc.get("actions", [])]
     canonical_doc["screens"] = [{k: v for k, v in screen.items() if k != "action_states"} for screen in doc["screens"]]
-    bundle = render_markdown_bundle(ux_map_model.model_validate(canonical_doc)).split("\n")
+    bundle = _relocate_code_references(
+        render_markdown_bundle(ux_map_model.model_validate(canonical_doc)).split("\n")
+    )
     screens = {screen["id"]: screen for screen in doc["screens"]}
     flows = {flow["id"]: flow for flow in doc["flows"]}
 
@@ -562,6 +589,7 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
     json_path = MAPS_DIR / f"{map_ref}.uxmap.json"
     markdown_path = MAPS_DIR / f"{map_ref}.md"
     _validate_action_conditions(json.loads(json_path.read_text(encoding="utf8")))
+    fresh_source = "fs.readFileSync(0, 'utf8')" if rendered is not None else "null"
     script = "\n".join(
         [
             "import fs from 'node:fs';",
@@ -569,7 +597,11 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
             f"const source = JSON.parse(fs.readFileSync({json.dumps(str(json_path))}, 'utf8'));",
             f"const markdown = fs.readFileSync({json.dumps(str(markdown_path))}, 'utf8');",
             "const parityOptions = {includeScreenMetadata: source.map_ref === 'workbench-operator-loop'};",
-            "console.log(JSON.stringify({expected: projectUxMapForRenderParity(source, parityOptions), actual: parseRenderedUxMap(markdown, parityOptions)}, null, 2));",
+            # The committed artifact alone cannot prove the producer: hand-postprocessed
+            # Markdown would pass. Parse the renderer's in-memory output with the same consumer.
+            f"const rendered = {fresh_source};",
+            "const parseFresh = (text) => { try { return parseRenderedUxMap(text, parityOptions); } catch (error) { throw new Error(`freshly rendered Markdown: ${error.message}`); } };",
+            "console.log(JSON.stringify({expected: projectUxMapForRenderParity(source, parityOptions), actual: parseRenderedUxMap(markdown, parityOptions), rendered: rendered === null ? null : parseFresh(rendered)}, null, 2));",
         ]
     )
     try:
@@ -577,14 +609,24 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
             ["node", "--experimental-strip-types", "--input-type=module", "--eval", script],
             check=False,
             capture_output=True,
-            text=True,
+            encoding="utf8",
             timeout=10,
+            input=rendered,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"{map_ref}: Node parity check exceeded 10s deadline") from exc
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     projections = json.loads(completed.stdout)
+    fresh = projections.pop("rendered")
+    if fresh is not None and fresh != projections["expected"]:
+        def dump(value: object) -> list[str]:
+            return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True).splitlines(keepends=True)
+
+        raise RuntimeError(
+            f"{map_ref}: freshly rendered Markdown does not parse to the JSON projection\n"
+            + "".join(unified_diff(dump(fresh), dump(projections["expected"]), "rendered (parsed)", "uxmap.json"))
+        )
     markdown = markdown_path.read_text(encoding="utf8")
     snapshot_digest = _read_visible_snapshot(map_ref, json_path)
     if rendered is not None:

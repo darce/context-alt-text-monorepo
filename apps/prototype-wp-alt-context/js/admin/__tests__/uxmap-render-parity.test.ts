@@ -1922,7 +1922,7 @@ describe('ux-map generated-render provenance', () => {
     ).toBeGreaterThan(10);
   });
 
-  it('preserves all five original suggested task slices in source and rendered Markdown', () => {
+  it('preserves all six approved suggested task slices (original five plus UXREC-1 TIMELINE) in source and rendered Markdown', () => {
     const { md } = loadOwnedMap('workbench-operator-loop');
     const raw = readMapJson('workbench-operator-loop') as { slices: string[] };
     expect(raw.slices).toEqual([
@@ -1931,6 +1931,7 @@ describe('ux-map generated-render provenance', () => {
       '**Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence',
       '**Dead-letter discard confirm** — destructive + irreversible path',
       '**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])',
+      "UXREC-1 TIMELINE proposed: replace the INITIAL_STATE timelineStatus 'all' default and the always-rendered second timeline in DeadLetterPanel with Needs attention (Failed = existing failed list only; Pending or Conflict = server-filtered timeline only) and History (existing all/status timeline with guarded row Retry/Discard only on failed rows, once per view), keeping deadLetterPanelReducer paging and the handleTimelineStatusChange offset reset. Bulk controls stay attention_failed only; preserve confirmation, capability, pending-mutation and bulk-discard age/clock guards. Proposed fixtures cover old failed rows, genuine pending and conflict rows, History failed rows with non-terminal-only Retry and confirmed Discard, and acknowledged/discarded history with no recovery actions. Do not delete history, hide by age, or repeat integrated DW3-UX0924-04 reconciliation. Localize only the History filter display labels and moved timeline count as annotated; retain literal _n singular/plural templates selected by raw server total and string slots for locale-formatted human numbers. Future product-author fixtures cover totals 0/1/2 (singular change, plural changes), en-US/ar-EG host lang, empty/malformed/unsupported host-locale fallback, and a Polish or Russian multi-form catalog stub receiving raw total; translated labels must still send the existing TimelineStatusFilter tokens. Keep All/pager behavior, numeric accounting, guarded failed-row History recovery and legacy row-status/age/timezone paths unchanged. Scratch checks are not product RED.",
     ]);
     expect(parseRenderedUxMap(md).slices).toEqual(raw.slices);
     for (const [index, slice] of raw.slices.entries()) {

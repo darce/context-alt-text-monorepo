@@ -18,11 +18,14 @@ import { useRetryOperation } from '../../../hooks/useRetryOperation';
 import { useSyncStatus } from '../../../hooks/useSyncStatus';
 import { DeadLetterPanel } from '../DeadLetterPanel';
 
-const catalog = vi.hoisted(() => ({
-  labels: {} as Record<string, string>,
-  polish: false,
-  plural: vi.fn<(singular: string, plural: string, count: number, domain: string) => void>(),
-}));
+const catalog = vi.hoisted(() => {
+  const labels: Record<string, string> = {};
+  return {
+    labels,
+    polish: false,
+    plural: vi.fn<(singular: string, plural: string, count: number, domain: string) => void>(),
+  };
+});
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => catalog.labels[text] ?? text,
   _n: (singular: string, plural: string, count: number, domain: string) => {
@@ -76,11 +79,11 @@ type DeadLetterList = OutboxListResponse & {
   items: DeadLetterRow[];
 };
 
-type WpDateBootstrap = {
+interface WpDateBootstrap {
   date?: {
     getSettings?: () => { timezone?: { offset?: number } };
   };
-};
+}
 
 const buildOperation = (overrides: Partial<DeadLetterRow> = {}): DeadLetterRow => ({
   id: 11,
@@ -382,6 +385,111 @@ describe('DeadLetterPanel', () => {
       } finally {
         document.documentElement.lang = previous;
       }
+    });
+
+    // UXREC-1 TIMELINE_GATE-01: an actual view, filter or page transition disarms every
+    // confirmation and its confirmation-only announcement; Discard must be armed again.
+    describe('UXREC-1 navigation disarms confirmations', () => {
+      const OLD_FAILED_ARMED =
+        'Discard armed for Cluster label update for cluster-701 (operation 701). Activate Confirm discard to continue.';
+      const oldFailedRow = (): HTMLElement => {
+        const row = screen.getByText('Entity: cluster-701 (cluster)').closest('li');
+        expect(row).not.toBeNull();
+        return row!;
+      };
+      const expectRearmRequired = async (): Promise<void> => {
+        const discard = mockedUseDiscardOperation().mutateAsync;
+        expect(within(oldFailedRow()).queryByRole('button', { name: 'Confirm discard' })).not.toBeInTheDocument();
+        expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent('Discard armed');
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        expect(discard).not.toHaveBeenCalled();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Confirm discard' }));
+        await waitFor(() => expect(discard).toHaveBeenCalledWith(701));
+      };
+
+      it('History All to failed disarms the row that stays visible', async () => {
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: 'failed' });
+        await expectRearmRequired();
+      });
+
+      it('History page-away and back disarms the row', async () => {
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 10, status: undefined });
+        expect(within(oldFailedRow()).queryByRole('button', { name: 'Confirm discard' })).not.toBeInTheDocument();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Previous timeline page' }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: undefined });
+        await expectRearmRequired();
+      });
+
+      it('cached same-total failed pages disarm row and bulk confirmations', async () => {
+        mockFailedPages(listResponse({ items: [{ ...OLD_FAILED, age_seconds: 16 * 24 * 3600 }], total: 25 }));
+        renderPanel();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        expect(mockedUseDeadLetterOperations).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+        expect(mockedUseDeadLetterOperations).toHaveBeenCalledWith({ limit: 20, offset: 20 });
+        fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+        expect(mockedUseDeadLetterOperations).toHaveBeenCalledWith({ limit: 20, offset: 0 });
+        await expectRearmRequired();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (25)' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        expect(screen.getByRole('button', { name: 'Retry all failed (25)' })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Discard eligible failed changes' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+        expect(screen.getByRole('button', { name: 'Discard eligible failed changes' })).toBeInTheDocument();
+        expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent(/armed/);
+        expect(mockedUseBulkRetryOperations().mutateAsync).not.toHaveBeenCalled();
+        expect(mockedUseDiscardOperation().mutateAsync).toHaveBeenCalledTimes(1);
+      });
+
+      it('view changes clear the stale row discard announcement', async () => {
+        renderPanel();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent('Discard armed');
+        fireEvent.click(screen.getByRole('button', { name: 'Needs attention' }));
+        await expectRearmRequired();
+      });
+
+      it('same-selection no-ops keep the confirmation armed', () => {
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        expect(within(oldFailedRow()).getByRole('button', { name: 'Confirm discard' })).toBeInTheDocument();
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
+        expect(mockedUseDiscardOperation().mutateAsync).not.toHaveBeenCalled();
+      });
+
+      it('navigation keeps in-flight retry feedback', () => {
+        mockedUseRetryOperation.mockReturnValue(
+          createMockMutation<OutboxMutationResponse, Error, number>({
+            mutateAsync: vi.fn(() => new Promise<OutboxMutationResponse>(() => undefined)),
+          }),
+        );
+        renderPanel();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Retry' }));
+        const inFlight = 'Retrying Cluster label update for cluster-701 (operation 701).';
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(inFlight);
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(inFlight);
+        expect(mockedUseRetryOperation().mutateAsync).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Curation\BindingIntentJournal;
+use AltContext\Sovereign\Curation\FaceCorrespondenceResolver;
 use AltContext\Sovereign\Curation\WpBindingJournalStore;
 use PHPUnit\Framework\TestCase;
 
@@ -206,6 +207,45 @@ final class BindingIntentJournalTest extends TestCase {
 		$state = $this->journal->inspect( 'tenant' );
 		self::assertSame( 'historical', $state['people']['person']['claims']['request-claim']['authority_state'] );
 		self::assertSame( 'active', $state['people']['destination-person']['claims']['destination-claim']['authority_state'] );
+	}
+
+	/** Accepted JSON evidence with zero-fraction floats, which fingerprints keep distinct from integers. */
+	private function command_with_json_floats( string $request = 'request' ): array {
+		$command = $this->command( $request );
+		$command['claims'][ $request . '-claim' ]['confidence'] = 1.0;
+		$command['claims'][ $request . '-claim' ]['quality'] = 0.25;
+		$command['claims'][ $request . '-claim' ]['face_evidence_v1']['producer_extension'] = 1.0;
+		$command['claims'][ $request . '-claim' ]['face_evidence_v1']['producer_offset'] = -0.0;
+		return $command;
+	}
+	public function test_exact_retry_returns_identical_receipt_after_storage_round_trip(): void {
+		$command = $this->command_with_json_floats();
+		$first = $this->journal->apply( 'tenant', $command, $this->participate() );
+		self::assertSame( 1.0, $first['after']['claims']['request-claim']['confidence'], 'Control: the first receipt carries the accepted float.' );
+		$retry = $this->new_journal()->apply( 'tenant', $command, $this->participate() );
+		self::assertSame( array( 'request' ), $this->db->effects, 'Control: an exact retry must not repeat participant effects.' );
+		self::assertSame( $first, $retry, 'Exact retry must return the identical stored receipt, including accepted JSON float scalars.' );
+		self::assertSame( $first['after'], $this->new_journal()->inspect( 'tenant' )['people']['person'], 'Durable person state must keep accepted claim scalars unchanged.' );
+	}
+	public function test_exact_batch_retry_returns_identical_receipt_after_storage_round_trip(): void {
+		$bind = $this->command_with_json_floats( 'destination' );
+		$first = $this->journal->apply_batch( 'tenant', 'batch', array( $bind ), $this->participate() );
+		$retry = $this->new_journal()->apply_batch( 'tenant', 'batch', array( $bind ), $this->participate() );
+		self::assertSame( array( 'batch' ), $this->db->effects, 'Control: an exact batch retry must not repeat participant effects.' );
+		self::assertSame( $first, $retry, 'Exact batch retry must return the identical stored receipt, including accepted JSON float scalars.' );
+	}
+	public function test_accepted_proof_stays_exact_after_storage_round_trip(): void {
+		$command = $this->command_with_json_floats();
+		$face = $command['claims']['request-claim'];
+		self::assertTrue( FaceCorrespondenceResolver::valid_face( $face ), 'Control: the public validator accepts this JSON proof.' );
+		$first = $this->journal->apply( 'tenant', $command, $this->participate() );
+		$incoming = array( 'tenant_id' => 'tenant', 'identity_namespace_id' => 'namespace', 'snapshot_version' => 7, 'available' => true, 'complete' => true, 'claims_complete' => true, 'lifecycle_attested' => true, 'faces' => array( $face ) );
+		$resolver = new FaceCorrespondenceResolver();
+		$intent = $first['after'] + array( 'person_uuid' => 'person', 'ancestry_attested' => true );
+		self::assertSame( 'exact', $resolver->resolve( $incoming, $first['after']['claims'], $intent )['correspondence_status'], 'Control: correspondence is exact before persisted state is read.' );
+		$stored = $this->new_journal()->inspect( 'tenant' )['people']['person'];
+		$intent = $stored + array( 'person_uuid' => 'person', 'ancestry_attested' => true );
+		self::assertSame( 'exact', $resolver->resolve( $incoming, $stored['claims'], $intent )['correspondence_status'], 'Unchanged producer proof must stay exact after the journal storage round trip.' );
 	}
 	public function test_competing_positive_claim_rolls_back_instead_of_picking_a_person(): void {
 		$this->journal->apply( 'tenant', $this->command(), $this->participate() );

@@ -256,7 +256,7 @@ Each criterion maps to an eval case in `public-figure-library-evals.json`.
 19. P3 celebrity tier: a living adult, athletes included, above the 12-month Wikimedia pageview threshold with a voluntary public career is served. Minors, relatives without independent notability, and involuntary newsmakers are never served, even above the threshold. A P3 auto-name requires `public_role` context like every tier.
 20. With private recognition off and PFL on, describe can still auto-name a public figure, but it writes no `media_identity` row and persists no probe vector.
 21. Linked paths obey the same gate as matching. A cluster already linked to a QID is not named, and pending `pfl` suggestions are neither listed nor acceptable, when `PFL_ENABLED` is off, the tenant is not entitled, its jurisdiction is held or unknown, the tenant switched PFL off, or the identity's tier is not enabled. This holds on a describe-cache hit, and an eligibility read failure means no PFL name. An exited P2 link still resolves while P2 is enabled.
-22. A `pfl` suggestion survives the existing API. `SuggestedLabelSource.PFL` and `pf_qid` round-trip from a `name_suggestions` row through list, serialize and accept. `NameSuggestionResponse` carries `source='pfl'` and `pf_qid`. A roster-candidates response carries a gallery candidate with `source='pfl'`, `pf_qid`, `cluster_id` null and its pending `suggestion_id`, and exactly one of `cluster_id` and `pf_qid` is set. The plugin passes the candidate through without a roster mapping.
+22. A `pfl` suggestion survives the existing API. `SuggestedLabelSource.PFL` and `pf_qid` round-trip from a `name_suggestions` row through the list, accept and reject HTTP routes. Each `NameSuggestionResponse` carries `source='pfl'` and that row's actual `pf_qid`, never null. A roster-candidates response carries a gallery candidate with `source='pfl'`, `pf_qid`, `cluster_id` null and its pending `suggestion_id`, and exactly one of `cluster_id` and `pf_qid` is set. The plugin passes the candidate through without a roster mapping.
 
 ## Not doing
 
@@ -401,6 +401,7 @@ The flag's false default (criterion 1) makes intermediate merges safe. Market pr
 
 - **Change sites.**
   - `recognition/interface_adapters/http/routers/suggestions.py::get_roster_candidates`: merge `list_pfl_candidates` results with `source: pfl`, `pf_qid`, `cluster_id` null and the pending `suggestion_id`. The tenant roster wins at equal band.
+  - `recognition/interface_adapters/http/routers/suggestions.py::_to_name_response`: pass `pf_qid=suggestion.pf_qid`. The list, accept and reject name-suggestion routes all build their response through this mapper, so each response carries the row's QID.
   - `recognition/interface_adapters/http/schemas/responses.py`:
     - `RosterCandidateResponse`: add `source: Literal["roster", "pfl"]` (default `roster`), `pf_qid: str | None` and `suggestion_id: str | None`. `cluster_id` becomes `str | None`, UUID-validated when set. A model validator requires exactly one of `cluster_id` and `pf_qid`. Update the docstring: PHP maps `cluster_id` to `roster_entry_id` only for `source="roster"`.
     - `NameSuggestionResponse`: `source` accepts `pfl`, and add `pf_qid: str | None`.
@@ -411,7 +412,7 @@ The flag's false default (criterion 1) makes intermediate merges safe. Market pr
   - `suggestion_extension_service.py::list_name_suggestions` omits `source=pfl` rows while eligibility is closed.
   - `reject_name_suggestion`: the `pfl` branch writes `PflNameSuppression`.
 - **Criteria.** 6, 7 (no PFL write on accept or reject), 8, 15 (the write half), 21 (the list and accept half) and 22 (the API half).
-- **Proof.** `recognition/tests/api/test_pfl_accept.py`: list, serialize and accept a real `pfl` row; a roster-candidates response with a gallery candidate; list and accept refused while eligibility is closed.
+- **Proof.** `recognition/tests/api/test_pfl_accept.py`: list, accept and reject a real `pfl` row through the HTTP routes, and assert each response carries that row's `pf_qid`; a roster-candidates response with a gallery candidate; list and accept refused while eligibility is closed.
 - **Depends on** PUBFIG-3.
 
 ### PUBFIG-5. Name registry, language parameter, coverage gate

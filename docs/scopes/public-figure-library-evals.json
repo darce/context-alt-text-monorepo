@@ -192,9 +192,9 @@
     {
       "id": "PFL-SC-22",
       "group": "deterministic",
-      "criterion": "A pfl suggestion survives the existing API: SuggestedLabelSource.PFL and pf_qid round-trip from a name_suggestions row through list, serialize and accept; NameSuggestionResponse carries source='pfl' and pf_qid; a roster-candidates response carries a gallery candidate with source='pfl', pf_qid, cluster_id null and its pending suggestion_id, with exactly one of cluster_id and pf_qid set; the plugin passes it through without a roster mapping.",
+      "criterion": "A pfl suggestion survives the existing API: SuggestedLabelSource.PFL and pf_qid round-trip from a name_suggestions row through the list, accept and reject HTTP routes; each NameSuggestionResponse carries source='pfl' and that row's actual pf_qid, never null; a roster-candidates response carries a gallery candidate with source='pfl', pf_qid, cluster_id null and its pending suggestion_id, with exactly one of cluster_id and pf_qid set; the plugin passes it through without a roster mapping.",
       "status": "planned",
-      "test": "recognition/tests/api/test_pfl_accept.py::test_pfl_suggestion_lists_serializes_and_accepts; recognition/tests/api/test_pfl_accept.py::test_roster_candidates_serialize_gallery_candidate",
+      "test": "recognition/tests/api/test_pfl_accept.py::test_pfl_suggestion_list_accept_reject_responses_carry_qid; recognition/tests/api/test_pfl_accept.py::test_roster_candidates_serialize_gallery_candidate",
       "php_test": "apps/prototype-wp-alt-context/tests/Unit/SuggestionsControllerPflTest.php::test_pfl_candidates_pass_through_without_roster_mapping",
       "task_plan": "PUBFIG-2, PUBFIG-4, PUBFIG-9"
     }

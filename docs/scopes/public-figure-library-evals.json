@@ -22,9 +22,9 @@
     {
       "id": "PFL-SC-01",
       "group": "deterministic",
-      "criterion": "Default-off: no entitlement or no tenant opt-in yields zero PFL candidates.",
+      "criterion": "Default-on, fail-safe: zero PFL candidates when PFL_ENABLED is off, the tenant is not entitled, its jurisdiction is held or unknown, or the tenant switched PFL off; otherwise a tenant with no settings row gets candidates from every released tier, and the off switch takes effect on the next request.",
       "status": "planned",
-      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_candidates_absent_without_entitlement_and_opt_in",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_default_on_and_fail_safe_gate",
       "task_plan": "PUBFIG-3"
     },
     {
@@ -172,6 +172,14 @@
       "status": "planned",
       "test": "recognition/tests/unit/test_pfl_lifecycle.py::test_celebrity_tier_membership_and_exclusions; scene/tests/test_pfl_naming.py::test_celebrity_autoname_requires_public_role_context",
       "task_plan": "PUBFIG-3, PUBFIG-6, PUBFIG-8"
+    },
+    {
+      "id": "PFL-SC-20",
+      "group": "deterministic",
+      "criterion": "With private recognition off and PFL on, describe can still auto-name a public figure from an in-request probe, but it writes no media_identity row and persists no probe vector.",
+      "status": "planned",
+      "test": "scene/tests/test_pfl_naming.py::test_recognition_off_probe_is_ephemeral",
+      "task_plan": "PUBFIG-6"
     }
   ],
   "php_command": "cd apps/prototype-wp-alt-context && composer test -- --filter DescribeMediaServicePflTest"

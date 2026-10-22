@@ -221,9 +221,9 @@ describe('guided scenario fixture', () => {
       credit: 'https://www.instagram.com/katyperry/',
       source: 'https://www.instagram.com/katyperry/',
       altTextAiCaption: {
-        text: 'Two people sit on a curb outdoors at night, holding red cups and eating food. Both appear relaxed and casually dressed, with trees and plants in the background.',
+        text: 'Justin Trudeau and Katy Perry sitting outside, both holding red plastic cups and eating from a carton of noodles.',
         providerUrl: 'https://alttext.ai/',
-        capturedOn: '10 September 2026',
+        capturedOn: '21 October 2026',
       },
     });
     expect(scenario.pressPhotos[1].altContextDescription).toEqual({

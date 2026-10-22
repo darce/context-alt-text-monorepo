@@ -151,10 +151,10 @@ describe('GuidedSamplePhoto figure content', () => {
     expect(altContextLink.closest('p')).toHaveClass('acx-guided-page__caption-provenance');
     expect(altContextLink.closest('p')).toHaveTextContent(photo.altContextDescription.generatedOn);
 
-    const captionProvenance = comparison.getByText(/Captured 10 September 2026\./, {
+    const captionProvenance = comparison.getByText(/Captured 21 October 2026\./, {
       selector: 'p.acx-guided-page__caption-provenance',
     });
-    expect(captionProvenance.textContent).toBe('AltText.ai · Captured 10 September 2026.');
+    expect(captionProvenance.textContent).toBe('AltText.ai · Captured 21 October 2026.');
     expect(comparison.getByText(guidedCopy('comparison.note.public'))).toBeInTheDocument();
     expect(comparisonDetails).not.toHaveTextContent(photo.altTextAiCaption.note);
 

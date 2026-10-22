@@ -48,7 +48,7 @@ R2_IMAGE_SHA256 = '710a6798653ef868338136da63e2c176e892d73bac342e395bf0df640e700
 REPLACED_IMAGE_ID = 'original-038'
 REPLACEMENT_SOURCE = 'qwen-gsq-02.json'
 REVISION_SCHEMA = 'bakeoff-corpus-revision/v1'
-SELECTION = {'pilot': 'first-two', 'full': 'whole-cohort', 'replacement': 'r2-replacement-original-038'}
+SELECTION = {'pilot': 'first-two', 'full': 'whole-cohort', 'replacement': 'r2-replacement-original-038', 'missing': 'canonical-pending-only'}
 # Claim-time predecessor binding (decision 18673): the recipe refreshes the
 # owned window's AUTO before START, so the fresh publication is the fencing
 # token. Replaces the pinned template line `assert previous=='aa048fdb...'`.
@@ -188,9 +188,66 @@ def replacement_path(revision_raw, previous):
     return image
 
 
-def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None, revision=None):
+# PROV-01 / AGT-08: these are current report inputs, separate from frozen config ancestry.
+MISSING_INPUTS = Path(__file__).resolve().parent / 'missing-inputs'
+MISSING_INVENTORY_SHA256 = '17f5c9906badaaa3142fdc749f8603f33d8b8fb89e1552762360bb901bc781ae'
+PROTOCOL_SHA256 = '9e33cf5284c2eef1947015d61efa31eae7a70d0b00901a68bef9ea6ad1764250'
+CORPUS_SHA256 = '05fe1b169be22c6a8e25d97769ef9aeb143dea1a5ffa7d0b09a48b25cc444a63'
+MISSING_NAMES = {'gsq': 'LEXICON-QWEN-GSQ-MISSING-C064-R1',
+                 'ud': 'LEXICON-QWEN-UD-MISSING-04-R1'}
+
+
+def missing_selection(configs, candidate, inventory, protocol_sha256, corpus_sha256):
+    """Select only the pinned pending model rows, in original config/image order."""
+    raw = read_regular(inventory)
+    require(sha(raw) == MISSING_INVENTORY_SHA256, 'not the canonical missing inventory')
+    require(protocol_sha256 == PROTOCOL_SHA256 and corpus_sha256 == CORPUS_SHA256,
+            'current protocol/corpus digest required')
+    protocol_raw = read_regular(MISSING_INPUTS / 'protocol.json')
+    corpus_raw = read_regular(MISSING_INPUTS / 'corpus-active-120-r2.json')
+    require(sha(protocol_raw) == protocol_sha256 and sha(corpus_raw) == corpus_sha256,
+            'current protocol/corpus bytes drifted')
+    doc = json.loads(raw)
+    require(doc['official_protocol_sha256'] == protocol_sha256
+            and doc['active_manifest_sha256'] == corpus_sha256, 'inventory report binding drift')
+    row = next(r for r in doc['model_rows'] if r['model_key'] == 'qwen-' + candidate)
+    ids = row['missing_ids']
+    require(len(ids) == len(set(ids)) and len(ids) == (1 if candidate == 'gsq' else 4),
+            'duplicate or wrong pending count')
+    records = {r['image_id']: r for r in row['input_records']}
+    corpus = {r['image_id']: r for r in json.loads(corpus_raw)['images']}
+    require(set(records) == set(ids) and all(records[i] == corpus.get(i) for i in ids),
+            'pending record outside current corpus or image hash drift')
+    selected = []; seen = []
+    for filename, frozen in configs:
+        cfg = json.loads(frozen)
+        images = [im for im in cfg['images'] if im['image_id'] in ids]
+        if not images:
+            continue
+        for im in images:
+            ident = im['image_id']
+            require(im['sha256'] == records[ident]['sha256']
+                    and im['path'] == R1_IMAGES_DIR + '/' + ident + '.jpg',
+                    'pending frozen image path/hash drift')
+            seen.append(ident)
+        cfg['images'] = images
+        selected.append((filename, (json.dumps(cfg, indent=2) + '\n').encode()))
+    require(seen == ids, 'pending IDs not in immutable candidate/order')
+    binding = dict(inventory_sha256=sha(raw), official_protocol_sha256=protocol_sha256,
+                   active_manifest_sha256=corpus_sha256, selected_ids=seen,
+                   prespecified_target=row['prespecified_target'], evaluated_before=row['evaluated_before'],
+                   planned_max_completion_POSTs=3*len(seen), execution_status='PROSPECTIVE_NOT_EXECUTED',
+                   prior_failed_attempts_retained=True, existing_model_output_errors_are_not_retry_targets=True)
+    return selected, binding
+
+
+def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None, revision=None,
+            missing_inventory=None, protocol_sha256=None, corpus_sha256=None):
     require(candidate in SOURCES and mode in SELECTION, 'candidate/mode required')
     require((revision is not None) == (mode == 'replacement'), 'revision is required in replacement mode only')
+    require((missing_inventory is not None and protocol_sha256 is not None and corpus_sha256 is not None)
+            if mode == 'missing' else all(v is None for v in (missing_inventory, protocol_sha256, corpus_sha256)),
+            'missing inventory and current digests are required in missing mode only')
     require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,90}', name or '')), 'explicit safe name required')
     require(bool(re.fullmatch(r'workbay-[A-Za-z0-9_-]+\.scope', unit or '')), 'explicit scope unit required')
     root = Path(root)
@@ -199,8 +256,12 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     prior = inputs[SOURCES[candidate]].decode()
     plan = json.loads(inputs['batch-plan.json'])
     model, configs = validate_configs(root, plan, candidate)
-    revision_raw = replacement = None
-    if mode == 'pilot':
+    revision_raw = replacement = missing = None
+    if mode == 'missing':
+        require(not cohorts and name == MISSING_NAMES[candidate] and unit.startswith('workbay-bakeoff-'),
+                'missing mode requires exact operation name, bakeoff unit and no cohort selection')
+        selected, missing = missing_selection(configs, candidate, missing_inventory, protocol_sha256, corpus_sha256)
+    elif mode == 'pilot':
         require(not cohorts, 'pilot uses first immutable config only')
         cfg = json.loads(configs[0][1]); cfg['images'] = cfg['images'][:2]
         selected = [(configs[0][0], (json.dumps(cfg, indent=2) + '\n').encode())]
@@ -223,7 +284,7 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
         selected = [(c, available[c]) for c in cohorts]
     count = sum(len(json.loads(raw)['images']) for _, raw in selected)
     require(mode != 'replacement' or count == 1, 'replacement is exactly one image')
-    short_run = mode in ('pilot', 'replacement')
+    short_run = mode in ('pilot', 'replacement', 'missing')
     client = client_seconds if client_seconds is not None else (420 if short_run else 650)
     # Fixed phase reservations, not a promise every request will finish. The
     # native client deadline preserves incomplete/invalid attempts without retry.
@@ -309,7 +370,7 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
     # This guard is deliberately unresolved until independent review. The CLI
     # cannot certify review or a live pilot by generating a recipe.
     guard = "assert os.environ.get('QWEN_AB_SOL_XHIGH_GATE')==" + repr(sha(recipe.encode())) + ", 'Independent Sol XHIGH gate required; coordinator execution only'\n"
-    if mode in ('full', 'replacement'):
+    if mode in ('full', 'replacement', 'missing'):
         guard += "assert os.environ.get('QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256') and re.fullmatch(r'[0-9a-f]{64}',os.environ['QWEN_AB_ACTUAL_PILOT_RECEIPT_SHA256']), 'Actual pilot receipt required before full; coordinator must verify contents'\n"
     recipe = replace_once(recipe, "assert os.geteuid()==os.getuid()==0", guard + "assert os.geteuid()==os.getuid()==0")
     for func in ('public', 'observe', 'guest'):
@@ -357,6 +418,8 @@ def prepare(root, candidate, mode, name, unit, cohorts=None, client_seconds=None
                                 'Predecessor is bound at claim by stop/withdraw refresh; coordinator must verify late-bound-predecessor.json and actual pilot receipt contents after the run; a digest alone is not acceptance'])
     if replacement is not None:
         receipt['replacement'] = replacement
+    if missing is not None:
+        receipt['missing_only'] = missing
     return recipe, receipt
 
 
@@ -366,6 +429,9 @@ def main():
     parser.add_argument('--candidate', choices=SOURCES, required=True)
     parser.add_argument('--mode', choices=tuple(SELECTION), required=True)
     parser.add_argument('--revision', type=Path, help='corpus-revision-r2.json; replacement mode only')
+    parser.add_argument('--missing-inventory', type=Path)
+    parser.add_argument('--protocol-sha256')
+    parser.add_argument('--corpus-sha256')
     parser.add_argument('--name', required=True)
     parser.add_argument('--unit', required=True)
     parser.add_argument('--cohort', action='append', dest='cohorts')
@@ -375,7 +441,8 @@ def main():
     try:
         require(not args.out.resolve().is_relative_to(args.references.resolve()), 'references are immutable; choose another output directory')
         recipe, receipt = prepare(args.references, args.candidate, args.mode, args.name,
-                                  args.unit, args.cohorts, args.client_seconds, args.revision)
+                                  args.unit, args.cohorts, args.client_seconds, args.revision,
+                                  args.missing_inventory, args.protocol_sha256, args.corpus_sha256)
         args.out.mkdir(mode=0o700, parents=True, exist_ok=False)
         (args.out / 'recipe.remote.py').write_text(recipe)
         (args.out / 'prepared-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')

@@ -259,7 +259,8 @@ class PreparationTests(unittest.TestCase):
             with self.subTest(cohorts=cohorts, seconds=seconds), self.assertRaises(ValueError):
                 make(mode='full', cohorts=cohorts, client_seconds=seconds)
         self.assertEqual(list(inspect.signature(p.prepare).parameters),
-                         ['root', 'candidate', 'mode', 'name', 'unit', 'cohorts', 'client_seconds', 'revision'])
+                         ['root', 'candidate', 'mode', 'name', 'unit', 'cohorts', 'client_seconds', 'revision',
+                          'missing_inventory', 'protocol_sha256', 'corpus_sha256'])
         for name, unit in [('', 'workbay-test.scope'), ('TEST', ''), ('x;echo', 'workbay-test.scope')]:
             with self.assertRaises(ValueError):
                 p.prepare(REF, 'gsq', 'pilot', name, unit)

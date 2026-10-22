@@ -1835,7 +1835,12 @@ def ensure_tables(op) -> None:
         op,
         "face_observations",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("identity_namespace_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("attachment_id", sa.Integer(), nullable=False),
         sa.Column("evidence", sa.dialects.postgresql.JSONB(), nullable=False),
@@ -3564,7 +3569,24 @@ def ensure_triggers(op) -> None:
     """(Re)create the centroid-dirty functions and triggers (CREATE OR REPLACE)."""
     op.execute("""
         CREATE OR REPLACE FUNCTION reject_face_observation_update() RETURNS trigger AS $$
+        DECLARE
+            tenant_gone boolean;
         BEGIN
+            -- UPDATE is always rejected. DELETE is tenant erasure only: the purge
+            -- path names this row's tenant transaction-locally (RLS still decides
+            -- which rows it reaches), or the owning tenant row is already gone
+            -- (ON DELETE CASCADE). tenants is looked up in this table's schema so
+            -- a pg_temp shadow cannot satisfy the check.
+            IF TG_OP = 'DELETE' THEN
+                IF OLD.tenant_id::text = current_setting('app.face_observation_erasure_tenant', true) THEN
+                    RETURN OLD;
+                END IF;
+                EXECUTE format('SELECT NOT EXISTS (SELECT 1 FROM %I.tenants WHERE id = $1)', TG_TABLE_SCHEMA)
+                    INTO tenant_gone USING OLD.tenant_id;
+                IF tenant_gone THEN
+                    RETURN OLD;
+                END IF;
+            END IF;
             RAISE EXCEPTION 'face observations are immutable';
         END;
         $$ LANGUAGE plpgsql;

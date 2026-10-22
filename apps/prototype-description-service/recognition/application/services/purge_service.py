@@ -9,7 +9,7 @@ from enum import Enum, auto
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, delete, func, inspect, or_, select
+from sqlalchemy import ColumnElement, delete, exists, func, inspect, or_, select, text
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,13 +37,19 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
+from db.models.identity import FaceObservation
 from recognition.application.services.audit_service import AuditService
 from recognition.domain.repositories import MvRefreshOutcome
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+from recognition.shared.db.dialect import is_postgres
 
 ALLOWED_PURGE_SCOPES = ("disposed", "all")
 DEFAULT_PURGE_BATCH_SIZE = 1000
+# Transaction-local marker read by the face_observations immutability trigger.
+# It only distinguishes erasure from ordinary mutation; RLS still decides which
+# tenant rows the DELETE can reach, and the trigger requires the row's tenant.
+FACE_OBSERVATION_ERASURE_SETTING = "app.face_observation_erasure_tenant"
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +73,7 @@ class PurgeScopeIds:
     identity_ids: list[UUID]
     cluster_ids: list[UUID]
     representative_ids: list[UUID]
+    face_observation_ids: list[UUID]
 
 
 class TenantPurgeService:
@@ -155,6 +162,7 @@ class TenantPurgeService:
             identity_ids=await self._get_identity_ids(tenant_id, scope),
             cluster_ids=await self._get_cluster_ids(tenant_id, scope),
             representative_ids=await self._get_representative_ids(tenant_id, scope),
+            face_observation_ids=await self._get_face_observation_ids(tenant_id, scope),
         )
 
     async def _delete_jobs_for_scope(self, tenant_id: UUID, scope: str) -> dict[str, int]:
@@ -313,6 +321,10 @@ class TenantPurgeService:
                 )
             else:
                 deleted_counts[label] = await self._delete_rows(model, tenant_predicate, predicate)
+        # After media_identities: their face_observation_id FK must not dangle.
+        deleted_counts["face_observations"] = await self._erase_face_observations(
+            tenant_id, self._face_observation_predicate(scope_ids.face_observation_ids, scope)
+        )
         return deleted_counts
 
     def _atlas_disposition_predicate(self, scope: str) -> Any:
@@ -464,6 +476,18 @@ class TenantPurgeService:
             return PurgeRowScope.NO_ROWS
         return IdentityCluster.id.in_(cluster_ids)
 
+    def _face_observation_predicate(self, observation_ids: list[UUID], scope: str) -> Any:
+        # Observations carry no disposed marker and no identity FK, so disposed
+        # scope reaches only those the disposed identities currently point at.
+        # Historical rows are reclaimed by scope=all and tenant deletion. Any row
+        # a surviving identity still points at is kept in every scope.
+        unreferenced = ~exists().where(MediaIdentity.face_observation_id == FaceObservation.id)
+        if scope != "disposed":
+            return unreferenced
+        if not observation_ids:
+            return PurgeRowScope.NO_ROWS
+        return FaceObservation.id.in_(observation_ids) & unreferenced
+
     def _identity_delete_predicate(self, identity_ids: list[UUID], scope: str) -> Any:
         if scope != "disposed":
             return PurgeRowScope.ALL_TENANT_ROWS
@@ -491,6 +515,41 @@ class TenantPurgeService:
             stmt = stmt.where(IdentityClusterRepresentative.disposed_at.is_not(None))
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def _get_face_observation_ids(self, tenant_id: UUID, scope: str) -> list[UUID]:
+        if scope != "disposed":
+            return []
+        stmt = select(MediaIdentity.face_observation_id).where(
+            MediaIdentity.tenant_id == tenant_id,
+            MediaIdentity.disposed_at.is_not(None),
+            MediaIdentity.face_observation_id.is_not(None),
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _erase_face_observations(self, tenant_id: UUID, predicate: Any) -> int:
+        """Batched erasure of immutable observations; ordinary deletes stay rejected."""
+        tenant_predicate = FaceObservation.tenant_id == tenant_id
+        erased_total = 0
+        while True:
+            batch_ids = await self._list_batch_ids(FaceObservation, FaceObservation.id, tenant_predicate, predicate)
+            if not batch_ids:
+                return erased_total
+            await self._set_face_observation_erasure_tenant(str(tenant_id))
+            result = await self._session.execute(
+                delete(FaceObservation).where(tenant_predicate, FaceObservation.id.in_(batch_ids))
+            )
+            await self._set_face_observation_erasure_tenant("")
+            erased_total += self._rowcount(result)
+            await self._session.commit()
+
+    async def _set_face_observation_erasure_tenant(self, value: str) -> None:
+        # The immutability trigger exists only in the PostgreSQL migration.
+        if is_postgres(self._session):
+            await self._session.execute(
+                text("SELECT set_config(:name, :value, true)"),
+                {"name": FACE_OBSERVATION_ERASURE_SETTING, "value": value},
+            )
 
     async def _delete_rows(
         self,

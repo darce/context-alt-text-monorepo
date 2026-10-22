@@ -160,10 +160,10 @@
     {
       "id": "PFL-SC-18",
       "group": "deterministic",
-      "criterion": "Adding a language needs only registry rows and a supported_languages entry: enabling a fixture language (es) in test config yields 'Papa Le\u00f3n XIV' with no code or schema change. A language below full verified coverage is refused at enable. A disabled or unknown language resolves to en.",
+      "criterion": "Adding a language needs only registry rows and a supported_languages entry: enabling a fixture language (es) in test config yields 'Papa Le\u00f3n XIV' with no code or schema change. A language below full verified coverage is refused at enable. A disabled or unknown language resolves to en. A registry row counts toward coverage only with at least three cited warrant_sources (FM-14), and an identity with no verified canonical row is not served.",
       "status": "planned",
       "test": "scene/tests/test_pfl_name_resolution.py::test_language_add_is_data_and_config_with_coverage_gate",
-      "task_plan": "PUBFIG-5"
+      "task_plan": "PUBFIG-2, PUBFIG-5"
     },
     {
       "id": "PFL-SC-19",
@@ -180,7 +180,24 @@
       "status": "planned",
       "test": "scene/tests/test_pfl_naming.py::test_recognition_off_probe_is_ephemeral",
       "task_plan": "PUBFIG-6"
+    },
+    {
+      "id": "PFL-SC-21",
+      "group": "deterministic",
+      "criterion": "Linked paths obey the same gate as matching: a cluster linked to a QID is not named, and pending pfl suggestions are neither listed nor acceptable, when PFL_ENABLED is off, the tenant is not entitled, its jurisdiction is held or unknown, the tenant switched PFL off, or the identity's tier is not enabled. This holds on a describe-cache hit; an eligibility read failure means no PFL name; an exited P2 link still resolves while P2 is enabled.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_eligibility_is_one_decision_and_fails_closed; recognition/tests/api/test_pfl_accept.py::test_pending_pfl_suggestions_hidden_and_unacceptable_when_ineligible; scene/tests/test_pfl_naming.py::test_linked_qid_unnamed_when_pfl_ineligible",
+      "task_plan": "PUBFIG-3, PUBFIG-4, PUBFIG-6"
+    },
+    {
+      "id": "PFL-SC-22",
+      "group": "deterministic",
+      "criterion": "A pfl suggestion survives the existing API: SuggestedLabelSource.PFL and pf_qid round-trip from a name_suggestions row through list, serialize and accept; NameSuggestionResponse carries source='pfl' and pf_qid; a roster-candidates response carries a gallery candidate with source='pfl', pf_qid, cluster_id null and its pending suggestion_id, with exactly one of cluster_id and pf_qid set; the plugin passes it through without a roster mapping.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_pfl_accept.py::test_pfl_suggestion_lists_serializes_and_accepts; recognition/tests/api/test_pfl_accept.py::test_roster_candidates_serialize_gallery_candidate",
+      "php_test": "apps/prototype-wp-alt-context/tests/Unit/SuggestionsControllerPflTest.php::test_pfl_candidates_pass_through_without_roster_mapping",
+      "task_plan": "PUBFIG-2, PUBFIG-4, PUBFIG-9"
     }
   ],
-  "php_command": "cd apps/prototype-wp-alt-context && composer test -- --filter DescribeMediaServicePflTest"
+  "php_command": "cd apps/prototype-wp-alt-context && composer test -- --filter 'PflTest'"
 }

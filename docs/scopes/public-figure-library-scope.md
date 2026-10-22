@@ -2,7 +2,7 @@
 
 **Intake**: 2026-10-21 · task MAINT-public-figure-gallery-scope-20261021 (to be rehomed to PUBFIG-1) · answers recorded in handoff MCP
 **Canon**: heuristics canon v0.26.2
-**Status**: DRAFT, revised after planning review PR1 (2026-10-21). Phase 1 is decided by the operator and gated on counsel (§ MVP scope): politicians and living celebrities (athletes included), with auto-name. § Implementation task plans is the input for drafting PUBFIG-2..10.
+**Status**: DRAFT, revised after planning review PR1 (2026-10-21), then revised for **public figures on by default** (operator direction 2026-10-21, § How it would work item 2). Phase 1 is decided by the operator and its release is gated on counsel (§ MVP scope): politicians and living celebrities (athletes included), with auto-name. Every operator call is decided (§ Operator calls). § Implementation task plans is the input for drafting PUBFIG-2..11.
 
 ## Problem
 
@@ -12,14 +12,14 @@ News and education tenants keep hand-labelling the same recurring people: politi
 
 - **E15-29 blocker 7.** `infra/oci/demo/seed/README.md` requires public-domain or generated faces for the public demo. celebs01 (111 figures) is real-celebrity photography of unknown licence. **celebs01 must not seed the PFL.**
 - **VLM-6 decision 2308.** Operator policy: "private personal images = LOCAL, UNPUBLISHED ONLY; public figures = the only publishable identity corpus." The role split already exists.
-- **DEMO-UX-1-D-10 (10025, deferred).** Identifiable celebrities enrolled in a face-recognition demo without consent conflicts with the product's ethics positioning (HAI-05, HAI-09). This was raised and left undecided. P3 (decision 18981) answers it by construction, not by consent. Unlike celebs01, P3 is licensed, targeted, opt-out capable (tombstone), tenant opt-in, and auto-names only in `public_role` context. The public demo stays on public-domain or generated faces (E15-29 blocker 7).
+- **DEMO-UX-1-D-10 (10025, deferred).** Identifiable celebrities enrolled in a face-recognition demo without consent conflicts with the product's ethics positioning (HAI-05, HAI-09). This was raised and left undecided. P3 (decision 18981) answers it by construction, not by consent. Unlike celebs01, P3 is licensed, targeted, opt-out capable for the subject (tombstone) and for the tenant (one switch), and auto-names only in `public_role` context. The public demo stays on public-domain or generated faces (E15-29 blocker 7).
 - **GUIDE2IMG-1-LIC-01 (13745).** An unlicensed press photo of public figures was published as an accepted risk. That is the same failure class at small scale.
 - **SECREV-1 (2734).** `acx_description_allow_person_names` defaults to false. `SettingsForm.tsx` promises roster-only names (MAINT-CAPTIONCTX-DEBT finding 18947).
 - **FIR scope** (`docs/scopes/commercial-face-identity-replacement.md`). The prod embedder, InsightFace buffalo_l, has non-commercial weights. The in-house commercial pipeline is still dev-only.
 - **Code seams** (verified 2026-10-21; § Implementation task plans lists every change site).
   - `recognition/application/suggestions/roster_candidates.py::list_roster_candidates` ranks labelled roster clusters against a probe, in memory, on demand. Its only caller is `recognition/interface_adapters/http/routers/suggestions.py::get_roster_candidates`. Its `SimilarityBand` is "never a calibrated probability".
   - `embedding_space.py::models_are_same_space` already fails closed across models (FIR23-01).
-  - `recognition/infrastructure/repositories/tenant_entitlement_repository.py::SqlAlchemyTenantEntitlementRepository` gates the entitlement. The tenant's opt-in choices are tenant settings, not entitlement.
+  - `recognition/infrastructure/repositories/tenant_entitlement_repository.py::SqlAlchemyTenantEntitlementRepository` gates the entitlement. The tenant's PFL choices (the switch, tiers, auto-name) are tenant settings, not entitlement.
   - Naming is gated at two sites. Backend: `scene/application/identity_merge/join.py::load_confirmed_faces` (confirmed, non-`cluster-` label) and `scene/application/identity_merge/policy.py::resolve_naming_allowed` (no `roster_id` means never nameable). Plugin: `DescribeMediaService::build_identity_context` (a face without a confirmed person name counts as machine-only).
 - **Market.**
   - AWS Rekognition `RecognizeCelebrities` is open per call. Its legal instrument is contractual, not statutory: the AWS Biometric Notice and Consent Terms make the customer give notice and obtain consent "on behalf of AWS". AWS has still been sued under BIPA over Rekognition (Dorian v. AWS).
@@ -35,26 +35,34 @@ News and education tenants keep hand-labelling the same recurring people: politi
    - `pf_reference`: source, licence, attribution, sha256, **capture basis** (MLDATA-14), retention expiry (MLDATA-15).
    - `pf_template`: vector, `embedding_model`, `gallery_version`.
    - One gallery per embedding contract (EMB-01). Versions are pinned, and the gallery is rebuilt when the contract changes (EMB-05, IDX-02).
-2. **Off by default** (SECD-12). Turning it on needs an entitlement plus a tenant admin opt-in.
-   - Entitlement: `SqlAlchemyTenantEntitlementRepository`. Opt-in: a new tenant table `tenant_pfl_settings(tenant_id, enabled_tiers, autoname_tiers, purpose_statement, updated_by, updated_at)`.
-   - The admin picks enabled tiers and records a purpose/necessity statement (SECD-13).
-   - The tenant gets a subject-facing notice line for their privacy page (SECD-11).
+2. **Public figures on by default; private recognition stays opt-in** (operator direction 2026-10-21: the market now names public figures by default). The canon reading is a partition by object and by sequence, recorded as a contextual judgment (§ Canon validation, SECD-12 row):
+   - **Object: private faces keep SECD-12.** The tenant roster, clustering and `acx_recognition_enabled` stay off until the tenant opts in (`apps/prototype-wp-alt-context/src/settings/class-recognition-policy.php::RecognitionPolicy::DEFAULT` stays `false`).
+   - **Object: PFL tiers default on.** SECD-12 binds "when choice is product-real". The operator ruled that a product without public-figure names is disqualified (decisions 18949, 18981), so an off default is not a real choice for this object. The tenant opt-in never protected the pictured person, who has no choice either way. The person's protections are kept: tier bounds (MLDATA-16), subject opt-out (item 6), the `public_role` gate (item 5), the subject notice and audit (SECD-11), and editor review before publish (SECD-14).
+   - **Sequence: the system default stays deny** (SECD-05). A server setting `PFL_ENABLED` defaults to `false` and stays off until the release gate passes (§ Implementation task plans). Every failure path fails to no PFL name: the flag is off, the gallery is unreachable, the version is stale, or the jurisdiction is held or unknown.
+   - **Surface: held jurisdictions stay off.** `tenant_pfl_settings.jurisdiction` is an ISO 3166-2 code captured at onboarding (e.g. `US-IL`, `CA-QC`). A config list `pfl_held_jurisdictions` turns PFL off there, and an unknown jurisdiction counts as held. The list starts with every jurisdiction that has a biometric statute or special-category regime: US-IL, US-TX, US-WA, EU/EEA, UK and CA-QC. It shrinks only on a counsel answer (§ Operator calls, call 4).
+   - **Tenant control.** `tenant_pfl_settings(tenant_id, jurisdiction, enabled_tiers, autoname_tiers, updated_by, updated_at)`. With no row, every released tier is enabled with auto-name on. One switch turns PFL off and is as easy as turning it on (SECD-08), with per-tier detail behind it. The first PFL-named draft a tenant sees carries a one-time notice naming the switch, so turning it off is never a hunt.
+   - **Entitlement.** Every plan, trial included, grants PFL by default through `SqlAlchemyTenantEntitlementRepository`. It is bundled, never an upsell (§ Not doing).
+   - **Purpose (SECD-13).** The vendor sets the default, so the vendor holds the necessity record in the DPIA. Tenant terms bind use to captioning the tenant's own library (MLDATA-16). There is no per-tenant purpose statement.
+   - **Notice (SECD-11).** The vendor publishes a subject-facing notice page: the tiers, the sources, and an opt-out request route that feeds tombstoning (item 6). Tenants also get a notice line for their privacy page.
+   - **Probe retention is zero when private recognition is off** (MLDATA-15). Describe then detects and embeds faces in-request through `recognition/application/embedding/detector.py::FaceDetectorProtocol.detect`, matches the PFL, and discards every probe vector. It writes no `media_identity` row. The curate paths in item 3 need clusters, so they run only for tenants with private recognition on.
 3. **Matching** is one shared core, `list_pfl_candidates(tenant_id, probe, embedding_model)` over `PflGalleryRepository`. Three callers use it (PR1-01).
    - The core applies, in order:
-     1. Same-space templates only (`models_are_same_space`).
-     2. The active `gallery_version` only.
-     3. Tier ∈ the tenant's `enabled_tiers`.
-     4. Not minor-flagged, tombstoned or denylisted.
-     5. Licence and capture basis non-null.
-     6. Not suppressed for the tenant.
+     1. `PFL_ENABLED` is on, the tenant is entitled, and its jurisdiction is neither held nor unknown (item 2).
+     2. Same-space templates only (`models_are_same_space`).
+     3. The active `gallery_version` only.
+     4. Tier is released (criterion 12 passed) and ∈ the tenant's `enabled_tiers` (default: every released tier).
+     5. Not minor-flagged, tombstoned or denylisted.
+     6. Licence and capture basis non-null.
+     7. Not suppressed for the tenant.
    - It returns capped bands. Below the floor the result is unknown (CAL-02). The tenant roster wins at equal band.
    - **Curate, on demand.** `get_roster_candidates` merges PFL candidates into its response with `source: pfl` and `pf_qid`.
    - **Curate, proactive.** A post-clustering job after `cluster_unclustered_identities` writes one existing `name_suggestions` row per (cluster, QID), with `source='pfl'`, `pf_qid` and `suggested_name` as the canonical display name for the review UI. The tenant sees suggestions without asking.
    - **Describe, per image.** After the VLM returns `setting`, the naming step calls the core for each unlinked detected face. This is the only place auto-name can be decided, because the context gate needs `setting`.
-   - **Auto-name (operator decision 2026-10-21, decision 18958).** A strong-band match names the person with no acceptance step, but only when all of these hold: the tenant enabled auto-name for that tier; the tier has calibration evidence (criterion 12); the QID is not suppressed for the tenant; and this image's `setting` is `public_role`. Otherwise the match is a suggestion (review reason `pfl_suggestion`). The strong-band ceiling is set for precision (AIPX-07) from FPIR at the served gallery size on news imagery, not from 1:1 FMR.
+   - **Auto-name (operator decision 2026-10-21, decision 18958).** A strong-band match names the person with no acceptance step, but only when all of these hold: auto-name is on for that tier (the default; the tenant can turn it off); the tier has calibration evidence (criterion 12); the QID is not suppressed for the tenant; and this image's `setting` is `public_role`. Otherwise the match is a suggestion (review reason `pfl_suggestion`). The strong-band ceiling is set for precision (AIPX-07) from FPIR at the served gallery size on news imagery, not from 1:1 FMR (call 6).
+   - **An auto-name lands only in a draft.** The plugin has no publish-without-review path: an editor applies every description. That apply step is the human review SECD-14 requires for a high-harm false match, so the draft marks each PFL name with its source. A future no-review publish path must not carry PFL names.
    - An auto-name is computed per describe and **persists nothing to identity tables** (PR1-08). It records `pfl_auto:<QID>@<gallery_version>` and its band in `naming_provenance`. A later image is decided again on its own context, and a `gallery_version` change cannot leave a stale link.
    - **"Not this person"** writes `pfl_name_suppressions(tenant_id, qid, cluster_id NULL|id)` (PR1-03). A row with no cluster unnames the QID across the tenant; a row with a cluster stops that cluster being suggested or auto-named as the QID. `NamingPolicy` gains `suppressed_qids`, and the matching core filters on both forms. It is written by `reject_name_suggestion` (source `pfl`) and by the describe review action.
-4. **Link-on-accept (revised 2026-10-21, decision 18960).** A human accept is the only way a tenant cluster links to a QID. That covers accepting a suggestion, and accepting the name on an auto-named face.
+4. **Link-on-accept (revised 2026-10-21, decision 18960).** A human accept is the only way a tenant cluster links to a QID. That covers accepting a suggestion, and accepting the name on an auto-named face. With private recognition off there is no cluster to link, so accepting an auto-name only keeps it in that draft.
    - `accept_name_suggestion` (source `pfl`) sets `IdentityCluster.pf_qid`, `user_confirmed = true` and `confirmation_source = ConfirmationSource.PFL_ACCEPT`. `label` stays NULL. A tenant's own non-PFL label is never overwritten; that accept is refused.
    - The tenant keeps its face membership, which is its own data, so the curated-accuracy flywheel still accrues to the tenant. The name string is never copied into the tenant roster.
    - Nothing a tenant does writes to PFL tables (PROV-11, PROV-12).
@@ -90,12 +98,14 @@ News and education tenants keep hand-labelling the same recurring people: politi
                      │                                      unlinked face → core → strong band
      IdentityCluster.pf_qid (label NULL,                      + gate passes → pfl_auto (provenance only)
      PFL_ACCEPT); reject → pfl_name_suppressions            every PFL name needs setting=public_role
+                                                            recognition off → in-request probe, vectors discarded
                                                             → merge_identities → named_draft
 ```
 
 - **The gallery is a build artifact, not live tables.** An offline pipeline produces `pfl-<embedding_model>-<version>`: identity manifest, provenance, vectors and a sha256. A loader inserts it into a new `gallery_version` and flips `active_version`. Model change means re-embed from stored reference provenance (EMB-01, EMB-05, IDX-02).
 - **Isolation is a grant, not discipline.** The serving DB role has SELECT only on `pfl`; tenant code paths cannot write it (PFL-SC-07). Takedown deletes the rows immediately (pgvector HNSW supports deletes) and adds the QID to a denylist the query also checks (PFL-SC-09). Tenant-side PFL state is tenant tables only: `IdentityCluster.pf_qid`, `name_suggestions` rows, `pfl_name_suppressions` and `tenant_pfl_settings`.
 - **Matching runs where the data is (PR1-01).** Every path reuses embeddings already stored on `media_identity` (`MediaIdentity.embedding`, `embedding_model`). Describe reads them by the `identity_id`s that `join.py::load_detected_faces` already returns. Each call is one HNSW query per face, milliseconds, with no extra GPU. Nothing about a match is stored at describe time.
+  - Exception: a tenant with private recognition off has no stored embeddings. Describe then runs the shared face pipeline in-request (`FaceDetectorProtocol.detect`, admitted through `face_pipeline_adapter.py::FacePipelineAdmissionGate`) and discards the vectors (§ How it would work, item 2). That costs one detect-and-embed per described image; criterion 20 proves nothing persists.
 - **Two naming sites change together (PR1-02, PR1-05).** The E20-10 guardrail ("machine-only faces are never named") is enforced in the backend and in the plugin. Both change in the same task plan, PUBFIG-6, or one side vetoes or mis-flags what the other names:
   - Backend: `load_confirmed_faces` loads a face confirmed with `pf_qid` (label NULL) and resolves its name from the registry for the request language. `ConfirmedFace` gains `pf_qid`. `resolve_naming_allowed` gains a QID branch: nameable when `agreement_enabled`, the QID is not in `suppressed_qids`, and `setting == public_role`.
   - Plugin: the cluster projection selects `pf_qid` (`ClusterProjectionWriter::upsert_projection_cluster`, `IdentityMembersReadRepository::list_for_media_ids`). `build_identity_context` counts a `pf_qid` face as neither named nor machine-only, so it raises no `identity_unconfirmed`. It adds no item to `IdentityContext.identities`, whose `name` is required. The backend realizes PFL names after the VLM call, through `named_draft`.
@@ -124,7 +134,7 @@ News and education tenants keep hand-labelling the same recurring people: politi
   - Pageviews are stored per Wikimedia project (en, fr, es…), so regional notability (fr.wikipedia for Quebec) is a config change.
 - **Auto-name (decided 2026-10-21).** Strong-band matches that pass the auto-name gate (§ How it would work, item 3) are named for that describe only, with `pfl_auto` provenance. No link is written (PR1-08). This is an explicit, scoped change to the E20-10 guardrail ("machine-only faces are never named", the `DescribeMediaService` class docblock) and to the SEC-01 describe path, at both naming sites.
 - **Context gate.** The describe VLM call also returns `setting: public_role | private | unclear`: a new field on the VLM JSON contract in `gpu_remote_adapter.py::_SYSTEM_PROMPT`, carried on `scene/application/description_adapter.py::AdapterResult`. A missing or invalid value is `unclear`. Only `public_role` allows any PFL name, auto or linked. `private` and `unclear` leave the face generic with a review reason. Example: the Tribeca red carpet allows auto-name; the Coachella noodles photo does not. The gate carries the most weight for P3: a performance, red carpet, premiere, match or press event is the public role, while street, family, beach and home photos are private even for a celebrity (Campbell).
-- **Legal gate before Phase 1.** BIPA has no public-figure exception, and GDPR Art. 9 applies to templates of public figures. Counsel decides the population and geography bounds before any template is built. For P3, counsel also covers the right of publicity (naming in alt text is not endorsement or commercial use, but confirm per jurisdiction).
+- **Legal gate before release.** BIPA has no public-figure exception, and GDPR Art. 9 applies to templates of public figures. Counsel decides the population bounds and the held-jurisdiction list before `PFL_ENABLED` flips (§ Operator calls, call 3). Building templates for the calibration benchmark is part of that question. For P3, counsel also covers the right of publicity (naming in alt text is not endorsement or commercial use, but confirm per jurisdiction).
 
 ## The public/private line (distilled corpus)
 
@@ -154,7 +164,7 @@ The core distinction is that **there are two separate questions, and fame answer
 | --- | --- | --- |
 | Who (inclusion tier) | Deceased historical figures. **Politicians in the current news cycle** (operator decision 2026-10-21): (P1) current national heads of state/government, cabinet ministers, national legislators, governors/premiers and big-city mayors in supported countries, via Wikidata P39 with no end date; (P2) any adult current or former officeholder or declared candidate whose trailing-30-day news salience is above a threshold, e.g. Trudeau, a former PM who is still in the news. **Living celebrities** (operator decision 2026-10-21, decision 18981, table stakes): (P3) living adults famous through a voluntary public career (entertainment, music, film/TV, sport, arts, media, business) above a notability threshold, e.g. Katy Perry. Notability is Wikimedia pageviews over a trailing 12 months (decision 18983); the threshold value comes from the call-6 FPIR budget. Athletes above the threshold are P3 (decision 18983); team rosters cover the rest. | Minors, including child performers. Relatives of public figures without independent notability. Involuntary or one-time newsmakers (victims, bystanders, viral subjects). Anyone who opted out. |
 | What (image context) | The image depicts the public role: podium, chamber, official event, performance, archival record. | Family, medical, home, holiday, religious or recovery settings (Campbell, von Hannover), even if the person is famous. |
-| Why (tenant purpose) | News, education, archive captioning of the tenant's own media library, with a recorded purpose (SECD-13, MLDATA-16). | People search, open "who is this" lookups, marketing, monitoring. |
+| Why (tenant purpose) | News, education, archive captioning of the tenant's own media library, with use bound by tenant terms and the vendor's recorded necessity case (SECD-13, MLDATA-16). | People search, open "who is this" lookups, marketing, monitoring. |
 | When (decay) | Role is current, salience is current (P2 enters on threshold and exits after 90 days below it), notability is current (P3 is re-checked at each editorial review date), or historical and deceased. | Limited-purpose fame that has faded. A weekly salience job removes P2 identities that have exited and deletes their templates (data minimisation). The name entry and existing tenant QID links stay. |
 
 ## GTM fit verdict
@@ -165,7 +175,7 @@ The core distinction is that **there are two separate questions, and fame answer
 
 - **Against.**
   - The launch ICP is professors working on lecture diagrams. `pricing-2026-10-08/strategy.md` says recognition "is not the central value proposition" there.
-  - The same doc requires identity to stay "optional, scoped to a customer-authorized roster, and subject to review". A vendor gallery is not customer-authorized unless the tenant explicitly opts in to scoped tiers.
+  - The same doc required identity to stay "optional, scoped to a customer-authorized roster, and subject to review". Default-on PFL keeps it optional (one switch) and subject to review (editor apply), but it is vendor-authorized, not customer-authorized. This branch amends that sentence (`strategy.md` § recognition) so the policy and the product never contradict (CLM-03).
   - A shared gallery is a commodity that AWS sells per call, not the moat. The moat in the launch plan (§2) is tenant-curated labels.
   - The ~$83/mo time-saved math does not carry a standalone add-on, so this must be bundled, not upsold.
 - **For.**
@@ -175,7 +185,7 @@ The core distinction is that **there are two separate questions, and fame answer
 - **Positioning risk.**
   - "Celebrity recognition" invites the Clearview question that DEMO-UX-1-D-10 already raised.
   - Copy must say "suggests names from a licensed public-figure library for your review", never "identifies anyone" (CLM-01, CLM-02).
-- **Validate before inventory.** Curating and licensing the gallery is inventory. Micro-test the offer and land 2–3 same-segment reference customers first (GTM-02, GTM-14, CARD-06).
+- **Validate before inventory.** Phase 1 buys no inventory: references come from Commons and official portraits (call 2). Bought feeds wait until 2–3 same-segment reference customers name a gap (GTM-02, GTM-14, CARD-06).
 
 ## Alternatives considered (SECD-13)
 
@@ -200,25 +210,26 @@ Reordered 2026-10-21 (decision 18958): politicians are the parity gap, so they c
 - **Phase 1. Public Figures Library: politicians (P1 + P2) and living celebrities (P3), with auto-name.**
   - Living current and former officeholders and candidates in the news cycle, built from official portraits and licensed sources.
   - Living celebrities above the notability threshold (decision 18981). This is table stakes: without it the Tribeca photo names Trudeau and leaves Perry generic, while free tools name both.
-  - Restricted to verified news and education tenants. Auto-name is per tenant and per tier, behind calibration evidence.
-  - Gated on counsel memos: EU AI Act Art. 6 classification (the Commission lists "facial recognition for media archives" under Annex III 1(a)), a DPIA, BIPA/CUBI geo-policy, Quebec biometric-database disclosure, and right of publicity for P3.
+  - On by default for every tenant in a cleared jurisdiction, on every plan including trial. The tenant can turn it off (§ How it would work, item 2). A tier serves only after its calibration evidence passes (criterion 12).
+  - Release gated on counsel memos: EU AI Act Art. 6 classification (the Commission lists "facial recognition for media archives" under Annex III 1(a)), a DPIA, BIPA/CUBI geo-policy, Quebec biometric-database disclosure, and right of publicity for P3.
 - **Phase 2. Historical Figures Library.** Deceased persons, public-domain references, curriculum and archive identities. Same pipeline; lower legal exposure (GDPR Recital 27).
 
 ## Assumptions
 
 - The commercial embedding model will be the production space before any PFL ships. Shipping a commercial gallery on buffalo_l weights is the risk to avoid (CARD-26).
 - Wikidata QID is the identity key. Tier assignment is a human editorial decision recorded per identity with a review date.
-- The tenant is the controller of its own media and its QID links. The vendor is the controller of the PFL and the name registry.
+- The tenant is the controller of its own media and its QID links. The vendor is the controller of the PFL, the name registry and the default.
+- Onboarding can capture a tenant jurisdiction (ISO 3166-2), from the billing address or an admin answer. Until it does, the tenant counts as held.
 
 ## Success criteria
 
 Each criterion maps to an eval case in `public-figure-library-evals.json`.
 
-1. Default-off. Without entitlement and opt-in, zero PFL candidates are returned.
+1. Default-on, fail-safe. Zero PFL candidates are returned when `PFL_ENABLED` is off, the tenant is not entitled, its jurisdiction is held or unknown, or the tenant switched PFL off. Otherwise a tenant with no settings row gets candidates from every released tier, and turning the switch off takes effect on the next request.
 2. Same-space. Mismatched `embedding_model` yields zero PFL candidates, fail-closed.
 3. A null or unrecognised capture basis or licence is never served.
 4. Out-of-tier, minor-flagged or opted-out identities are never served.
-5. Below the floor returns unknown. The possible band is suggestion-only. The strong band auto-names only when the auto-name gate passes (tenant setting, tier enabled, tier calibrated, `public_role` context); otherwise it is a suggestion.
+5. Below the floor returns unknown. The possible band is suggestion-only. The strong band auto-names only when the auto-name gate passes (auto-name on for the tier, tier calibrated, QID not suppressed, `public_role` context); otherwise it is a suggestion.
 6. The tenant roster outranks the PFL at equal band, and a PFL name never overwrites a tenant's own (non-PFL) person label.
 7. No tenant probe, accept or edit writes to PFL tables, and nothing crosses tenants.
 8. Link-on-accept stores the QID and provenance on the tenant cluster, never a name string.
@@ -233,6 +244,7 @@ Each criterion maps to an eval case in `public-figure-library-evals.json`.
 17. Names resolve from the registry for the description language (exact locale, then base language, then canonical). A registry edit changes the next description for every linked tenant, including on a describe-cache hit.
 18. Adding a language needs only registry rows and a `supported_languages` entry; no code or schema change. A language below full verified coverage cannot be enabled, and a disabled language resolves to `en`.
 19. P3 celebrity tier: a living adult, athletes included, above the 12-month Wikimedia pageview threshold with a voluntary public career is served. Minors, relatives without independent notability, and involuntary newsmakers are never served, even above the threshold. A P3 auto-name requires `public_role` context like every tier.
+20. With private recognition off and PFL on, describe can still auto-name a public figure, but it writes no `media_identity` row and persists no probe vector.
 
 ## Not doing
 
@@ -243,46 +255,82 @@ Each criterion maps to an eval case in `public-figure-library-evals.json`.
 - Auto-naming below the strong band, in `private`/`unclear` context, or for an uncalibrated tier. Confidence shown as probability.
 - Writing tenant data back into the global gallery, or cross-tenant learning.
 - Seeding from celebs01 or any scraped or unlicensed set.
-- Pricing it as a standalone recognition upsell.
+- Pricing it as a standalone recognition upsell, or gating it to a higher plan.
+- PFL in a held or unknown jurisdiction, or before `PFL_ENABLED` flips.
+- Persisting probe vectors for a tenant whose private recognition is off.
+- Any publish path that carries a PFL name without an editor applying the draft.
 - Video.
 
 ## Canon validation (v0.26.2)
 
 | ID | Rule | Verdict for this design |
 | --- | --- | --- |
-| SECD-12 | Biometric opt-in default | Off by default plus a tenant opt-in (§2). |
-| SECD-13 | Necessity-proportionality gate | Purpose statement, alternatives (§Alternatives), tiered scope, review date. |
-| SECD-11 | Compulsory-visibility notice | Tenant notice line plus PFL query audit. |
+| SECD-12 | Biometric opt-in default | Partitioned by object (§ How it would work, item 2). Private faces stay opt-in. PFL tiers default on, a contextual judgment: the rule binds "when choice is product-real", and the operator ruled an off default disqualifies the product (decisions 18949, 18981). Counter-case: the pictured person gets no choice either way, so their protections (tier bounds, opt-out, context gate, notice, editor review) are all kept. |
+| SECD-05 | Fail-safe defaults | `PFL_ENABLED` defaults to false. Held or unknown jurisdiction, stale version or unreachable gallery all mean no PFL name. |
+| SECD-08 | Make the safe path the easy path | One switch turns PFL off. A first-run notice on the first PFL-named draft names it. |
+| SECD-14 | FP/FN harm polarity for face decisions | FPIR bound per tier at the served N (call 6). An auto-name lands only in a draft an editor applies. |
+| SECD-13 | Necessity-proportionality gate | Vendor DPIA necessity record (the vendor sets the default), alternatives (§Alternatives), tiered scope, review date. Tenant terms bind purpose. |
+| SECD-11 | Compulsory-visibility notice | Vendor subject notice page with an opt-out route, tenant notice line, PFL query audit. |
 | MLDATA-14 | Capture basis is a column | `pf_reference.capture_basis`. Null is refused on the match path. |
 | MLDATA-15 | Every identity store carries a retention maximum | Expiry plus disposal on `pf_reference`. |
 | MLDATA-16 | Bound face-search scope | Tiers plus the "Who" axis define the population. P3 is bounded by a notability threshold and the voluntary-career test, not by occupation lists alone. |
 | MLDATA-17 | Removing names does not de-identify a face | Tombstone drops templates, not just names. |
-| PROV-10, PROV-11, PROV-12 | Deletion reaches rebuilt artifacts; a derived copy inherits access controls; consumers are scoped to purpose | No write-back. Link-on-accept. Purpose bound per tenant. |
+| PROV-10, PROV-11, PROV-12 | Deletion reaches rebuilt artifacts; a derived copy inherits access controls; consumers are scoped to purpose | No write-back. Link-on-accept. Purpose bound by tenant terms. |
 | DATA-14, REF-45 | No dual writes; one authored source, rendered per consumer | One name registry. Tenants hold QID links and render per language. |
 | FM-14 | Literary warrant before admit | Every localized form is editor-verified; Wikidata labels only seed it. |
 | EMB-01, EMB-05, IDX-02 | One space, pinned versions, rebuild on contract change | One gallery per model contract, versioned. |
 | CAL-02, CARD-03, AIPX-07 | Unknown is valid; precision-first | Capped bands, abstain below the floor. |
+| HAI-14 | Disclose the synthetic hand | Each PFL name in a draft carries its source mark until the editor applies it. |
 | HITL-14 | Familiar is not unfamiliar | Reviewer guidance: familiarity is not verification. |
 | FAIR-07, FAIR-08, COL-10 | Subgroup monitoring; know your algorithm; inclusive grade test | Success criterion 12 before any tier goes on. |
 | ATTRIB-02, ATTRIB-05 | Captions explain or falsify identity; honour source identity decisions | Naming gate. Metadata-first Phase 0. |
 | CLM-01, CLM-02, CLM-03 | Claims are products; cost asymmetry; the policy is a contract | "Suggests from a licensed library" copy; the settings promise holds. |
 | CARD-26 | Licence provenance is transitive | Per-reference licence row. No buffalo_l commercial gallery. |
-| GTM-02, GTM-14, CARD-06 | Micro-test the offer; reference customers first; evidence before commitment | Calibration evidence per tier before auto-name is enabled for it. |
-| STRAT-03 | Circle of competence | Legal questions go to counsel (§8), not agent judgement. |
+| GTM-02, GTM-14, CARD-06 | Micro-test the offer; reference customers first; evidence before commitment | Calibration evidence per tier before auto-name is enabled for it. No agency-feed contract before demand is measured (call 2). |
+| PROD-15 | HPC triage | Table stakes is built even without margin. Bundled in every plan. |
+| FM-12 | Concept ID, not preferred string | P2 salience is keyed by QID through Wikipedia sitelinks, not by name strings (call 5). |
+| RLSE-02 | Gates are not suggestions | Market urgency does not move the release gate. |
+| RLSE-09 | Plain-English expert gate | Counsel gets yes/no questions with quoted strings (call 3). |
+| STRAT-03 | Circle of competence | Legal questions go to counsel (call 3), not agent judgement. |
 
-**Canon gap:** no row distinguishes public from private figures, or biometric processing from publication. Candidate row for the maintainer: "Fame licenses publication, not templating", sourced from Berle ch. 7.
+**Canon gaps** (for the maintainer):
+- No row distinguishes public from private figures, or biometric processing from publication. Candidate row: "Fame licenses publication, not templating", sourced from Berle ch. 7.
+- RLSE-09 glosses RLSE-02 as "CONDITIONAL is red: proximity makes the shipping team the worst judge". RLSE-02's row says "Gates are not suggestions". No row states the reviewer-independence rule the gloss describes.
 
-## Open operator calls
+## Operator calls (all decided 2026-10-21)
 
-1. ~~Pilot segment~~ Decided 2026-10-21: news-cycle politicians first (decision 18958).
-2. The gallery licence source for Phase 1: official portraits only, or a contracted agency feed. P3 has no official portraits, so it needs Commons CC/PD or an agency feed whose licence permits biometric templating.
-3. Engage EU/US/CA privacy counsel now; it gates Phase 1.
-4. Launch jurisdictions, and whether to geo-gate IL/TX.
-5. P3 half decided 2026-10-21: notability is Wikimedia pageviews over a trailing 12 months, and athletes are included (decision 18983). The threshold value is bound to call 6. Still open: the P2 salience source and threshold. Recommended: Wikimedia pageviews over a trailing 30 days, one pipeline for both tiers. GDELT news mentions are the alternative.
-6. The FPIR bound that sets the auto-name ceiling per tier. P3 enlarges the served gallery, so the ceiling is computed at the served N.
-7. ~~Whether living entertainers (Perry) get a tier~~ Decided 2026-10-21: living celebrities are P3 in Phase 1, table stakes (decision 18981).
-8. ~~Launch languages~~ Decided 2026-10-21: English only, with i18n built in (decision 18963).
-9. Whether a tenant may override a language form for its style guide (e.g. "León XIV" without "Papa"). Recommended: no in Phase 1. If allowed, overrides are tenant-side rows keyed by (tenant, QID, language) and never write the registry.
+1. **Pilot segment.** News-cycle politicians first (decision 18958).
+2. **Gallery licence source.** No agency feed in Phase 1. Buying a feed before demand is measured is inventory before a micro-test (GTM-02).
+   - P1 and P2: official portraits whose licence permits reuse (US federal works are public domain; any other source records its licence per reference), plus Commons CC0, PD, CC BY and CC BY-SA images via Wikidata P18.
+   - P3: Commons CC0, PD, CC BY and CC BY-SA only.
+   - Disconfirmer (STRAT-02): a P3 identity serves only with 3 or more verified licensed references. Identities below that drop out of the served N. An agency feed is reconsidered only when paying reference customers name a gap (GTM-14).
+   - Whether a CC licence permits deriving a template is counsel question Q5.
+3. **Counsel.** Engage EU, US and CA privacy counsel now. Counsel gates the release (`PFL_ENABLED`) and the templates PUBFIG-10 builds. It does not gate task-plan drafting or the RED and implementation lanes, which ship dark behind the flag. The brief follows RLSE-09: quoted strings, yes/no answers, and a "not your problem" section covering the engineering mechanisms.
+   - Q1. May AltContext build and store face templates of the P1–P3 population (the "Who" axis), from the call-2 sources, for captioning a tenant's own library, in each launch jurisdiction? Yes/no per jurisdiction.
+   - Q2. Per jurisdiction: is PFL lawful on by default with a one-switch off, lawful only after a tenant opt-in, or barred?
+   - Q3. Do these strings meet the notice duties? Tenant: "AltContext names public figures from its licensed public-figure library. You can turn this off in Settings." Subject: the vendor notice page, including Quebec's biometric-database disclosure duty. Yes/no each.
+   - Q4. Does naming a P3 person in alt text, in `public_role` context, create right-of-publicity exposure? Yes/no per jurisdiction.
+   - Q5. Do CC BY and CC BY-SA permit deriving a biometric template from the image? Yes/no.
+   - Q6. Asked only before EU/EEA leaves the held list: does the PFL fall under EU AI Act Annex III 1(a)? Yes/no.
+4. **Launch jurisdictions.** Launch only where counsel answers Q1 yes and Q2 "on by default". The starting held list is US-IL, US-TX, US-WA, EU/EEA, UK and CA-QC, and an unknown jurisdiction counts as held (SECD-05). The list is config (`pfl_held_jurisdictions`), so a counsel answer is a config change. Where Q2 is "opt-in", the tenant switch starts off there.
+5. **Salience and notability sources.** One pipeline, Wikimedia pageviews, keyed by QID through Wikipedia sitelinks (FM-12). GDELT keys on name strings and needs entity resolution, so it is not used.
+   - P2: trailing-30-day pageviews. Entry at or above the threshold, exit after 90 days below it.
+   - P3: trailing-12-month pageviews (decision 18983).
+   - Both thresholds are set by the call-6 N budget, per Wikimedia project.
+6. **FPIR bound.** This is a contextual judgment; canon requires a stated bound (SECD-14) but sets no number.
+   - **Strong band (auto-name):** FPIR ≤ 1×10⁻³ per non-mated probe at the served N. It uses the 95% upper bound, on news imagery, and is checked per skin-tone slice; the worst slice sets the bound (FAIR-07).
+   - **Sample size:** at least 3,000 non-mated probes per slice (rule of three: 0 false matches in 3,000 bounds FPIR at 1×10⁻³).
+   - **Suggestion band:** FPIR ≤ 1×10⁻² at the same N.
+   - If a tier misses the bound, its served N shrinks by notability rank until it passes. FNIR is reported but not bounded, because a miss leaves the face generic (AIPX-07, CAL-02).
+7. **Living entertainers.** Living celebrities are P3 in Phase 1, as table stakes (decision 18981).
+8. **Launch languages.** English only, with i18n built in (decision 18963).
+9. **Tenant language-form override.** Not in Phase 1. One authored source renders per consumer (DATA-14, REF-45). A style-guide variant is a registry correction request.
+10. **Default posture.** Public figures are on by default and private recognition stays opt-in (§ How it would work, item 2).
+
+**Operator actions.** These are actions, not open decisions:
+- Engage counsel with Q1–Q6.
+- Run the curation workstream (§ Dispatch).
+- Publish the vendor notice page before `PFL_ENABLED` flips.
 
 ## Implementation task plans
 
@@ -297,13 +345,14 @@ Each plan below becomes one `docs/tasks/` plan under PUBFIG-1. Paths are relativ
 
 PUBFIG-10 waits for curation. PUBFIG-11 runs in parallel throughout.
 
-**Release gate:** PFL stays off for every tenant until PUBFIG-6 and PUBFIG-7 are both merged, criterion 12 passes for the tier, and the counsel memos exist. Default-off (criterion 1) makes intermediate merges safe.
+**Release gate:** `PFL_ENABLED` stays `false` until PUBFIG-6 and PUBFIG-7 are both merged, criterion 12 passes for the tier, counsel has answered Q1–Q5 for the launch jurisdictions, and the vendor notice page is live. The flag's false default (criterion 1) makes intermediate merges safe. Market pressure does not move this gate (RLSE-02).
 
 ### PUBFIG-2. Gallery schema, enums, repository, artifact loader
 
 - **Change sites.**
   - New `db/models/pfl.py`: schema `pfl` with `PfIdentity`, `PfReference`, `PfTemplate`, `PfIdentityName`, `PfDenylist`, `PfGalleryVersion` (`active` flag), and per-project pageview columns on `PfIdentity`.
-  - New `db/models/pfl_tenant.py`: `TenantPflSettings` and `PflNameSuppression`.
+  - New `db/models/pfl_tenant.py`: `TenantPflSettings` (`jurisdiction`, `enabled_tiers`, `autoname_tiers`; no row means the defaults in § How it would work item 2) and `PflNameSuppression`.
+  - `recognition/config/settings.py::RecognitionSettings`: `pfl_enabled` (env `PFL_ENABLED`, default `false`) and `pfl_held_jurisdictions` (the call-4 list), validated at load (rg-008).
   - `db/models/identity.py::IdentityCluster`: add `pf_qid` (nullable). Replace the free `confirmation_source` strings with a `ConfirmationSource` StrEnum that adds `PFL_ACCEPT`, and extend `valid_confirmation_source`.
   - `db/models/constraints.py::NameSuggestion`: add `pf_qid` (nullable). Add a `NameSuggestionSource` StrEnum that adds `PFL`, and extend the source CHECK.
   - `db/migrations/versions/001_identity_schema.py`: all of the above, plus an HNSW index on `pf_template.vector` and a SELECT-only grant on `pfl` for the serving role.
@@ -315,11 +364,11 @@ PUBFIG-10 waits for curation. PUBFIG-11 runs in parallel throughout.
   - The loader rejects a bad sha256 or a null licence.
   - An INSERT as the serving role is denied.
 
-### PUBFIG-3. Matching core, opt-in gate, audit
+### PUBFIG-3. Matching core, default-on gate, audit
 
 - **Change sites.**
   - New `recognition/application/pfl/candidates.py::list_pfl_candidates(tenant_id, probe, embedding_model)`. It applies the § How it would work item 3 filter order and returns capped bands, using `embedding_space.py::models_are_same_space` and `SimilarityBand`.
-  - Opt-in reads `TenantPflSettings`; entitlement reads `SqlAlchemyTenantEntitlementRepository`.
+  - The gate reads `PFL_ENABLED`, `pfl_held_jurisdictions`, `TenantPflSettings` (absent row = every released tier on) and `SqlAlchemyTenantEntitlementRepository`. Any read failure returns zero candidates (SECD-05).
   - Each query writes one `db/models/observability.py::AuditEvent` row: tenant, gallery_version, candidate count.
 - **Criteria.** 1, 2, 3, 4, 11, 13, and 19 (the serving-exclusion half).
 - **Proof.** `recognition/tests/unit/test_pfl_candidates.py`, `test_pfl_audit.py`, `recognition/tests/api/test_pfl_isolation.py`.
@@ -360,7 +409,8 @@ PUBFIG-10 waits for curation. PUBFIG-11 runs in parallel throughout.
   - `policy.py::NamingProvenance` / `InjectedName`: add `pf_qid`, `gallery_version`, `band` and the resolved language.
   - `naming_preview_service.py::load_fusion_naming_inputs`: load QID suppressions, then run auto-name for unlinked faces through a scene-side `PflCandidateSource` Protocol. The describe router wires recognition's `list_pfl_candidates` into it; scene/application does not import recognition.
   - Review reasons `pfl_suggestion` and `pfl_private_context` go on `scene/application/fusion/reconcile.py::ReviewReason`.
-- **Criteria.** 5, 10, 14, 15 (the naming half), 17 (cache-hit half), and 19 (the auto-name half).
+  - `scene/interface_adapters/http/routers/describe.py::describe_image_multipart`: today `recognition_enabled` false skips `_load_fusion_naming_inputs` entirely. Add the PFL-only branch: with recognition off and the PFL gate open, detect and embed faces in-request through `FaceDetectorProtocol.detect`, pass the probes to the `PflCandidateSource`, and drop them. Tenant roster faces stay unloaded (SEC-01 unchanged).
+- **Criteria.** 5, 10, 14, 15 (the naming half), 17 (cache-hit half), 19 (the auto-name half) and 20.
 - **Proof.** `scene/tests/test_pfl_naming.py`.
 - **Depends on** PUBFIG-3, PUBFIG-4 and PUBFIG-5.
 
@@ -390,7 +440,9 @@ PUBFIG-10 waits for curation. PUBFIG-11 runs in parallel throughout.
 ### PUBFIG-9. Admin settings and review UI
 
 - **Change sites.** `apps/prototype-wp-alt-context/js/admin/`:
-  - The PFL opt-in panel: tiers, auto-name per tier, purpose statement, the notice line to copy.
+  - The PFL panel: one on/off switch (on by default, as easy to turn off as on), per-tier and per-tier auto-name detail behind it, the jurisdiction field, and the notice line to copy.
+  - The one-time first-run notice on the first PFL-named draft, naming the switch.
+  - A source mark on each PFL name in the draft (SECD-14).
   - A source chip on `pfl` suggestions.
   - The "Not this person" action.
   - The `SettingsForm.tsx` naming copy, which must stay true (CLM-03).

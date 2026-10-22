@@ -289,11 +289,11 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       credit: 'Colleen Sturtevant, CC BY-SA 4.0, resized',
       event: 'Tribeca Festival, New York, June 2026',
       altTextAiCaption: {
-        text: 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a backdrop with “Tribeca Festival” and various logos.',
+        text: 'Justin Trudeau and Katy Perry pose together on a Tribeca Festival branded step and repeat.',
         provider: 'AltText.ai',
         providerUrl: 'https://alttext.ai/',
-        capturedOn: '10 September 2026',
-        note: 'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 5ae0105fe47338c39767e88da014617c; source file guided-press-tribeca-2026.jpg.',
+        capturedOn: '21 October 2026',
+        note: 'Captured by the operator from the AltText.ai trial widget on 21 October 2026, image supplied by URL, with no names or keywords supplied (handoff decision 18948); source file guided-press-tribeca-2026.jpg.',
       },
       altContextDescription: {
         text: 'Justin Trudeau and Katy Perry pose together on the red carpet at the Tribeca Festival in New York in June 2026. Trudeau is wearing a black tuxedo with a white shirt, while Perry is in a white sleeveless dress with a draped design. They are standing in front of a backdrop with the Tribeca Festival and 10 Lives Studios logos.',
@@ -311,11 +311,11 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       event: 'Coachella festival photo, 2026',
       source: 'https://www.instagram.com/katyperry/',
       altTextAiCaption: {
-        text: 'Two people sit on a curb outdoors at night, holding red cups and eating food. Both appear relaxed and casually dressed, with trees and plants in the background.',
+        text: 'Justin Trudeau and Katy Perry sitting outside, both holding red plastic cups and eating from a carton of noodles.',
         provider: 'AltText.ai',
         providerUrl: 'https://alttext.ai/',
-        capturedOn: '10 September 2026',
-        note: 'Captured from the AltText.ai free web demo (POST https://alttext.ai/demo_images), with no keywords supplied; asset_id 7b54b68b4fde9ee3f5257f2ac28d7049; source file guided-press-coachella-2026.webp.',
+        capturedOn: '21 October 2026',
+        note: 'Captured by the operator from the AltText.ai trial widget on 21 October 2026, image supplied by URL, with no names or keywords supplied (handoff decision 18948); source file guided-press-coachella-2026.webp.',
       },
       altContextDescription: {
         text: 'Justin Trudeau and Katy Perry are sitting together outdoors at night, eating from red cups and a yellow noodle container. Trudeau wears a white t-shirt, blue jeans, and a backward blue cap, while Perry wears a white t-shirt, black boots, and holds a red cup. They are surrounded by plants and appear to be at a casual evening event.',

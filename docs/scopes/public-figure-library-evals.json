@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "suite_id": "pubfig-1-public-figure-library",
+  "owner": "PUBFIG-1",
+  "description": "PROVISIONAL DATA ONLY. This manifest is local to docs/scopes. It is not registered in the packages/workbay-system eval registry, which is absent from this checkout; when that registry lands, it needs an EXECUTOR_BY_SUITE_ID entry or a local runner. Describe-time naming cases live in scene/tests (scene owns describe); the PHP guardrail case runs under php_command. There is one case per success criterion in public-figure-library-scope.md. The tests are deliverables of the RED lane. PFL-SC-12 is an offline VM benchmark and does not run under the deterministic command.",
+  "command": "cd apps/prototype-description-service && uv run --locked --extra dev pytest -q recognition/tests/unit/test_pfl_candidates.py recognition/tests/unit/test_pfl_lifecycle.py recognition/tests/unit/test_pfl_audit.py recognition/tests/api/test_pfl_isolation.py recognition/tests/api/test_pfl_accept.py scene/tests/test_pfl_naming.py scene/tests/test_pfl_name_resolution.py",
+  "threshold": {
+    "kind": "junit_counts",
+    "max_failures": 0,
+    "max_skipped": 0
+  },
+  "evidence_sink": ".task-state/evals/results.jsonl",
+  "mirror_failures_to_handoff": true,
+  "tags": [
+    "pubfig-1",
+    "recognition",
+    "biometrics",
+    "public-figure-library",
+    "privacy"
+  ],
+  "cases": [
+    {
+      "id": "PFL-SC-01",
+      "group": "deterministic",
+      "criterion": "Default-off: no entitlement or no tenant opt-in yields zero PFL candidates.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_candidates_absent_without_entitlement_and_opt_in",
+      "task_plan": "PUBFIG-3"
+    },
+    {
+      "id": "PFL-SC-02",
+      "group": "deterministic",
+      "criterion": "A mismatch between probe and template embedding_model yields zero PFL candidates. It fails closed, not with an error.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_cross_model_templates_are_never_ranked",
+      "task_plan": "PUBFIG-3"
+    },
+    {
+      "id": "PFL-SC-03",
+      "group": "deterministic",
+      "criterion": "Templates are never served when the reference capture_basis or licence is null or unrecognised.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_null_capture_basis_or_licence_is_refused",
+      "task_plan": "PUBFIG-2, PUBFIG-3"
+    },
+    {
+      "id": "PFL-SC-04",
+      "group": "deterministic",
+      "criterion": "Identities outside the tenant's enabled tiers, flagged as minors, or opted out are never served.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_population_bound_excludes_out_of_tier_minor_and_opted_out",
+      "task_plan": "PUBFIG-3"
+    },
+    {
+      "id": "PFL-SC-05",
+      "group": "deterministic",
+      "criterion": "Below the floor the result is unknown. The possible band is suggestion-only. The strong band auto-names only when the gate passes: tenant auto-name on, tier enabled, tier calibrated, context public_role. Otherwise it is a suggestion.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_pfl_bands_unknown_suggest_and_gated_autoname; scene/tests/test_pfl_naming.py::test_strong_band_autonames_only_when_gate_passes",
+      "task_plan": "PUBFIG-3, PUBFIG-6"
+    },
+    {
+      "id": "PFL-SC-06",
+      "group": "deterministic",
+      "criterion": "At equal band, a tenant roster candidate outranks a PFL candidate. A PFL name never overwrites a tenant's own (non-PFL) person label.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_candidates.py::test_tenant_roster_precedence_over_pfl",
+      "task_plan": "PUBFIG-4"
+    },
+    {
+      "id": "PFL-SC-07",
+      "group": "deterministic",
+      "criterion": "No tenant probe, accept, or edit writes to PFL tables. An acceptance by tenant A is invisible to tenant B.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_pfl_isolation.py::test_tenant_actions_never_write_pfl_or_cross_tenants",
+      "task_plan": "PUBFIG-2, PUBFIG-4"
+    },
+    {
+      "id": "PFL-SC-08",
+      "group": "deterministic",
+      "criterion": "Link-on-accept stores the QID and provenance on the tenant cluster, never a name string.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_pfl_accept.py::test_link_on_accept_stores_qid_not_name",
+      "task_plan": "PUBFIG-4"
+    },
+    {
+      "id": "PFL-SC-09",
+      "group": "deterministic",
+      "criterion": "A tombstone or opt-out removes the identity's templates from the served index and stops its name resolving in later descriptions for every tenant.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_lifecycle.py::test_tombstone_drops_templates_from_served_index",
+      "task_plan": "PUBFIG-8"
+    },
+    {
+      "id": "PFL-SC-10",
+      "group": "deterministic",
+      "criterion": "A linked PFL identity is not named in descriptions when allow_person_names is false.",
+      "status": "planned",
+      "test": "scene/tests/test_pfl_naming.py::test_pfl_identity_not_named_when_person_names_disabled",
+      "php_test": "apps/prototype-wp-alt-context/tests/Unit/DescribeMediaServicePflTest.php::test_pfl_linked_face_is_not_machine_only_and_carries_no_name",
+      "task_plan": "PUBFIG-6, PUBFIG-7"
+    },
+    {
+      "id": "PFL-SC-11",
+      "group": "deterministic",
+      "criterion": "Every PFL query writes an audit row recording tenant, gallery_version, and candidate count.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_audit.py::test_every_pfl_query_is_audited",
+      "task_plan": "PUBFIG-3"
+    },
+    {
+      "id": "PFL-SC-12",
+      "group": "offline_benchmark",
+      "criterion": "Before a tier (P1, P2, P3 or historical) is enabled or auto-name turns on for it: FMR/FNMR per skin-tone slice are within the parity bound on the gallery population and on news imagery, and FPIR at the served gallery size is within the operator's auto-name bound at the strong-band ceiling.",
+      "status": "planned",
+      "test": "benchmarks/pfl/fairness_slices (VM/GPU; operator sets the bound before Phase 1 enablement)",
+      "additional_evidence_required": true,
+      "task_plan": "PUBFIG-10"
+    },
+    {
+      "id": "PFL-SC-13",
+      "group": "deterministic",
+      "criterion": "The served gallery_version matches the active embedding contract. Stale versions are refused.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_lifecycle.py::test_stale_gallery_version_is_refused",
+      "task_plan": "PUBFIG-2, PUBFIG-3"
+    },
+    {
+      "id": "PFL-SC-14",
+      "group": "deterministic",
+      "criterion": "Every auto-named face carries pfl_auto provenance (QID, gallery_version, band) in naming_provenance. private or unclear context never auto-names.",
+      "status": "planned",
+      "test": "scene/tests/test_pfl_naming.py::test_autoname_provenance_and_context_gate",
+      "task_plan": "PUBFIG-6"
+    },
+    {
+      "id": "PFL-SC-15",
+      "group": "deterministic",
+      "criterion": "'Not this person' unnames the identity in the tenant's later descriptions and suppresses re-auto-naming on that cluster.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_pfl_accept.py::test_reject_writes_qid_suppression; scene/tests/test_pfl_naming.py::test_suppressed_qid_is_not_named",
+      "task_plan": "PUBFIG-4, PUBFIG-6"
+    },
+    {
+      "id": "PFL-SC-16",
+      "group": "deterministic",
+      "criterion": "P2 news-cycle lifecycle: entry above the salience threshold, exit after 90 days below it, templates deleted on exit. P1 membership follows Wikidata P39 end dates.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_lifecycle.py::test_news_cycle_tier_entry_exit_and_template_deletion",
+      "task_plan": "PUBFIG-8"
+    },
+    {
+      "id": "PFL-SC-17",
+      "group": "deterministic",
+      "criterion": "Names resolve from pfl.identity_name for the description language: exact locale, then base language, then canonical (es-MX \u2192 es 'Papa Le\u00f3n XIV'; en 'Pope Leo XIV'). A registry edit changes the next description for every linked tenant.",
+      "status": "planned",
+      "test": "scene/tests/test_pfl_name_resolution.py::test_locale_fallback_and_central_rename_propagates",
+      "task_plan": "PUBFIG-5, PUBFIG-6"
+    },
+    {
+      "id": "PFL-SC-18",
+      "group": "deterministic",
+      "criterion": "Adding a language needs only registry rows and a supported_languages entry: enabling a fixture language (es) in test config yields 'Papa Le\u00f3n XIV' with no code or schema change. A language below full verified coverage is refused at enable. A disabled or unknown language resolves to en.",
+      "status": "planned",
+      "test": "scene/tests/test_pfl_name_resolution.py::test_language_add_is_data_and_config_with_coverage_gate",
+      "task_plan": "PUBFIG-5"
+    },
+    {
+      "id": "PFL-SC-19",
+      "group": "deterministic",
+      "criterion": "P3 living-celebrity tier (decision 18981): a living adult above the notability threshold with a voluntary public career is served. Minors, relatives without independent notability, and involuntary newsmakers are never served, even above the threshold. A P3 strong-band match auto-names only in public_role context; private or unclear context yields a suggestion.",
+      "status": "planned",
+      "test": "recognition/tests/unit/test_pfl_lifecycle.py::test_celebrity_tier_membership_and_exclusions; scene/tests/test_pfl_naming.py::test_celebrity_autoname_requires_public_role_context",
+      "task_plan": "PUBFIG-3, PUBFIG-6, PUBFIG-8"
+    }
+  ],
+  "php_command": "cd apps/prototype-wp-alt-context && composer test -- --filter DescribeMediaServicePflTest"
+}

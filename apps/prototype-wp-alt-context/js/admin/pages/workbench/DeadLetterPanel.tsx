@@ -1,5 +1,5 @@
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { fetchFailedOutboxOperations } from '../../api/recognition';
 import type { OutboxListResponse, OutboxOperation } from '../../api/recognition';
@@ -116,7 +116,14 @@ const OPERATION_LABELS: Record<string, string> = {
   cluster_created_for_identity: __('Create cluster for identity', 'alt-context'),
 };
 
+const PANEL_VIEW = { ATTENTION: 'attention', HISTORY: 'history' } as const;
+type PanelView = (typeof PANEL_VIEW)[keyof typeof PANEL_VIEW];
+const ATTENTION_STATUSES = ['failed', 'pending', 'conflict'] as const;
+type AttentionStatus = (typeof ATTENTION_STATUSES)[number];
+
 interface DeadLetterPanelState {
+  panelView: PanelView;
+  attentionStatus: AttentionStatus;
   offset: number;
   timelineOffset: number;
   timelineStatus: TimelineStatusFilter;
@@ -131,6 +138,8 @@ interface DeadLetterPanelState {
 }
 
 type DeadLetterPanelAction =
+  | { type: 'setPanelView'; view: PanelView }
+  | { type: 'setAttentionStatus'; status: AttentionStatus }
   | { type: 'setOffset'; offset: number }
   | { type: 'setTimelineOffset'; offset: number }
   | { type: 'setTimelineStatus'; status: TimelineStatusFilter }
@@ -144,6 +153,8 @@ type DeadLetterPanelAction =
   | { type: 'setMutationError'; error: string | null };
 
 const INITIAL_STATE: DeadLetterPanelState = {
+  panelView: PANEL_VIEW.ATTENTION,
+  attentionStatus: 'failed',
   offset: 0,
   timelineOffset: 0,
   timelineStatus: 'all',
@@ -159,6 +170,24 @@ const INITIAL_STATE: DeadLetterPanelState = {
 
 const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterPanelAction): DeadLetterPanelState => {
   switch (action.type) {
+    case 'setPanelView':
+      return {
+        ...state,
+        panelView: action.view,
+        timelineOffset: 0,
+        pendingDiscardId: null,
+        bulkRetryArmed: false,
+        bulkDiscardArmed: false,
+      };
+    case 'setAttentionStatus':
+      return {
+        ...state,
+        attentionStatus: action.status,
+        timelineOffset: 0,
+        pendingDiscardId: null,
+        bulkRetryArmed: false,
+        bulkDiscardArmed: false,
+      };
     case 'setOffset':
       return { ...state, offset: action.offset };
     case 'setTimelineOffset':
@@ -393,8 +422,7 @@ const isTerminalOperation = (operation: OutboxOperation): boolean =>
   (operation.last_error_code !== null && TERMINAL_ERROR_CODE_SET.has(operation.last_error_code)) ||
   readAutoAttempts(operation.payload) >= MAX_AUTO_ATTEMPTS;
 
-const isFailedOperation = (operation: OutboxOperation): boolean =>
-  operation.status === OPERATION_STATUS.FAILED;
+const isFailedOperation = (operation: OutboxOperation): boolean => operation.status === OPERATION_STATUS.FAILED;
 
 const isOlderThanRetention = (
   operation: FailureAgeOperation,
@@ -485,9 +513,7 @@ const DeadLetterOperationRow = ({
         {showLastAttempted ? (
           <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>
         ) : null}
-        {showFailedRecovery ? (
-          <p>{sprintf(__('Error: %s', 'alt-context'), formatErrorSummary(operation))}</p>
-        ) : null}
+        {showFailedRecovery ? <p>{sprintf(__('Error: %s', 'alt-context'), formatErrorSummary(operation))}</p> : null}
         {variant === 'failed-list' && payloadSummary ? <p>{payloadSummary}</p> : null}
         {variant === 'timeline' && operation.acknowledged_at ? (
           <p>{sprintf(__('Acknowledged: %s', 'alt-context'), formatTimestamp(operation.acknowledged_at))}</p>
@@ -527,10 +553,204 @@ const DeadLetterOperationRow = ({
   );
 };
 
+type HumanCountLocale =
+  | { kind: 'localized'; tag: string }
+  | { kind: 'neutral-raw'; reason: 'missing' | 'invalid' | 'unsupported' | 'unavailable' };
+
+const readHostUiCountLocale = (): string | null => {
+  try {
+    return typeof document === 'undefined' ? null : document.documentElement.lang || null;
+  } catch {
+    return null;
+  }
+};
+const resolveHumanCountLocale = (raw: string | null): HumanCountLocale => {
+  if (!raw?.trim()) {
+    return { kind: 'neutral-raw', reason: 'missing' };
+  }
+  if (
+    typeof Intl === 'undefined' ||
+    typeof Intl.getCanonicalLocales !== 'function' ||
+    typeof Intl.NumberFormat !== 'function' ||
+    typeof Intl.NumberFormat.supportedLocalesOf !== 'function'
+  ) {
+    return { kind: 'neutral-raw', reason: 'unavailable' };
+  }
+  let tag: string;
+  try {
+    [tag] = Intl.getCanonicalLocales(raw.trim());
+  } catch {
+    return { kind: 'neutral-raw', reason: 'invalid' };
+  }
+  try {
+    return Intl.NumberFormat.supportedLocalesOf([tag], { localeMatcher: 'lookup' }).includes(tag)
+      ? { kind: 'localized', tag }
+      : { kind: 'neutral-raw', reason: 'unsupported' };
+  } catch {
+    return { kind: 'neutral-raw', reason: 'unavailable' };
+  }
+};
+const formatHumanCount = (count: number, uiLocale: string | null): string => {
+  const locale = resolveHumanCountLocale(uiLocale);
+  if (locale.kind === 'localized') {
+    try {
+      return new Intl.NumberFormat(locale.tag, { style: 'decimal', maximumFractionDigits: 0 }).format(count);
+    } catch {
+      /* Neutral raw fallback keeps controls usable. */
+    }
+  }
+  return String(count);
+};
+const timelineFilterLabel = (status: TimelineStatusFilter): string => {
+  switch (status) {
+    case 'all':
+      return __('All', 'alt-context');
+    case 'pending':
+      return __('pending', 'alt-context');
+    case 'acknowledged':
+      return __('acknowledged', 'alt-context');
+    case 'conflict':
+      return __('conflict', 'alt-context');
+    case 'failed':
+      return __('failed', 'alt-context');
+    case 'discarded':
+      return __('discarded', 'alt-context');
+  }
+};
+const timelineCountText = (
+  start: number,
+  end: number,
+  total: number,
+  statusLabel: string,
+  uiLocale: string | null,
+): string =>
+  sprintf(
+    _n('Showing %1$s-%2$s of %3$s change (%4$s).', 'Showing %1$s-%2$s of %3$s changes (%4$s).', total, 'alt-context'),
+    formatHumanCount(start, uiLocale),
+    formatHumanCount(end, uiLocale),
+    formatHumanCount(total, uiLocale),
+    statusLabel,
+  );
+interface DeadLetterTimelineSectionProps {
+  heading: string;
+  status: Exclude<TimelineStatusFilter, 'all'> | undefined;
+  statusLabel: string;
+  emptyCopy: string;
+  offset: number;
+  onOffsetChange: (offset: number) => void;
+  filters?: { selected: TimelineStatusFilter; onChange: (status: TimelineStatusFilter) => void };
+  displayNowMs: number;
+  pendingDiscardId: number | null;
+  mutationPending: boolean;
+  onRetry: (operation: OutboxOperation) => void;
+  onDiscard: (operation: OutboxOperation) => void;
+}
+const DeadLetterTimelineSection = ({
+  heading,
+  status,
+  statusLabel,
+  emptyCopy,
+  offset,
+  onOffsetChange,
+  filters,
+  displayNowMs,
+  pendingDiscardId,
+  mutationPending,
+  onRetry,
+  onDiscard,
+}: DeadLetterTimelineSectionProps): React.JSX.Element => {
+  const query = useOutboxOperations({ limit: TIMELINE_PAGE_SIZE, offset, status });
+  const uiLocale = readHostUiCountLocale();
+  return (
+    <div className="acx-workbench__panel">
+      <h3>{heading}</h3>
+      {filters ? (
+        <div className="acx-dashboard__actions">
+          {TIMELINE_STATUSES.map((value) => (
+            <button
+              key={value}
+              type="button"
+              className="button button-secondary"
+              aria-pressed={filters.selected === value}
+              onClick={() => {
+                if (filters.selected !== value) {
+                  filters.onChange(value);
+                }
+              }}
+            >
+              {timelineFilterLabel(value)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div aria-live="polite" data-testid="acx-dead-letter-timeline-status">
+        {query.isLoading ? (
+          <p>{__('Loading changes…', 'alt-context')}</p>
+        ) : query.isError ? (
+          <p>{__('Unable to load changes.', 'alt-context')}</p>
+        ) : query.data ? (
+          <p>
+            {timelineCountText(
+              query.data.total === 0 ? 0 : offset + 1,
+              offset + query.data.items.length,
+              query.data.total,
+              statusLabel,
+              uiLocale,
+            )}
+          </p>
+        ) : null}
+      </div>
+      {!query.isLoading && !query.isError && query.data ? (
+        query.data.items.length === 0 ? (
+          <p>{emptyCopy}</p>
+        ) : (
+          <>
+            <ul className="acx-dashboard__activity-list">
+              {query.data.items.map((operation) => (
+                <li key={`timeline-${operation.id}`} className="acx-dashboard__activity-item">
+                  <DeadLetterOperationRow
+                    operation={operation}
+                    variant="timeline"
+                    displayNowMs={displayNowMs}
+                    pendingDiscardId={pendingDiscardId}
+                    mutationPending={mutationPending}
+                    onRetry={onRetry}
+                    onDiscard={onDiscard}
+                  />
+                </li>
+              ))}
+            </ul>
+            <div className="acx-dashboard__actions">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => onOffsetChange(offset - TIMELINE_PAGE_SIZE)}
+                disabled={offset === 0}
+              >
+                {__('Previous timeline page', 'alt-context')}
+              </button>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => onOffsetChange(offset + TIMELINE_PAGE_SIZE)}
+                disabled={offset + query.data.items.length >= query.data.total}
+              >
+                {__('Next timeline page', 'alt-context')}
+              </button>
+            </div>
+          </>
+        )
+      ) : null}
+    </div>
+  );
+};
+
 export const DeadLetterPanel = (): React.JSX.Element => {
   const [state, dispatch] = React.useReducer(deadLetterPanelReducer, INITIAL_STATE);
   const [loadingAnnouncement, setLoadingAnnouncement] = React.useState('');
   const {
+    panelView,
+    attentionStatus,
     offset,
     timelineOffset,
     timelineStatus,
@@ -544,40 +764,26 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     mutationError,
   } = state;
 
+  const showFailed = panelView === PANEL_VIEW.ATTENTION && attentionStatus === 'failed';
   const operationsQuery = useDeadLetterOperations({ limit: PAGE_SIZE, offset });
   const bulkDiscardPageQuery = useDeadLetterOperations({
     limit: BULK_DISCARD_PAGE_SIZE,
     offset: 0,
-  });
-  const timelineQuery = useOutboxOperations({
-    limit: TIMELINE_PAGE_SIZE,
-    offset: timelineOffset,
-    status: timelineStatus === 'all' ? undefined : timelineStatus,
   });
   const retryMutation = useRetryOperation();
   const discardMutation = useDiscardOperation();
   const bulkRetryMutation = useBulkRetryOperations();
   const syncStatusQuery = useSyncStatus();
   const mutationPending =
-    retryMutation.isPending ||
-    discardMutation.isPending ||
-    bulkRetryMutation.isPending ||
-    bulkDiscardRunning;
+    retryMutation.isPending || discardMutation.isPending || bulkRetryMutation.isPending || bulkDiscardRunning;
 
   const failedTotal = operationsQuery.data?.total;
   const siteGmtOffsetHours = getSiteGmtOffsetHours();
   const eligibilityList = asFailureAgeList(bulkDiscardPageQuery.data);
-  const bulkDiscardHasMorePages = Boolean(
-    eligibilityList && eligibilityList.total > eligibilityList.items.length,
-  );
-  const eligibilityNowMs = resolveNowMs(
-    eligibilityList ?? asFailureAgeList(operationsQuery.data),
-    siteGmtOffsetHours,
-  );
+  const bulkDiscardHasMorePages = Boolean(eligibilityList && eligibilityList.total > eligibilityList.items.length);
+  const eligibilityNowMs = resolveNowMs(eligibilityList ?? asFailureAgeList(operationsQuery.data), siteGmtOffsetHours);
   const displayNowMs = eligibilityNowMs ?? Date.now();
-  const eligibilityReady = Boolean(
-    bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError && eligibilityList,
-  );
+  const eligibilityReady = Boolean(bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError && eligibilityList);
   const eligibleOperations =
     eligibilityList && bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError
       ? eligibilityList.items
@@ -604,16 +810,16 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       );
   const missingAgeClock = Boolean(
     eligibilityList &&
-      bulkDiscardPageQuery.isSuccess &&
-      !bulkDiscardPageQuery.isError &&
-      eligibilityList.items.length > 0 &&
-      eligibilityList.items.every(
-        (operation) => readEligibilityAgeMs(operation, eligibilityNowMs, siteGmtOffsetHours) === null,
-      ),
+    bulkDiscardPageQuery.isSuccess &&
+    !bulkDiscardPageQuery.isError &&
+    eligibilityList.items.length > 0 &&
+    eligibilityList.items.every(
+      (operation) => readEligibilityAgeMs(operation, eligibilityNowMs, siteGmtOffsetHours) === null,
+    ),
   );
 
   React.useEffect(() => {
-    if (!operationsQuery.isLoading) {
+    if (!showFailed || !operationsQuery.isLoading) {
       setLoadingAnnouncement('');
       return undefined;
     }
@@ -625,7 +831,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [operationsQuery.isLoading]);
+  }, [showFailed, operationsQuery.isLoading]);
 
   // E15-35 Slice 2 review fix: the armed confirmation is time-boxed and scoped to the
   // backlog it was armed against — it auto-disarms after a short window and whenever the
@@ -792,9 +998,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
         });
         const pageNowMs = resolveNowMs(page, siteGmtOffsetHours) ?? eligibilityNowMs;
         candidates.push(
-          ...page.items.filter((operation) =>
-            isOlderThanRetention(operation, pageNowMs, siteGmtOffsetHours),
-          ),
+          ...page.items.filter((operation) => isOlderThanRetention(operation, pageNowMs, siteGmtOffsetHours)),
         );
       }
     } catch {
@@ -865,10 +1069,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     dispatch({
       type: 'setNotice',
       notice: halted
-        ? sprintf(
-            __('Stopped after an authorization or client error. %d discarded.', 'alt-context'),
-            discardedCount,
-          ) + (remainderCopy ? ` ${remainderCopy}` : '')
+        ? sprintf(__('Stopped after an authorization or client error. %d discarded.', 'alt-context'), discardedCount) +
+          (remainderCopy ? ` ${remainderCopy}` : '')
         : discardedCount === results.length
           ? sprintf(__('Discarded %d failed changes older than 7 days.', 'alt-context'), discardedCount) +
             (remainderCopy ? ` ${remainderCopy}` : '')
@@ -880,28 +1082,45 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     });
   };
 
+  const handlePanelViewChange = (view: PanelView): void => {
+    if (view !== panelView) {
+      dispatch({ type: 'setPanelView', view });
+    }
+  };
+  const handleAttentionStatusChange = (status: AttentionStatus): void => {
+    if (status !== attentionStatus) {
+      dispatch({ type: 'setAttentionStatus', status });
+    }
+  };
   const handleTimelineStatusChange = (status: TimelineStatusFilter): void => {
+    if (status === timelineStatus) {
+      return;
+    }
     dispatch({ type: 'setTimelineStatus', status });
     dispatch({ type: 'setTimelineOffset', offset: 0 });
   };
 
-  const liveStatus = operationsQuery.isLoading
-    ? loadingAnnouncement
-    : bulkRetryMutation.isPending
-      ? __('Retrying all failed changes…', 'alt-context')
-      : bulkDiscardRunning
-        ? __('Discarding failed changes older than 7 days…', 'alt-context')
-        : actionStatus ||
-          (retryMutation.isPending || discardMutation.isPending
-            ? __('Failed-change action in progress. Please wait.', 'alt-context')
-            : bulkRetryArmed && failedTotal !== undefined
-              ? sprintf(
-                  __('Retry all is armed. Activate Confirm retry all failed to queue %d failed changes.', 'alt-context'),
-                  failedTotal,
-                )
-              : bulkDiscardArmed
-                ? bulkDiscardArmedStatus
-                : (notice ?? ''));
+  const liveStatus =
+    showFailed && operationsQuery.isLoading
+      ? loadingAnnouncement
+      : bulkRetryMutation.isPending
+        ? __('Retrying all failed changes…', 'alt-context')
+        : bulkDiscardRunning
+          ? __('Discarding failed changes older than 7 days…', 'alt-context')
+          : actionStatus ||
+            (retryMutation.isPending || discardMutation.isPending
+              ? __('Failed-change action in progress. Please wait.', 'alt-context')
+              : bulkRetryArmed && failedTotal !== undefined
+                ? sprintf(
+                    __(
+                      'Retry all is armed. Activate Confirm retry all failed to queue %d failed changes.',
+                      'alt-context',
+                    ),
+                    failedTotal,
+                  )
+                : bulkDiscardArmed
+                  ? bulkDiscardArmedStatus
+                  : (notice ?? ''));
 
   const statusRegion = (
     <div
@@ -916,28 +1135,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     </div>
   );
 
-  if (operationsQuery.isLoading) {
-    return (
-      <section aria-label={__('Failed changes panel', 'alt-context')} aria-busy="true">
-        {statusRegion}
-        <p>{__('Loading failed changes…', 'alt-context')}</p>
-      </section>
-    );
-  }
-
-  if (operationsQuery.isError || !operationsQuery.data) {
-    return (
-      <section aria-label={__('Failed changes panel', 'alt-context')}>
-        {statusRegion}
-        <div className="acx-error-state" role={DEAD_LETTER_STATUS.alertRole}>
-          <span aria-hidden="true">⚠</span>
-          <p>{__('Unable to load failed changes.', 'alt-context')}</p>
-        </div>
-      </section>
-    );
-  }
-
-  const { items, total, limit } = operationsQuery.data;
+  const { items = [], total = 0, limit = PAGE_SIZE } = operationsQuery.data ?? {};
   const canPageBack = offset > 0;
   const canPageForward = offset + items.length < total;
   const rangeStart = total === 0 ? 0 : offset + 1;
@@ -951,203 +1149,245 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       topologyStatus.conflict > 0);
 
   return (
-    <section aria-label={__('Failed changes panel', 'alt-context')} aria-busy={mutationPending ? 'true' : undefined}>
-      {statusRegion}
-      <h3>{__('Failed changes', 'alt-context')}</h3>
-      <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed changes.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
-      <div className="acx-dashboard__actions" data-testid="acx-zone-z-dl-actions">
-        {total === 0 ? <p>{__('No failed changes to retry.', 'alt-context')}</p> : null}
-        {/* E15-35 Slice 2: bulk recovery is inherently N-dependent — at zero the control
-            stays visible (count included) but disabled, per rg-003's intent. */}
+    <section
+      aria-label={__('Changes panel', 'alt-context')}
+      aria-busy={mutationPending || (showFailed && operationsQuery.isLoading) ? 'true' : undefined}
+    >
+      <div role="group" aria-label={__('Changes view', 'alt-context')} className="acx-dashboard__actions">
         <button
           type="button"
           className="button button-secondary"
-          onClick={() => {
-            void handleBulkRetry();
-          }}
-          disabled={total === 0 || mutationPending}
-          aria-disabled={mutationPending || total === 0 ? true : undefined}
-          aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
+          aria-pressed={panelView === PANEL_VIEW.ATTENTION}
+          onClick={() => handlePanelViewChange(PANEL_VIEW.ATTENTION)}
         >
-          {bulkRetryMutation.isPending
-            ? __('Retrying all failed…', 'alt-context')
-            : bulkRetryArmed
-              ? sprintf(__('Confirm retry all failed (%d)', 'alt-context'), total)
-              : sprintf(__('Retry all failed (%d)', 'alt-context'), total)}
+          {__('Needs attention', 'alt-context')}
         </button>
         <button
           type="button"
           className="button button-secondary"
-          onClick={() => {
-            void handleBulkDiscard();
-          }}
-          disabled={!canBulkDiscard || mutationPending}
-          aria-disabled={!canBulkDiscard || mutationPending ? true : undefined}
-          aria-describedby={
-            mutationPending
-              ? DEAD_LETTER_PENDING_REASON_ID
-              : missingAgeClock
-                ? DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID
-                : undefined
-          }
+          aria-pressed={panelView === PANEL_VIEW.HISTORY}
+          onClick={() => handlePanelViewChange(PANEL_VIEW.HISTORY)}
         >
-          {bulkDiscardRunning
-            ? __('Discarding failed older than 7 days…', 'alt-context')
-            : bulkDiscardArmed
-              ? bulkDiscardConfirmLabel
-              : bulkDiscardButtonLabel}
+          {__('History', 'alt-context')}
         </button>
       </div>
-      {missingAgeClock && !mutationPending ? (
-        <p id={DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID}>{AGE_CLOCK_UNAVAILABLE}</p>
-      ) : null}
-      {mutationError ? (
-        <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
-          <span aria-hidden="true">⚠</span>
-          <p>{mutationError}</p>
-        </div>
-      ) : null}
-      {bulkDiscardResults.length > 0 ? (
-        <ul className="acx-dashboard__activity-list" data-testid="acx-bulk-discard-results">
-          {bulkDiscardResults.map((result) => (
-            <li key={`bulk-discard-${result.id}`}>{formatBulkDiscardResult(result)}</li>
-          ))}
-        </ul>
-      ) : null}
-      {hasTopologyStatus ? (
-        <div className={NOTICE_VARIANTS.info}>
-          <span aria-hidden="true">ℹ</span>
-          <p>
-            {sprintf(
-              SYNC_VOCABULARY.pendingWorkSummary,
-              topologyStatus.pending,
-              topologyStatus.applied,
-              topologyStatus.failed,
-              topologyStatus.conflict,
-            )}
-          </p>
-        </div>
-      ) : null}
-      {mutationPending ? (
-        <p id={DEAD_LETTER_PENDING_REASON_ID}>{__('Failed-change action in progress. Please wait.', 'alt-context')}</p>
-      ) : null}
-      <div className="acx-workbench__panel">
-        <h4>{__('Pending changes timeline', 'alt-context')}</h4>
-        <div className="acx-dashboard__actions">
-          {TIMELINE_STATUSES.map((status) => (
+      {panelView === PANEL_VIEW.ATTENTION ? (
+        <div role="group" aria-label={__('Needs attention status', 'alt-context')} className="acx-dashboard__actions">
+          {ATTENTION_STATUSES.map((status) => (
             <button
               key={status}
               type="button"
               className="button button-secondary"
-              onClick={() => handleTimelineStatusChange(status)}
-              disabled={timelineStatus === status}
+              aria-pressed={attentionStatus === status}
+              onClick={() => handleAttentionStatusChange(status)}
             >
-              {status === 'all' ? __('All', 'alt-context') : formatStatusLabel(status)}
+              {status === 'failed'
+                ? __('Failed', 'alt-context')
+                : status === 'pending'
+                  ? __('Pending', 'alt-context')
+                  : __('Conflict', 'alt-context')}
             </button>
           ))}
         </div>
-        {timelineQuery.isLoading ? <p>{__('Loading pending changes…', 'alt-context')}</p> : null}
-        {timelineQuery.isError ? <p>{__('Unable to load pending changes.', 'alt-context')}</p> : null}
-        {!timelineQuery.isLoading && !timelineQuery.isError && timelineQuery.data ? (
-          <>
-            <p>
-              {sprintf(
-                __('Showing %1$d-%2$d of %3$d changes (%4$s).', 'alt-context'),
-                timelineQuery.data.total === 0 ? 0 : timelineOffset + 1,
-                timelineOffset + timelineQuery.data.items.length,
-                timelineQuery.data.total,
-                timelineStatus === 'all' ? __('all statuses', 'alt-context') : formatStatusLabel(timelineStatus),
-              )}
-            </p>
-            {timelineQuery.data.items.length === 0 ? (
-              <p>{__('No pending changes found for this filter.', 'alt-context')}</p>
-            ) : (
-              <>
-                <ul className="acx-dashboard__activity-list">
-                  {timelineQuery.data.items.map((operation) => (
-                    <li key={`timeline-${operation.id}`} className="acx-dashboard__activity-item">
-                      <DeadLetterOperationRow
-                        operation={operation}
-                        variant="timeline"
-                        displayNowMs={displayNowMs}
-                        pendingDiscardId={pendingDiscardId}
-                        mutationPending={mutationPending}
-                        onRetry={handleRetry}
-                        onDiscard={handleDiscard}
-                      />
-                    </li>
+      ) : null}
+      {statusRegion}
+      {mutationPending && !showFailed ? (
+        <p id={DEAD_LETTER_PENDING_REASON_ID}>{__('Failed-change action in progress. Please wait.', 'alt-context')}</p>
+      ) : null}
+      {!showFailed && mutationError ? (
+        <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
+          <p>{mutationError}</p>
+        </div>
+      ) : null}
+      {showFailed ? (
+        <>
+          <h3>{__('Failed changes', 'alt-context')}</h3>
+          {operationsQuery.isLoading ? (
+            <p>{__('Loading failed changes…', 'alt-context')}</p>
+          ) : operationsQuery.isError || !operationsQuery.data ? (
+            <div className="acx-error-state" role={DEAD_LETTER_STATUS.alertRole}>
+              <span aria-hidden="true">⚠</span>
+              <p>{__('Unable to load failed changes.', 'alt-context')}</p>
+            </div>
+          ) : (
+            <>
+              <p>
+                {sprintf(__('Showing %1$d-%2$d of %3$d failed changes.', 'alt-context'), rangeStart, rangeEnd, total)}
+              </p>
+              <div className="acx-dashboard__actions" data-testid="acx-zone-z-dl-actions">
+                {total === 0 ? <p>{__('No failed changes to retry.', 'alt-context')}</p> : null}
+                {/* E15-35 Slice 2: bulk recovery is inherently N-dependent — at zero the control
+            stays visible (count included) but disabled, per rg-003's intent. */}
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    void handleBulkRetry();
+                  }}
+                  disabled={total === 0 || mutationPending}
+                  aria-disabled={mutationPending || total === 0 ? true : undefined}
+                  aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
+                >
+                  {bulkRetryMutation.isPending
+                    ? __('Retrying all failed…', 'alt-context')
+                    : bulkRetryArmed
+                      ? sprintf(__('Confirm retry all failed (%d)', 'alt-context'), total)
+                      : sprintf(__('Retry all failed (%d)', 'alt-context'), total)}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    void handleBulkDiscard();
+                  }}
+                  disabled={!canBulkDiscard || mutationPending}
+                  aria-disabled={!canBulkDiscard || mutationPending ? true : undefined}
+                  aria-describedby={
+                    mutationPending
+                      ? DEAD_LETTER_PENDING_REASON_ID
+                      : missingAgeClock
+                        ? DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID
+                        : undefined
+                  }
+                >
+                  {bulkDiscardRunning
+                    ? __('Discarding failed older than 7 days…', 'alt-context')
+                    : bulkDiscardArmed
+                      ? bulkDiscardConfirmLabel
+                      : bulkDiscardButtonLabel}
+                </button>
+              </div>
+              {missingAgeClock && !mutationPending ? (
+                <p id={DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID}>{AGE_CLOCK_UNAVAILABLE}</p>
+              ) : null}
+              {mutationError ? (
+                <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
+                  <span aria-hidden="true">⚠</span>
+                  <p>{mutationError}</p>
+                </div>
+              ) : null}
+              {bulkDiscardResults.length > 0 ? (
+                <ul className="acx-dashboard__activity-list" data-testid="acx-bulk-discard-results">
+                  {bulkDiscardResults.map((result) => (
+                    <li key={`bulk-discard-${result.id}`}>{formatBulkDiscardResult(result)}</li>
                   ))}
                 </ul>
-                <div className="acx-dashboard__actions">
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => dispatch({ type: 'setTimelineOffset', offset: timelineOffset - TIMELINE_PAGE_SIZE })}
-                    disabled={timelineOffset === 0}
-                  >
-                    {__('Previous timeline page', 'alt-context')}
-                  </button>
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => dispatch({ type: 'setTimelineOffset', offset: timelineOffset + TIMELINE_PAGE_SIZE })}
-                    disabled={timelineOffset + timelineQuery.data.items.length >= timelineQuery.data.total}
-                  >
-                    {__('Next timeline page', 'alt-context')}
-                  </button>
+              ) : null}
+              {hasTopologyStatus ? (
+                <div className={NOTICE_VARIANTS.info}>
+                  <span aria-hidden="true">ℹ</span>
+                  <p>
+                    {sprintf(
+                      SYNC_VOCABULARY.pendingWorkSummary,
+                      topologyStatus.pending,
+                      topologyStatus.applied,
+                      topologyStatus.failed,
+                      topologyStatus.conflict,
+                    )}
+                  </p>
                 </div>
-              </>
-            )}
-          </>
-        ) : null}
-      </div>
-      {items.length === 0 ? (
-        <EmptyState
-          variant={EmptyStateVariant.EMPTY}
-          heading={__('No failed changes.', 'alt-context')}
-          body={__('Refresh to check whether any changes need recovery.', 'alt-context')}
-          action={{
-            label: __('Refresh failed changes', 'alt-context'),
-            onClick: () => void operationsQuery.refetch(),
-          }}
-          headingLevel={4}
-        />
-      ) : (
-        <>
-          <ul className="acx-dashboard__activity-list">
-            {items.map((operation) => (
-              <li key={operation.id} className="acx-dashboard__activity-item">
-                <DeadLetterOperationRow
-                  operation={operation}
-                  variant="failed-list"
-                  displayNowMs={displayNowMs}
-                  pendingDiscardId={pendingDiscardId}
-                  mutationPending={mutationPending}
-                  onRetry={handleRetry}
-                  onDiscard={handleDiscard}
+              ) : null}
+              {mutationPending ? (
+                <p id={DEAD_LETTER_PENDING_REASON_ID}>
+                  {__('Failed-change action in progress. Please wait.', 'alt-context')}
+                </p>
+              ) : null}
+              {items.length === 0 ? (
+                <EmptyState
+                  variant={EmptyStateVariant.EMPTY}
+                  heading={__('No failed changes.', 'alt-context')}
+                  body={__('Refresh to check whether any changes need recovery.', 'alt-context')}
+                  action={{
+                    label: __('Refresh failed changes', 'alt-context'),
+                    onClick: () => void operationsQuery.refetch(),
+                  }}
+                  headingLevel={4}
                 />
-              </li>
-            ))}
-          </ul>
-          <div className="acx-dashboard__actions">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => dispatch({ type: 'setOffset', offset: offset - limit })}
-              disabled={!canPageBack}
-            >
-              {__('Previous', 'alt-context')}
-            </button>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => dispatch({ type: 'setOffset', offset: offset + limit })}
-              disabled={!canPageForward}
-            >
-              {__('Next', 'alt-context')}
-            </button>
-          </div>
+              ) : (
+                <>
+                  <ul className="acx-dashboard__activity-list">
+                    {items.map((operation) => (
+                      <li key={operation.id} className="acx-dashboard__activity-item">
+                        <DeadLetterOperationRow
+                          operation={operation}
+                          variant="failed-list"
+                          displayNowMs={displayNowMs}
+                          pendingDiscardId={pendingDiscardId}
+                          mutationPending={mutationPending}
+                          onRetry={handleRetry}
+                          onDiscard={handleDiscard}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="acx-dashboard__actions">
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => dispatch({ type: 'setOffset', offset: offset - limit })}
+                      disabled={!canPageBack}
+                    >
+                      {__('Previous', 'alt-context')}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => dispatch({ type: 'setOffset', offset: offset + limit })}
+                      disabled={!canPageForward}
+                    >
+                      {__('Next', 'alt-context')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
         </>
+      ) : (
+        <DeadLetterTimelineSection
+          heading={
+            panelView === PANEL_VIEW.HISTORY
+              ? __('Change history', 'alt-context')
+              : attentionStatus === 'pending'
+                ? __('Pending changes', 'alt-context')
+                : __('Conflicted changes', 'alt-context')
+          }
+          status={
+            panelView === PANEL_VIEW.HISTORY
+              ? timelineStatus === 'all'
+                ? undefined
+                : timelineStatus
+              : attentionStatus === 'pending'
+                ? 'pending'
+                : 'conflict'
+          }
+          statusLabel={
+            panelView === PANEL_VIEW.HISTORY
+              ? timelineStatus === 'all'
+                ? __('all statuses', 'alt-context')
+                : timelineFilterLabel(timelineStatus)
+              : timelineFilterLabel(attentionStatus)
+          }
+          emptyCopy={
+            panelView === PANEL_VIEW.HISTORY
+              ? __('No changes found for this filter.', 'alt-context')
+              : attentionStatus === 'pending'
+                ? __('No pending changes.', 'alt-context')
+                : __('No conflicted changes.', 'alt-context')
+          }
+          offset={timelineOffset}
+          onOffsetChange={(nextOffset) => dispatch({ type: 'setTimelineOffset', offset: nextOffset })}
+          filters={
+            panelView === PANEL_VIEW.HISTORY
+              ? { selected: timelineStatus, onChange: handleTimelineStatusChange }
+              : undefined
+          }
+          displayNowMs={displayNowMs}
+          pendingDiscardId={pendingDiscardId}
+          mutationPending={mutationPending}
+          onRetry={handleRetry}
+          onDiscard={handleDiscard}
+        />
       )}
     </section>
   );

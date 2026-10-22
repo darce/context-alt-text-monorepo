@@ -59,7 +59,7 @@ final class WpBindingJournalStore implements BindingJournalStore {
 				throw new \RuntimeException( 'Invalid journal state.' );
 			}
 			$result = $operation( $state );
-			$this->execute( $this->database->prepare( 'UPDATE %i SET state_json = %s WHERE tenant_id = %s', $this->table, json_encode( $state, JSON_THROW_ON_ERROR ), $tenant_id ) );
+			$this->execute( $this->database->prepare( 'UPDATE %i SET state_json = %s WHERE tenant_id = %s', $this->table, json_encode( $state, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION ), $tenant_id ) );
 			$this->execute( 'COMMIT' );
 			return $result;
 		} catch ( \Throwable $error ) {

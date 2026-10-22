@@ -1,0 +1,100 @@
+{
+  "schema": "bakeoff-missing-only-inputs/v1",
+  "official_protocol_sha256": "9e33cf5284c2eef1947015d61efa31eae7a70d0b00901a68bef9ea6ad1764250",
+  "active_manifest_sha256": "05fe1b169be22c6a8e25d97769ef9aeb143dea1a5ffa7d0b09a48b25cc444a63",
+  "model_rows": [
+    {
+      "model_key": "qwen-gsq",
+      "prespecified_target": 120,
+      "evaluated_before": 119,
+      "missing_ids": [
+        "c064"
+      ],
+      "input_records": [
+        {
+          "image_id": "c064",
+          "path": "corpus-new/images/commons-064.jpg",
+          "sha256": "3ccf486e5e58a6eb1b1f765abe77fc8126f73a9b406c58acf7d9ae592cdd9057",
+          "width": 1275,
+          "height": 1030,
+          "cohort": "new82",
+          "stratum": "crowds_occlusion",
+          "context_pack": {},
+          "present_identities": [],
+          "pilot_development": false
+        }
+      ],
+      "prior_failed_attempts_retained": true,
+      "existing_model_output_errors_are_not_retry_targets": true,
+      "planned_max_completion_POSTs": 3,
+      "status": "INPUTS_IDENTIFIED_NOT_EXECUTABLE_NOT_APPROVED"
+    },
+    {
+      "model_key": "qwen-ud",
+      "prespecified_target": 30,
+      "evaluated_before": 26,
+      "missing_ids": [
+        "c055",
+        "c061",
+        "c062",
+        "c071"
+      ],
+      "input_records": [
+        {
+          "image_id": "c055",
+          "path": "corpus-new/images/commons-055.jpg",
+          "sha256": "4ca16433480746144f6b9e58f1245ca314252e316f1c7a7e8c1f8db9b5347ec7",
+          "width": 1920,
+          "height": 1448,
+          "cohort": "new82",
+          "stratum": "artwork_reproduction",
+          "context_pack": {},
+          "present_identities": [],
+          "pilot_development": false
+        },
+        {
+          "image_id": "c061",
+          "path": "corpus-new/images/commons-061.jpg",
+          "sha256": "d2fd79efd80abab9cf34fe46c43e371e8749cc8059eac992bed233e08ef013d8",
+          "width": 1920,
+          "height": 1280,
+          "cohort": "new82",
+          "stratum": "crowds_occlusion",
+          "context_pack": {},
+          "present_identities": [],
+          "pilot_development": false
+        },
+        {
+          "image_id": "c062",
+          "path": "corpus-new/images/commons-062.jpg",
+          "sha256": "f152975d098c4c580ac3ff6ed4c4639a2f1da0ae8f37848eb34b3fb55104fc18",
+          "width": 1920,
+          "height": 1281,
+          "cohort": "new82",
+          "stratum": "crowds_occlusion",
+          "context_pack": {},
+          "present_identities": [],
+          "pilot_development": false
+        },
+        {
+          "image_id": "c071",
+          "path": "corpus-new/images/commons-071.jpg",
+          "sha256": "a47eca630cd3f03edea62a83c94586a678332019e7eb1575c940e2dc59904b31",
+          "width": 1920,
+          "height": 1440,
+          "cohort": "new82",
+          "stratum": "misleading_frame_crop",
+          "context_pack": {},
+          "present_identities": [],
+          "pilot_development": false
+        }
+      ],
+      "prior_failed_attempts_retained": true,
+      "existing_model_output_errors_are_not_retry_targets": true,
+      "planned_max_completion_POSTs": 12,
+      "status": "INPUTS_IDENTIFIED_NOT_EXECUTABLE_NOT_APPROVED"
+    }
+  ],
+  "new_data_or_completion_claim": false,
+  "note": "Existing qualified preparer has pilot/full/replacement038 modes only; no invented generic missing mode. Use actual source6a1437 before proposing any subset execution. Preserve original errors and denominators."
+}

@@ -1,0 +1,16 @@
+{
+  "seed_assembly_commit": "6571c92dbbc0a55d13a163a9a11c4b2363a74d62",
+  "qualified_preparer_sha256": "6d2689390204b4fd102eea77ba0c34d99bf61912821c254f57f7e49ac36e2031",
+  "settler_snapshot": "6a1437fbcd11e2afcc7349639b567997bab5edb7",
+  "file_sha256": {
+    "qwen-ab/prepare_qwen_ab.py": "eb193f587e3cad15d690b2447e30e765151fcde80ee328c6c0abf233df3769d8",
+    "qwen-ab/run_qwen_cohort_operation.py": "5295fa6824e9023594218596ba6384c22843c74d6915b914df167ee5db96eab7",
+    "qwen-ab/cohort_admission.py": "80695b23de74242278be2b76ade0d313d2021b189910ce7a5609ee794186d074",
+    "tools/settle_qwen_candidate.py": "cf7264f0b3393556a7f88888f8ac1394c4f222600bbdd091866d3b6f589c0087"
+  },
+  "runtime_source": "ab94e904ca25e2e031ad241f2600aa0406201c15",
+  "native_execution": false,
+  "new_tests": "43 passed",
+  "existing_qwen_tests": "465 passed, 1 unavailable source test deselected, 105 subtests passed",
+  "existing_settler_failures_baseline_identical": true
+}

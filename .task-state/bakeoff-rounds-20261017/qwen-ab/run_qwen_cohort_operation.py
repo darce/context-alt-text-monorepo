@@ -58,7 +58,7 @@ def parse_args(argv=None):
     p.add_argument('--name', required=True)
     p.add_argument('--dir', required=True, help='holds <name>.prepared.json and <name>.remote.py')
     p.add_argument('--gate-commit', required=True)
-    p.add_argument('--pilot', help='required iff the prepared mode is full or replacement')
+    p.add_argument('--pilot', help='required iff the prepared mode is full, replacement or missing')
     return p.parse_args(argv)
 
 
@@ -70,14 +70,41 @@ def verify_prepared(prepared, raw):
         raise ValueError(f'recipe does not parse: {e}') from e
     need(prepared.get('predecessor_binding') == 'late_bound_at_claim_refresh', 'predecessor must be late_bound_at_claim_refresh')
     need('actual_previous_AUTO' not in prepared, 'pinned actual_previous_AUTO is not allowed')
-    need(prepared.get('mode') in ('pilot', 'full', 'replacement'), f"mode must be pilot, full or replacement, got {prepared.get('mode')!r}")
+    need(prepared.get('mode') in ('pilot', 'full', 'replacement', 'missing'), f"mode must be pilot, full, replacement or missing, got {prepared.get('mode')!r}")
     if prepared['mode'] == 'replacement':
         verify_replacement(prepared, raw)
     else:
         need('replacement' not in prepared, 'replacement record is valid only in replacement mode')
+    if prepared['mode'] == 'missing':
+        verify_missing(prepared, raw)
+    else:
+        need('missing_only' not in prepared, 'missing record is valid only in missing mode')
     windows = WINDOW.findall(raw.decode())
     need(len(windows) == 1, f'recipe must contain exactly one owner window line, found {len(windows)}')
     return windows[0]
+
+
+def verify_missing(prepared, raw=None):
+    """AGT-08: rebuild from pinned inputs before any claim, without executing code.
+
+    Compare every generator field with JSON types preserved (bool is not int).
+    Additional caller custody fields remain the caller's responsibility.
+    """
+    import prepare_qwen_ab as p
+    candidate = prepared.get('candidate')
+    need(type(candidate) is str and candidate in p.SOURCES, 'missing candidate')
+    need(type(prepared.get('whole_client_seconds')) is int, 'missing client budget type')
+    recipe, expected = p.prepare(HERE / 'references', candidate, 'missing',
+        prepared.get('name'), prepared.get('unit'), client_seconds=prepared['whole_client_seconds'],
+        missing_inventory=p.MISSING_INPUTS / 'MISSING-ID-PREP.json',
+        protocol_sha256=p.PROTOCOL_SHA256, corpus_sha256=p.CORPUS_SHA256)
+    for key, value in expected.items():
+        need(key in prepared and json.dumps(prepared[key], sort_keys=True) == json.dumps(value, sort_keys=True),
+             'missing receipt differs from canonical generation: ' + key)
+    need('replacement' not in prepared, 'replacement record in missing mode')
+    if raw is not None:
+        need(type(raw) is bytes and raw == recipe.encode(), 'missing recipe differs from canonical generation')
+    return expected
 
 
 def embedded_configs(raw):
@@ -109,8 +136,8 @@ def verify_replacement(prepared, raw):
 
 
 def pilot_requirement(prepared, pilot):
-    need((pilot is not None) == (prepared.get('mode') in ('full', 'replacement')),
-         '--pilot is required iff the prepared mode is full or replacement')
+    need((pilot is not None) == (prepared.get('mode') in ('full', 'replacement', 'missing')),
+         '--pilot is required iff the prepared mode is full or replacement (including missing)')
 
 
 def workspace_ok(p):
@@ -316,6 +343,29 @@ def bootstrap_source(raw, name, gate_token, pilot_sha):
     return '\n'.join(lines) + '\n'
 
 
+def verify_pilot_reuse(pr, prepared, pilot):
+    # RLSE-21: an unchanged stored pilot need not be rerun for selection-only changes.
+    # Prove exact generated pilot recipe identity; never assert invented Git ancestry.
+    import prepare_qwen_ab as p
+    need(pr.get('preparer_sha256') in (prepared['preparer_sha256'],
+         '6d2689390204b4fd102eea77ba0c34d99bf61912821c254f57f7e49ac36e2031'),
+         'pilot generator is not the qualified baseline or current generator')
+    pilot_recipe, expected = p.prepare(HERE / 'references', prepared['candidate'], 'pilot',
+        pr['name'], pr['unit'], client_seconds=pr['whole_client_seconds'])
+    for key, value in expected.items():
+        if key != 'preparer_sha256':
+            need(key in pr and json.dumps(pr[key], sort_keys=True) == json.dumps(value, sort_keys=True),
+                 'pilot differs from unchanged pilot generation: ' + key)
+    binding = source_binding(pilot_recipe.encode())
+    missing_binding = source_binding(p.prepare(HERE / 'references', prepared['candidate'], 'missing',
+        prepared['name'], prepared['unit'], client_seconds=prepared['whole_client_seconds'],
+        missing_inventory=p.MISSING_INPUTS / 'MISSING-ID-PREP.json',
+        protocol_sha256=p.PROTOCOL_SHA256, corpus_sha256=p.CORPUS_SHA256)[0].encode())
+    need(all(binding[k] == missing_binding[k] for k in ('source', 'repo', 'python')),
+         'pilot shared runtime differs')
+    need(pilot.get('recipe_sha256') == pr['recipe_sha256'], 'accepted pilot recipe identity differs')
+
+
 def pilot_checks(d, prepared, name):
     raw = (BAKEOFF/(name + '.actual-capacity-return.json')).read_bytes()
     pilot = json.loads(raw)
@@ -329,7 +379,10 @@ def pilot_checks(d, prepared, name):
     for key in ('asset_spec_sha256', 'model_contract', 'sources', 'immutable_candidate_configs'):
         need(pr[key] == prepared[key], f'pilot {key} differs from the full recipe')
     need(pr.get('predecessor_binding') == 'late_bound_at_claim_refresh', 'pilot predates the late-bound generator; run a fresh pilot')
-    need(pr.get('preparer_sha256') == prepared['preparer_sha256'], 'pilot was prepared by a different generator than the full recipe')
+    if prepared['mode'] == 'missing':
+        verify_pilot_reuse(pr, prepared, pilot)
+    else:
+        need(pr.get('preparer_sha256') == prepared['preparer_sha256'], 'pilot was prepared by a different generator than the full recipe')
     archive = Path(pilot['archive'])
     with archive.open('rb') as f:
         need(hashlib.file_digest(f, 'sha256').hexdigest() == pilot['archive_sha256'], 'pilot archive sha256 mismatch')

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HTTPError } from '../../../utils/http';
 import type {
@@ -18,8 +18,23 @@ import { useRetryOperation } from '../../../hooks/useRetryOperation';
 import { useSyncStatus } from '../../../hooks/useSyncStatus';
 import { DeadLetterPanel } from '../DeadLetterPanel';
 
+const catalog = vi.hoisted(() => {
+  const labels: Record<string, string> = {};
+  return {
+    labels,
+    polish: false,
+    plural: vi.fn<(singular: string, plural: string, count: number, domain: string) => void>(),
+  };
+});
 vi.mock('@wordpress/i18n', () => ({
-  __: (text: string) => text,
+  __: (text: string) => catalog.labels[text] ?? text,
+  _n: (singular: string, plural: string, count: number, domain: string) => {
+    catalog.plural(singular, plural, count, domain);
+    if (catalog.polish) {
+      return `${count === 1 ? 'one' : count % 10 >= 2 && count % 10 <= 4 && !(count % 100 >= 12 && count % 100 <= 14) ? 'few' : 'many'} %1$s-%2$s/%3$s (%4$s)`;
+    }
+    return count === 1 ? singular : plural;
+  },
   sprintf: (text: string, ...values: (string | number)[]): string => {
     let result = text;
     for (const value of values) {
@@ -64,11 +79,11 @@ type DeadLetterList = OutboxListResponse & {
   items: DeadLetterRow[];
 };
 
-type WpDateBootstrap = {
+interface WpDateBootstrap {
   date?: {
     getSettings?: () => { timezone?: { offset?: number } };
   };
-};
+}
 
 const buildOperation = (overrides: Partial<DeadLetterRow> = {}): DeadLetterRow => ({
   id: 11,
@@ -116,7 +131,7 @@ describe('DeadLetterPanel', () => {
   };
 
   const getTimelinePanel = (): HTMLElement => {
-    const heading = screen.getByRole('heading', { name: 'Pending changes timeline' });
+    const heading = screen.getByRole('heading', { name: 'Change history' });
     const panel = heading.parentElement;
     expect(panel).not.toBeNull();
     return panel!;
@@ -157,6 +172,8 @@ describe('DeadLetterPanel', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    catalog.labels = {};
+    catalog.polish = false;
     delete (window as Window & { wp?: WpDateBootstrap }).wp;
     mockedUseBulkRetryOperations.mockReturnValue(
       createMockMutation<BulkRetryResponse, Error, void>({
@@ -220,6 +237,434 @@ describe('DeadLetterPanel', () => {
     );
   });
 
+  describe('UXREC-1 needs attention', () => {
+    const OLD_FAILED = buildOperation({
+      id: 701,
+      entity_key: 'cluster-701',
+      created_at: '2026-07-14T09:00:00Z',
+      first_failed_at: '2026-07-14T09:00:00Z',
+    });
+    const PENDING_OP = buildOperation({ id: 702, status: 'pending', last_error_code: null, last_error_message: null });
+    const CONFLICT_OP = buildOperation({ id: 703, status: 'conflict' });
+    const ACKNOWLEDGED_OP = buildOperation({
+      id: 704,
+      status: 'acknowledged',
+      acknowledged_at: '2026-07-15T09:00:00Z',
+    });
+    const DISCARDED_OP = buildOperation({ id: 705, status: 'discarded', last_error_code: 'auto_retry_exhausted' });
+
+    beforeEach(() => {
+      mockFailedPages(listResponse({ items: [OLD_FAILED] }));
+      mockedUseOutboxOperations.mockImplementation((params) => {
+        const items = [OLD_FAILED, PENDING_OP, CONFLICT_OP, ACKNOWLEDGED_OP, DISCARDED_OP].filter(
+          (op) => !params?.status || op.status === params.status,
+        );
+        return createMockQuery<OutboxListResponse>({
+          data: { items, total: 25, limit: 10, offset: params?.offset ?? 0 },
+        });
+      });
+    });
+
+    // Predicted RED: missing accessible Needs attention button on unchanged consumer.
+    it('defaults to Needs attention › Failed with the failed list only', () => {
+      renderPanel();
+      expect(screen.getByRole('button', { name: 'Needs attention' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByRole('button', { name: 'Failed' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getAllByText('Entity: cluster-701 (cluster)')).toHaveLength(1);
+      expect(mockedUseOutboxOperations).not.toHaveBeenCalled();
+      expect(screen.queryByRole('heading', { name: 'Change history' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Retry all failed (1)' })).toBeInTheDocument();
+    });
+
+    it('Pending and Conflict render only the server-filtered timeline', () => {
+      renderPanel();
+      for (const [label, status, heading] of [
+        ['Pending', 'pending', 'Pending changes'],
+        ['Conflict', 'conflict', 'Conflicted changes'],
+      ]) {
+        fireEvent.click(screen.getByRole('button', { name: label }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status });
+        expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
+        expect(screen.queryByTestId('acx-zone-z-dl-actions')).not.toBeInTheDocument();
+        expect(screen.queryByText('Showing 1-1 of 1 failed changes.')).not.toBeInTheDocument();
+      }
+    });
+
+    it('History renders the all-status timeline with guarded failed-row recovery and no bulk controls', async () => {
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: undefined });
+      expect(screen.getByText('Status: acknowledged')).toBeInTheDocument();
+      expect(screen.getByText('Status: discarded')).toBeInTheDocument();
+      expect(screen.queryByTestId('acx-zone-z-dl-actions')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+      expect(screen.getAllByText('Entity: cluster-701 (cluster)')).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(mockedUseRetryOperation().mutateAsync).toHaveBeenCalledWith(701));
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(mockedUseDiscardOperation().mutateAsync).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm discard' }));
+      await waitFor(() => expect(mockedUseDiscardOperation().mutateAsync).toHaveBeenCalledWith(701));
+    });
+
+    it('view changes reset the timeline offset and disarm confirmations', () => {
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(screen.getByRole('button', { name: 'Confirm discard' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
+      expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 10, status: undefined });
+      fireEvent.click(screen.getByRole('button', { name: 'Needs attention' }));
+      expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Needs attention' }));
+      expect(screen.getByRole('button', { name: 'Retry all failed (1)' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Pending' }));
+      expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: 'pending' });
+    });
+
+    it('failed-list load error keeps History reachable', () => {
+      mockedUseDeadLetterOperations.mockReturnValue(
+        createMockQuery<OutboxListResponse>({ status: 'error', error: new Error('Boom') }),
+      );
+      renderPanel();
+      expect(screen.getByText('Unable to load failed changes.')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      expect(screen.getByRole('heading', { name: 'Change history' })).toBeInTheDocument();
+    });
+
+    it('old failed rows stay in Needs attention until the server status changes', () => {
+      renderPanel();
+      expect(screen.getAllByText('Entity: cluster-701 (cluster)')).toHaveLength(1);
+      expect(screen.getByRole('button', { name: 'Retry all failed (1)' })).toBeInTheDocument();
+    });
+
+    it('view changes never send a mutation', () => {
+      renderPanel();
+      for (const name of ['Pending', 'Conflict', 'History', 'Needs attention', 'Failed']) {
+        fireEvent.click(screen.getByRole('button', { name }));
+      }
+      expect(mockedUseRetryOperation().mutateAsync).not.toHaveBeenCalled();
+      expect(mockedUseDiscardOperation().mutateAsync).not.toHaveBeenCalled();
+      expect(mockedUseBulkRetryOperations().mutateAsync).not.toHaveBeenCalled();
+    });
+
+    it('History filters expose pressed state and stay focusable', () => {
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      const all = screen.getByRole('button', { name: 'All' });
+      expect(all).toHaveAttribute('aria-pressed', 'true');
+      expect(all).toBeEnabled();
+      const failed = screen.getByRole('button', { name: 'failed' });
+      fireEvent.click(failed);
+      expect(failed).toHaveAttribute('aria-pressed', 'true');
+      expect(all).toHaveAttribute('aria-pressed', 'false');
+      fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
+      fireEvent.click(failed);
+      expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 10, status: 'failed' });
+    });
+
+    it('History labels and moved count use literal gettext and explicit host locale', () => {
+      const previous = document.documentElement.lang;
+      document.documentElement.lang = 'ar-EG';
+      try {
+        mockedUseOutboxOperations.mockReturnValue(
+          createMockQuery<OutboxListResponse>({
+            data: { items: [ACKNOWLEDGED_OP, DISCARDED_OP], total: 1234, limit: 10, offset: 0 },
+          }),
+        );
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        const fmt = new Intl.NumberFormat('ar-EG', { maximumFractionDigits: 0 });
+        expect(fmt.format(2)).not.toBe('2');
+        expect(
+          screen.getByText(`Showing ${fmt.format(1)}-${fmt.format(2)} of ${fmt.format(1234)} changes (all statuses).`),
+        ).toBeInTheDocument();
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: undefined });
+      } finally {
+        document.documentElement.lang = previous;
+      }
+    });
+
+    // UXREC-1 TIMELINE_GATE-01: an actual view, filter or page transition disarms every
+    // confirmation and its confirmation-only announcement; Discard must be armed again.
+    describe('UXREC-1 navigation disarms confirmations', () => {
+      const OLD_FAILED_ARMED =
+        'Discard armed for Cluster label update for cluster-701 (operation 701). Activate Confirm discard to continue.';
+      const oldFailedRow = (): HTMLElement => {
+        const row = screen.getByText('Entity: cluster-701 (cluster)').closest('li');
+        expect(row).not.toBeNull();
+        return row!;
+      };
+      const expectRearmRequired = async (): Promise<void> => {
+        const discard = mockedUseDiscardOperation().mutateAsync;
+        expect(within(oldFailedRow()).queryByRole('button', { name: 'Confirm discard' })).not.toBeInTheDocument();
+        expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent('Discard armed');
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        expect(discard).not.toHaveBeenCalled();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Confirm discard' }));
+        await waitFor(() => expect(discard).toHaveBeenCalledWith(701));
+      };
+
+      it('History All to failed disarms the row that stays visible', async () => {
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: 'failed' });
+        await expectRearmRequired();
+      });
+
+      it('History page-away and back disarms the row', async () => {
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 10, status: undefined });
+        expect(within(oldFailedRow()).queryByRole('button', { name: 'Confirm discard' })).not.toBeInTheDocument();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Previous timeline page' }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: undefined });
+        await expectRearmRequired();
+      });
+
+      it('cached same-total failed pages disarm row and bulk confirmations', async () => {
+        mockFailedPages(listResponse({ items: [{ ...OLD_FAILED, age_seconds: 16 * 24 * 3600 }], total: 25 }));
+        renderPanel();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        expect(mockedUseDeadLetterOperations).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
+        expect(mockedUseDeadLetterOperations).toHaveBeenCalledWith({ limit: 20, offset: 20 });
+        fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+        expect(mockedUseDeadLetterOperations).toHaveBeenCalledWith({ limit: 20, offset: 0 });
+        await expectRearmRequired();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (25)' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+        expect(screen.getByRole('button', { name: 'Retry all failed (25)' })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Discard eligible failed changes' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+        expect(screen.getByRole('button', { name: 'Discard eligible failed changes' })).toBeInTheDocument();
+        expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent(/armed/);
+        expect(mockedUseBulkRetryOperations().mutateAsync).not.toHaveBeenCalled();
+        expect(mockedUseDiscardOperation().mutateAsync).toHaveBeenCalledTimes(1);
+      });
+
+      it('view changes clear the stale row discard announcement', async () => {
+        renderPanel();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent('Discard armed');
+        fireEvent.click(screen.getByRole('button', { name: 'Needs attention' }));
+        await expectRearmRequired();
+      });
+
+      it('same-selection no-ops keep the confirmation armed', () => {
+        renderPanel();
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        expect(within(oldFailedRow()).getByRole('button', { name: 'Confirm discard' })).toBeInTheDocument();
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
+        expect(mockedUseDiscardOperation().mutateAsync).not.toHaveBeenCalled();
+      });
+
+      it('navigation keeps in-flight retry feedback', () => {
+        mockedUseRetryOperation.mockReturnValue(
+          createMockMutation<OutboxMutationResponse, Error, number>({
+            mutateAsync: vi.fn(() => new Promise<OutboxMutationResponse>(() => undefined)),
+          }),
+        );
+        renderPanel();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Retry' }));
+        const inFlight = 'Retrying Cluster label update for cluster-701 (operation 701).';
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(inFlight);
+        fireEvent.click(screen.getByRole('button', { name: 'History' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
+        fireEvent.click(screen.getByRole('button', { name: 'failed' }));
+        expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(inFlight);
+        expect(mockedUseRetryOperation().mutateAsync).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  describe('UXREC-1 timeline locale boundary', () => {
+    let hostLang: string | null;
+    beforeEach(() => {
+      hostLang = document.documentElement.getAttribute('lang');
+      document.documentElement.lang = 'en-US';
+      vi.spyOn(navigator, 'language', 'get').mockReturnValue('ar-EG');
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      if (hostLang === null) {
+        document.documentElement.removeAttribute('lang');
+      } else {
+        document.documentElement.lang = hostLang;
+      }
+      catalog.labels = {};
+      catalog.polish = false;
+    });
+    const historyWithTotal = (total: number) => {
+      mockedUseOutboxOperations.mockReturnValue(
+        createMockQuery<OutboxListResponse>({
+          data: {
+            items:
+              total === 0
+                ? []
+                : [
+                    buildOperation({ status: 'acknowledged' }),
+                    ...(total > 1 ? [buildOperation({ id: 12, status: 'discarded' })] : []),
+                  ],
+            total,
+            limit: 10,
+            offset: 0,
+          },
+        }),
+      );
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      return screen.getByTestId('acx-dead-letter-timeline-status');
+    };
+    it.each([0, 1, 2, 1234])('uses explicit English display and raw total %i', (total) => {
+      expect(Intl.NumberFormat.supportedLocalesOf(['en-US'])).toContain('en-US');
+      const format = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+      const line = historyWithTotal(total);
+      expect(line).toHaveTextContent(
+        `Showing ${total === 0 ? '0' : '1'}-${Math.min(total, 2)} of ${format.format(total)} ${total === 1 ? 'change' : 'changes'} (all statuses).`,
+      );
+      expect(catalog.plural).toHaveBeenCalledWith(
+        'Showing %1$s-%2$s of %3$s change (%4$s).',
+        'Showing %1$s-%2$s of %3$s changes (%4$s).',
+        total,
+        'alt-context',
+      );
+    });
+    it.each([1, 2, 22, 1234])('uses explicit Arabic display for %i without changing server params', (total) => {
+      document.documentElement.lang = 'ar-EG';
+      expect(Intl.NumberFormat.supportedLocalesOf(['ar-EG'])).toContain('ar-EG');
+      const format = new Intl.NumberFormat('ar-EG', { maximumFractionDigits: 0 });
+      expect(format.format(2)).not.toBe('2');
+      expect(historyWithTotal(total)).toHaveTextContent(
+        `Showing ${format.format(1)}-${format.format(Math.min(total, 2))} of ${format.format(total)} ${total === 1 ? 'change' : 'changes'} (all statuses).`,
+      );
+      expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: undefined });
+    });
+    it.each([null, '', '   ', 'en_US', 'not_a_locale'])(
+      'uses neutral raw display for missing or malformed host %s',
+      (lang) => {
+        if (lang === null) {
+          document.documentElement.removeAttribute('lang');
+        } else {
+          document.documentElement.lang = lang;
+        }
+        const constructor = vi.spyOn(Intl, 'NumberFormat');
+        expect(historyWithTotal(1234)).toHaveTextContent('Showing 1-2 of 1234 changes (all statuses).');
+        expect(constructor).not.toHaveBeenCalled();
+      },
+    );
+    it('uses neutral raw display for explicitly unsupported host locale', () => {
+      document.documentElement.lang = 'ar-EG';
+      vi.spyOn(Intl.NumberFormat, 'supportedLocalesOf').mockReturnValue([]);
+      const constructor = vi.spyOn(Intl, 'NumberFormat');
+      expect(historyWithTotal(1234)).toHaveTextContent('Showing 1-2 of 1234 changes (all statuses).');
+      expect(constructor).not.toHaveBeenCalled();
+    });
+    it('uses neutral raw display when locale support lookup fails', () => {
+      vi.spyOn(Intl.NumberFormat, 'supportedLocalesOf').mockImplementation(() => {
+        throw new Error('Intl unavailable');
+      });
+      const constructor = vi.spyOn(Intl, 'NumberFormat');
+      expect(historyWithTotal(1234)).toHaveTextContent('Showing 1-2 of 1234 changes (all statuses).');
+      expect(constructor).not.toHaveBeenCalled();
+    });
+    it('uses neutral raw display with missing Intl APIs', () => {
+      vi.stubGlobal('Intl', {});
+      expect(historyWithTotal(1234)).toHaveTextContent('Showing 1-2 of 1234 changes (all statuses).');
+    });
+    it('uses neutral raw display when formatting fails', () => {
+      const descriptor = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, 'format');
+      if (!descriptor) {
+        throw new Error('Expected NumberFormat format accessor');
+      }
+      Object.defineProperty(Intl.NumberFormat.prototype, 'format', {
+        configurable: true,
+        get: () => () => {
+          throw new Error('format failed');
+        },
+      });
+      try {
+        expect(historyWithTotal(1234)).toHaveTextContent('Showing 1-2 of 1234 changes (all statuses).');
+      } finally {
+        Object.defineProperty(Intl.NumberFormat.prototype, 'format', descriptor);
+      }
+    });
+    it('uses neutral raw display when formatter construction fails', () => {
+      vi.spyOn(Intl, 'NumberFormat').mockImplementation(function () {
+        throw new Error('constructor failed');
+      });
+      expect(historyWithTotal(1234)).toHaveTextContent('Showing 1-2 of 1234 changes (all statuses).');
+    });
+    it.each(['pending', 'error'] as const)('announces timeline %s on one polite status container', (status) => {
+      mockedUseOutboxOperations.mockReturnValue(
+        status === 'error'
+          ? createMockQuery<OutboxListResponse>({ status: 'error', error: new Error('Boom') })
+          : createMockQuery<OutboxListResponse>({ status: 'pending' }),
+      );
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      const live = screen.getByTestId('acx-dead-letter-timeline-status');
+      expect(live).toHaveAttribute('aria-live', 'polite');
+      expect(live).toHaveTextContent(status === 'pending' ? 'Loading changes…' : 'Unable to load changes.');
+      expect(screen.queryByTestId('acx-zone-z-dl-actions')).not.toBeInTheDocument();
+    });
+    it('translates literal History labels while query tokens stay raw', () => {
+      catalog.labels = {
+        All: 'Tous',
+        pending: 'en attente',
+        acknowledged: 'reçu',
+        conflict: 'conflit',
+        failed: 'échec',
+        discarded: 'écarté',
+        'all statuses': 'tous les états',
+      };
+      expect(historyWithTotal(2)).toHaveTextContent('Showing 1-2 of 2 changes (tous les états).');
+      for (const token of ['pending', 'acknowledged', 'conflict', 'failed', 'discarded']) {
+        fireEvent.click(screen.getByRole('button', { name: catalog.labels[token] }));
+        expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: token });
+        expect(screen.getByTestId('acx-dead-letter-timeline-status')).toHaveTextContent(`(${catalog.labels[token]}).`);
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Tous' }));
+      expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: undefined });
+    });
+    it.each([
+      [1, 'one'],
+      [2, 'few'],
+      [5, 'many'],
+      [11, 'many'],
+      [22, 'few'],
+    ] as const)('passes raw %i to a multi-form catalog', (total, form) => {
+      catalog.polish = true;
+      document.documentElement.lang = 'ar-EG';
+      const format = new Intl.NumberFormat('ar-EG', { maximumFractionDigits: 0 });
+      expect(historyWithTotal(total)).toHaveTextContent(
+        `${form} ${format.format(1)}-${format.format(Math.min(total, 2))}/${format.format(total)} (all statuses)`,
+      );
+      expect(catalog.plural).toHaveBeenCalledWith(
+        'Showing %1$s-%2$s of %3$s change (%4$s).',
+        'Showing %1$s-%2$s of %3$s changes (%4$s).',
+        total,
+        'alt-context',
+      );
+    });
+  });
+
   it('keeps visible loading copy alongside the screen-reader status', () => {
     mockedUseDeadLetterOperations.mockReturnValue(createMockQuery<OutboxListResponse>({ status: 'pending' }));
 
@@ -240,7 +685,7 @@ describe('DeadLetterPanel', () => {
 
       const status = screen.getByTestId('acx-dead-letter-status');
       expect(status).toBeEmptyDOMElement();
-      expect(screen.getByRole('region', { name: 'Failed changes panel' })).toHaveAttribute('aria-busy', 'true');
+      expect(screen.getByRole('region', { name: 'Changes panel' })).toHaveAttribute('aria-busy', 'true');
 
       act(() => {
         vi.runOnlyPendingTimers();
@@ -311,19 +756,20 @@ describe('DeadLetterPanel', () => {
 
     expect(screen.getByText('Failed changes')).toBeInTheDocument();
     expect(screen.getByText('Showing 1-1 of 1 failed changes.')).toBeInTheDocument();
-    expect(screen.getAllByText('Cluster label update')).toHaveLength(2);
-    expect(screen.getAllByText('Entity: cluster-1 (cluster)')).toHaveLength(2);
+    expect(screen.getAllByText('Cluster label update')).toHaveLength(1);
+    expect(screen.getAllByText('Entity: cluster-1 (cluster)')).toHaveLength(1);
     expect(screen.getByText('Attempts: 5')).toBeInTheDocument();
-    expect(screen.getAllByText(/Last attempted:/)).toHaveLength(2);
+    expect(screen.getAllByText(/Last attempted:/)).toHaveLength(1);
     expect(screen.getByText('Error: dispatch_failed: Remote curation replay failed.')).toBeInTheDocument();
     expect(screen.getByText('Payload label: Renamed')).toBeInTheDocument();
   });
 
   it('renders outbox timeline entries with status and acknowledgement metadata', () => {
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
-    expect(screen.getByText('Pending changes timeline')).toBeInTheDocument();
-    expect(screen.getByText('Showing 1-1 of 1 changes (all statuses).')).toBeInTheDocument();
+    expect(screen.getByText('Change history')).toBeInTheDocument();
+    expect(screen.getByText('Showing 1-1 of 1 change (all statuses).')).toBeInTheDocument();
     expect(screen.getByText('Status: acknowledged')).toBeInTheDocument();
     expect(screen.getByText(/Acknowledged:/)).toBeInTheDocument();
   });
@@ -358,6 +804,7 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'pending' }));
     expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({
@@ -372,6 +819,7 @@ describe('DeadLetterPanel', () => {
 
   it('keeps non-failed timeline rows without error, attempts, or recovery actions', () => {
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     const timeline = within(getTimelinePanel());
     expect(timeline.getByText('Status: acknowledged')).toBeInTheDocument();
@@ -403,6 +851,7 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     const timeline = within(getTimelinePanel());
     expect(timeline.getByText('Status: failed')).toBeInTheDocument();
@@ -437,6 +886,7 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
     fireEvent.click(within(getTimelinePanel()).getByRole('button', { name: 'Retry' }));
 
     await waitFor(() => {
@@ -472,6 +922,7 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
     const timeline = within(getTimelinePanel());
     fireEvent.click(timeline.getByRole('button', { name: 'Discard' }));
     expect(mutateAsync).not.toHaveBeenCalled();
@@ -506,6 +957,7 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     const timeline = within(getTimelinePanel());
     expect(timeline.getByText('Will not retry')).toBeInTheDocument();
@@ -928,7 +1380,7 @@ describe('DeadLetterPanel', () => {
     expect(reasonId).toBeTruthy();
     expect(document.getElementById(reasonId!)).toHaveTextContent('Failed-change action in progress. Please wait.');
     expect(document.getElementById(reasonId!)).not.toHaveClass('screen-reader-text');
-    expect(screen.getByRole('region', { name: 'Failed changes panel' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('region', { name: 'Changes panel' })).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByRole('status')).toHaveTextContent('Retrying all failed changes…');
   });
 
@@ -976,7 +1428,9 @@ describe('DeadLetterPanel', () => {
     try {
       renderPanel();
 
-      expect(screen.getAllByText('Age: 8 days')).toHaveLength(2);
+      expect(screen.getAllByText('Age: 8 days')).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      expect(screen.getAllByText('Age: 8 days')).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -1025,6 +1479,7 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     expect(screen.getByText('Will not retry')).toBeInTheDocument();
   });

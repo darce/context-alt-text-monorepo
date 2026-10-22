@@ -6,7 +6,7 @@
 > **Task ID:** WBTRUST-3
 > **Target Branch:** feature/wbtrust-3
 > **Base SHA:** 372a6413a7ae0eb71baa3566716546684bac5a58
-> **Revision:** 2 (proposed ADR-019 corrective amendment; no operator acceptance)
+> **Revision:** 3 (ADR-019 corrective amendment; accepted 2026-10-18, operator decision 18002)
 > **Review Coverage Target:** frontend + PHP label service read; PHP edits only if S1, run on a build that already contains the rename-durability fix, still proves a server-side persistence defect
 > **Depends on:** WBTRUST-4 merged (shared invalidation primitive; rate-limit-clean repro)
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
@@ -69,10 +69,10 @@ Labelling `bea-burke_57b99d594f1b` (#106): the edit form shows "3 naming options
 
 ## Contract and Boundary Impact
 
-- **Proposed ADR-019 amendment, pending exact-blob review and recorded acceptance:** naming writes preserve the binding-intent and provenance boundary in ADR-019 rules 1b/2b/2d. A typed or same-name match is a choice requiring the explicit operator command; it cannot activate historical anchors, clear unlink/Undo suppression or authorize snapshot backfill. Retire name-based snapshot person creation/binding even for labels proved human. Preserve unlinked person UUIDs, names and origin. Missing provenance leaves name-only evidence ineligible; missing historical correspondence requires fresh current-source review under ADR-019 2e and cannot itself bind.
+- **ADR-019 amendment, accepted 2026-10-18 (operator decision 18002; see [ADR-019 Status](../../adrs/ADR-019-person-anchored-curation-surfaces.md#status)):** naming writes preserve the binding-intent and provenance boundary in ADR-019 rules 1b/2b/2d. A typed or same-name match is a choice requiring the explicit operator command; it cannot activate historical anchors, clear unlink/Undo suppression or authorize snapshot backfill. Retire name-based snapshot person creation/binding even for labels proved human. Preserve unlinked person UUIDs, names and origin. Missing provenance leaves name-only evidence ineligible; missing historical correspondence requires fresh current-source review under ADR-019 2e and cannot itself bind.
 - Rename remains a person update plus ordered label events for currently bound groups, without reactivating retired claims. Preserve `enqueue_bound_cluster_label_updates` and maintenance fresh-key behavior; a re-link uses the guarded command and its receipt, not the normal binder's merge-on-bind. Advisory similarity failure does not block an otherwise valid rename; it also does not waive roster prerequisites for create/bind. Reuse the existing persistence proof, adding lifecycle cases for unlink → human-label snapshot, Undo → same snapshot, and later explicit rebind/rename. These are required future tests, not verified outcomes.
 - If S1 proves an additional media-row projection omission on the required served build, retain its bounded label-service correction and PHP test. The existing WBTRUST-4 prerequisite remains; this binding contract adds no ordering among independent implementation work beyond the named-input edges in ADR-019.
-- The original PR-16 routing remains prior art. The proposed ADR-019 amendment below supersedes S2's row content/selection contract only after independent exact-blob review and recorded operator acceptance; no acceptance is recorded here.
+- The original PR-16 routing remains prior art. The ADR-019 amendment below supersedes S2's row content/selection contract under the independent exact-blob PASS and operator acceptance recorded in [ADR-019 Status](../../adrs/ADR-019-person-anchored-curation-surfaces.md#status) on 2026-10-18 (decision 18002). Its implementation gates remain in force.
 
 ## Proposed Solution
 

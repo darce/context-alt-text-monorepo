@@ -3,7 +3,7 @@
 > **Metadata**
 >
 > - **Date**: 2026-10-21 17:30 EST
-> - **Author**: PLAN3, codex-remote gpt-6.1-sol (xhigh); identity copy-equality correction by PLAN4, claude-remote claude-opus-5-5 (xhigh)
+> - **Author**: PLAN3, codex-remote gpt-6.1-sol (xhigh); identity copy-equality correction by PLAN4, claude-remote claude-opus-5-5 (xhigh); locale/count contract correction by PLAN5, codex-remote gpt-6.1-sol (xhigh)
 > - **Project**: `apps/prototype-wp-alt-context` (WordPress admin SPA)
 > - **Task ID**: `UXREC-1`
 > - **Task Plan Status**: `proposed`. Not approved, not running product work, not deployed, not accepted.
@@ -137,9 +137,9 @@ Three independent frontend slices:
 | Mode / surface | What renders | Query | Count shown | Offset | Actions |
 | --- | --- | --- | --- | --- | --- |
 | Needs attention › Failed (default) | Existing failed list, maintenance zone, bulk results, age notice, topology notice | Existing `useDeadLetterOperations` 20-row page and 50-row eligibility page | Existing "Showing %1$d-%2$d of %3$d failed changes." from `operationsQuery.data.total` | `offset` (step 20), kept across view changes | Existing guarded row Retry/Discard and armed bulk Retry all / Discard eligible |
-| Needs attention › Pending | Timeline section only | `useOutboxOperations({limit:10, offset:timelineOffset, status:'pending'})` | Existing timeline count line from that query's server `total` | `timelineOffset` reset to 0 on entry | None (non-failed rows already render none) |
+| Needs attention › Pending | Timeline section only | `useOutboxOperations({limit:10, offset:timelineOffset, status:'pending'})` | Moved timeline count from that query's raw server `total`, with `_n(total)` and formatted slots | `timelineOffset` reset to 0 on entry | None (non-failed rows already render none) |
 | Needs attention › Conflict | Timeline section only | Same query with `status:'conflict'` | As above | As above | None in this panel |
-| History | Timeline section with existing status filters (All default) | `useOutboxOperations({limit:10, offset:timelineOffset, status: timelineStatus==='all' ? undefined : timelineStatus})` | Existing timeline count line | `timelineOffset` reset to 0 on entry and on filter change | Existing guarded row Retry/Discard on rows whose status is `failed`. No maintenance zone. |
+| History | Timeline section with existing status filters (All default) | `useOutboxOperations({limit:10, offset:timelineOffset, status: timelineStatus==='all' ? undefined : timelineStatus})` | Same moved plural-aware, locale-formatted timeline count | `timelineOffset` reset to 0 on entry and on filter change | Existing guarded row Retry/Discard on rows whose status is `failed`. No maintenance zone. |
 
 - The failed timeline is never mounted alongside the failed list, so no row or action is duplicated.
 - No count is computed by filtering a page locally.
@@ -160,7 +160,7 @@ Three independent frontend slices:
 - Rules: `docs/workbay/rules/frontend-guidelines.md`, `docs/workbay/rules/testing-typescript.md`, `docs/workbay/templates/TASK_PLAN.template.md`. The repo-local `docs/workbay/rules/planning-review-guide.md` is absent in this checkout. Use the WorkBay payload copy `/home/gate/wb/agentic-protocol-monorepo/packages/workbay-system/workbay_system/payload/docs/workbay/rules/planning-review-guide.md`.
 - Design: [UXREC-1 UX inventory](../../assessments/current/UXREC-1-ux-inventory.md) and the three map JSON files named in Intake.
 - Reservations: `docs/tasks/v0.5.0/WBTRUST-5-control-placement-task-plan.md` and `docs/tasks/v0.5.0/WBTRUST-4-request-budget-task-plan.md` (Files and Surfaces to Change).
-- Slice anchors: the files in [Files and Surfaces to Change](#files-and-surfaces-to-change) and their current tests.
+- Slice anchors: the files in [Files and Surfaces to Change](#files-and-surfaces-to-change) and their current tests. For new human counts, read the host-producer and fallback contract below, `CLAUDE.md:sr-012` and `docs/workbay/constitution.md:sr-012`.
 - Canon v0.26.2, pinned at `/home/gate/heuristics-canon-v0.26.2` (project <https://github.com/darce/heuristics-canon>). Verify `meta/release-manifest.json` digests before citing rows.
 - Handoff state: `UXREC-1` decisions (18920 contract, amended by 18935) and open findings via `review_findings(review={"operation":"list","status":"open","task_ref":"UXREC-1"})`.
 
@@ -173,6 +173,7 @@ Three independent frontend slices:
 | Typed `unavailable` envelope | `class-gpu-control-controller.php:map_unavailable_reason` → `utils/http.ts` → `serviceUnavailable.ts:parseUnavailable` | `{reason, service, http_status, retry_after_seconds, checked_at}`; scene reasons pass through | none to shape. Frontend adds copy for the existing `endpoint_unconfigured` reason. | no | `serviceUnavailable.test.ts`, `GpuControlCard.test.tsx` with the PHP-pinned envelope |
 | `GET /scene/gpu/status` | description service `routers/gpu.py:GpuStatusResponse` | no configuration field (`extra="forbid"`) | none. A configuration or capability field is **deferred** to a separate status-contract task. | n/a | grep-level check that no slice touches `routers/gpu.py` |
 | Describe-run status | `describeApi.ts:DescribeRunResponse` | `completed`, `fallback_reason`, `terminal`, item `tier` | none to schema. GPU copy reads existing `draftCount`; the frontend review href requires DONE + positive completed count + valid run id. | no | `useGpuStateToasts.test.tsx`, `useActivityStatus.test.ts` |
+| Admin UI count locale | WordPress admin chrome → `document.documentElement.lang` → the three display boundaries below | Published HTML language attribute, potentially empty, filtered or malformed; no plugin locale field | Read and validate the existing publisher for new human counts; no PHP/config/request/schema field | no new transport or shared-file dependency | explicit `en-US`/`ar-EG`, catalog and fallback fixtures in each owned test file |
 | Media identities | `js/admin/api/recognition/types/identity.ts:DetectedIdentity` | fields listed in Current State | none. IDENTITY reads existing fields only. | no | `repeatedRegionEvidence.test.ts` |
 
 There is no replicated, cached or cross-service write, and no schema change. TanStack Query caching is unchanged.
@@ -202,6 +203,42 @@ Add panel-local view state with a file-local timeline section in `DeadLetterPane
 - Add a small presentational native-`<details>` component, rendered by `IdentityClusterItem` and by `UngroupedResidueSection`.
 - **Trade-off**: exact numeric equality misses near-identical regions, such as re-scans with a one-pixel offset. That is deliberate. A threshold would be similarity tuning, so a miss is acceptable and a false link is not.
 
+### Human-count locale boundary (T1/G1/I1)
+
+These are admin-control counts, so the locale is the **host admin UI language**, not a per-post content/description-generation language. Use the already published `document.documentElement.lang`; add no service/request/schema/config field or whole-app locale plumbing. Primary producer evidence supplied for WordPress core **7.1.3**: `wp-admin/admin-header.php` calls `_wp_admin_html_begin` in `wp-admin/includes/template.php` (`language_attributes()` at 2658–2683) → `wp-includes/general-template.php:language_attributes` → `get_language_attributes` (4772–4819) → `get_bloginfo('language')` (1118–1130). The latter uses translated `html_lang_attribute` when valid under its guard, otherwise `determine_locale()` with `_` replaced by `-`; `get_language_attributes` applies the `language_attributes` filter. Thus the published attribute must still be validated. This is supplied primary-source evidence, not a deployed-version or browser check. The plugin's `src/admin/class-menu.php:Menu::register_menu` mounts the admin page in that host chrome; it does not publish a separate locale.
+
+`src/admin/class-admin.php:Admin::enqueue_entry` already calls `wp_set_script_translations(..., 'alt-context', ...)`; `gpuStatePresentation.ts` imports `__`, `_n`, `sprintf` from `@wordpress/i18n`. Gettext registration and number formatting are separate dependencies. Translation bundle delivery is not established here. The current display-boundary source has no verified helper satisfying this contract; every helper below is **proposed (new)**, not an existing API.
+
+Keep these helpers module-private in their named owned files. This small duplication preserves independent **2/8/10** product write sets ([GRPH-09] **Colour the conflict graph**, Source: *Graph Theory with Applications, ch. 8*; Canon v0.26.2, <https://github.com/darce/heuristics-canon>).
+
+| Proposed path:symbol (all new, module-private) | Actual producer / proposed caller |
+| --- | --- |
+| `js/admin/pages/workbench/DeadLetterPanel.tsx:readHostUiCountLocale`, `HumanCountLocale`, `resolveHumanCountLocale`, `formatHumanCount`, `timelineFilterLabel`, `timelineCountText` | WordPress HTML `lang` → reader inside new `DeadLetterTimelineSection`; section passes the explicit locale to `timelineCountText`, which formats slots and selects `_n` by raw `total`. History buttons and count status label use `timelineFilterLabel`. |
+| `js/admin/hooks/useGpuStateToasts.ts:readHostUiCountLocale` | Same host publisher → existing `useGpuStateToasts` DEGRADED emission reads it and calls `GPU_STATE_VOCABULARY.degradedToastWithDrafts(status.draftCount, uiLocale)`. |
+| `js/admin/pages/workbench/gpuStatePresentation.ts:HumanCountLocale`, `resolveHumanCountLocale`, `formatHumanCount` | Required explicit locale argument of new exported vocabulary function `degradedToastWithDrafts` → private formatter; pure vocabulary fixtures can pass a locale directly. Existing `doneToast`/`reviewDrafts` signatures and consumers are unchanged. |
+| `js/admin/pages/workbench/identity-clusters/RepeatedRegionEvidenceDisclosure.tsx:readHostUiCountLocale`, `HumanCountLocale`, `resolveHumanCountLocale`, `formatHumanCount` | Same host publisher → new `RepeatedRegionEvidenceDisclosure` reads the locale and formats only its summary/pool/skipped human-count slots. No locale prop is added to list/item, and the pure evidence builder gets no locale. |
+
+Private contracts, copied only into each named boundary as needed:
+
+```ts
+const readHostUiCountLocale: () => string | null; // document.documentElement.lang at render/emission; absent document/attribute or read failure → null
+// resolveHumanCountLocale and its result type are private to each formatter module.
+type HumanCountLocale = { kind: 'localized'; tag: string }
+  | { kind: 'neutral-raw'; reason: 'missing' | 'invalid' | 'unsupported' | 'unavailable' };
+const resolveHumanCountLocale: (raw: string | null) => HumanCountLocale;
+const formatHumanCount: (count: number, uiLocale: string | null) => string;
+// DeadLetterPanel.tsx only; all module-private:
+const timelineFilterLabel: (status: TimelineStatusFilter) => string;
+const timelineCountText: (start: number, end: number, total: number, statusLabel: string, uiLocale: string | null) => string;
+```
+
+- Resolve a non-empty trimmed tag with `Intl.getCanonicalLocales`; reject malformed tags (including `en_US`) without throwing. Require `Intl.NumberFormat.supportedLocalesOf([tag], { localeMatcher: 'lookup' })` to contain the requested canonical tag before constructing `new Intl.NumberFormat(tag, { style: 'decimal', maximumFractionDigits: 0 })`. Parent-language lookup is allowed by that explicit support policy; no unsupported tag falls through to the runtime default. Missing Intl APIs or a support-check failure are `unavailable`; construction/formatting failures also take the neutral fallback. See [ECMA-402 locale canonicalization](https://tc39.es/ecma402/#sec-canonicalizelocalelist) and [NumberFormat supported locales](https://tc39.es/ecma402/#sec-intl.numberformat.supportedlocalesof).
+- Missing/empty/whitespace locale → `neutral-raw/missing`; malformed → `neutral-raw/invalid`; valid but unsupported → `neutral-raw/unsupported`. In any neutral state or formatting failure, render `String(count)` with no grouping: this is a **deliberate neutral raw-numeric fallback**, not localized output. Keep gettext copy and all controls usable, with no new toast. Never use `navigator.language`, assume English, or pass `undefined`/an empty value to Intl. The typed state is local implementation/test evidence, not a new API or visible label.
+- Retain original numbers for `_n`, comparisons, totals, accounting and action predicates. Format only the new display slots using `%s`/numbered string slots. Counts are the existing non-negative integer values; this changes no counting algorithm. Canonical media/identity/group IDs, route/run tokens, region keys, `Object.is` comparisons and raw box values remain untouched. The existing canonical region-line `%1$d` media ID and `String(n)` geometry stay raw and inspectable.
+- All human-readable labels and both `_n` templates remain **literal gettext arguments**, domain `alt-context`. Do not feed a variable msgid to gettext or replace `_n` with `__`, even when English forms coincide or one form is unreachable. Prior constraints: UXW2-3-R1-10 (DB9341) and WBUX-5-R4-D-03 (DB6821, rejected identical-form removal). `_n` uses the original numeric count and the active gettext catalog; `Intl.NumberFormat` formats the displayed slots only.
+
+The explicit publisher, support policy and fallback remove the accidental locale dependency ([REF-27] **Don't program by coincidence**, Source: *The Pragmatic Programmer, ch. 7*; Canon v0.26.2, <https://github.com/darce/heuristics-canon>). No durable key is changed, so FM-12 is inert; FORM-02's input-format trigger does not apply to count display.
+
 ### New symbol contracts
 
 ```ts
@@ -216,7 +253,7 @@ type AttentionStatus = (typeof ATTENTION_STATUSES)[number];
 interface DeadLetterTimelineSectionProps {
   heading: string;                      // 'Pending changes' | 'Conflicted changes' | 'Change history'
   status: Exclude<TimelineStatusFilter, 'all'> | undefined;  // value sent to useOutboxOperations
-  statusLabel: string;                  // %4$s of the existing count line
+  statusLabel: string;                  // %4$s: literal translated filter label, or literal translated "all statuses"
   emptyCopy: string;
   offset: number;
   onOffsetChange: (offset: number) => void;
@@ -234,8 +271,9 @@ const DeadLetterTimelineSection: (props: DeadLetterTimelineSectionProps) => Reac
 // js/admin/pages/workbench/gpuStatePresentation.ts
 GPU_STATE_VOCABULARY.warmingToast            // value: 'GPU warming — this run is waiting for the description service'
 GPU_STATE_VOCABULARY.degradedToast           // value: 'GPU unavailable — no descriptions returned yet'
-GPU_STATE_VOCABULARY.degradedToastWithDrafts // (new) (draftCount: number) => string
-//   sprintf(_n('GPU unavailable — %d draft ready to review', 'GPU unavailable — %d drafts ready to review', draftCount, 'alt-context'), draftCount)
+GPU_STATE_VOCABULARY.degradedToastWithDrafts // (new exported vocabulary function) (draftCount: number, uiLocale: string | null) => string
+//   sprintf(_n('GPU unavailable — %s draft ready to review', 'GPU unavailable — %s drafts ready to review', draftCount, 'alt-context'), formatHumanCount(draftCount, uiLocale))
+// useGpuStateToasts DEGRADED: degradedToastWithDrafts(status.draftCount, readHostUiCountLocale()); predicate stays draftCount > 0.
 GPU_STATE_VOCABULARY.doneToastWithoutDrafts  // (new) __('Description run finished — no drafts returned.', 'alt-context')
 // Existing doneToast(count), reviewDrafts(count) and reviewDraftsAltText stay unchanged for positive results.
 
@@ -333,16 +371,18 @@ export const RepeatedRegionEvidenceDisclosure: (props: { view: RepeatedRegionEvi
 | TIMELINE | region headings (h3) | `Failed changes` (existing), `Pending changes`, `Conflicted changes`, `Change history` (replaces h4 `Pending changes timeline`) |
 | TIMELINE | timeline loading / error | `Loading changes…` / `Unable to load changes.` (replace the "pending changes" variants) |
 | TIMELINE | timeline empty | `No pending changes.` / `No conflicted changes.` / `No changes found for this filter.` (History; replaces `No pending changes found for this filter.`) |
-| TIMELINE | count, filters, pager | unchanged: `Showing %1$d-%2$d of %3$d changes (%4$s).`, `All` + `formatStatusLabel(status)`, `Previous timeline page` / `Next timeline page` |
+| TIMELINE | moved timeline count | `sprintf(_n('Showing %1$s-%2$s of %3$s change (%4$s).', 'Showing %1$s-%2$s of %3$s changes (%4$s).', total, 'alt-context'), formatHumanCount(start, uiLocale), formatHumanCount(end, uiLocale), formatHumanCount(total, uiLocale), statusLabel)`. Raw server `total` selects plural; start/end arithmetic is unchanged, including 0-0 at zero. |
+| TIMELINE | History filters / count status label | `timelineFilterLabel(status)` maps existing machine IDs `all`, `pending`, `acknowledged`, `conflict`, `failed`, `discarded` to literal `__('All', 'alt-context')`, `__('pending', 'alt-context')`, `__('acknowledged', 'alt-context')`, `__('conflict', 'alt-context')`, `__('failed', 'alt-context')`, `__('discarded', 'alt-context')`. Count uses literal `__('all statuses', 'alt-context')` for `all`, otherwise that getter. English case stays unchanged. Filter/query tokens stay raw; do not change legacy `formatStatusLabel(operation.status)` in rows. |
+| TIMELINE | pager / failed-list count | `Previous timeline page` / `Next timeline page` and All/pager behavior unchanged. Existing failed-list/bulk counts, row-status, age/timezone/date formatting are outside this correction. |
 | GPU | toasts | see New symbol contracts |
 | GPU | Settings card (rendered by existing `GpuControlCard`) | `Description service is unavailable because its GPU endpoint is not configured.` + fix sentence |
-| IDENTITY | `<summary>` | `_n('Same photo region is also listed in %d other group', 'Same photo region is also listed in %d other groups', n)`. `n` = distinct group keys in the view's regions, minus the current group. |
+| IDENTITY | `<summary>` | `sprintf(_n('Same photo region is also listed in %s other group', 'Same photo region is also listed in %s other groups', n, 'alt-context'), formatHumanCount(n, uiLocale))`. `n` = distinct group keys in the view's regions, minus the current group. |
 | IDENTITY | limit statement | `Matching uses exact box coordinates in the face records loaded for this photo. It does not show that these faces are the same person, and nothing is merged or moved.` |
 | IDENTITY | region line | `Photo %1$d — box x %2$s, y %3$s, width %4$s, height %5$s` (`String(n)` per number) |
 | IDENTITY | observation line | `%1$s — face record %2$s`. `%2$s` is the verbatim `identity_id` inside `<code>`. |
 | IDENTITY | group display (`%1$s`) | `Person %s`; with a human label `%1$s (person %2$s)`; `Face group %s`; with a human label `%1$s (face group %2$s)`; ungrouped `Not yet grouped`. The id is verbatim inside `<code>`, and the label comes from `formatClusterLabel`. |
-| IDENTITY | pool line | `Checked %1$d of %2$d loaded face records with usable box coordinates.` |
-| IDENTITY | abstention line (only when > 0) | `_n('%d face record was skipped because its loaded copies disagree.', '%d face records were skipped because their loaded copies disagree.', n)` |
+| IDENTITY | pool line | `sprintf(_n('Checked %1$s of %2$s loaded face record with usable box coordinates.', 'Checked %1$s of %2$s loaded face records with usable box coordinates.', pool.loadedObservationCount, 'alt-context'), formatHumanCount(pool.eligibleObservationCount, uiLocale), formatHumanCount(pool.loadedObservationCount, uiLocale))`. Keep separate literal singular/plural templates even though a rendered repeated region requires at least two records. English plural output is unchanged. |
+| IDENTITY | abstention line (only when > 0) | `sprintf(_n('%s face record was skipped because its loaded copies disagree.', '%s face records were skipped because their loaded copies disagree.', n, 'alt-context'), formatHumanCount(n, uiLocale))`; raw `n = pool.abstainedIdentityIds.length` |
 
 ## Files and Surfaces to Change
 
@@ -351,21 +391,21 @@ export const RepeatedRegionEvidenceDisclosure: (props: { view: RepeatedRegionEvi
 | frontend | `js/admin/pages/workbench/DeadLetterPanel.tsx` | `PANEL_VIEW`, `ATTENTION_STATUSES`, `PanelView`, `AttentionStatus` (new) | View and attention-status constants (`as const`) |
 | frontend | same | `DeadLetterPanelState`, `DeadLetterPanelAction`, `INITIAL_STATE`, `deadLetterPanelReducer` | Add `panelView` / `attentionStatus` and two actions. The reducer resets `timelineOffset`, `pendingDiscardId` and both armed flags on either action. `INITIAL_STATE.timelineStatus` stays `'all'` (History default). |
 | frontend | same | `handlePanelViewChange`, `handleAttentionStatusChange` (new); `handleTimelineStatusChange` (reuse) | Dispatch the new actions. History filters keep the existing handler. |
-| frontend | same | `DeadLetterTimelineSection` (new, file-local) | Move the existing timeline JSX (status line, rows, pager) here. It calls `useOutboxOperations` and wraps loading, error and count in one `aria-live="polite"` container (`data-testid="acx-dead-letter-timeline-status"`). History filter buttons switch from `disabled={selected}` to `aria-pressed={selected}`, so they match the new groups and stay focusable. Activating the already-selected filter does nothing. |
+| frontend | same | `DeadLetterTimelineSection` (new, file-local) | Move the existing timeline JSX (status line, rows, pager) here. It calls `useOutboxOperations` and wraps loading, error and count in one `aria-live="polite"` container (`data-testid="acx-dead-letter-timeline-status"`). Use the private locale/count helpers and literal `timelineFilterLabel` mapping above for the moved count and filters. Import existing `_n` from `@wordpress/i18n`. History filter buttons switch from `disabled={selected}` to `aria-pressed={selected}`, so they match the new groups and stay focusable. Activating the already-selected filter does nothing. |
 | frontend | same | `DeadLetterPanel` | Remove the top-level `timelineQuery`. Render native `<button type="button" aria-pressed>` view and status groups (`role="group"` + `aria-label`). Mount exactly one region per mode (Target Outcome table). Move the loading and error early returns into the Failed region, keeping `aria-busy="true"` on the section while Needs attention › Failed is shown and `operationsQuery.isLoading`. Rename the section `aria-label` to `Changes panel`. |
 | frontend | same | `DeadLetterOperationRow` | **No change**. `showFailedRecovery` keeps current behaviour. |
 | tests | `js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx` | `describe('UXREC-1 needs attention')` (new); `getTimelinePanel` helper; listed existing tests | New RED tests; adapt existing timeline tests (see Slice T1) |
-| frontend | `js/admin/pages/workbench/gpuStatePresentation.ts` | `GPU_STATE_VOCABULARY.warmingToast`, `.degradedToast`, `.degradedToastWithDrafts`, `.doneToastWithoutDrafts` (last two new) | Copy per contracts; existing positive `doneToast` and review labels unchanged |
-| frontend | `js/admin/hooks/useGpuStateToasts.ts` | `useGpuStateToasts` (DEGRADED and DONE branches only) | DEGRADED chooses count-bound copy/action. DONE uses neutral zero copy, and the review action requires `draftCount > 0 && reviewHref !== null`. Keep `durationMs: null`, edge memory and other branches. |
+| frontend | `js/admin/pages/workbench/gpuStatePresentation.ts` | `GPU_STATE_VOCABULARY.warmingToast`, `.degradedToast`, `.degradedToastWithDrafts`, `.doneToastWithoutDrafts` (last two new) | Copy per contracts; add private `resolveHumanCountLocale` / `formatHumanCount` for the explicit new vocabulary signature; existing positive `doneToast` and review labels unchanged |
+| frontend | `js/admin/hooks/useGpuStateToasts.ts` | `useGpuStateToasts` (DEGRADED and DONE branches only) | Add private `readHostUiCountLocale`; DEGRADED passes its value to the new vocabulary function and chooses count-bound copy/action. DONE uses neutral zero copy, and the review action requires `draftCount > 0 && reviewHref !== null`. Keep `durationMs: null`, edge memory and other branches. |
 | frontend | `js/admin/hooks/useActivityStatus.ts` | `reviewDraftsHrefForStatus` (new); `useActivityStatus` actions `useMemo` | Bounded grant: add the pure review-href derivation, import existing `serializeRunParam`, and replace only the `reviewDraftsHref` expression. No cooldown, budget, lifecycle, cancel/retry or layout change. |
 | frontend | `js/admin/utils/serviceUnavailable.ts` | `UNAVAILABLE_REASON`, `UNAVAILABLE_REASON_COPY` | Add `ENDPOINT_UNCONFIGURED` and its copy |
-| tests | `js/admin/hooks/__tests__/useGpuStateToasts.test.tsx` | `describe('UXREC-1 GPU toast evidence')` (new); `it.each(...)('always toasts %s to degraded with Review results even while mounted')` | New RED tests. The existing degraded case gets `draftCount: 1` and expects `degradedToastWithDrafts(1)`. |
+| tests | `js/admin/hooks/__tests__/useGpuStateToasts.test.tsx` | `describe('UXREC-1 GPU toast evidence')` (new); `it.each(...)('always toasts %s to degraded with Review results even while mounted')` | New RED tests. The existing degraded case gets `draftCount: 1` and expects `degradedToastWithDrafts(1, 'en-US')` with that host locale. |
 | tests | `js/admin/hooks/__tests__/useActivityStatus.test.ts` | `describe('UXREC-1 review href evidence')` (new, nested in existing hook setup) | Real completed-run hook fixtures plus pure derivation boundary cases, as named in G1 |
 | tests | `js/admin/utils/__tests__/serviceUnavailable.test.ts` | `CLOSED_REASON_COPY`; `it('UXREC-1 endpoint_unconfigured maps to configuration copy')` (new) | Add the closed-set row (TypeScript `Record` requires it) and the RED test |
 | tests | `js/admin/pages/settings/__tests__/GpuControlCard.test.tsx` | `it('UXREC-1 endpoint_unconfigured envelope shows configuration copy')`, `it('UXREC-1 stale snapshot never shows configuration copy')` (new) | Consumer test with the PHP-pinned envelope via the existing `unavailableError` helper, plus a stale-telemetry guard |
 | frontend | `js/admin/pages/workbench/identity-clusters/utils.ts` | `identityGroupKey` (new); `groupIdentitiesByClusters` | Extract the key; call it from grouping |
 | frontend | `js/admin/pages/workbench/identity-clusters/repeatedRegionEvidence.ts` (new) | `buildRepeatedRegionEvidence`, `repeatedRegionViewForGroup` and the types above | Pure projection |
-| frontend | `js/admin/pages/workbench/identity-clusters/RepeatedRegionEvidenceDisclosure.tsx` (new) | `RepeatedRegionEvidenceDisclosure` | Native `<details className="acx-identity-cluster__repeated-region" data-testid="acx-repeated-region-evidence">`, closed by default. Renders `<summary>`, limit, regions (`<ul>`), observations (`<ul>`), pool and abstention lines with the exact copy. Renders no image, button or link. |
+| frontend | `js/admin/pages/workbench/identity-clusters/RepeatedRegionEvidenceDisclosure.tsx` (new) | `RepeatedRegionEvidenceDisclosure` | Native `<details className="acx-identity-cluster__repeated-region" data-testid="acx-repeated-region-evidence">`, closed by default. Renders `<summary>`, limit, regions (`<ul>`), observations (`<ul>`), pool and abstention lines with the exact copy. Add private `readHostUiCountLocale`, `resolveHumanCountLocale` and `formatHumanCount`; summary/pool/skipped slots use the host locale. Renders no image, button or link. |
 | frontend | `js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx` | `IdentityClusterItemProps.repeatedRegionEvidence?: RepeatedRegionEvidenceView` (new); `IdentityClusterItem` | In display mode, render the disclosure last inside `acx-identity-cluster__info`, after the inline suggestion prompt and outside the `clusteringPending` guard. Never inside the label button. |
 | frontend | `js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx` | `IdentityClusterList`, `UngroupedResidueSection` (prop `repeatedRegionEvidence?: RepeatedRegionEvidenceView`) | `useMemo(() => buildRepeatedRegionEvidence(identities), [identities])`. Build `groupLabels` from `clusters`. Pass `repeatedRegionViewForGroup(evidence, cluster.key, groupLabels)` to each item and the `ungrouped` view to the residue section, which renders the disclosure under its heading. |
 | styles | `js/admin/styles/components/_identity-cluster-list.scss` | `.acx-identity-cluster__repeated-region` (new rules) | `flex-basis: 100%; min-width: 0`, token spacing, and `code { overflow-wrap: anywhere; }` so references wrap at 320 px |
@@ -424,7 +464,7 @@ All selectors below are **future product-author commands**. This planning lane r
 
 Files/functions:
 
-- `js/admin/pages/workbench/DeadLetterPanel.tsx:PANEL_VIEW`, `ATTENTION_STATUSES` (new); `DeadLetterPanelState`, `DeadLetterPanelAction`, `INITIAL_STATE`, `deadLetterPanelReducer`, `handlePanelViewChange` (new), `handleAttentionStatusChange` (new), `DeadLetterTimelineSection` (new), `DeadLetterPanel`.
+- `js/admin/pages/workbench/DeadLetterPanel.tsx:PANEL_VIEW`, `ATTENTION_STATUSES` (new); `DeadLetterPanelState`, `DeadLetterPanelAction`, `INITIAL_STATE`, `deadLetterPanelReducer`, `handlePanelViewChange` (new), `handleAttentionStatusChange` (new), `DeadLetterTimelineSection` (new), `DeadLetterPanel`; private `readHostUiCountLocale`, `resolveHumanCountLocale`, `formatHumanCount`, `timelineFilterLabel`, `timelineCountText` (all new).
 - `js/admin/pages/workbench/__tests__/DeadLetterPanel.test.tsx`.
 
 Fixtures, added to the test file with the existing `buildOperation`. All IDs are synthetic; these are not the live July records.
@@ -458,6 +498,11 @@ RED tests in `describe('UXREC-1 needs attention')`, each with its predicted fail
    - In History, `All` has `aria-pressed="true"` and is not disabled. After activating `failed`, that button is pressed and `All` is not.
    - Activating the already-pressed `failed` again leaves the request offset unchanged.
 
+9. `History labels and moved count use literal gettext and explicit host locale`
+   - Set/restore `document.documentElement.lang` per fixture. In `en-US`, totals 0/1/2 give `Showing 0-0 of 0 changes (all statuses).`, `Showing 1-1 of 1 change (all statuses).`, `Showing 1-2 of 2 changes (all statuses).`; never `1 changes`. At `ar-EG`, assert the corresponding count slots equal explicit `Intl.NumberFormat('ar-EG')` output, including a non-Latin-digit 2, while the query still receives numeric offset/limit and the same machine status.
+   - Install a scoped gettext mock/catalog stub with distinct translations for `All`, each lowercase literal filter label and `all statuses`. Assert translated buttons/count label but unchanged filter/query tokens. Do not localize legacy row-status/age/timezone paths.
+   - Apply the shared fallback and multi-form fixtures below to the moved count. Predicted RED: untranslated `pending`, `1 changes` and raw digits in the Arabic fixture.
+
 Intentional updates to existing tests (setup changes; assertions are preserved unless stated):
 
 - `getTimelinePanel`: look up the heading `Change history`.
@@ -480,7 +525,7 @@ Proof:
 Files/functions:
 
 - `js/admin/pages/workbench/gpuStatePresentation.ts:GPU_STATE_VOCABULARY` (`warmingToast`, `degradedToast`, `degradedToastWithDrafts`, `doneToastWithoutDrafts` (last two new)).
-- `js/admin/hooks/useGpuStateToasts.ts:useGpuStateToasts`.
+- `js/admin/hooks/useGpuStateToasts.ts:useGpuStateToasts`, private `readHostUiCountLocale` (new); `gpuStatePresentation.ts:resolveHumanCountLocale`, `formatHumanCount` (private, new).
 - `js/admin/hooks/useActivityStatus.ts:reviewDraftsHrefForStatus` (new) and only the actions `useMemo` review-href expression/import; other internals read-only.
 - `js/admin/utils/serviceUnavailable.ts:UNAVAILABLE_REASON`, `UNAVAILABLE_REASON_COPY`.
 - Tests: `js/admin/hooks/__tests__/{useGpuStateToasts.test.tsx,useActivityStatus.test.ts}`, `serviceUnavailable.test.ts`, `GpuControlCard.test.tsx`. These tests and symbols are proposed, not implemented by this plan.
@@ -491,6 +536,7 @@ RED tests (assert literal strings, so RED is a clean assertion failure):
    - `warming toast makes no CPU draft claim`: the kind change to WARMING gives info text `GPU warming — this run is waiting for the description service`, which does not match `/CPU/`. Predicted RED: `expected 'GPU warming — CPU drafts first' to be …`.
    - `degraded toast without returned drafts offers no review`: READY → DEGRADED with `draftCount: 0` gives error text `GPU unavailable — no descriptions returned yet`, `options.action` undefined and `durationMs` null. Predicted RED: text mismatch, with the action present.
    - `degraded toast with returned drafts names the count and keeps Review results`: `draftCount: 2` gives `GPU unavailable — 2 drafts ready to review` and action label `Review results`.
+   - `new degraded count follows host locale and numeric plural selection`: parameterize `en-US`/`ar-EG`, counts 1/2/22/1234, set/restore host `lang`, and assert the entire new sentence uses only explicit locale-formatted display slots. The ar-EG 2 slot must differ from raw `2`. The new vocabulary function can also be called directly with the explicit locale; spy `_n` to receive each original numeric count and literal templates/domain. Apply fallback and multi-form fixtures below; review eligibility and run/href tokens are identical across locales. Predicted RED: raw Arabic count slot (and missing new vocabulary before implementation).
    - `DONE zero returned drafts has neutral completion copy and no review action`: use existing `observeSequence`, `hookResult`, `runStatus` and `idleActions` (real `UseActivityStatusResult` shape). DESCRIBING → DONE with `draftCount: 0`; parameterize `reviewDraftsHref: null` and a stale non-null href. Expect exactly one success toast, literal `Description run finished — no drafts returned.`, `options.action` undefined, `durationMs: null`, no navigation and no error/info toast. Predicted RED: `expected '0 drafts ready to review' to be 'Description run finished — no drafts returned.'`.
    - `DONE positive drafts with null href has no review action`: same sequence with `draftCount: 2`, `reviewDraftsHref: null`. Expect existing `doneToast(2)` and no action, unchanged location `/people`. Predicted RED: `expected { label: 'Review 2 drafts', ... } to be undefined`.
    - `DONE positive drafts with href keeps review navigation`: same sequence with `draftCount: 2`, `reviewDraftsHref: '#/workbench?hasDraft=1&run=run-1'`. Expect existing `doneToast(2)`, `reviewDrafts(2)`, alt text, `durationMs: null`; invoke `onClick` inside `act` and expect `/workbench?hasDraft=1&run=run-1`. This guard passes before and after; also retain the existing four-draft review test.
@@ -506,7 +552,7 @@ RED tests (assert literal strings, so RED is a clean assertion failure):
 
 Intentional updates to existing tests:
 
-- `always toasts %s to degraded with Review results even while mounted`: add `draftCount: 1` to the DEGRADED status and expect `GPU_STATE_VOCABULARY.degradedToastWithDrafts(1)`.
+- `always toasts %s to degraded with Review results even while mounted`: add `draftCount: 1` to the DEGRADED status and expect `GPU_STATE_VOCABULARY.degradedToastWithDrafts(1, 'en-US')` (set/restore the host lang accordingly).
 - `CLOSED_REASON_COPY`: add the `ENDPOINT_UNCONFIGURED` row. The distinct-`why` test then covers it.
 
 Proof:
@@ -524,7 +570,7 @@ Files/functions:
 
 - `identity-clusters/utils.ts:identityGroupKey` (new), `groupIdentitiesByClusters`.
 - `identity-clusters/repeatedRegionEvidence.ts` (new): `buildRepeatedRegionEvidence`, `repeatedRegionViewForGroup`.
-- `identity-clusters/RepeatedRegionEvidenceDisclosure.tsx` (new).
+- `identity-clusters/RepeatedRegionEvidenceDisclosure.tsx:RepeatedRegionEvidenceDisclosure`, private `readHostUiCountLocale`, `resolveHumanCountLocale`, `formatHumanCount` (all new).
 - `IdentityClusterItem.tsx:IdentityClusterItem`.
 - `IdentityClusterList.tsx:IdentityClusterList`, `UngroupedResidueSection`.
 - `styles/components/_identity-cluster-list.scss`.
@@ -598,6 +644,12 @@ Other RED tests:
   - Every permutation of `[P1A, P1A2, P2B]` gives no disclosure. Every permutation of `[P1A, P1A2, P2B, C3C]` gives disclosures only on the `person:2` and `cluster:c-3` cards, none on the `person:1` card. Each disclosure shows `Checked 2 of 3 loaded face records with usable box coordinates.` and `1 face record was skipped because its loaded copies disagree.`. The label buttons and the `Edit label` / `Name this person` / `Remove from group` buttons match, by name and order, a control render of the same permutation with `P2B` on media 11 and `C3C` on media 12. That control has the same groups and members but no region. (A 1×1-box control is not used here, because same-face dedup ignores unusable boxes and would change the `person:1` members.)
   - Existing 1×1 fixtures render no disclosure.
 
+Focused future display fixtures in the existing owned `IdentityClusterItem.test.tsx` and `IdentityClusterList.test.tsx`:
+
+- Set/restore host `lang` to `en-US` for the English fixtures above and to `ar-EG` for a second pass. For `[P1A, P1A2, P2B, C3C]`, assert the whole summary/pool/skipped sentences use explicit locale-formatted slots: the pool is eligible 2 of loaded 3, skipped 1; the plural selector for the pool is raw **3**, not eligible 2. For three distinct groups, summary selects with raw 2. Add two conflicting ids beside a valid region so skipped selects raw 2. Assert all new `_n` calls use both literal templates and `alt-context`.
+- Keep `Photo 10 — box x 12, y 20, width 40, height 48`, `person:1`, `c-1`, face record IDs, region keys and signed-zero/equality evidence raw across locales. Compare pure projection/pool/grouping/editable/removal outputs before and after rendering under each locale, using `Object.is` for retained numbers. No formatter enters `buildRepeatedRegionEvidence` or `identityGroupKey`.
+- Apply the shared fallback/multi-form fixtures below. An extraction/call-spy assertion on the actual disclosure must capture both literal pool msgids; feed those captured messages to the catalog stub at N=1. Do not fabricate a one-record repeated region or copy test-only msgids, and do not delete the plural catalog entry. Predicted RED before implementation includes missing disclosure; after the component exists, a raw-decimal mutant must fail the Arabic assertions. These are future product-author tests, not current product RED evidence.
+
 Keep green unchanged: the `groupIdentitiesByClusters same-face dedup (GPUFLOW-3 R1)` block, the twin-chip, provenance and suggestion-recovery suites, `gettext-literals.test.ts` and `banned-vocabulary.test.tsx`.
 
 Proof:
@@ -610,6 +662,15 @@ Proof:
 - After the change they pass, and so do the full IDENTITY command, typecheck and the ownership check.
 
 **Source-complete when** all of the above pass. **Not proven here**: whether the supplied same-person crops are same-photo exact regions, cross-photo duplicates or recall fragmentation. That diagnosis belongs to a separately granted CORPUS probe. Rendered browser reflow and assistive-technology behaviour are also unproven.
+
+### Focused locale fixtures shared as requirements, not a shared test file
+
+Each author adds these cases only to its existing owned tests: T1 `DeadLetterPanel.test.tsx`; G1 `useGpuStateToasts.test.tsx` (imports the exported vocabulary function for pure checks); I1 `IdentityClusterItem.test.tsx` / `IdentityClusterList.test.tsx`. No new shared helper/test file or another lane's write is required.
+
+- Set/restore `en-US` for all English-copy fixtures above. Use explicit `en-US` and `ar-EG`, and assert those locales are supported by the fixture runtime before expecting localized output. Derive expected slots with an explicitly tagged `Intl.NumberFormat`, then assert at least the ar-EG 2 slot is non-Latin (for example `٢`; verify in the fixture runtime). This is numeric-display coverage, not proof of an Arabic translation bundle. Test 1234 too for locale grouping. Never let a fixture's browser default supply the expected value.
+- Empty/missing/whitespace host `lang`, malformed `en_US`/`not_a_locale`, and a stubbed valid-but-unsupported locale each render the deliberate neutral raw-numeric fallback without throwing. Stub missing Intl APIs and formatting failure too. Assert no `Intl.NumberFormat` constructor is called with `undefined` or an invalid/unsupported tag; restore document/Intl/gettext mocks after each fixture. Set a contrary browser default to expose accidental reliance on it.
+- Use a scoped Polish catalog stub with at least three distinct plural slots, driven by raw numeric N: 1 → one, 2 and 22 → few, 5 and 11 → many. The stub records both literal msgids, numeric selector and `alt-context`; assert raw numbers (never formatted strings) reach `_n` for G1 degraded, I1 summary/pool/skipped and T1 total. For I1 pool, vary loaded N separately from eligible M and select on N; its two literal entries must survive extraction even when English uses only the plural on screen. These sample categories are grounded in [Unicode CLDR Polish cardinal rules](https://www.unicode.org/cldr/charts/49/supplemental/language_plural_rules.html#pl); the stub is test data, not a claim that Intl plural categories replace the WordPress catalog.
+- Across locales/fallback, assert unchanged numeric counts/predicates, server totals/offsets, canonical IDs/geometry/region keys, grouping and mutation targets, and G1 review/href/run semantics. Keep gettext's literal-argument guard green; do not replace an identical-form `_n` with `__`.
 
 ## Lane Decomposition (Multi-Agent)
 
@@ -734,14 +795,14 @@ make lane-manifest-init TASK=UXREC-1 LANE_IDS='uxrec-1-timeline uxrec-1-gpu-stat
 
 ### Checklist for Slice T1: TIMELINE
 
-- [ ] Added the fixtures `OLD_FAILED`, `PENDING_OP`, `CONFLICT_OP`, `ACKNOWLEDGED_OP` and `DISCARDED_OP`, and the eight `UXREC-1 needs attention` tests. Recorded each predicted message and saw each one fail against unchanged `DeadLetterPanel.tsx`.
+- [ ] Added the fixtures `OLD_FAILED`, `PENDING_OP`, `CONFLICT_OP`, `ACKNOWLEDGED_OP` and `DISCARDED_OP`, and the nine `UXREC-1 needs attention` tests. Recorded each predicted message and saw each one fail against unchanged `DeadLetterPanel.tsx`.
 - [ ] Added `PANEL_VIEW`, `ATTENTION_STATUSES`, the new state fields and actions, and reducer cases that reset `timelineOffset`, `pendingDiscardId`, `bulkRetryArmed` and `bulkDiscardArmed`.
 - [ ] Added `handlePanelViewChange` and `handleAttentionStatusChange`, and kept `handleTimelineStatusChange` for History filters.
 - [ ] Moved the timeline JSX into `DeadLetterTimelineSection`, which owns the `useOutboxOperations` call and one polite live container. History filters use `aria-pressed` and ignore re-selection. Removed the top-level `timelineQuery`.
 - [ ] Rendered the `aria-pressed` view and status groups and mounted one region per mode as the Target Outcome table specifies. The maintenance zone renders only in Failed.
 - [ ] History retains guarded recovery only on failed rows, once per view, with confirmation/capability/age and terminal guards preserved. No bulk control appears in History; no age-only hiding or July-record clearance claim.
 - [ ] Scoped the failed-list loading and error states to the Failed region, kept `aria-busy` while loading, and renamed the section label to `Changes panel`.
-- [ ] Applied the exact copy table, with literal gettext first arguments.
+- [ ] Applied the exact copy table: literal `timelineFilterLabel` mapped from unchanged machine IDs, `_n(total)` singular/plural moved count with formatted string slots, and private host-locale reader/resolver/formatter. The `en-US`/`ar-EG`, Polish catalog, empty/malformed/unsupported/unavailable fallback fixtures pass; row-status/age/timezone and failed-list count paths are unchanged.
 - [ ] Made the listed intentional edits to existing tests and left `DeadLetterOperationRow` unchanged.
 - [ ] Captured GREEN for the RED selector and the TIMELINE full-file command, `npm run typecheck`, and the ownership `git diff --name-only`.
 
@@ -752,7 +813,7 @@ make lane-manifest-init TASK=UXREC-1 LANE_IDS='uxrec-1-timeline uxrec-1-gpu-stat
 - [ ] In DEGRADED, chose copy and attached "Review results" only when `status.draftCount > 0`. In DONE, zero results have neutral completion copy and no action, positive results with null href have no action, and positive results with href keep existing review copy/navigation. Preserved all other branches, ready/Back to run, real errors/cancel/retry, dormant/progress/first-observation suppression and per-run edge memory.
 - [ ] Added `useActivityStatus.ts:reviewDraftsHrefForStatus` and used it only for the actions `reviewDraftsHref` expression. The href requires DONE, positive returned completed count and an id accepted by existing `serializeRunParam`; existing `toDescriptionHistoryRun` owns the destination. No status schema, cooldown, budget, lifecycle, cancel/retry or layout change.
 - [ ] Added `UNAVAILABLE_REASON.ENDPOINT_UNCONFIGURED`, its `UNAVAILABLE_REASON_COPY` entry, and the `CLOSED_REASON_COPY` test row.
-- [ ] Updated the existing degraded test to `draftCount: 1`.
+- [ ] Updated the existing degraded test to `draftCount: 1` with explicit host `en-US`; added the required locale argument at every new `degradedToastWithDrafts` call. Private reader/formatter use the verified host publisher; English/Arabic, Polish numeric-selector and all fallback fixtures pass. Existing DONE/review copy is unchanged.
 - [ ] Captured GREEN for the RED selectors, producer and consumer preservation guards, GPU full command and typecheck. The ownership diff lists only the eight owned paths, and the `useActivityStatus.ts` symbol diff matches the narrow grant. Reserved strip source and all read-only regression files remain untouched.
 
 ### Checklist for Slice I1: IDENTITY
@@ -762,18 +823,19 @@ make lane-manifest-init TASK=UXREC-1 LANE_IDS='uxrec-1-timeline uxrec-1-gpu-stat
 - [ ] Implemented `buildRepeatedRegionEvidence` and `repeatedRegionViewForGroup` to rules 1–6 and the types above. No IoU, no similarity, no image fields.
 - [ ] Rule 2 compares copies field by field over the complete retained tuple with `Object.is`. It uses no joined string, no `groupKey`-only signature and no winning copy. The `[P1A, P1A2, P2B]` and `[P1A, P1A2, P2B, C3C]` permutations, every-field participation, `face-d` delimiter and signed-zero fixtures pass. A region's `bbox` comes from its sorted `observations[0]`.
 - [ ] Implemented `RepeatedRegionEvidenceDisclosure` as native `<details>`/`<summary>`, closed by default, using text only and the exact copy. Exact references appear only inside the body.
+- [ ] Added the private disclosure host-locale reader/resolver/formatter. Summary, pool (`_n` on raw loaded count) and skipped line keep literal plural entries and formatted string slots. English/Arabic, Polish selector and fallback fixtures pass, with raw IDs/geometry/accounting and targets unchanged.
 - [ ] Wired `IdentityClusterList`: a memoized evidence value, `groupLabels`, a per-item `repeatedRegionEvidence`, and the residue-section disclosure. `IdentityClusterItem` renders it last in display mode.
 - [ ] Added `.acx-identity-cluster__repeated-region` rules to `_identity-cluster-list.scss` using tokens and `overflow-wrap: anywhere` for `code`.
 - [ ] Captured GREEN for the RED selectors and the IDENTITY full command (including `gettext-literals.test.ts` and `banned-vocabulary.test.tsx`), typecheck, and the ownership diff.
 
 ## Review Readiness
 
-- [ ] No slice changes a boundary. Each boundary row's verification evidence is attached: status params, the PHP-pinned envelope, and permutation and purity tests.
+- [ ] No slice changes a transport/schema boundary. Each boundary row's verification evidence is attached: status params, the PHP-pinned envelope, permutation/purity tests, and the verified host-locale publisher with explicit support/fallback and numeric-plural fixtures.
 - [ ] Each RED test's predicted and observed failure is recorded in the slice handoff decision, not in this file.
 - [ ] The runtime-acceptance items stay listed as unproven. No slice report claims deployed behaviour, July-record clearance, CPU availability or an identity diagnosis.
 - [ ] The map writer has reconciled map action IDs (`act-edit-person-name`, `act-toggle-repeated-region-evidence`, `act-view-current-attention`, `act-view-audit-history`, `act-retry-dead-letter`, `act-discard-dead-letter`) with the merged code references.
 - [ ] Joined maps and documents agree: History has existing failed-row recovery with guards and no bulk zone; review requires returned results, and DONE with zero/null href offers no review action. No read-only History promise or deferred zero-DONE bug remains. An independent planning gate follows; this document does not approve itself.
-- [ ] Each handoff decision records the change, its verification and "no contract change".
+- [ ] Each handoff decision records the change, verification, the local display-locale dependency and "no transport/schema change".
 
 ## Stretch Goals
 
@@ -791,6 +853,7 @@ make lane-manifest-init TASK=UXREC-1 LANE_IDS='uxrec-1-timeline uxrec-1-gpu-stat
 - [ ] A repeated exact region across two loaded groups renders one collapsed native disclosure per involved card, with the region, references and pool counts. Same-group, cross-photo, overlapping, degenerate and conflicting inputs render none.
 - [ ] Copies of one face record that disagree in any retained field, including only `cluster_id` under a winning `person_id`, abstain in every input order. Each counts once as loaded and never as eligible, joins no region and is reported by the conditional skipped line. Identical copies still count once and still match.
 - [ ] `groupIdentitiesByClusters` output, `getEditableClusterId` and `members[0].identity_id` are identical with and without the projection.
+- [ ] New G1/I1 and moved T1 human counts use the validated host UI locale with explicit string slots, raw numeric plural selectors and a non-throwing named neutral fallback. Literal History filter labels map from unchanged tokens; singular timeline copy never says `1 changes`. English/Arabic and Polish multi-form fixtures pass while canonical IDs/geometry/accounting remain unchanged.
 - [ ] Every slice's full command and `npm run typecheck` pass on the VM, and each lane's diff lists only its owned paths.
 
 ## Canon authority (Canon v0.26.2)
@@ -799,6 +862,7 @@ Pinned at `/home/gate/heuristics-canon-v0.26.2`, from <https://github.com/darce/
 
 | Decision | Rule |
 | --- | --- |
+| New human counts depend on the verified host UI publisher, explicit BCP47 validation/support and named neutral fallback; gettext plural selection keeps raw numbers | [REF-27] **Don't program by coincidence**, `lexicons/engineering.md#ref-27`, *The Pragmatic Programmer, ch. 7* |
 | GPU copy states only returned evidence; unknown never becomes "not configured" | [HAI-05] **Imperceptible AI is not ethical**, `lexicons/interaction-ux.md#hai-05`, *Human-Centered AI* |
 | An accepted run keeps visible status, next step and existing cancel/retry | [INT-10] **Status–predict–stop**, `lexicons/interaction-ux.md#int-10`, *Human-Centered AI* |
 | Separate backlog maintenance (Needs attention › Failed) from audit navigation (History), each with a named end state | [INT-19] **One outcome per interaction**, `#int-19`, *Microinteractions, ch. 1* + *Microinteractions, ch. 3* |

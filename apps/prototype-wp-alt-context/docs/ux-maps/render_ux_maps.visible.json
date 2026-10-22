@@ -37,12 +37,12 @@
       "source_sha256": "0c8ed4abe3ddf2be27e62b2af4a26d59c104b48ff9d7b8244c60a3caf3ac5b54"
     },
     "workbench-identity-chips": {
-      "projection_sha256": "927a7650aa205a1095df387d83c686f24d85631ae31792a6de1060462ea65976",
-      "source_sha256": "458dd317103e556e236ecb28005fc4e3a375590a9eee15cecabee87981bfdd25"
+      "projection_sha256": "f1b7719d1c01d1a4674f7f5c234048734f3a930fce90575fc1afd59fa82b364f",
+      "source_sha256": "0353f69da55c79ac0fe7ae6e50a57df8ae4c95bf953931bd289c6a099838355d"
     },
     "workbench-operator-loop": {
-      "projection_sha256": "11b99dcd85a217395168da5ea729a40d595511683a98bf83e6c7fb6f08a173ad",
-      "source_sha256": "d024ba47454e728045b77765cd4f2be550ccbf445f9c37dd6a23c29c6bc588e1"
+      "projection_sha256": "63db5c6b40d472941f6a6e8c0e4540fadad1814b432d91aa8e38d71c15838d0b",
+      "source_sha256": "f3f52f21681c8684241f6d1a7844f5643c650a5b98d55af2051105c32ef0505c"
     }
   },
   "version": 1

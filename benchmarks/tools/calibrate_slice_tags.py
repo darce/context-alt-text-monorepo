@@ -125,6 +125,13 @@ def main(argv=None) -> int:
                 continue
             ranked.append((area, signal, direction, pos, neg))
         ranked.sort(reverse=True, key=lambda r: r[0])
+        if not ranked:
+            # AUC needs tagged and untagged faces on the same signal. Without that there is
+            # no evidence either way, so report the gap rather than invent an AUC or cut.
+            print(f"{tag:<17}{n_pos:>6}{'-':>20}{'-':>8}{'-':>10}{'-':>7}{'-':>7}{'-':>7}"
+                  f"  insufficient data - no signal has both tagged and untagged faces"
+                  f" (untagged {len(rows) - n_pos})")
+            continue
         area, signal, direction, pos, neg = ranked[0]
         cut = best_threshold(pos, neg, +1)
         verdict = "SHIP" if area >= AUC_FLOOR else "noise - hand-tag only"

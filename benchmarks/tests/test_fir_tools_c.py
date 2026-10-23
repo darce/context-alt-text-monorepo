@@ -68,6 +68,61 @@ def test_calibration_toy(tmp_path):
                                          'shippable': {}, 'named_but_undetected': []}
 
 
+# Detection-pass face row after pose enrichment; every calibration signal is usable.
+FACE = {'bbox': [10.0, 10.0, 80.0, 100.0],
+        'landmarks': [[30.0, 40.0], [60.0, 40.0], [45.0, 60.0], [33.0, 80.0], [57.0, 80.0]],
+        'face_min_side': 80.0, 'face_area_frac': 0.08, 'interocular_ratio': 0.375, 'nose_offset': 0.0,
+        'blur_var': 100.0, 'score': 0.95, 'yaw_eye': 0.0, 'yaw_mouth': 0.0, 'eye_span_ratio': 0.75,
+        'roll_deg': 0.0}
+NO_SIGNALS = {k: None for k in FACE if k not in ('bbox', 'landmarks')}
+BLUR_SHIPS = {'signal': 'blur_var', 'direction': -1, 'threshold': 10.0, 'auc': 1.0,
+              'f1': 1.0, 'precision': 1.0, 'recall': 1.0}
+
+
+def calibrate(tmp_path, images):
+    """Run calibration on synthetic (tags, face) rows; assert inputs are left unchanged."""
+    docs = {
+        'det': {'entries': [{'media_id': i, 'path': f'synthetic/{i}.jpg', 'sha256': '0' * 64,
+                             'width': 100, 'height': 100, 'faces': [face]}
+                            for i, (_, face) in enumerate(images)]},
+        'gold': {'entries': [{'media_id': i, 'tags': tags} for i, (tags, _) in enumerate(images)]},
+        'corpus': {'entries': [{'media_id': i, 'named_boxes': []} for i in range(len(images))]},
+    }
+    for name, doc in docs.items():
+        (tmp_path / name).write_text(json.dumps(doc))
+    out = tmp_path / 'result'
+    result = cli('calibrate_slice_tags', '--detections', tmp_path / 'det', '--golden', tmp_path / 'gold',
+                 '--corpus', tmp_path / 'corpus', '--out', out, cwd=tmp_path)
+    for name, doc in docs.items():
+        assert json.loads((tmp_path / name).read_text()) == doc
+    assert result.returncode == 0, result.stderr
+    rows = {line.split()[0]: line for line in result.stdout.splitlines() if line.strip()}
+    return json.loads(out.read_text()), rows
+
+
+def test_calibration_single_one_class_image(tmp_path):
+    published, rows = calibrate(tmp_path, [(['profile'], FACE)])
+    assert published == {'auc_floor': .75, 'labelled_images': 1, 'shippable': {},
+                         'named_but_undetected': []}
+    assert 'insufficient' in rows['profile'] and 'nan' not in rows['profile']
+
+
+@pytest.mark.parametrize('images', [
+    # One class: every detected image carries `profile`, so no signal has a negative.
+    [(['profile', 'blur'], {**FACE, 'blur_var': 10.0}), (['profile'], FACE)],
+    # No usable signal: `profile` has both classes but never on the same signal.
+    [(['profile'], {**FACE, **NO_SIGNALS, 'nose_offset': 0.4}),
+     ([], {**FACE, **NO_SIGNALS, 'blur_var': 100.0}),
+     (['blur'], {**FACE, **NO_SIGNALS, 'blur_var': 10.0})],
+], ids=['one_class', 'no_usable_signal'])
+def test_calibration_skips_undiscriminable_tag_and_continues(images, tmp_path):
+    published, rows = calibrate(tmp_path, images)
+    assert published == {'auc_floor': .75, 'labelled_images': len(images), 'shippable': {'blur': BLUR_SHIPS},
+                         'named_but_undetected': []}
+    assert 'insufficient' in rows['profile'] and 'nan' not in rows['profile']
+    assert rows['blur'].endswith('SHIP')
+
+
 @pytest.mark.parametrize('tool,flag', [('pose_features', None), ('calibrate_slice_tags', '--detections'),
                                        ('run_detection_pass', '--corpus')])
 def test_malformed_no_output(tool, flag, tmp_path):

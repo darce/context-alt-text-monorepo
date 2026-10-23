@@ -38,6 +38,7 @@ from db.models import (
     Tenant,
 )
 from db.models.identity import FaceObservation
+from db.tenant_context import set_tenant_context
 from recognition.application.services.audit_service import AuditService
 from recognition.domain.repositories import MvRefreshOutcome
 from recognition.infrastructure.repositories._helpers import coerce_uuid
@@ -89,11 +90,13 @@ class TenantPurgeService:
         self._audit_service = audit_service or AuditService()
         self._cluster_repository = SqlAlchemyClusterRepository(session)
         self._batch_size = batch_size
+        self._authorized_tenant: UUID | None = None
 
     async def purge_tenant_data(self, tenant_id: str, actor: str, scope: str = "disposed") -> dict[str, object]:
         if scope not in ALLOWED_PURGE_SCOPES:
             raise ValueError("invalid purge scope")
 
+        await self._capture_tenant_context(tenant_id)
         tenant = await self._get_tenant(tenant_id)
         purged_at = datetime.now(tz=UTC)
 
@@ -123,7 +126,7 @@ class TenantPurgeService:
             },
         )
 
-        await self._session.commit()
+        await self._commit_and_rescope()
         await self._session.refresh(tenant)
         return {
             "tenant_id": str(tenant.id),
@@ -131,6 +134,31 @@ class TenantPurgeService:
             "purged_at": purged_at.isoformat(),
             "deleted_counts": deleted_counts,
         }
+
+    async def _capture_tenant_context(self, tenant_id: str) -> None:
+        """Bind batching to existing request authority, never to its purge target."""
+        self._authorized_tenant = None
+        if not is_postgres(self._session):
+            return
+        target = coerce_uuid(tenant_id, on_failure="none")
+        if target is None:
+            raise ValueError("invalid tenant_id")
+        current = (
+            await self._session.execute(text("SELECT current_setting('app.current_tenant', true)"))
+        ).scalar_one()
+        trusted = coerce_uuid(current, on_failure="none")
+        if trusted is None or trusted != target:
+            raise PermissionError("purge requires matching authenticated tenant context")
+        self._authorized_tenant = trusted
+
+    async def _commit_and_rescope(self) -> None:
+        # COMMIT clears SET LOCAL. Reapply the captured authority before any
+        # next-batch read, audit write or response refresh can start using RLS.
+        if is_postgres(self._session) and self._authorized_tenant is None:
+            raise PermissionError("purge requires authenticated tenant context")
+        await self._session.commit()
+        if self._authorized_tenant is not None:
+            await set_tenant_context(self._session, self._authorized_tenant)
 
     async def _purge_rows(self, tenant_id: UUID, scope: str) -> dict[str, int]:
         scope_ids = await self._collect_scope_ids(tenant_id, scope)
@@ -541,7 +569,7 @@ class TenantPurgeService:
             )
             await self._set_face_observation_erasure_tenant("")
             erased_total += self._rowcount(result)
-            await self._session.commit()
+            await self._commit_and_rescope()
 
     async def _set_face_observation_erasure_tenant(self, value: str) -> None:
         # The immutability trigger exists only in the PostgreSQL migration.
@@ -567,7 +595,7 @@ class TenantPurgeService:
 
             result = await self._session.execute(delete(model).where(primary_key.in_(batch_ids)))
             deleted_total += self._rowcount(result)
-            await self._session.commit()
+            await self._commit_and_rescope()
 
     async def _list_batch_ids(
         self,

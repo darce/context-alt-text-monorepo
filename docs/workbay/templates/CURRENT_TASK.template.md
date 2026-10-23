@@ -1,7 +1,13 @@
-# CURRENT_TASK.json Template
+# CURRENT_TASK.json Compatibility Export Template
 
-> Copy this template to the **monorepo root** as `CURRENT_TASK.json` when starting a multi-session task.
-> Location: `/context-alt-text-monorepo/CURRENT_TASK.json`
+> `CURRENT_TASK.json` is retired from the normal agent workflow. Do not copy this
+> template to the monorepo root when starting a task. Canonical task state lives in
+> the handoff DB; use `make context`, `make tasks`, MCP tools, and `DASHBOARD.txt`
+> for routine workflow state.
+>
+> Keep this template only for legacy consumers that explicitly request a
+> task-scoped export. Prefer `render_handoff(kind='current_task', write_file=False)`
+> or an export under `.task-state/exports/` over a durable root file.
 
 ---
 
@@ -57,11 +63,11 @@
 
 ```bash
 # How to verify the current state
-cd apps/prototype-description-service
+cd path/to/package-or-app
 pytest tests/unit/test_relevant_file.py -v
 
 # Type checking
-make typecheck
+mypy .
 ```
 
 ## Next Agent Instructions

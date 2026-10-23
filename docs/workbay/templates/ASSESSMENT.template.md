@@ -4,7 +4,7 @@
 >
 > - **Date**: [YYYY-MM-DD]
 > - **Author**: {{MODEL_IDENTITY}}
-> - **Scope**: [package or surface being assessed, e.g. installed `workbay-handoff-mcp`]
+> - **Scope**: [package or surface being assessed, e.g. `packages/mcp-workbay-handoff`]
 > - **Status**: [Draft / Reviewed / Superseded]
 >
 > **Purpose:** Assessments surface problems and verify them against code.

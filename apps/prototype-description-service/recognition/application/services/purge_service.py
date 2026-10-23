@@ -9,7 +9,7 @@ from enum import Enum, auto
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, delete, func, inspect, or_, select
+from sqlalchemy import ColumnElement, delete, exists, func, inspect, or_, select, text
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,13 +37,20 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
+from db.models.identity import FaceObservation
+from db.tenant_context import set_tenant_context
 from recognition.application.services.audit_service import AuditService
 from recognition.domain.repositories import MvRefreshOutcome
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+from recognition.shared.db.dialect import is_postgres
 
 ALLOWED_PURGE_SCOPES = ("disposed", "all")
 DEFAULT_PURGE_BATCH_SIZE = 1000
+# Transaction-local marker read by the face_observations immutability trigger.
+# It only distinguishes erasure from ordinary mutation; RLS still decides which
+# tenant rows the DELETE can reach, and the trigger requires the row's tenant.
+FACE_OBSERVATION_ERASURE_SETTING = "app.face_observation_erasure_tenant"
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +74,7 @@ class PurgeScopeIds:
     identity_ids: list[UUID]
     cluster_ids: list[UUID]
     representative_ids: list[UUID]
+    face_observation_ids: list[UUID]
 
 
 class TenantPurgeService:
@@ -82,11 +90,13 @@ class TenantPurgeService:
         self._audit_service = audit_service or AuditService()
         self._cluster_repository = SqlAlchemyClusterRepository(session)
         self._batch_size = batch_size
+        self._authorized_tenant: UUID | None = None
 
     async def purge_tenant_data(self, tenant_id: str, actor: str, scope: str = "disposed") -> dict[str, object]:
         if scope not in ALLOWED_PURGE_SCOPES:
             raise ValueError("invalid purge scope")
 
+        await self._capture_tenant_context(tenant_id)
         tenant = await self._get_tenant(tenant_id)
         purged_at = datetime.now(tz=UTC)
 
@@ -116,7 +126,7 @@ class TenantPurgeService:
             },
         )
 
-        await self._session.commit()
+        await self._commit_and_rescope()
         await self._session.refresh(tenant)
         return {
             "tenant_id": str(tenant.id),
@@ -124,6 +134,31 @@ class TenantPurgeService:
             "purged_at": purged_at.isoformat(),
             "deleted_counts": deleted_counts,
         }
+
+    async def _capture_tenant_context(self, tenant_id: str) -> None:
+        """Bind batching to existing request authority, never to its purge target."""
+        self._authorized_tenant = None
+        if not is_postgres(self._session):
+            return
+        target = coerce_uuid(tenant_id, on_failure="none")
+        if target is None:
+            raise ValueError("invalid tenant_id")
+        current = (
+            await self._session.execute(text("SELECT current_setting('app.current_tenant', true)"))
+        ).scalar_one()
+        trusted = coerce_uuid(current, on_failure="none")
+        if trusted is None or trusted != target:
+            raise PermissionError("purge requires matching authenticated tenant context")
+        self._authorized_tenant = trusted
+
+    async def _commit_and_rescope(self) -> None:
+        # COMMIT clears SET LOCAL. Reapply the captured authority before any
+        # next-batch read, audit write or response refresh can start using RLS.
+        if is_postgres(self._session) and self._authorized_tenant is None:
+            raise PermissionError("purge requires authenticated tenant context")
+        await self._session.commit()
+        if self._authorized_tenant is not None:
+            await set_tenant_context(self._session, self._authorized_tenant)
 
     async def _purge_rows(self, tenant_id: UUID, scope: str) -> dict[str, int]:
         scope_ids = await self._collect_scope_ids(tenant_id, scope)
@@ -155,6 +190,7 @@ class TenantPurgeService:
             identity_ids=await self._get_identity_ids(tenant_id, scope),
             cluster_ids=await self._get_cluster_ids(tenant_id, scope),
             representative_ids=await self._get_representative_ids(tenant_id, scope),
+            face_observation_ids=await self._get_face_observation_ids(tenant_id, scope),
         )
 
     async def _delete_jobs_for_scope(self, tenant_id: UUID, scope: str) -> dict[str, int]:
@@ -313,6 +349,10 @@ class TenantPurgeService:
                 )
             else:
                 deleted_counts[label] = await self._delete_rows(model, tenant_predicate, predicate)
+        # After media_identities: their face_observation_id FK must not dangle.
+        deleted_counts["face_observations"] = await self._erase_face_observations(
+            tenant_id, self._face_observation_predicate(scope_ids.face_observation_ids, scope)
+        )
         return deleted_counts
 
     def _atlas_disposition_predicate(self, scope: str) -> Any:
@@ -464,6 +504,18 @@ class TenantPurgeService:
             return PurgeRowScope.NO_ROWS
         return IdentityCluster.id.in_(cluster_ids)
 
+    def _face_observation_predicate(self, observation_ids: list[UUID], scope: str) -> Any:
+        # Observations carry no disposed marker and no identity FK, so disposed
+        # scope reaches only those the disposed identities currently point at.
+        # Historical rows are reclaimed by scope=all and tenant deletion. Any row
+        # a surviving identity still points at is kept in every scope.
+        unreferenced = ~exists().where(MediaIdentity.face_observation_id == FaceObservation.id)
+        if scope != "disposed":
+            return unreferenced
+        if not observation_ids:
+            return PurgeRowScope.NO_ROWS
+        return FaceObservation.id.in_(observation_ids) & unreferenced
+
     def _identity_delete_predicate(self, identity_ids: list[UUID], scope: str) -> Any:
         if scope != "disposed":
             return PurgeRowScope.ALL_TENANT_ROWS
@@ -492,6 +544,41 @@ class TenantPurgeService:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def _get_face_observation_ids(self, tenant_id: UUID, scope: str) -> list[UUID]:
+        if scope != "disposed":
+            return []
+        stmt = select(MediaIdentity.face_observation_id).where(
+            MediaIdentity.tenant_id == tenant_id,
+            MediaIdentity.disposed_at.is_not(None),
+            MediaIdentity.face_observation_id.is_not(None),
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _erase_face_observations(self, tenant_id: UUID, predicate: Any) -> int:
+        """Batched erasure of immutable observations; ordinary deletes stay rejected."""
+        tenant_predicate = FaceObservation.tenant_id == tenant_id
+        erased_total = 0
+        while True:
+            batch_ids = await self._list_batch_ids(FaceObservation, FaceObservation.id, tenant_predicate, predicate)
+            if not batch_ids:
+                return erased_total
+            await self._set_face_observation_erasure_tenant(str(tenant_id))
+            result = await self._session.execute(
+                delete(FaceObservation).where(tenant_predicate, FaceObservation.id.in_(batch_ids))
+            )
+            await self._set_face_observation_erasure_tenant("")
+            erased_total += self._rowcount(result)
+            await self._commit_and_rescope()
+
+    async def _set_face_observation_erasure_tenant(self, value: str) -> None:
+        # The immutability trigger exists only in the PostgreSQL migration.
+        if is_postgres(self._session):
+            await self._session.execute(
+                text("SELECT set_config(:name, :value, true)"),
+                {"name": FACE_OBSERVATION_ERASURE_SETTING, "value": value},
+            )
+
     async def _delete_rows(
         self,
         model,
@@ -508,7 +595,7 @@ class TenantPurgeService:
 
             result = await self._session.execute(delete(model).where(primary_key.in_(batch_ids)))
             deleted_total += self._rowcount(result)
-            await self._session.commit()
+            await self._commit_and_rescope()
 
     async def _list_batch_ids(
         self,

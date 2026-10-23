@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from recognition.domain.face_evidence import FaceEvidenceStatus
 from recognition.domain.job import JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.blob_url import BlobUrl
 from recognition.interface_adapters.http.validation_utils import validate_uuid_format
@@ -648,6 +649,20 @@ class RevertMergeClusterResponse(BaseModel):
         return _validate_uuid(v)
 
 
+class FaceEvidenceResponse(BaseModel):
+    """Measured evidence only. Lifecycle and verified previews remain unavailable."""
+
+    identity_namespace_id: str
+    observation_id: str
+    source_sha256: str
+    raster_sha256: str
+    decode_recipe_id: str
+    raster_serialization: str
+    raster_width: int
+    raster_height: int
+    region: tuple[int, int, int, int]
+
+
 class ClusterSnapshotMemberResponse(BaseModel):
     """Cluster member in the snapshot payload.
 
@@ -657,6 +672,9 @@ class ClusterSnapshotMemberResponse(BaseModel):
     identity_uuid: str
     cluster_uuid: str
     attachment_id: int
+    face_evidence_v1: FaceEvidenceResponse | None = None
+    face_evidence_status: FaceEvidenceStatus = FaceEvidenceStatus.UNAVAILABLE
+    correspondence_eligible: Literal[False] = False
     bbox: FaceBoxResponse
     image_width: int
     image_height: int
@@ -707,6 +725,7 @@ class ClusterSnapshotResponse(BaseModel):
 
     tenant_id: str
     snapshot_version: int
+    face_evidence_lifecycle_status: Literal["unavailable"] = "unavailable"
     snapshot_generation_id: str | None = None
     source_job_id: str | None = None
     generated_at: datetime
@@ -719,6 +738,7 @@ class ClusterDeltaResponse(BaseModel):
 
     tenant_id: str
     snapshot_version: int
+    face_evidence_lifecycle_status: Literal["unavailable"] = "unavailable"
     generated_at: datetime
     clusters: list[ClusterSnapshotClusterResponse]
     members: list[ClusterSnapshotMemberResponse]

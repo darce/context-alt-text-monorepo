@@ -115,6 +115,24 @@ uv run --locked --extra dev python -m scripts.verify_identity_schema
 If you see errors similar to `type "vector" does not exist`, confirm that the
 extension was installed in the target database **before** running migrations.
 
+`face_observations` is append-only: the `face_observations_immutable` trigger
+rejects every UPDATE and any DELETE outside tenant erasure. Erasure is either a
+tenant row delete (`tenant_id` cascades) or `TenantPurgeService`, which sets the
+transaction-local `app.face_observation_erasure_tenant` to the purged tenant
+before each batch; RLS still limits which rows that DELETE can reach. `scope=all`
+erases every observation of the tenant; `scope=disposed` erases only those the
+disposed identities point at. Rows a surviving identity points at are kept.
+
+On PostgreSQL, purge requires an already established `app.current_tenant`
+matching the requested tenant. It captures that context before any writes and
+reapplies it transaction-locally after each batch and completion commit, because
+`SET LOCAL` ends at commit. The target tenant ID and erasure-intent marker do not
+grant authorization. Missing or mismatched context is refused before an audit or
+deletion; no session-wide tenant setting is used on pooled connections.
+Previously committed batches remain durable if a later batch fails; request
+rollback clears the active batch and its local markers, without recording a
+completed purge or updating `last_purge_at`.
+
 ## 6. Handy Commands
 
 - Generate a new Alembic revision: `uv run --locked --extra dev alembic -c db/alembic.ini revision -m "describe change"`

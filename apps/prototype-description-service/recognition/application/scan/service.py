@@ -726,16 +726,25 @@ class ScanService:
         media_url: str | None = None,
     ) -> ReconcileResult:
         # 1. Fetch existing identities for this media item
-        stmt = select(MediaIdentity).where(
-            MediaIdentity.tenant_id == tenant_uuid,
-            MediaIdentity.media_id == int(media_id),
+        from sqlalchemy.orm import selectinload
+
+        stmt = (
+            select(MediaIdentity)
+            .where(
+                MediaIdentity.tenant_id == tenant_uuid,
+                MediaIdentity.media_id == int(media_id),
+            )
+            .options(selectinload(MediaIdentity.face_observation))
         )
         result = await self._session.execute(stmt)
         existing_identities = list(result.scalars().all())
 
         # 2. Match new detections to existing identities using BBOX IOU
         matched: list[tuple[MediaIdentity, FaceDetection]] = []
-        unmatched_new: list[FaceDetection] = list(detections)
+        # Duplicate boxes cannot yield a unique observation and collide with the
+        # greenfield identity key. Keep one mutable row; registry binding abstains
+        # against the original complete detection multiset below.
+        unmatched_new: list[FaceDetection] = list({det.bbox[:2]: det for det in detections}.values())
         orphaned_old: list[MediaIdentity] = list(existing_identities)
 
         for old in existing_identities:
@@ -829,6 +838,18 @@ class ScanService:
                     image_phash=det.image_phash,
                 )
             )
+        from recognition.infrastructure.repositories.face_evidence_repository import bind_scan_observations
+
+        new_detections = [det for det in unmatched_new if det.embedding is not None]
+        bind_scan_observations(
+            self._session,
+            tenant_uuid,
+            int(media_id),
+            existing_identities,
+            detections,
+            [(row, det) for row, det in matched if det.embedding is not None]
+            + list(zip(new_rows, new_detections, strict=True)),
+        )
         self._session.add_all(new_rows)
 
         # 6. Delete orphaned

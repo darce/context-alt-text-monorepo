@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from sqlalchemy import event
 from sqlalchemy import inspect as inspect_instance
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm.exc import DetachedInstanceError
@@ -133,6 +134,31 @@ def require_top_unreverted_receipt(
     return top
 
 
+class FaceObservation(Base):
+    """Append-only measurements, independent of recyclable MediaIdentity UUIDs.
+
+    No lifecycle attestation exists yet: these rows never authorize correspondence.
+    No identity FK: deleting/recycling a face row cannot retarget this observation.
+    Tenant purge and tenant deletion are the only erasure paths (see db/README.md).
+    """
+
+    __tablename__ = "face_observations"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_namespace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    attachment_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence: Mapped[dict] = mapped_column(_jsonb_compatible(), nullable=False)
+
+
+@event.listens_for(FaceObservation, "before_update")
+@event.listens_for(FaceObservation, "before_delete")
+def _reject_face_observation_change(mapper, connection, target) -> None:
+    """Also enforce append-only behavior on ORM-only test schemas."""
+    raise ValueError("face observations are immutable")
+
+
 class MediaIdentity(Base):
     __tablename__ = "media_identities"
 
@@ -143,6 +169,10 @@ class MediaIdentity(Base):
     identity_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'face'"))
     media_id: Mapped[int] = mapped_column(Integer, nullable=False)
     media_url: Mapped[str] = mapped_column(Text, nullable=False)
+    face_observation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("face_observations.id"), nullable=True
+    )
+    face_observation: Mapped[FaceObservation | None] = relationship(lazy="raise")
 
     bbox_x: Mapped[int] = mapped_column(Integer, nullable=False)
     bbox_y: Mapped[int] = mapped_column(Integer, nullable=False)

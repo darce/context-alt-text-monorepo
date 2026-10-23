@@ -6,7 +6,7 @@
 > **Task ID:** WBTRUST-3
 > **Target Branch:** feature/wbtrust-3
 > **Base SHA:** 372a6413a7ae0eb71baa3566716546684bac5a58
-> **Revision:** 1
+> **Revision:** 3 (ADR-019 corrective amendment; accepted 2026-10-18, operator decision 18002)
 > **Review Coverage Target:** frontend + PHP label service read; PHP edits only if S1, run on a build that already contains the rename-durability fix, still proves a server-side persistence defect
 > **Depends on:** WBTRUST-4 merged (shared invalidation primitive; rate-limit-clean repro)
 > **Executor:** `claude-remote` `claude-haiku-5-5`, effort `xhigh` for implementation and grunt work (operator order 2026-10-15). Brief each slice separately (1–3 files), inline the slice text plus codemap snippets; if the write-enabled remote Claude harness is denied or unavailable, record a blocker and ask the operator — no silent fallback to another model.
@@ -59,8 +59,8 @@ Labelling `bea-burke_57b99d594f1b` (#106): the edit form shows "3 naming options
 
 ## Target Outcome
 
-- The picker shows "Ellyn Heald" once, with face count or band words (no "Group"/"Person").
-- A suggestion-load failure is a quiet inline note with "Try again" below the field; typing a new name and Save name still work.
+- Under the proposed ADR-019 amendment, the picker offers eligible human-named people once per person UUID, up to five ranked rows with proved current reference faces/counts and then A–Z; no Group/Person badge, score or band word. Human label evidence requires explicit selection; it cannot silently bind by name.
+- A suggestion-load failure is an inline note with Try again; typing stays enabled. Create/bind requires successful roster loading and actual mutation guards. A valid UUID rename does not depend on advisory similarity.
 - Save shows a `role="status"` "Saved" within 1 s from the mutation response; after reload the media row chip carries the name.
 
 ## Context Loading
@@ -69,12 +69,14 @@ Labelling `bea-burke_57b99d594f1b` (#106): the edit form shows "3 naming options
 
 ## Contract and Boundary Impact
 
-- None expected. If S1 shows the local-projection path omits the media-row update, the fix is in `class-cluster-label-service.php` and pins a PHP test; contract docs change only if the response shape changes.
-- **Open decision:** none for the operator; the collapsed row's action routing is settled in S2 from `useClusterMatchAction`.
+- **ADR-019 amendment, accepted 2026-10-18 (operator decision 18002; see [ADR-019 Status](../../adrs/ADR-019-person-anchored-curation-surfaces.md#status)):** naming writes preserve the binding-intent and provenance boundary in ADR-019 rules 1b/2b/2d. A typed or same-name match is a choice requiring the explicit operator command; it cannot activate historical anchors, clear unlink/Undo suppression or authorize snapshot backfill. Retire name-based snapshot person creation/binding even for labels proved human. Preserve unlinked person UUIDs, names and origin. Missing provenance leaves name-only evidence ineligible; missing historical correspondence requires fresh current-source review under ADR-019 2e and cannot itself bind.
+- Rename remains a person update plus ordered label events for currently bound groups, without reactivating retired claims. Preserve `enqueue_bound_cluster_label_updates` and maintenance fresh-key behavior; a re-link uses the guarded command and its receipt, not the normal binder's merge-on-bind. Advisory similarity failure does not block an otherwise valid rename; it also does not waive roster prerequisites for create/bind. Reuse the existing persistence proof, adding lifecycle cases for unlink → human-label snapshot, Undo → same snapshot, and later explicit rebind/rename. These are required future tests, not verified outcomes.
+- If S1 proves an additional media-row projection omission on the required served build, retain its bounded label-service correction and PHP test. The existing WBTRUST-4 prerequisite remains; this binding contract adds no ordering among independent implementation work beyond the named-input edges in ADR-019.
+- The original PR-16 routing remains prior art. The ADR-019 amendment below supersedes S2's row content/selection contract under the independent exact-blob PASS and operator acceptance recorded in [ADR-019 Status](../../adrs/ADR-019-person-anchored-curation-surfaces.md#status) on 2026-10-18 (decision 18002). Its implementation gates remain in force.
 
 ## Proposed Solution
 
-Collapse suggestion + roster rows into one option per canonical person keyed by lower-cased trimmed name, keeping the suggestion evidence (`similarity`, `suggestion_id`) on that single row. Make suggestion loading advisory. Write the saved label into the query cache from the mutation response and reconcile with a deferred, targeted invalidation.
+Under the proposed ADR-019 rules 1a–1e, collapse evidence onto a UUID-bound person option and preserve the existing suggestion identity/action guards. Name equality is a display/search key, not person identity or binding consent. Same-name ambiguity requires an explicit person choice. A legacy human label with no person is explicit creation/review evidence only. Make suggestion loading advisory. Write the saved label into the query cache from the mutation response and reconcile with a deferred, targeted invalidation.
 
 ## Files and Surfaces to Change
 
@@ -88,7 +90,7 @@ Owned paths:
 
 ## Verification Strategy
 
-- Unit: option collapse (same name via suggestion and person ⇒ one row, evidence kept, action routing unchanged); error-state rendering (field usable, Save enabled); save success writes cache before any refetch resolves.
+- Unit: option collapse (same UUID via suggestion/person ⇒ one row, evidence kept and explicit action routing; same name with different UUIDs remains distinct); error-state rendering (field usable; Save follows real roster/validity/pending guards); save success writes cache before any refetch resolves.
 - Persistence: RED test first (S1) reproduces "assign then reopen ⇒ name missing" with the refetch forced to 429.
 - PHP: label-service test for both paths (proxy, local projection) asserting the media row reads back the label.
 - Browser (fir tenant): label #106, reload, chip shows the name; picker lists each person once.
@@ -107,15 +109,16 @@ Acceptance: decision names the path and the defect (stale deployment / server / 
 
 Remove the Group/Person leak.
 Closes: R9. Canon: PERC-10, INT-22, HAI-08.
-Design decision (binding): `selectClusterSuggestions` merges projection rows into the matching person/roster option (same lower-cased trimmed name) so one row carries `similarity`, `suggestion_id`, `suggestion_identity_id`; `sourceBadgeLabel` and the `acx-badge--source` span are removed; the row shows the face count or band words. Action routing is unchanged: a row with a suggestion evidence id still routes to the merge/accept path, a bare person row to rename (PR-16). Internal `person:`/`cluster:` value namespacing stays. The reject ✕ stays on the evidence-bearing row.
-Acceptance: fixture "Ellyn Heald (group, 60 %) + Ellyn Heald (person) + Bea Burke (person)" ⇒ two rows; both save paths exercised; `aria-label` has no "Group"/"Person" word.
+Design decision (proposed ADR-019 amendment): consume CURUX-2's `name_source`/`label_source` provenance and person-grain candidate projection. Only verified human-origin options qualify; missing provenance fails closed, machine labels are preserved as machine evidence and never person options. Use person UUID as option identity and the existing name key for search/duplicate review. Never collapse distinct same-name people or silently execute an evidence-bearing merge because a same-name row was selected. Explicitly selected suggestion actions retain PR-16 guards and their own consent path; a bare person rename updates that UUID. The sourceBadgeLabel and acx-badge--source UI are removed; up to five ranked people show up to three proved current reference faces/counts, then an A–Z remainder. No score/band words, no re-sort while open, no self-suggestion. Selecting a human-only legacy label is a new explicit operator command under ADR-019, not snapshot backfill. Rename of a zero-face person stays UUID-based; duplicate name offers an explicit Merge into… outcome. Unlink/Undo suppression cannot be cleared by a name match.
+Acceptance (future): provenance filtering and missing-origin cases; distinct same-name UUIDs remain selectable; reference evidence excludes unverified current crops; suggestion versus rename actions retain their own guards/consent; no Group/Person/band verdict in the option label; typed new-person commit still requires a successfully loaded roster. Reuse existing rename-durability tests and add only uncovered lifecycle cases.
+
 
 ### Slice S3: non-blocking-suggestions
 
 A failed advisory call stays advisory.
 Closes: R9. Canon: FORM-05, PERC-07, RES-06, A11Y-21.
-Design decision (binding): start by reading the landed optional-read budget tests; implement only what they do not cover. Confirm the Retry handler refetches the name-suggestion query itself (prior finding E21-20 said it did not). `suggestionsError` renders an inline note below the field ("Suggestions are busy — you can still type a name. Try again") with rate-limit-aware copy when the WBTRUST-4 cooldown is open; Save name stays enabled; no `role="alert"` for rate-limit (a polite `role="status"`); retry reuses the loader's `retry`.
-Acceptance: error fixture leaves the field and Save usable; cooldown fixture shows the busy copy and no alert role.
+Design decision (binding): start by reading the landed optional-read budget tests; implement only what they do not cover. Confirm the Retry handler refetches the name-suggestion query itself (prior finding E21-20 said it did not). `suggestionsError` renders an inline note below the field ("Suggestions are busy — you can still type a name. Try again") with rate-limit-aware copy when the WBTRUST-4 cooldown is open; Save name stays available when its real roster/valid-name/pending prerequisites hold; new-person/create/bind remains gated on successful roster loading, while advisory similarity alone cannot block an otherwise valid UUID rename; no `role="alert"` for rate-limit (a polite `role="status"`); retry reuses the loader's `retry`.
+Acceptance: advisory-error fixture leaves the field and valid Save usable; roster-error fixture disables create/bind with Retry and reason; cooldown fixture shows the busy copy and no alert role.
 
 ### Slice S4: read-your-writes
 

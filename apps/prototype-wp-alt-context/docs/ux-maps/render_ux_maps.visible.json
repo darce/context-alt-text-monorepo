@@ -13,8 +13,8 @@
       "source_sha256": "dea5305316cdcf6386a1bbf8afe5ae636902ee3391ef995b1a8fa54564612d23"
     },
     "gpu-operator-control": {
-      "projection_sha256": "47b911e0e3f43b12bc7413f0a340d6db22acc1007f1d5411999db24dcdf472f0",
-      "source_sha256": "7ffcc2b0e6fda30b3735e92e43d6575a94665def7454a37da9a5a047d96ef580"
+      "projection_sha256": "af22eebcc8c3ca8350af30a7f9fb011e7cd0df021fce8baad16fe116902e36ab",
+      "source_sha256": "13eed36cdbca57b8e16a488320d038c9b07b889f7113f00a663769692d1c7a9c"
     },
     "guided-prototype": {
       "projection_sha256": "19fbbfed27852133db21acc1aa95991bb61b466940e1583dee6466aab7907dd3",

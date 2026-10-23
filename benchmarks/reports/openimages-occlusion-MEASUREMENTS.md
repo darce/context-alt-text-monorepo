@@ -11,14 +11,19 @@ that is the claim being made, not that they have been independently confirmed.
 
 ## Reproduce
 
-**There is no committed measure script.** `benchmarks/tools/` is not in this
-tree, and no `openimages_occlusion_measure` command exists. The tables below
-are author-run (2026-07-28) from the shipped Open Images annotation CSVs.
-They are methodology-documented, not script-reproducible ([rg-006]). Do **not**
-treat this file as meeting a committed-reproducer bar, and do not contrast
-COCO against a bar this record does not itself meet.
+The committed reproducer is [openimages_occlusion_measure.sh](../tools/openimages_occlusion_measure.sh).
+Run it with an explicit annotation directory (or set
+`OPENIMAGES_ANNOTATION_DIR`):
 
-Author-run method (not a copy-pasteable in-tree command):
+```bash
+bash benchmarks/tools/openimages_occlusion_measure.sh /path/to/annotations
+```
+
+The figures below remain historical author-run measurements (2026-07-28),
+unreplicated. Adding source does not independently verify them. Pin the input
+CSV hashes and record the environment before an independent rerun.
+
+Historical author-run method:
 
 - Annotation dir: OCI VM `acx-backend:~/data/open-images`, or any local copy
   of the Open Images face (`/m/0dzct`) CSVs fetched from
@@ -28,8 +33,8 @@ Author-run method (not a copy-pasteable in-tree command):
 - Exclude `IsOccluded=-1` from rate denominators.
 - Restrict size-ratio bootstrap to single-face images.
 
-Until a committed script lands and is checked against these tables, a
-re-run is a **new measurement**, not a verification of this record.
+Until the script is independently rerun against pinned inputs and checked against
+these tables, a rerun is a **new measurement**, not verification of this record.
 
 ## Measurement caveats that changed the conclusions
 
@@ -167,9 +172,8 @@ These are not closed by this document. No new counts were taken in this pass.
 instances, 48.6% keypoint coverage. Those COCO numbers have **no persisted
 script in this tree and no pinned annotation-JSON revision**. Do not treat
 them as audited. Closing that gate needs a committed reproducer plus a
-pinned COCO annotation SHA (T-07 / D-05). The Open Images tables above fail
-the same committed-script bar — they are first-party and methodology-documented,
-not independently re-runnable from this checkout.
+pinned COCO annotation SHA (T-07 / D-05). The Open Images reproducer is now committed, but its historical tables remain
+first-party and unreplicated; input pins and an independent rerun are still needed.
 
 **Train vs val/test `IsOccluded` mechanism (T-15) is unfunded and unscheduled.**
 Four rivals remain unexcluded. Supervision must stay conservative (positives-only

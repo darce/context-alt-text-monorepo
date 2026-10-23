@@ -60,7 +60,7 @@ counts, availability, or `images_root`; those are read live.
 ### Where the bytes live
 
 The default corpus root is the primary checkout's `benchmarks/images/corpus646/`,
-ignored by the [`/benchmarks/*` rule](../.gitignore). In a normal `.git` layout,
+ignored by the [`/benchmarks/**` rule](../.gitignore). In a normal `.git` layout,
 the resolver discovers the primary checkout as the parent of Git's common
 directory and appends the catalog's `root_relative`. Linked worktrees resolve
 to that same physical root while reading their own catalog and manifest, so
@@ -141,3 +141,26 @@ actual detector-independent exhaustive annotation and a separate detector-only
 comparison are needed. The inspected v3r manifest has no `session_id` or
 `synthetic_parent_id`; shared identities alone do not establish independent
 occasions. These are limits of the inspected records, not global absence claims.
+
+
+## Reproducer tools
+
+Run from the checkout root; use `--help` for input details. JSON writers require
+an explicit `--out` naming an absent destination, including no existing symlink.
+Choose a new ignored run path for every invocation; never overwrite frozen
+manifests or results. Input defaults resolve from the source checkout or corpus
+resolver, independently of the caller's working directory.
+
+```bash
+python benchmarks/tools/build_corpus_manifest.py --corpus CORPUS --golden GOLDEN --detections DETECTIONS --images-root IMAGES --out benchmarks/results/new-corpus.json
+python benchmarks/tools/build_golden_selection.py --corpus CORPUS --out benchmarks/results/new-golden.json
+python benchmarks/tools/calibrate_slice_tags.py --detections DETECTIONS --golden GOLDEN --corpus CORPUS --out benchmarks/results/new-calibration.json
+python benchmarks/tools/pose_features.py SOURCE --out benchmarks/results/new-pose.json
+python benchmarks/tools/run_detection_pass.py --corpus CORPUS --images-root IMAGES --out benchmarks/results/new-detections.json
+bash benchmarks/tools/openimages_occlusion_measure.sh /path/to/annotations
+```
+
+The Open Images tool accepts `OPENIMAGES_ANNOTATION_DIR` instead of the positional
+directory and prints to stdout. It requires awk and Python with NumPy; its
+historical [measurement record](reports/openimages-occlusion-MEASUREMENTS.md)
+remains author-run and unreplicated. No measurement was rerun when adding source.

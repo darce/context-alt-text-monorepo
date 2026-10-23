@@ -24,6 +24,7 @@ Optional:
 
 - `contract_path`: Owning contract document, if one exists.
 - `deprecation_timeline`: Use `greenfield; no deprecation needed` when applicable.
+- `ctx7_library_id`: Resolved `ctx7` library id if upstream docs informed the decision.
 
 ## Suggested Decision Body
 
@@ -36,4 +37,5 @@ consumer_migration:
 deprecation_timeline:
 tests_proving_new_shape:
 lanes_or_owners_notified:
+ctx7_library_id:
 ```

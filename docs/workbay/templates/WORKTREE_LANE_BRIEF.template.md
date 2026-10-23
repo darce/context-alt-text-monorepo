@@ -31,6 +31,13 @@ Author: `{{MODEL_IDENTITY}}`
 
 {{DONE_DEFINITION}}
 
+## Per-Slice Review
+
+After each slice, run `/wb-review-code` (single-reviewer, no subagent fan-out) followed by
+`/wb-auto-fix` on your own findings. This in-lane pass is a **non-authoritative smoke test** — it
+catches obvious regressions before the next slice but does not gate merge. The orchestrator's
+`/wb-review-slice` at branch-complete is the **sole merge gate**.
+
 ## Shared MCP Commands
 
 ```bash

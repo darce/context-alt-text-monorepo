@@ -22,6 +22,7 @@ Required:
 
 Optional:
 
+- `ctx7_library_id`: Resolved `ctx7` library id if upstream docs influenced the change.
 - `runtime_parity_check`: Real-path validation run or the gap that prevented it.
 - `follow_up_required`: Explicit remaining work if the slice intentionally left anything open.
 
@@ -34,6 +35,7 @@ fields_changed:
 tests_verifying_change:
 downstream_consumers_checked:
 assumptions_safe_to_make:
+ctx7_library_id:
 runtime_parity_check:
 follow_up_required:
 ```

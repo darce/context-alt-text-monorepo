@@ -4,8 +4,17 @@ template_for: record_decision slice_complete_* rationale
 
 # Slice Completion Decision Format
 
-Use this format as the `rationale` value for every `record_decision` call where
-`decision` starts with `slice_complete_`. The format is enforced at write time.
+Use this format as the `rationale` value for every canonical slice-complete
+decision. Check the authoritative registry at
+`get_handoff_state(sections="identity").data.limits.write.slice_complete_decision_id`
+or preflight with `validate(payload={"kind": "decision_id", "decision": ..., "decision_kind": "slice_complete"})`
+before writing. Valid: `cdx_slice_complete_plan0004_contract_pinning_and_docs`.
+Invalid: `cdx_slice_complete_plan0004_contract-pinning-and-docs`.
+
+Pass `slice_number` (integer from `### Checklist for Slice N` in the task plan)
+on `close_slice` so plan-checklist sync binds evidence to the correct slice.
+The slug does not need to embed `slice_N`; omitting `slice_number` still works
+via a legacy slug-regex fallback but emits a receipt warning.
 
 ```
 ## Changes

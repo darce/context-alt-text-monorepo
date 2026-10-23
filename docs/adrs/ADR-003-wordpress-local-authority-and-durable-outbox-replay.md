@@ -64,6 +64,8 @@ Backend curation replay endpoint
 9. **Projection acknowledgement is part of pipeline completion.** Backend compute is not operator-complete until WordPress has projected the resulting machine state.
 10. **The system is not active-active.** Backend state is compute state plus acknowledged curation alignment; it is not the live authority for rendered UX state.
 
+> **Rules 7–8 amended by [ADR-019](ADR-019-person-anchored-curation-surfaces.md#decision) (accepted 2026-10-18).** The two “ADR-003 amendment” paragraphs after Decision rule 8 contain the exact accepted amendment text. [ADR-019 Status](ADR-019-person-anchored-curation-surfaces.md#status) records operator decision 18002 and the separate implementation gates.
+
 ## Rationale
 
 ### 1. Offline usability requires a real local authority

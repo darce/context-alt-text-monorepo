@@ -28,6 +28,8 @@ from recognition.config import get_settings
 if TYPE_CHECKING:
     from insightface.app import FaceAnalysis
 
+from recognition.domain.face_evidence import measure_input
+
 logger = logging.getLogger(__name__)
 
 _SHARED_ADAPTER: InsightFaceAdapter | None = None
@@ -144,6 +146,7 @@ class InsightFaceAdapter:
             raise RuntimeError("InsightFace model not loaded")
 
         cv2_image = self._bytes_to_cv2(image_bytes)
+        evidence = measure_input(image_bytes, cv2_image)
 
         # Run detection in thread pool (InsightFace is sync)
         loop = asyncio.get_running_loop()
@@ -152,7 +155,8 @@ class InsightFaceAdapter:
         model_id = self._manifest.model_id
         results: list[FaceDetection] = []
         for face in faces:
-            bbox = tuple(int(x) for x in face.bbox)
+            left, top, right, bottom = (int(x) for x in face.bbox)
+            bbox = (left, top, right, bottom)
 
             # Pose remains for pose-bucket / diversity (not threshold quality).
             pose_pitch: float | None = None
@@ -170,8 +174,9 @@ class InsightFaceAdapter:
             results.append(
                 FaceDetection(
                     media_id="",  # filled by InsightFaceFaceDetector with source id
-                    bbox=bbox,  # type: ignore[arg-type]
+                    bbox=bbox,
                     confidence=float(face.det_score),
+                    face_evidence=evidence.for_bbox(bbox),
                     embedding=face.normed_embedding,
                     pose_pitch=pose_pitch,
                     pose_yaw=pose_yaw,

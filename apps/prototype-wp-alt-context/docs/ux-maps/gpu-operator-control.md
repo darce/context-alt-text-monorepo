@@ -16,6 +16,12 @@
 - `job-return-auto` — Return Description Service to automatic lifecycle
 - `job-save-description-api-routing` — Configure the Description API URL and API key with local autosave feedback
 
+## Code references
+- `screen:settings-burst-gpu` — `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx`
+- `screen:gpu-start-confirm` — `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx`
+- `screen:gpu-stop-confirm` — `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx`
+- `screen:exit-workbench` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`
+
 ## Screens
 | id | kind | route | title |
 | --- | --- | --- | --- |
@@ -45,18 +51,62 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 ```
 +------------------------------------------------------------+
 | Settings › Description Service  [screen]  #/settings       |
-| Description Service controls and Description API URL/key a…|
+| Card on the Settings page showing Description Service sta\ |
+|   te, intent, activity and load, with Start / Stop / Retu\ |
+|   rn to automatic / Refresh controls. The same Settings s\ |
+|   creen also owns Description API URL/key autosave feedba\ |
+|   ck and post-save health status. Domain vocabulary: stop\ |
+|   ped and ready = default; starting and warming = loading\ |
+|   ; snapshot missing or stale = empty; service unreachabl\ |
+|   e = error; lifecycle degraded or intent pending = degra\ |
+|   ded. gpu_state is unknown|stopped|starting|warming|read\ |
+|   y|degraded. Seven sketches: stopped → [PRIMARY] Start s\ |
+|   ervice; stopped by operator (intent STOP) → Stopped by \ |
+|   operator · auto-start paused, [PRIMARY] Start service, \ |
+|   [secondary] Return to automatic; starting/warming with \ |
+|   eta_seconds → Warming up, about {eta} left and [seconda\ |
+|   ry] Stop service; starting/warming without eta → Warmin\ |
+|   g up, this can take a few minutes; ready → Service: rea\ |
+|   dy · idle|N in flight and [secondary] Stop service; unk\ |
+|   nown/stale → Status unavailable, last seen {age} with [\ |
+|   tertiary] Refresh, Start/Stop hidden; degraded → Servic\ |
+|   e unavailable. Start service to retry. [PRIMARY] Start \ |
+|   service. Typed description_service_unavailable is copy \ |
+|   on degraded/unknown, not a gpu_state. Warm-up ETA comes\ |
+|    from the load/status payload or is omitted; never inve\ |
+|   nt a retry countdown.                                    |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Service status chip — Service: not reported / stopped …|
-|   - Effective intent and expiry — automatic / start until …|
-|   - Service activity — idle or running since, auto-stops b…|
-|   - Describe load — work in flight yes/no with load snapsh…|
-|   - Cost disclosure — hourly rate and warm-up time before …|
-|   - Start service / Stop service / Return to automatic / R…|
-|   - Description API URL and API key — concealed key input;…|
-|   - Local autosave status — dirty / saving / saved / faile…|
-|   - Connection health — automatic check after persisted Se…|
+|   - Service status chip — Service: not reported / stopped\ |
+|    / starting / warming / ready / degraded with snapshot \ |
+|   age (icon + text) (status) states=[default,loading,empt\ |
+|   y,error,degraded]                                        |
+|   - Effective intent and expiry — automatic / start until\ |
+|    HH:MM / stop (pending: Stopping after the current work\ |
+|    finishes until idle) (status) states=[default,loading,\ |
+|   degraded]                                                |
+|   - Service activity — idle or running since, auto-stops \ |
+|   by HH:MM (run limit); never show lease ids (status) sta\ |
+|   tes=[default,empty]                                      |
+|   - Describe load — work in flight yes/no with load snaps\ |
+|   hot freshness (status) states=[default,empty,degraded]   |
+|   - Cost disclosure — hourly rate and warm-up time before\ |
+|    Start, not in the headline (content) states=[default]   |
+|   - Start service / Stop service / Return to automatic / \ |
+|   Refresh status (form) states=[default,loading,error,deg\ |
+|   raded]                                                   |
+|   - Description API URL and API key — concealed key input\ |
+|   ; edits stay in memory and the key is never echoed or w\ |
+|   ritten to local storage (form) states=[default,first_ti\ |
+|   me,edge_input,loading,error,offline]                     |
+|   - Local autosave status — dirty / saving / saved / fail\ |
+|   ed; failed or partial save retains the typed key, and n\ |
+|   ewer edits remain dirty (status) states=[default,loadin\ |
+|   g,error,degraded]                                        |
+|   - Connection health — automatic check after persisted S\ |
+|   ettings reload; discard a stale result after a newer UR\ |
+|   L or key edit (status) states=[default,loading,error,de\ |
+|   graded,empty]                                            |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when stopped                                               |
@@ -88,6 +138,101 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 | states: default | loading | empty | error | degraded       |
 +------------------------------------------------------------+
 ```
+
+### Confirm Start (`gpu-start-confirm`)
+
+Purpose: Inline confirm strip below the controls: names the hourly cost, the warm-up time and the intent TTL after which lifecycle returns to automatic. Stays until confirmed or dismissed.
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-start-preview` | Start preview — cost per hour, warm-up estimate, auto-return after TTL | content | default |
+| `z-start-actions` | Confirm start / Cancel | form | default, loading, error |
+
+```
++------------------------------------------------------------+
+| Confirm Start  [overlay]  #/settings (inline strip; no de\ |
+|   dicated route)                                           |
+| Inline confirm strip below the controls: names the hourly\ |
+|    cost, the warm-up time and the intent TTL after which \ |
+|   lifecycle returns to automatic. Stays until confirmed o\ |
+|   r dismissed.                                             |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Start preview — cost per hour, warm-up estimate, auto\ |
+|   -return after TTL (content) states=[default]             |
+|   - Confirm start / Cancel (form) states=[default,loading\ |
+|   ,error]                                                  |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Confirm start -> POST recognition/gpu/intent \ |
+|   {action: start} (costly)                                 |
+|   [secondary] Cancel -> settings-burst-gpu                 |
++------------------------------------------------------------+
+| states: default | loading | error                          |
++------------------------------------------------------------+
+```
+
+### Confirm Stop (`gpu-stop-confirm`)
+
+Purpose: Inline confirm strip: Stop service stays available while load.has_work. Confirm copy is Stop after the current run finishes? After confirm, the pending-intent indicator is Stopping after the current work finishes until idle, then the service stops. Never a disabled control.
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-stop-preview` | Stop preview — Stop after the current run finishes? then Stopping after the current work finishes until idle | content | default, degraded |
+| `z-stop-actions` | Confirm stop / Cancel | form | default, loading, error |
+
+```
++------------------------------------------------------------+
+| Confirm Stop  [overlay]  #/settings (inline strip; no ded\ |
+|   icated route)                                            |
+| Inline confirm strip: Stop service stays available while \ |
+|   load.has_work. Confirm copy is Stop after the current r\ |
+|   un finishes? After confirm, the pending-intent indicato\ |
+|   r is Stopping after the current work finishes until idl\ |
+|   e, then the service stops. Never a disabled control.     |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Stop preview — Stop after the current run finishes? t\ |
+|   hen Stopping after the current work finishes until idle\ |
+|    (content) states=[default,degraded]                     |
+|   - Confirm stop / Cancel (form) states=[default,loading,\ |
+|   error]                                                   |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Confirm stop -> POST recognition/gpu/intent {\ |
+|   action: stop}                                            |
++------------------------------------------------------------+
+| states: default | loading | error | degraded               |
++------------------------------------------------------------+
+```
+
+### Workbench (`exit-workbench`)
+
+Purpose: Go describe media once Description Service is ready
+
+url_params: `run_id`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-wb-entry` | Workbench entry | nav | default |
+
+```
++------------------------------------------------------------+
+| Workbench  [exit]  #/workbench                             |
+| Go describe media once Description Service is ready        |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Workbench entry (nav) states=[default]                 |
++------------------------------------------------------------+
+| states: default                                            |
++------------------------------------------------------------+
+```
+
+## Operator interaction contract
+
+### Description Service state sketches
+
+Detailed sketches of the seven `settings-burst-gpu` states named in its purpose. Clock times, ages, ETAs and the hourly cost are illustrative examples, not measurements or validated pricing.
 
 #### stopped
 
@@ -192,79 +337,6 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 +------------------------------------------------------------+
 ```
 
-### Confirm Start (`gpu-start-confirm`)
-
-Purpose: Inline confirm strip below the controls: names the hourly cost, the warm-up time and the intent TTL after which lifecycle returns to automatic. Stays until confirmed or dismissed.
-
-| zone id | label | role | states |
-| --- | --- | --- | --- |
-| `z-start-preview` | Start preview — cost per hour, warm-up estimate, auto-return after TTL | content | default |
-| `z-start-actions` | Confirm start / Cancel | form | default, loading, error |
-
-```
-+------------------------------------------------------------+
-| Confirm Start  [overlay]  #/settings (inline strip; no ded…|
-| Inline confirm strip below the controls: names the hourly …|
-+------------------------------------------------------------+
-| ZONES                                                      |
-|   - Start preview — cost per hour, warm-up estimate, auto-…|
-|   - Confirm start / Cancel (form) states=[default,loading,…|
-+------------------------------------------------------------+
-| ACTIONS                                                    |
-|   [PRIMARY] Confirm start -> POST recognition/gpu/intent {…|
-|   [secondary] Cancel -> settings-burst-gpu                 |
-+------------------------------------------------------------+
-| states: default | loading | error                          |
-+------------------------------------------------------------+
-```
-
-### Confirm Stop (`gpu-stop-confirm`)
-
-Purpose: Inline confirm strip: Stop service stays available while load.has_work. Confirm copy is Stop after the current run finishes? After confirm, the pending-intent indicator is Stopping after the current work finishes until idle, then the service stops. Never a disabled control.
-
-| zone id | label | role | states |
-| --- | --- | --- | --- |
-| `z-stop-preview` | Stop preview — Stop after the current run finishes? then Stopping after the current work finishes until idle | content | default, degraded |
-| `z-stop-actions` | Confirm stop / Cancel | form | default, loading, error |
-
-```
-+------------------------------------------------------------+
-| Confirm Stop  [overlay]  #/settings (inline strip; no dedi…|
-| Inline confirm strip: Stop service stays available while l…|
-+------------------------------------------------------------+
-| ZONES                                                      |
-|   - Stop preview — Stop after the current run finishes? th…|
-|   - Confirm stop / Cancel (form) states=[default,loading,e…|
-+------------------------------------------------------------+
-| ACTIONS                                                    |
-|   [PRIMARY] Confirm stop -> POST recognition/gpu/intent {a…|
-+------------------------------------------------------------+
-| states: default | loading | error | degraded               |
-+------------------------------------------------------------+
-```
-
-### Workbench (`exit-workbench`)
-
-Purpose: Go describe media once Description Service is ready
-
-url_params: `run_id`
-
-| zone id | label | role | states |
-| --- | --- | --- | --- |
-| `z-wb-entry` | Workbench entry | nav | default |
-
-```
-+------------------------------------------------------------+
-| Workbench  [exit]  #/workbench                             |
-| Go describe media once Description Service is ready        |
-+------------------------------------------------------------+
-| ZONES                                                      |
-|   - Workbench entry (nav) states=[default]                 |
-+------------------------------------------------------------+
-| states: default                                            |
-+------------------------------------------------------------+
-```
-
 ## Actions
 
 | id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
@@ -281,6 +353,20 @@ url_params: `run_id`
 ## Flows
 ### Pre-warm before a demo (`flow-prewarm`)
 
+```
+flow: Pre-warm before a demo (flow-prewarm) job=job-prewarm-g\
+  pu
+  1. Settings › Description Service [settings-burst-gpu]
+     --state stopped → Start service-->
+  2. Confirm Start [gpu-start-confirm]
+     --preview cost + TTL → Confirm start (202)-->
+  3. Settings › Description Service [settings-burst-gpu] (vis\
+  it 2)
+     --intent start (pending) → starting → warming (bounded E\
+  TA) → ready-->
+  4. Workbench [exit-workbench]
+```
+
 ```mermaid
 flowchart TD
   %% flow: Pre-warm before a demo job=job-prewarm-gpu
@@ -295,6 +381,19 @@ flowchart TD
 
 ### Stop while a describe run is in flight (`flow-stop-blocked`)
 
+```
+flow: Stop while a describe run is in flight (flow-stop-block\
+  ed) job=job-stop-gpu
+  1. Settings › Description Service [settings-burst-gpu]
+     --state ready, load.has_work → Stop service available (d\
+  eferred intent)-->
+  2. Confirm Stop [gpu-stop-confirm]
+     --Stop after the current run finishes? → Confirm stop (2\
+  02)-->
+  3. Settings › Description Service [settings-burst-gpu] (vis\
+  it 2)
+```
+
 ```mermaid
 flowchart TD
   %% flow: Stop while a describe run is in flight job=job-stop-gpu
@@ -303,10 +402,18 @@ flowchart TD
   n_gpu_stop_confirm["Confirm Stop (overlay)"]
   n_settings_burst_gpu -->|state ready, load.has_work → Stop service available (deferred intent)| n_gpu_stop_confirm
   n_gpu_stop_confirm -->|Stop after the current run finishes? → Confirm stop (202)| n_settings_burst_gpu
-  n_settings_burst_gpu -->|Stopping after the current work finishes until idle → service stops| n_settings_burst_gpu
 ```
 
 ### Return to automatic (`flow-return-auto`)
+
+```
+flow: Return to automatic (flow-return-auto) job=job-return-a\
+  uto
+  1. Settings › Description Service [settings-burst-gpu]
+     --intent start until HH:MM → Return to automatic-->
+  2. Settings › Description Service [settings-burst-gpu] (vis\
+  it 2)
+```
 
 ```mermaid
 flowchart TD
@@ -317,6 +424,29 @@ flowchart TD
 ```
 
 ### Autosave Description API URL and key, then check persisted connection (`flow-routing-autosave-success`)
+
+```
+flow: Autosave Description API URL and key, then check persis\
+  ted connection (flow-routing-autosave-success) job=job-save\
+  -description-api-routing
+  1. Settings › Description Service [settings-burst-gpu]
+     --routing clean → edit URL and/or concealed key → routin\
+  g dirty-->
+  2. Settings › Description Service [settings-burst-gpu] (vis\
+  it 2)
+     --blur or Enter → save dirty URL + key pair; show routin\
+  g saving; newer edits remain queued/dirty-->
+  3. Settings › Description Service [settings-burst-gpu] (vis\
+  it 3)
+     --save succeeded → reload persisted Settings → run autom\
+  atic health check with saved target-->
+  4. Settings › Description Service [settings-burst-gpu] (vis\
+  it 4)
+     --current health response → show result; stale response \
+  after newer edit → discard-->
+  5. Settings › Description Service [settings-burst-gpu] (vis\
+  it 5)
+```
 
 ```mermaid
 flowchart TD
@@ -330,6 +460,25 @@ flowchart TD
 ```
 
 ### Retain unsaved key after Description API settings save failure (`flow-routing-autosave-failure`)
+
+```
+flow: Retain unsaved key after Description API settings save \
+  failure (flow-routing-autosave-failure) job=job-save-descri\
+  ption-api-routing
+  1. Settings › Description Service [settings-burst-gpu]
+     --routing clean → edit URL and/or concealed key → routin\
+  g dirty-->
+  2. Settings › Description Service [settings-burst-gpu] (vis\
+  it 2)
+     --blur or Enter → save dirty URL + key pair; show routin\
+  g saving-->
+  3. Settings › Description Service [settings-burst-gpu] (vis\
+  it 3)
+     --save failed or partial → show routing failed; retain k\
+  ey draft in memory; no health check-->
+  4. Settings › Description Service [settings-burst-gpu] (vis\
+  it 4)
+```
 
 ```mermaid
 flowchart TD

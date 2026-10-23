@@ -12,6 +12,10 @@ Documentation status is part of the contract: a superseded document must link it
 
 Prefer codebase-memory-mcp graph tools: search_graph, trace_path, get_code_snippet, query_graph and get_architecture. Use text search for literals, configuration, non-code documents or graph coverage gaps.
 
+## Remote execution
+
+Select `codex-remote` or `claude-remote` explicitly for remote work. The Grok CLI is retired; do not select `grok-remote` or reinstall Grok for readiness checks. WorkBay v0.1.74 uses the standard install mode because its `--with-remote` bootstrap probe requires Grok; that install mode does not enforce remote-only execution.
+
 ## Heuristics canon
 
 Use the pinned read-only copy at `/Users/daniel/Development/heuristics-canon-current`. Follow its AGENTS.md, verify relevant release-manifest digests and cite the release version from that manifest. Never edit it or use the maintainer publish checkout as row-text authority.

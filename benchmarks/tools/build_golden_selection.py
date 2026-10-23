@@ -218,7 +218,15 @@ def build(corpus: dict, corpus_path: Path = CORPUS, *, corpus_bytes: bytes | Non
     }
 
 
-def verify(sel: dict, corpus: dict) -> list[str]:
+def verify(sel: dict, corpus: dict, corpus_bytes: bytes) -> list[str]:
+    # Rows only point into the corpus, so agreeing IDs and sha256 cannot catch a corpus
+    # edited underneath (hand tags, say). The byte pin can. Hash the bytes `corpus` was
+    # parsed from, never a second read, and judge nothing else against an unpinned corpus.
+    if "corpus_manifest_sha256" not in sel:
+        return ["selection has no corpus_manifest_sha256 pin"]
+    if sel["corpus_manifest_sha256"] != hashlib.sha256(corpus_bytes).hexdigest():
+        return ["corpus bytes do not match the selection's corpus_manifest_sha256 pin"]
+
     problems: list[str] = []
     entries = {e["path"]: e for e in corpus["entries"]}
     paths = [row["path"] for row in sel["selection"]]
@@ -284,7 +292,7 @@ def main() -> int:
             sel = json.loads(args.out.read_bytes())
         else:
             sel = build(corpus, args.corpus, corpus_bytes=corpus_bytes)
-        problems = verify(sel, corpus)
+        problems = verify(sel, corpus, corpus_bytes)
         if problems:
             print("FAILED INVARIANTS: " + "; ".join(problems), file=sys.stderr)
             return 1
@@ -306,7 +314,7 @@ def main() -> int:
           f"   excluded { {k: len(v) for k, v in sel['sampling_frame']['excluded'].items()} }")
     for key, value in sel["realized"].items():
         print(f"  {key:24s} {value}")
-    problems = verify(sel, corpus)
+    problems = verify(sel, corpus, corpus_bytes)
     if problems:
         print("\nFAILED INVARIANTS:")
         for p in problems:

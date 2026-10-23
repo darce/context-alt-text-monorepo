@@ -178,26 +178,71 @@ local/*-worktrees.txt
 # codemap MCP index artifact (local, regenerated)
 .codebase-memory/
 
-# Benchmark metrics/reports — local-only, privacy-sensitive (never in repo)
-/benchmarks/
-# FIR-11 Slice 0: track only plans/manifests/reports deliverables
-!/benchmarks/
-/benchmarks/*
-!/benchmarks/plans/
-!/benchmarks/manifests/
-!/benchmarks/reports/
-!/benchmarks/ux-maps/
-# Sampling-frame generators are lineage, not output: the population arms cited by
-# docs/assessments/current/fir-corpus-population-allocation-2026-09-19.md (seeds,
-# inclusion probabilities) cannot be reproduced off this laptop without the script.
-# Track the code; the CSV/JSON it emits stay local (personal-image metadata).
+# Benchmarks: data and generated artifacts stay local by default.
+# Reopen only intentional source directories; nested data stays ignored.
+/benchmarks/**
+!/benchmarks/README.md
+!/benchmarks/*.py
+!/benchmarks/*.sh
 !/benchmarks/tools/
-/benchmarks/tools/*
-!/benchmarks/tools/fir_corpus_population_draft_20260919.py
-!/benchmarks/tools/fir_occ_label_queue.py
-# generated review-board HTML bundles are derived from the tracked json/md (regenerable, ~30 MB)
-/benchmarks/reports/*.html
-/benchmarks/reports/*_files/
+!/benchmarks/tools/*.py
+# Superseded local builder; use build_corpus_manifest.py.
+/benchmarks/tools/build_manifest.py
+!/benchmarks/tools/*.sh
+!/benchmarks/tests/
+!/benchmarks/tests/*.py
+!/benchmarks/plans/
+!/benchmarks/plans/*.md
+!/benchmarks/protocols/
+!/benchmarks/protocols/*.md
+!/benchmarks/protocols/*.json
+!/benchmarks/ux-maps/
+!/benchmarks/ux-maps/*.md
+!/benchmarks/ux-maps/*.uxmap.json
+
+# Curated deliverables: add exact reviewed paths here, never whole subtrees.
+!/benchmarks/manifests/
+!/benchmarks/manifests/altq-interleave-master-20260716.json
+!/benchmarks/manifests/bakeoff10-manifest-20260716.json
+!/benchmarks/manifests/corpus-catalog-v1.json
+!/benchmarks/manifests/corpus-manifest-v3.json
+!/benchmarks/manifests/corpus-manifest-v3r-20260814.json
+!/benchmarks/manifests/corpus646-interleave-manifest-20260716.json
+!/benchmarks/manifests/curated-identities-20260716.json
+!/benchmarks/manifests/detections-yunet-t030.json
+!/benchmarks/manifests/detections-yunet-v1.json
+!/benchmarks/manifests/fir-bench-decision-v1.json
+!/benchmarks/manifests/fir-gate-contract-v1.json
+!/benchmarks/manifests/fir12-selection-v1.json
+!/benchmarks/manifests/golden150-draft-20260723.json
+!/benchmarks/manifests/golden150-draft-20260723.sidecar.json
+!/benchmarks/manifests/golden150-selection-v1.json
+!/benchmarks/manifests/slice-tag-calibration-v1.json
+!/benchmarks/reports/
+!/benchmarks/reports/auraface-endpoint-diagnosis-plan-20261020.md
+!/benchmarks/reports/fir-auraface-512d-vm-validation-20260922.json
+!/benchmarks/reports/fir-dims-research-20260723.json
+!/benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html
+!/benchmarks/reports/fir-executive-summary-20260728.md
+!/benchmarks/reports/fir-gtm-legal-research-20260723.json
+!/benchmarks/reports/fir-issuedag-1-measurement-gates.md
+!/benchmarks/reports/fir-licensing-research-20260723.json
+!/benchmarks/reports/fir-licensing-research-20260723.md
+!/benchmarks/reports/fir-occlusion-caption-mining-20260904.json
+!/benchmarks/reports/fir-projects-eval-20260723.json
+!/benchmarks/reports/fir-umap-dcface-econ-20260723.json
+!/benchmarks/reports/firbench-1-comparison-ascii.md
+!/benchmarks/reports/firbench-1-gt-qualification-20261015.md
+!/benchmarks/reports/firbench-1-occasion-preflight-20261015.md
+!/benchmarks/reports/firbench-1-qc-observation-qualification-20261015.md
+!/benchmarks/reports/firbench-1-simulation-v6-20261015.md
+!/benchmarks/reports/openimages-occlusion-MEASUREMENTS.md
+!/benchmarks/experiments/
+!/benchmarks/experiments/rounds-20261017/
+!/benchmarks/experiments/rounds-20261017/accepted-packet.json
+!/benchmarks/experiments/rounds-20261017/accepted-packet.md
+!/benchmarks/experiments/rounds-20261017/model-comparison.csv
+!/benchmarks/experiments/rounds-20261017/model-comparison.html
 
 # Offload lane manifests — regenerated per task by materialize_offload_lane_manifest;
 # embed absolute local worktree paths, so machine-specific (never in repo)

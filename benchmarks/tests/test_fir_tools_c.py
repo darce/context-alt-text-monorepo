@@ -65,7 +65,11 @@ def test_calibration_toy(tmp_path):
                  '--corpus', paths[2], '--out', out, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert json.loads(out.read_text()) == {'auc_floor': .75, 'labelled_images': 0,
-                                         'shippable': {}, 'named_but_undetected': []}
+                                         'shippable': {}, 'named_but_undetected': [],
+                                         'unqualified_tags': {
+                                             tag: {'reason': 'no_positive_examples',
+                                                   'positive_count': 0, 'negative_count': 0}
+                                             for tag in CALIBRATION_TAGS}}
 
 
 # Detection-pass face row after pose enrichment; every calibration signal is usable.
@@ -77,33 +81,50 @@ FACE = {'bbox': [10.0, 10.0, 80.0, 100.0],
 NO_SIGNALS = {k: None for k in FACE if k not in ('bbox', 'landmarks')}
 BLUR_SHIPS = {'signal': 'blur_var', 'direction': -1, 'threshold': 10.0, 'auc': 1.0,
               'f1': 1.0, 'precision': 1.0, 'recall': 1.0}
+CALIBRATION_TAGS = {'profile', 'blur', 'low_res', 'sunglasses', 'masked', 'occlusion_other'}
 
 
 def calibrate(tmp_path, images):
     """Run calibration on synthetic (tags, face) rows; assert inputs are left unchanged."""
     docs = {
         'det': {'entries': [{'media_id': i, 'path': f'synthetic/{i}.jpg', 'sha256': '0' * 64,
-                             'width': 100, 'height': 100, 'faces': [face]}
+                             'width': 100, 'height': 100, 'faces': [face] if face is not None else []}
                             for i, (_, face) in enumerate(images)]},
-        'gold': {'entries': [{'media_id': i, 'tags': tags} for i, (tags, _) in enumerate(images)]},
+        'gold': {'entries': [{'media_id': i, **({'tags': tags} if tags is not None else {})}
+                             for i, (tags, _) in enumerate(images)]},
         'corpus': {'entries': [{'media_id': i, 'named_boxes': []} for i in range(len(images))]},
     }
-    for name, doc in docs.items():
-        (tmp_path / name).write_text(json.dumps(doc))
+    originals = {name: json.dumps(doc) for name, doc in docs.items()}
+    for name, original in originals.items():
+        (tmp_path / name).write_text(original)
     out = tmp_path / 'result'
     result = cli('calibrate_slice_tags', '--detections', tmp_path / 'det', '--golden', tmp_path / 'gold',
                  '--corpus', tmp_path / 'corpus', '--out', out, cwd=tmp_path)
-    for name, doc in docs.items():
-        assert json.loads((tmp_path / name).read_text()) == doc
+    for name, original in originals.items():
+        assert (tmp_path / name).read_text() == original
     assert result.returncode == 0, result.stderr
+    saved = out.read_text()
+    published = json.loads(saved)
+    json.dumps(published, allow_nan=False)
+    assert published['shippable'].keys().isdisjoint(published['unqualified_tags'])
+    assert published['shippable'].keys() | published['unqualified_tags'].keys() == CALIBRATION_TAGS
+    repeated = cli('calibrate_slice_tags', '--detections', tmp_path / 'det', '--golden', tmp_path / 'gold',
+                   '--corpus', tmp_path / 'corpus', '--out', out, cwd=tmp_path)
+    assert repeated.returncode != 0
+    assert 'choose a new output' in repeated.stderr.lower()
+    assert out.read_text() == saved
     rows = {line.split()[0]: line for line in result.stdout.splitlines() if line.strip()}
-    return json.loads(out.read_text()), rows
+    return published, rows
 
 
 def test_calibration_single_one_class_image(tmp_path):
     published, rows = calibrate(tmp_path, [(['profile'], FACE)])
     assert published == {'auc_floor': .75, 'labelled_images': 1, 'shippable': {},
-                         'named_but_undetected': []}
+                         'named_but_undetected': [],
+                         'unqualified_tags': {
+                             'profile': {'reason': 'insufficient_data', 'positive_count': 1, 'negative_count': 0},
+                             **{tag: {'reason': 'no_positive_examples', 'positive_count': 0, 'negative_count': 1}
+                                for tag in CALIBRATION_TAGS - {'profile'}}}}
     assert 'insufficient' in rows['profile'] and 'nan' not in rows['profile']
 
 
@@ -118,9 +139,83 @@ def test_calibration_single_one_class_image(tmp_path):
 def test_calibration_skips_undiscriminable_tag_and_continues(images, tmp_path):
     published, rows = calibrate(tmp_path, images)
     assert published == {'auc_floor': .75, 'labelled_images': len(images), 'shippable': {'blur': BLUR_SHIPS},
-                         'named_but_undetected': []}
+                         'named_but_undetected': [],
+                         'unqualified_tags': {
+                             'profile': {'reason': 'insufficient_data',
+                                         'positive_count': 2 if len(images) == 2 else 1,
+                                         'negative_count': 0 if len(images) == 2 else 2},
+                             **{tag: {'reason': 'no_positive_examples',
+                                      'positive_count': 0, 'negative_count': len(images)}
+                                for tag in CALIBRATION_TAGS - {'profile', 'blur'}}}}
     assert 'insufficient' in rows['profile'] and 'nan' not in rows['profile']
     assert rows['blur'].endswith('SHIP')
+
+
+def test_calibration_persists_below_floor_and_no_positive_reasons(tmp_path):
+    published, rows = calibrate(tmp_path, [(['profile'], FACE), ([], FACE),
+                                         (['profile', 'blur'], {**FACE, 'blur_var': 10.0}),
+                                         (['blur'], {**FACE, 'blur_var': 10.0})])
+    assert published == {'auc_floor': .75, 'labelled_images': 4, 'named_but_undetected': [],
+                         'shippable': {'blur': BLUR_SHIPS},
+                         'unqualified_tags': {
+                             'profile': {'reason': 'below_auc_floor', 'positive_count': 2,
+                                         'negative_count': 2, 'auc': .5},
+                             **{tag: {'reason': 'no_positive_examples', 'positive_count': 0, 'negative_count': 4}
+                                for tag in CALIBRATION_TAGS - {'profile', 'blur'}}}}
+    assert rows['profile'].endswith('noise - hand-tag only')
+    assert rows['blur'].endswith('SHIP')
+
+
+def test_calibration_qualifies_at_auc_floor(tmp_path):
+    published, _ = calibrate(tmp_path, [([], FACE), (['blur'], FACE),
+                                      (['blur'], {**FACE, 'blur_var': 10.0})])
+    assert published['shippable'] == {'blur': {'signal': 'blur_var', 'direction': -1, 'threshold': 100.0,
+                                            'auc': .75, 'f1': .8, 'precision': .667, 'recall': 1.0}}
+    assert published['unqualified_tags'] == {
+        tag: {'reason': 'no_positive_examples', 'positive_count': 0, 'negative_count': 3}
+        for tag in CALIBRATION_TAGS - {'blur'}}
+
+
+def test_calibration_without_any_signals(tmp_path):
+    published, _ = calibrate(tmp_path, [(['profile'], {**FACE, **NO_SIGNALS}),
+                                      ([], {**FACE, **NO_SIGNALS})])
+    assert published == {'auc_floor': .75, 'labelled_images': 2, 'shippable': {},
+                         'named_but_undetected': [],
+                         'unqualified_tags': {
+                             'profile': {'reason': 'insufficient_data', 'positive_count': 1, 'negative_count': 1},
+                             **{tag: {'reason': 'no_positive_examples', 'positive_count': 0, 'negative_count': 2}
+                                for tag in CALIBRATION_TAGS - {'profile'}}}}
+
+
+def test_calibration_all_tags_qualify(tmp_path):
+    published, _ = calibrate(tmp_path, [(sorted(CALIBRATION_TAGS), {**FACE, 'blur_var': 10.0}), ([], FACE)])
+    assert published == {'auc_floor': .75, 'labelled_images': 2,
+                         'shippable': {tag: BLUR_SHIPS for tag in CALIBRATION_TAGS},
+                         'unqualified_tags': {}, 'named_but_undetected': []}
+
+
+def test_calibration_counts_only_detected_labelled_images(tmp_path):
+    # A missed positive face is outside the existing calibration frame. Unknown tags
+    # do not expand the known-tag vocabulary; an empty tags list is a true negative.
+    published, _ = calibrate(tmp_path, [(['profile'], None), (None, FACE),
+                                      (['operator_note'], FACE), ([], FACE)])
+    assert published == {'auc_floor': .75, 'labelled_images': 2, 'shippable': {},
+                         'named_but_undetected': [],
+                         'unqualified_tags': {
+                             tag: {'reason': 'no_positive_examples', 'positive_count': 0, 'negative_count': 2}
+                             for tag in CALIBRATION_TAGS}}
+
+
+@pytest.mark.parametrize('source', ['det', 'gold', 'corpus'])
+def test_calibration_cannot_overwrite_source(source, tmp_path):
+    for name in ('det', 'gold', 'corpus'):
+        (tmp_path / name).write_text('{"entries": []}')
+    result = cli('calibrate_slice_tags', '--detections', tmp_path / 'det', '--golden', tmp_path / 'gold',
+                 '--corpus', tmp_path / 'corpus', '--out', tmp_path / source, cwd=tmp_path)
+    assert result.returncode != 0
+    assert 'choose a new output' in result.stderr.lower()
+    for name in ('det', 'gold', 'corpus'):
+        assert (tmp_path / name).read_text() == '{"entries": []}'
 
 
 @pytest.mark.parametrize('tool,flag', [('pose_features', None), ('calibrate_slice_tags', '--detections'),

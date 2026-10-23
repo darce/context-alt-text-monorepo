@@ -10,6 +10,13 @@ labelled images) and the best achievable precision/recall, so a signal has to ea
 threshold instead of being handed one. A signal at AUC ~0.5 is noise, and saying so is
 the useful result: it is direct evidence for the claim that occlusion is not detectable
 offline, rather than an appeal to the harness's prior say-so.
+
+In the JSON, labelled_images and each unqualified_tags positive_count/negative_count
+use the detected labelled-image frame: golden entries with a tags key and a detection
+row containing at least one face. Each image contributes its first face; missing
+signals do not remove it from these counts, though AUC uses only available signal
+values. Absence from shippable alone is not evidence of noise: unqualified_tags
+distinguishes no positive examples, insufficient data, and a measured below-floor AUC.
 """
 
 from __future__ import annotations
@@ -111,10 +118,13 @@ def main(argv=None) -> int:
     print(f"{'tag':<17}{'n_pos':>6}{'signal':>20}{'AUC':>8}{'thresh':>10}{'prec':>7}{'rec':>7}{'F1':>7}  verdict")
     print("-" * 100)
     shippable: dict[str, dict] = {}
+    unqualified_tags: dict[str, dict] = {}
     for tag in TAGS:
         rows = [(tags, face) for _, tags, face in detected]
         n_pos = sum(1 for tags, _ in rows if tag in tags)
+        counts = {"positive_count": n_pos, "negative_count": len(rows) - n_pos}
         if n_pos == 0:
+            unqualified_tags[tag] = {"reason": "no_positive_examples", **counts}
             continue
         ranked = []
         for signal, direction in SIGNALS:
@@ -128,6 +138,7 @@ def main(argv=None) -> int:
         if not ranked:
             # AUC needs tagged and untagged faces on the same signal. Without that there is
             # no evidence either way, so report the gap rather than invent an AUC or cut.
+            unqualified_tags[tag] = {"reason": "insufficient_data", **counts}
             print(f"{tag:<17}{n_pos:>6}{'-':>20}{'-':>8}{'-':>10}{'-':>7}{'-':>7}{'-':>7}"
                   f"  insufficient data - no signal has both tagged and untagged faces"
                   f" (untagged {len(rows) - n_pos})")
@@ -141,6 +152,8 @@ def main(argv=None) -> int:
         if area >= AUC_FLOOR:
             shippable[tag] = {"signal": signal, "direction": direction, "threshold": raw_cut,
                               "auc": round(area, 3), **{k: round(v, 3) for k, v in cut.items() if k != "threshold"}}
+        else:
+            unqualified_tags[tag] = {"reason": "below_auc_floor", **counts, "auc": round(area, 3)}
 
     # Detector recall against the operator's own identity boxes: a face the operator
     # named but YuNet misses is a hole in every geometry-derived tag downstream.
@@ -153,6 +166,7 @@ def main(argv=None) -> int:
     print(f"shippable tags: {sorted(shippable) or 'none'}")
     publish(args.out, {"auc_floor": AUC_FLOOR, "labelled_images": len(detected),
                     "shippable": shippable,
+                    "unqualified_tags": unqualified_tags,
                     "named_but_undetected": sorted(named_but_undetected)})
     return 0
 

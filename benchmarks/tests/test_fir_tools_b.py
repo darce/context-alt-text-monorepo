@@ -16,6 +16,17 @@ def tool():
     spec.loader.exec_module(module)
     return module
 
+
+def corpus_entry(media_id, path, bucket, slug, named_face_count):
+    return dict(path=path, media_id=media_id, sha256=f'{media_id:064x}',
+        bucket=bucket, slug=slug, primary_identity=None if slug == 'unlabeled' else slug,
+        named_face_count=named_face_count, flags=[], width=640, height=480,
+        slice_tags=[], slice_tags_derived=[],
+        named_identities=[] if slug == 'unlabeled' else [slug],
+        slice_tags_known=False, slice_tags_source=None, detected_face_count=1,
+        detected_boxes=[], provenance={'license': 'external' if bucket == 'celebs' else 'consented'})
+
+
 @pytest.fixture
 def corpus(tmp_path):
     entries = []
@@ -25,14 +36,8 @@ def corpus(tmp_path):
             slug = f'person-{i // 3}' if bucket == 'personal' and i < 120 else 'unlabeled'
             if bucket == 'celebs':
                 slug = f'celeb-{i}'
-            entries.append(dict(path=f'{bucket}/{i}', media_id=len(entries),
-                sha256=f'{len(entries):064x}', bucket=bucket, slug=slug,
-                primary_identity=None if slug == 'unlabeled' else slug,
-                named_face_count=2 if bucket == 'personal' and i < 30 else 1,
-                flags=[], width=640, height=480, slice_tags=[], slice_tags_derived=[],
-                named_identities=[] if slug == 'unlabeled' else [slug],
-                slice_tags_known=False, slice_tags_source=None, detected_face_count=1,
-                detected_boxes=[], provenance={'license': 'external' if bucket == 'celebs' else 'consented'}))
+            entries.append(corpus_entry(len(entries), f'{bucket}/{i}', bucket, slug,
+                named_face_count=2 if bucket == 'personal' and i < 30 else 1))
     path = tmp_path / 'custom-corpus.json'
     path.write_text(json.dumps(dict(entries=entries, duplicate_groups=[])))
     return path
@@ -48,13 +53,8 @@ def corpus150(tmp_path):
     for bucket, prefix, identities, images, faces in groups:
         for i in range(identities * images):
             slug = f'{prefix}-{i // images}' if prefix else 'unlabeled'
-            entries.append(dict(path=f'{bucket}/{len(entries)}', media_id=len(entries),
-                sha256=f'{len(entries):064x}', bucket=bucket, slug=slug,
-                primary_identity=None if slug == 'unlabeled' else slug,
-                named_face_count=faces, flags=[], width=640, height=480, slice_tags=[],
-                slice_tags_derived=[], named_identities=[] if slug == 'unlabeled' else [slug],
-                slice_tags_known=False, slice_tags_source=None, detected_face_count=1,
-                detected_boxes=[], provenance={'license': 'external' if bucket == 'celebs' else 'consented'}))
+            entries.append(corpus_entry(len(entries), f'{bucket}/{len(entries)}',
+                bucket, slug, named_face_count=faces))
     path = tmp_path / 'corpus-150.json'
     path.write_text(json.dumps(dict(entries=entries, duplicate_groups=[])))
     return path
@@ -116,14 +116,24 @@ def test_custom_input_and_readonly_verification(tool, monkeypatch, corpus, tmp_p
     monkeypatch.setattr(tool, 'SIZE', 80)
     before = corpus.read_bytes()
     out = tmp_path / 'new.json'
+    verification_states = []
+    verify = tool.verify
+
+    def record_verification(sel, corpus, corpus_bytes):
+        verification_states.append(out.exists())
+        return verify(sel, corpus, corpus_bytes)
+
+    monkeypatch.setattr(tool, 'verify', record_verification)
     monkeypatch.chdir(tmp_path)
     assert invoke(tool, monkeypatch, '--corpus', corpus, '--out', out) == 0
+    assert verification_states == [False]
     selection = json.loads(out.read_text())
     assert selection['corpus_manifest'] == corpus.name
     assert selection['corpus_manifest_sha256'] == hashlib.sha256(before).hexdigest()
     content = out.read_bytes()
     out.chmod(0o444)
     assert invoke(tool, monkeypatch, '--corpus', corpus, '--out', out, '--verify-only') == 0
+    assert verification_states == [False, True]
     assert out.read_bytes() == content
     assert corpus.read_bytes() == before
 
@@ -160,7 +170,7 @@ def test_verify_rejects_corpus_bytes_off_the_pin(tool, monkeypatch, capsys, corp
 
 
 @pytest.mark.parametrize('pin', ['missing', None, 'upper', 'other'])
-def test_verify_rejects_missing_or_wrong_pin(tool, monkeypatch, corpus150, tmp_path, pin):
+def test_verify_rejects_missing_or_wrong_pin(tool, monkeypatch, capsys, corpus150, tmp_path, pin):
     _, selection = build150(tool, monkeypatch, corpus150, tmp_path)
     digest = selection['corpus_manifest_sha256']
     if pin == 'missing':
@@ -170,7 +180,13 @@ def test_verify_rejects_missing_or_wrong_pin(tool, monkeypatch, corpus150, tmp_p
             upper=digest.upper(), other=hashlib.sha256(b'').hexdigest()).get(pin)
     out = tmp_path / 'repinned.json'
     out.write_text(json.dumps(selection))
-    assert invoke(tool, monkeypatch, '--corpus', corpus150, '--out', out, '--verify-only') != 0
+    corpus_bytes = corpus150.read_bytes()
+    expected = ('selection has no corpus_manifest_sha256 pin' if pin == 'missing' else
+                "corpus bytes do not match the selection's corpus_manifest_sha256 pin")
+    assert tool.verify(selection, json.loads(corpus_bytes), corpus_bytes) == [expected]
+    capsys.readouterr()
+    assert invoke(tool, monkeypatch, '--corpus', corpus150, '--out', out, '--verify-only') == 1
+    assert capsys.readouterr().err == f'FAILED INVARIANTS: {expected}\n'
 
 
 def test_verify_hashes_the_bytes_it_parsed(tool, monkeypatch, capsys, corpus150, tmp_path):

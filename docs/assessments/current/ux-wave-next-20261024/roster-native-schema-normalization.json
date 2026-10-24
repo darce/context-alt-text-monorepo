@@ -1,0 +1,71 @@
+{
+  "reason": "Existing native UX-map schema rejects action_states/when extension fields. This proposal copy retains exact lifecycle predicates in purpose/verb, with complete original extension values here; original immutable map untouched.",
+  "changes": [
+    {
+      "screen_id": "roster-person-merge-dialog",
+      "action_states": [
+        "ready",
+        "preview_ready",
+        "conflict",
+        "committing"
+      ],
+      "preserved_in": "purpose"
+    },
+    {
+      "screen_id": "roster-person-merge-success",
+      "action_states": [
+        "success",
+        "undoing",
+        "undone",
+        "error"
+      ],
+      "preserved_in": "purpose"
+    },
+    {
+      "action_id": "act-preview-person-merge",
+      "when": [
+        "ready"
+      ],
+      "preserved_in": "verb"
+    },
+    {
+      "action_id": "act-retry-person-merge-preview",
+      "when": [
+        "conflict"
+      ],
+      "preserved_in": "verb"
+    },
+    {
+      "action_id": "act-confirm-person-merge",
+      "when": [
+        "preview_ready"
+      ],
+      "preserved_in": "verb"
+    },
+    {
+      "action_id": "act-cancel-person-merge",
+      "when": [
+        "ready",
+        "preview_ready",
+        "conflict"
+      ],
+      "preserved_in": "verb"
+    },
+    {
+      "action_id": "act-undo-person-merge",
+      "when": [
+        "success"
+      ],
+      "preserved_in": "verb"
+    },
+    {
+      "action_id": "act-dismiss-person-merge-result",
+      "when": [
+        "success",
+        "undone",
+        "error"
+      ],
+      "preserved_in": "verb"
+    }
+  ]
+}

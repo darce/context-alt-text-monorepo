@@ -1,0 +1,14 @@
+[
+  {
+    "rule_id": "INT-07",
+    "severity": "high",
+    "pointer": "actions[act-run-recognition].preview_required",
+    "fix": "Set preview_required=true for costly/irreversible actions.",
+    "detail": "costly/irreversible without preview",
+    "pack_revision": "uxmap-critique/1",
+    "canon_revision": "resume-20260912",
+    "evidence_kind": "heuristic",
+    "next_check": "Can the user see the result before they pay / print / apply?",
+    "limitation": "proxy: preview_required records an intended preview flag; map cannot establish that an outcome sample is shown before commit (INT-07 Preview before commit)"
+  }
+]

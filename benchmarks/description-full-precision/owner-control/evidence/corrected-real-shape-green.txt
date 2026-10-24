@@ -1,0 +1,8 @@
+test_actual_reconcile_auto_full_view_call_shape (test_native_transport.NativeRealShapeTests.test_actual_reconcile_auto_full_view_call_shape) ... ok
+test_full_saved_view_round_trips_without_projection (test_native_transport.NativeRealShapeTests.test_full_saved_view_round_trips_without_projection) ... ok
+test_small_cause_removal_same_native_control (test_native_transport.NativeRealShapeTests.test_small_cause_removal_same_native_control) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.251s
+
+OK

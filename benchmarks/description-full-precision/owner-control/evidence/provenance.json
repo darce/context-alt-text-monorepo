@@ -1,0 +1,235 @@
+{
+  "accepted_r4": {
+    "accepted_caller_patch_sha256": "30e4e8db654a6f5af7e8291056a00640875ef0d67753d66ae93f9a0ee3a804ce",
+    "members": [
+      {
+        "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/README.md",
+        "path": "prior-r4/accepted/README.md",
+        "sha256": "951ec0b881f5f6653672f32d52e6e89f3f539f9b6a70d0188b2d10a9966ca5d2"
+      },
+      {
+        "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/caller.patch",
+        "path": "prior-r4/accepted/caller.patch",
+        "sha256": "30e4e8db654a6f5af7e8291056a00640875ef0d67753d66ae93f9a0ee3a804ce"
+      },
+      {
+        "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/snapshot_cursor.py",
+        "path": "prior-r4/accepted/snapshot_cursor.py",
+        "sha256": "e7fd9187f685e41c6ef5b2a6a5577a4949b0f77ad211e3cfd13826618c7760ca"
+      },
+      {
+        "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/snapshot_source.py",
+        "path": "prior-r4/accepted/snapshot_source.py",
+        "sha256": "04917b66480bca3621e60668c06cae29c8c591941638f334c3e979869d8f98a0"
+      },
+      {
+        "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/test_snapshot_cursor.py",
+        "path": "prior-r4/accepted/test_snapshot_cursor.py",
+        "sha256": "bb315dbcebe72f688ba85172063cfa37b126559731ad2d02cdff9673572a22da"
+      },
+      {
+        "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/verify_inputs.py",
+        "path": "prior-r4/accepted/verify_inputs.py",
+        "sha256": "c8f3599f05e05fd147ef72dbd96b4f354808f5b5835b3424462fb132886be973"
+      }
+    ],
+    "rejected_seed": "prior-r4/seed-failed-caller.patch; not accepted and not applied",
+    "replay": "evidence/prior/GPU-OWNER-R4-REPLAY-20261024.json; supplied prior evidence, not a new run here",
+    "review": 1660,
+    "source_sha": "506ecedda3cad4ac48be05d84518c649255785a4",
+    "status": "SOURCE_ONLY_PASS; offline caller excerpt; unadopted"
+  },
+  "adoption": "PENDING independent joined review, WorkBay coordinator import/landing, protected staging and separate native adoption; no live launch/report",
+  "author_execution": "private OCI VM scratch repository; all commands in VM workspace",
+  "candidate_script_hashes": {
+    "capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+    "final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+    "guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+    "observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+    "owner-custody.py": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9",
+    "owner-window.py": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600",
+    "root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62"
+  },
+  "canon": {
+    "files": {
+      "PRINCIPLES.md": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+      "lexicons/engineering.md": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d",
+      "lexicons/graph-theory.md": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c",
+      "meta/release-manifest.json": "46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260",
+      "reasoning/falsification-disconfirmers.md": "9e572c986919420c614c6ae26033480a25294874c6bc6b4bb81341d32bba0771",
+      "reasoning/measurement-integrity.md": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8"
+    },
+    "mirror_verified_against_operator_digests": true,
+    "operator_pin": "published local Canon v0.26.2 at /Users/daniel/Development/heuristics-canon-current; read-only, not accessed from VM",
+    "original_distilled": [
+      {
+        "path": "/home/gate/src/context-alt-text-monorepo/literature/extracted/refactoring/distilled/why-programs-fail.md",
+        "sha256": "79a30653fb318a6f7b530879cd67b1d0d7d6e75739f676d03dc9da919294f831"
+      },
+      {
+        "path": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/pragmatic-programmer.md",
+        "sha256": "18ee4cc144c4950db3565d53c2fb3d1645a63ebc086317e4d0a0cbf9c4748455"
+      },
+      {
+        "path": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/implementing-effective-code-reviews.md",
+        "sha256": "3979b158b1857a82961c487a286b375aa84804ef9a259403c6cb82fee46d4986"
+      },
+      {
+        "path": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/building-knowledge-graphs.md",
+        "sha256": "9562805e02ed2a34605bd19959db2e52ed45a42e21994e288106a708ab941a73"
+      }
+    ],
+    "original_note": "Why Programs Fail missing from the two supplied description input bundles; read ch12 from existing VM source copy and record its hash. Other originals read from supplied immutable bundle. GRPH-32 is a practice label; STOR-10 is inert.",
+    "retained_rules": [
+      "DBG-11",
+      "TEST-15",
+      "TEST-33",
+      "GRPH-14",
+      "GRPH-32"
+    ],
+    "vm_mirror": "/home/gate/heuristics-canon-v0.26.2"
+  },
+  "dispatch": {
+    "note": "dispatch brief is provenance, not source/test completion proof; runtime model identity not introspected",
+    "operator_requested_backend": "codex-remote",
+    "operator_requested_effort": "XHIGH",
+    "operator_requested_model": "gpt-6.1-sol"
+  },
+  "effects": "offline native forks and temporary test files only; no model/GPU/controller/customer-image/production-helper effects",
+  "family": "GPU owner native IPC repair; fifth source, continuing R3/R4 lineage",
+  "fixture": {
+    "authority_fields": [
+      "highest_sequence",
+      "intents",
+      "last_wall_time",
+      "rejected_sequences",
+      "schema_version",
+      "sequences"
+    ],
+    "authority_records": 261,
+    "bytes": 137715,
+    "path": "fixtures/actual-view.json",
+    "sealing": "read-only 0444 in author workspace; Git blob digest is portable seal",
+    "sha256": "e388f8be6741710f0399176368b633ef0894f9f123e13afb8f7bdad2aa5e9939",
+    "transformation": "none; exact sealed source view, contract fields only; no credentials, environment snapshot or customer images"
+  },
+  "input_manifest": {
+    "all_15_members_verified_before_copy": true,
+    "local_path": "fixtures/input-manifest.json",
+    "original_path": "/home/gate/description-owner-ipc-r5-inputs-20261024T0303/manifest.json",
+    "sha256": "80f7267a090a69fbe05e8a55ce6dce4f9c958290db3a9c97f1efc67cda95e7fc"
+  },
+  "lineage_edges": [
+    {
+      "from": "input manifest SHA256 80f7267a090a69fbe05e8a55ce6dce4f9c958290db3a9c97f1efc67cda95e7fc",
+      "read_fields": [
+        "files[].path",
+        "files[].bytes",
+        "files[].sha256"
+      ],
+      "to": "seven scripts + exact fixture"
+    },
+    {
+      "constraint": "all other script bytes retained exactly",
+      "from": "baseline owner-custody cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+      "read_fields": [
+        "native_job source bytes"
+      ],
+      "to": "corrected owner-custody 42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9"
+    },
+    {
+      "from": "fixtures/actual-view.json",
+      "read_fields": [
+        "authority",
+        "publications",
+        "loads",
+        "deferred"
+      ],
+      "to": "NativeRealShapeTests"
+    },
+    {
+      "constraint": "actual guard/candidate custody/fences remain authority checks",
+      "from": "native_job return",
+      "read_fields": [
+        "wait status",
+        "complete JSON evidence"
+      ],
+      "to": "reconcile/guardian"
+    },
+    {
+      "constraint": "side-effect ordering: identity registration must finish before gate release",
+      "from": "before(pid) custody callback",
+      "read_fields": [
+        "gate byte 1"
+      ],
+      "to": "native effect"
+    },
+    {
+      "constraint": "independent lane B and adoption pending",
+      "from": "baseline/corrected test output",
+      "read_fields": [
+        "exit code",
+        "assertion output",
+        "source hashes"
+      ],
+      "to": "coordinator independent join/WorkBay landing gates"
+    }
+  ],
+  "original_script_hashes": {
+    "capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+    "final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+    "guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+    "observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+    "owner-custody.py": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+    "owner-window.py": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600",
+    "root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62"
+  },
+  "prior_failure": {
+    "current_verification_test_id": 5406,
+    "decisions": [
+      19532,
+      19540,
+      19542,
+      19550,
+      19620,
+      19625
+    ],
+    "old_owner_workaround": "disproved by fresh verification; no current owner reconcile or live last-wave success claimed",
+    "outcome": "REVISE; top-level cursor KeyError",
+    "r3_source_sha": "c8f3e463e4ba5c387a9cd68c2606e9350a9ffe29",
+    "review": 1659
+  },
+  "source_ordinal": 5,
+  "static_native_job_call_sites": [
+    {
+      "expression": "native_job(lambda:view(paths,plan['action']),5)",
+      "line": 303,
+      "path": "owner-custody.py",
+      "source_sha256": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9"
+    },
+    {
+      "expression": "native_job(effect,12,after=(lambda:hook('written',candidate)) if hook else None,before=started)",
+      "line": 325,
+      "path": "owner-custody.py",
+      "source_sha256": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9"
+    },
+    {
+      "expression": "native_job(lambda:view(paths,'auto'),5)",
+      "line": 332,
+      "path": "owner-custody.py",
+      "source_sha256": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9"
+    },
+    {
+      "expression": "native_job(lambda:view(paths,'auto'),5)",
+      "line": 382,
+      "path": "owner-custody.py",
+      "source_sha256": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9"
+    },
+    {
+      "expression": "c.native_job(lambda:c.view(paths,'inspect'),5)",
+      "line": 44,
+      "path": "owner-window.py",
+      "source_sha256": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600"
+    }
+  ]
+}

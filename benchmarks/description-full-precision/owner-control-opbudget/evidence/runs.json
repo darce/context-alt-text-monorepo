@@ -1,0 +1,65 @@
+[
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/gate/description-import-environment-20261023/venv/bin/python3 -m pytest --noconftest --import-mode=importlib -p no:cacheprovider -v benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py",
+    "exit_code": 0,
+    "summary": "10 passed; initial capacity/admission tests",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/green-first.txt",
+    "log_sha256": "550a1a45856abb0f89f4851fda1b16faca5e599b882373c55a9a831ccde0c272"
+  },
+  {
+    "command": "OPBUDGET_BASELINE=1 PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/gate/description-import-environment-20261023/venv/bin/python3 -m pytest --noconftest --import-mode=importlib -p no:cacheprovider -v benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py -k 'actual_33 or start_refused_before'",
+    "exit_code": 1,
+    "summary": "Expected RED: source5 refuses actual33 enumeration and lacks pre-creation START admission",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/source5-red.txt",
+    "log_sha256": "af86c3c29ae29aef9ecdf175dcf12aebd88146f85c64afd4e2b91d7cc64288d3"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/gate/description-import-environment-20261023/venv/bin/python3 -m pytest --noconftest --import-mode=importlib -p no:cacheprovider -q benchmarks/description-full-precision/owner-control/test_native_transport.py",
+    "exit_code": 1,
+    "summary": "23 passed, 17 subtests passed; two unchanged historical source-scope/hash tests reject authorized B edits",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/source5-author-tests.txt",
+    "log_sha256": "54cf0d1d7b33d85fb58316111950654aebbda318e6e071a4f6af487938434857"
+  },
+  {
+    "command": "OWNER_CONTROL_CANDIDATE=/home/gate/bakeoff-next-model-gpu-owner-opbudget-r1-19858cbf13b740eea796bad0bad3f5a8/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/gate/description-import-environment-20261023/venv/bin/python3 -m pytest --noconftest --import-mode=importlib -p no:cacheprovider -v /home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py -k 'candidate_after_'",
+    "exit_code": 1,
+    "summary": "Both expected source5 callback completion preservation defects reproduced; no fix in this lane",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/known-callback-defect.txt",
+    "log_sha256": "56b207a2bd3e70b56e7ebbb04e7874389e7bff0cc5eac5bc0990f00cf7efc553"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/gate/description-import-environment-20261023/venv/bin/python3 -m pytest --noconftest --import-mode=importlib -p no:cacheprovider -vs benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py",
+    "exit_code": 0,
+    "summary": "12 passed, including exact saved original guardian refusal and strict declared-region verifier; ran before addition of the separately tested full-history case",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/green-final.txt",
+    "log_sha256": "6aec91101ce6f0de7746f5cba6ab5a87a4d20e77a756da24bb3e7c45a1096867"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/gate/description-import-environment-20261023/venv/bin/python3 -m pytest --noconftest --import-mode=importlib -p no:cacheprovider -vs benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py -k full_candidate_history",
+    "exit_code": 0,
+    "summary": "1 passed: candidate-bearing full history at1023/1024 through real file reads/native IPC/guard",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/full-history-green.txt",
+    "log_sha256": "54e4ffb4ad3ac475a8798149c8eeb96611ab9a1c8b8ddfc44e4d38c848dffbc6"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 /home/gate/description-import-environment-20261023/venv/bin/python3 benchmarks/description-full-precision/owner-control-opbudget/verify_inputs.py",
+    "exit_code": 1,
+    "summary": "Harness path typo referenced /home/gate/references; corrected to session references; failure retained",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/input-verification-first-path-error.txt",
+    "log_sha256": "4d5e5133decb23e33fed7ae8accd7a405806450ee2fa282de975bd3857d2daa2"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 /home/gate/description-import-environment-20261023/venv/bin/python3 benchmarks/description-full-precision/owner-control-opbudget/verify_inputs.py",
+    "exit_code": 0,
+    "summary": "64 immutable inputs and45 independent control files match; canon pins verified",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/input-verification.txt",
+    "log_sha256": "5b55a1ba9e0f7e63c0cbdbe7e369b697bad80b35e6f0c2a1bea5d377192e54ee"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/gate/description-import-environment-20261023/venv/bin/python3 -m pytest --noconftest --import-mode=importlib -p no:cacheprovider -v benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py -k declared_regions",
+    "exit_code": 0,
+    "summary": "Strict source5 comparison: only named B constant, known_candidates bound expression and client operation differ; all other seed files preserved",
+    "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/scope-final.txt",
+    "log_sha256": "dd98cf5f7fc4acd9de5203d91c274e6b705d0f390ed8159f2221aadf2c48ec20"
+  }
+]

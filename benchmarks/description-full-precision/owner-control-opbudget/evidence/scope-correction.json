@@ -1,0 +1,53 @@
+{
+  "finding": "DW-IPC-RECOVERY-G1-01",
+  "hashes": {
+    "benchmarks/description-full-precision/owner-control-opbudget/README.md": "38868732789ed39aac46544f5ccbbda5d60636dc0da5535b7440bc7b3116b957",
+    "benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py": "f0a5db107d82bb72240ef8978d62ff08be86061cab7971c91dc314769a1dcdc4"
+  },
+  "notes": "Append-only: runs.json, artifact-hashes.json and all earlier logs/RED evidence unchanged. Tests changed only in ScopeAndCauseTests scope proof.",
+  "production_unchanged": true,
+  "runs": [
+    {
+      "command": "TMPDIR=<private 0700 mktemp dir under sticky 1777 /tmp> PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OWNER_CONTROL_CANDIDATE=/home/gate/bakeoff-next-model-gpu-owner-opbudget-adj2-76a20b32ad564140bd260eb6056171db/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py /home/gate/description-import-environment-20261023/venv/bin/python3 -B -m pytest -q --noconftest --import-mode=importlib -p no:cacheprovider benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py -k declared_regions",
+      "exit_code": 1,
+      "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/composed-scope-red-pre-correction.txt",
+      "log_sha256": "963befdd4e41e24ad83e188e38072fae2e9d47b7674d8d3fbf38f7a714523013",
+      "summary": "Retained RED: single source5 scope assertion rejects composed A7 native_job at line 324 (1 failed, 12 deselected)",
+      "test_file": "pre-correction (seed 1e77f193...)"
+    },
+    {
+      "command": "OPBUDGET_BASELINE=1 TMPDIR=<private 0700 mktemp dir under sticky 1777 /tmp> PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OWNER_CONTROL_CANDIDATE=/home/gate/bakeoff-next-model-gpu-owner-opbudget-adj2-76a20b32ad564140bd260eb6056171db/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py /home/gate/description-import-environment-20261023/venv/bin/python3 -B -m pytest -q --noconftest --import-mode=importlib -p no:cacheprovider benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py -k 'actual_33 or start_refused_before or original'",
+      "exit_code": 1,
+      "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/baseline-cause-control-post-correction.txt",
+      "log_sha256": "938463a9d14b7359cacef9a9a6851188aa49df91badbed759bd0132431ff5479",
+      "summary": "Expected cause-control RED: source5 refuses actual 33 (<=32) and lacks START pre-admission; original cause-removal and guardian-refusal probes pass (2 failed, 2 passed)"
+    },
+    {
+      "command": "TMPDIR=<private 0700 mktemp dir under sticky 1777 /tmp> PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OWNER_CONTROL_CANDIDATE=/home/gate/bakeoff-next-model-gpu-owner-opbudget-adj2-76a20b32ad564140bd260eb6056171db/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py /home/gate/description-import-environment-20261023/venv/bin/python3 -B -m pytest -q --noconftest --import-mode=importlib -p no:cacheprovider benchmarks/description-full-precision/owner-control/test_native_transport.py benchmarks/description-full-precision/owner-control-regression/test_native_transport.py benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py",
+      "exit_code": 0,
+      "log": "benchmarks/description-full-precision/owner-control-opbudget/evidence/unfiltered-composed-green.txt",
+      "log_sha256": "f7af2988a68205b85f1b3bbc5c2b8c962960fcb061d0b865ee3b27854878ad38",
+      "summary": "Unfiltered three files on composed production: 80 passed, 57 subtests passed in 104.62s"
+    }
+  ],
+  "scopes": {
+    "b-only": {
+      "baseline": "benchmarks/description-full-precision/owner-control-opbudget/fixtures/source5-owner-custody.py",
+      "baseline_sha256": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9",
+      "candidate": "benchmarks/description-full-precision/owner-control-opbudget/fixtures/b-only-source009030-owner-custody.py",
+      "candidate_origin": "B source 009030 custody pinned in evidence/artifact-hashes.json; rebuilt as source5 + evidence/focused.patch custody hunks",
+      "candidate_sha256": "f14b49bd0c3d645ababe72a2a6f39f37ef9e0a6f0cd61b4c374d2a11544d0056"
+    },
+    "composed": {
+      "a7_tree": "benchmarks/description-full-precision/owner-control-opbudget/fixtures/accepted-source7-control-files.json",
+      "a7_tree_sha256": "190aa4bd53a42c587d03487d97f35797a35b9eb001247cd8091eccce24792689",
+      "baseline": "benchmarks/description-full-precision/owner-control-opbudget/fixtures/accepted-source7-owner-custody.py",
+      "baseline_origin": "references/accepted-source7/owner-custody.py from full custody 1d409dd0e946dff16a11f4902afe48d14cc59c7005cdada70bd3575ae8d577b6; equals git 3a680fc622c41f0fb303b27275226280bd40fda9",
+      "baseline_sha256": "576bb83150af3f484996d3a49b05bc9b52d834215846030b64d4de022977f058",
+      "candidate": "benchmarks/description-full-precision/owner-control/owner-custody.py",
+      "candidate_sha256": "beaedb582d8138d9de7ea05968310765caf7bcd60c9a5e38e340e2b390cde58e"
+    }
+  },
+  "seed_commit": "e335bf42de8a45a71f552184f611341b34657ce8",
+  "seed_manifest_sha256": "2fe2bbb0898f77727283f74578cd29829e45428e601d4904bec575d9036e733c"
+}

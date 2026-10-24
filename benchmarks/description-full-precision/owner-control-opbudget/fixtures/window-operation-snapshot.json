@@ -1,0 +1,848 @@
+{
+  "count": 33,
+  "original_cap": 32,
+  "window_id": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+  "operations": [
+    {
+      "op": "c3b42c2c-f0e3-4013-a66f-914cdeba5e27",
+      "intent": {
+        "action": "auto",
+        "id": "c3b42c2c-f0e3-4013-a66f-914cdeba5e27",
+        "previous": "fd2f06a6-7aae-4442-9109-227aa704a6be",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "c3b42c2c-f0e3-4013-a66f-914cdeba5e27",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-22T12:31:31.587289Z",
+        "nonce": "cac1fbb7-4285-418b-955c-bd05e5849d9b",
+        "requested_at": "2026-10-22T12:01:31.587289Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 240,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "7e59d3fe-38d2-4b79-b7fd-e0bcec5915e4",
+      "intent": {
+        "action": "start",
+        "id": "7e59d3fe-38d2-4b79-b7fd-e0bcec5915e4",
+        "previous": "c414ae30-aef0-4c90-bdfc-6cec399d629f",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "7e59d3fe-38d2-4b79-b7fd-e0bcec5915e4",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-23T05:47:55.931768Z",
+        "nonce": "34dbf119-2cbd-4831-933c-50089a5baa48",
+        "requested_at": "2026-10-23T05:17:55.931768Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 256,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "ccd7bad3-85a1-42b3-97e9-e028d5d3e477",
+      "intent": {
+        "action": "stop",
+        "id": "ccd7bad3-85a1-42b3-97e9-e028d5d3e477",
+        "previous": "6320a440-7d6e-44ed-8122-d04367589ca0",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "ccd7bad3-85a1-42b3-97e9-e028d5d3e477",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-24T00:40:45.153235Z",
+        "nonce": "bbac3959-0ace-4841-8fd7-91a7dbe69777",
+        "requested_at": "2026-10-24T00:10:45.153235Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 261,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "a4784bb4-fb03-4a96-8a2c-e172e8a809ca",
+      "intent": {
+        "action": "start",
+        "id": "a4784bb4-fb03-4a96-8a2c-e172e8a809ca",
+        "previous": "78b79164-eddd-48ae-9294-5e434c52dcaa",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "a4784bb4-fb03-4a96-8a2c-e172e8a809ca",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-22T12:08:40.923664Z",
+        "nonce": "54612816-88f8-4ea8-a6af-4adea87fd2ea",
+        "requested_at": "2026-10-22T11:38:40.923664Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 235,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "993d6fac-089a-4f9d-bf62-3da870fc51d0",
+      "intent": {
+        "action": "start",
+        "id": "993d6fac-089a-4f9d-bf62-3da870fc51d0",
+        "previous": "7a974dfa-aaae-42e0-8f08-49bfdf838f5b",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "993d6fac-089a-4f9d-bf62-3da870fc51d0",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-23T05:14:55.884980Z",
+        "nonce": "90c2c4ae-9dc1-4518-b6ff-e507209c397c",
+        "requested_at": "2026-10-23T04:44:55.884980Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 253,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "754a9f9d-9103-4dc3-8d78-6203e40b2ba3",
+      "intent": {
+        "action": "start",
+        "id": "754a9f9d-9103-4dc3-8d78-6203e40b2ba3",
+        "previous": "3c3f5bf5-b5d8-4f50-93c9-b3e6cbce6853",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "754a9f9d-9103-4dc3-8d78-6203e40b2ba3",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-22T13:03:34.228993Z",
+        "nonce": "4535ba03-5688-40f8-91f5-38381287f376",
+        "requested_at": "2026-10-22T12:33:34.228993Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 247,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "e82800f6-c4ed-40ed-bbca-8a1e01ff8ae7",
+      "intent": {
+        "action": "auto",
+        "id": "e82800f6-c4ed-40ed-bbca-8a1e01ff8ae7",
+        "previous": "378afc78-495a-486a-8e5a-7fbf2faa36bf",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "e82800f6-c4ed-40ed-bbca-8a1e01ff8ae7",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-22T12:17:28.641975Z",
+        "nonce": "b4559b37-1cc6-422d-a65d-061a1496c572",
+        "requested_at": "2026-10-22T11:47:28.641975Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 237,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "daa5719d-0052-43aa-9540-bfa597a611dd",
+      "intent": {
+        "action": "start",
+        "id": "daa5719d-0052-43aa-9540-bfa597a611dd",
+        "previous": "b6aaaeef-25ad-4385-9875-e04d5aaf13d8",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "daa5719d-0052-43aa-9540-bfa597a611dd",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-24T05:04:15.744634Z",
+        "nonce": "9afbd4b9-0ab4-413b-8b7e-11af2d6319c2",
+        "requested_at": "2026-10-24T04:54:15.744634Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 263,
+        "ttl_seconds": 600
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "273fd398-cb1f-40e6-8e16-e26f78f01451",
+      "intent": {
+        "action": "auto",
+        "id": "273fd398-cb1f-40e6-8e16-e26f78f01451",
+        "previous": "e941b67d-c7c5-475d-bd32-053313e4aaff",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "273fd398-cb1f-40e6-8e16-e26f78f01451",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-22T13:12:49.913326Z",
+        "nonce": "979660f2-a2a8-4be3-8664-77244e62a4dd",
+        "requested_at": "2026-10-22T12:42:49.913326Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 249,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "85fba07c-43a8-456d-8f87-e4853cfcfe49",
+      "intent": {
+        "action": "start",
+        "id": "85fba07c-43a8-456d-8f87-e4853cfcfe49",
+        "previous": "e82800f6-c4ed-40ed-bbca-8a1e01ff8ae7",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "85fba07c-43a8-456d-8f87-e4853cfcfe49",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-22T12:22:38.808660Z",
+        "nonce": "974abb74-e7ab-42e3-b505-3470e568206a",
+        "requested_at": "2026-10-22T11:52:38.808660Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 238,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "23901346-0ec1-4124-89b9-83edcaadf28d",
+      "intent": {
+        "action": "start",
+        "id": "23901346-0ec1-4124-89b9-83edcaadf28d",
+        "previous": "993d6fac-089a-4f9d-bf62-3da870fc51d0",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "23901346-0ec1-4124-89b9-83edcaadf28d",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-23T05:43:36.775203Z",
+        "nonce": "c0a19c91-a1c9-40b4-97ed-358519123670",
+        "requested_at": "2026-10-23T05:13:36.775203Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 254,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "316134f5-b868-4d1f-9f49-18127e026f1b",
+      "intent": {
+        "action": "start",
+        "id": "316134f5-b868-4d1f-9f49-18127e026f1b",
+        "previous": "273fd398-cb1f-40e6-8e16-e26f78f01451",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "316134f5-b868-4d1f-9f49-18127e026f1b",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-22T13:16:45.422045Z",
+        "nonce": "0e76bc5d-833a-4d88-a1ff-b63068e85ce3",
+        "requested_at": "2026-10-22T12:46:45.422045Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 250,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "5fc9f281-2cc0-4c7d-a873-a733e6d92317",
+      "intent": {
+        "action": "start",
+        "id": "5fc9f281-2cc0-4c7d-a873-a733e6d92317",
+        "previous": "c3b42c2c-f0e3-4013-a66f-914cdeba5e27",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "5fc9f281-2cc0-4c7d-a873-a733e6d92317",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-22T12:40:22.917749Z",
+        "nonce": "cbfbb108-6249-4456-91b3-2835d10f54ef",
+        "requested_at": "2026-10-22T12:10:22.917749Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 241,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "07a7a618-2c61-4a06-84ff-07849c5426c7",
+      "intent": {
+        "action": "start",
+        "id": "07a7a618-2c61-4a06-84ff-07849c5426c7",
+        "previous": "d8bdafef-db55-4a4f-b703-4ba1bbb2bc0e",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "error": "RuntimeError: operation budget exhausted",
+        "operation": "07a7a618-2c61-4a06-84ff-07849c5426c7",
+        "outcome": "refused",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "candidate": null,
+      "candidate_present": false
+    },
+    {
+      "op": "c414ae30-aef0-4c90-bdfc-6cec399d629f",
+      "intent": {
+        "action": "stop",
+        "id": "c414ae30-aef0-4c90-bdfc-6cec399d629f",
+        "previous": "23901346-0ec1-4124-89b9-83edcaadf28d",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "c414ae30-aef0-4c90-bdfc-6cec399d629f",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-23T05:46:05.027092Z",
+        "nonce": "8f34e22f-ffed-40f3-b2df-bfe320e7bbe9",
+        "requested_at": "2026-10-23T05:16:05.027092Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 255,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "fd2f06a6-7aae-4442-9109-227aa704a6be",
+      "intent": {
+        "action": "stop",
+        "id": "fd2f06a6-7aae-4442-9109-227aa704a6be",
+        "previous": "85fba07c-43a8-456d-8f87-e4853cfcfe49",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "fd2f06a6-7aae-4442-9109-227aa704a6be",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-22T12:29:40.817513Z",
+        "nonce": "5acf8a2c-4479-42e1-9c2b-3e778c5beb07",
+        "requested_at": "2026-10-22T11:59:40.817513Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 239,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "d8bdafef-db55-4a4f-b703-4ba1bbb2bc0e",
+      "intent": {
+        "action": "start",
+        "id": "d8bdafef-db55-4a4f-b703-4ba1bbb2bc0e",
+        "previous": "daa5719d-0052-43aa-9540-bfa597a611dd",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "d8bdafef-db55-4a4f-b703-4ba1bbb2bc0e",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-24T05:08:34.426402Z",
+        "nonce": "88d8c9c7-1c8a-4eef-8725-ed5975aa5f03",
+        "requested_at": "2026-10-24T04:58:34.426402Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 264,
+        "ttl_seconds": 600
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "e5f3c5f9-9093-40d6-b25a-41826dae0e38",
+      "intent": {
+        "action": "start",
+        "id": "e5f3c5f9-9093-40d6-b25a-41826dae0e38",
+        "previous": "6a8fe2e2-abfc-40e2-b338-32b12669ba02",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "e5f3c5f9-9093-40d6-b25a-41826dae0e38",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-22T12:50:54.138955Z",
+        "nonce": "6a9f5ca3-6c6a-40dc-986d-a0636abf011f",
+        "requested_at": "2026-10-22T12:20:54.138955Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 244,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "78b79164-eddd-48ae-9294-5e434c52dcaa",
+      "intent": {
+        "action": "auto",
+        "id": "78b79164-eddd-48ae-9294-5e434c52dcaa",
+        "previous": "2fb23fe1-eee2-454d-a01c-68ef28172f39",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "78b79164-eddd-48ae-9294-5e434c52dcaa",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-22T12:04:52.784997Z",
+        "nonce": "178eb7f5-691a-42c3-ab9a-67c30b9a85bc",
+        "requested_at": "2026-10-22T11:34:52.784997Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 234,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "b53ab03d-583d-474b-86ea-96dd10c3fd0c",
+      "intent": {
+        "action": "stop",
+        "id": "b53ab03d-583d-474b-86ea-96dd10c3fd0c",
+        "previous": "316134f5-b868-4d1f-9f49-18127e026f1b",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "b53ab03d-583d-474b-86ea-96dd10c3fd0c",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-22T13:23:17.623305Z",
+        "nonce": "3d7b279e-d1eb-448c-975e-0c7f442db95c",
+        "requested_at": "2026-10-22T12:53:17.623305Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 251,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "21b8d732-82bf-4cf9-b28a-04765e45db79",
+      "intent": {
+        "action": "stop",
+        "id": "21b8d732-82bf-4cf9-b28a-04765e45db79",
+        "previous": "5fc9f281-2cc0-4c7d-a873-a733e6d92317",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "21b8d732-82bf-4cf9-b28a-04765e45db79",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-22T12:46:51.660395Z",
+        "nonce": "a2021517-3cac-467e-9032-3b1e920f03d5",
+        "requested_at": "2026-10-22T12:16:51.660395Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 242,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "6320a440-7d6e-44ed-8122-d04367589ca0",
+      "intent": {
+        "action": "start",
+        "id": "6320a440-7d6e-44ed-8122-d04367589ca0",
+        "previous": "6e4d6a72-e6d5-48d9-baf7-2c6707a33b42",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "6320a440-7d6e-44ed-8122-d04367589ca0",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-24T00:36:35.292516Z",
+        "nonce": "3176a9ad-5d49-4502-98d3-83dd5f6c8eb4",
+        "requested_at": "2026-10-24T00:06:35.292516Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 260,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "378afc78-495a-486a-8e5a-7fbf2faa36bf",
+      "intent": {
+        "action": "stop",
+        "id": "378afc78-495a-486a-8e5a-7fbf2faa36bf",
+        "previous": "a4784bb4-fb03-4a96-8a2c-e172e8a809ca",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "378afc78-495a-486a-8e5a-7fbf2faa36bf",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-22T12:15:42.887989Z",
+        "nonce": "3c19ca2f-a778-4d7a-9339-050fe6cfdec2",
+        "requested_at": "2026-10-22T11:45:42.887989Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 236,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "bd51698c-3f5a-4f6f-86cd-61160b77a722",
+      "intent": {
+        "action": "stop",
+        "id": "bd51698c-3f5a-4f6f-86cd-61160b77a722",
+        "previous": "e5f3c5f9-9093-40d6-b25a-41826dae0e38",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "bd51698c-3f5a-4f6f-86cd-61160b77a722",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-22T12:58:10.864185Z",
+        "nonce": "ac8fd218-2240-4a20-8576-48196f290739",
+        "requested_at": "2026-10-22T12:28:10.864185Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 245,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "3c3f5bf5-b5d8-4f50-93c9-b3e6cbce6853",
+      "intent": {
+        "action": "auto",
+        "id": "3c3f5bf5-b5d8-4f50-93c9-b3e6cbce6853",
+        "previous": "bd51698c-3f5a-4f6f-86cd-61160b77a722",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "3c3f5bf5-b5d8-4f50-93c9-b3e6cbce6853",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-22T13:00:41.640507Z",
+        "nonce": "bef3e99e-c510-431a-af7e-5ec2cb32a3b9",
+        "requested_at": "2026-10-22T12:30:41.640507Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 246,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "c77e5806-8dfb-40e5-9216-592d943592e6",
+      "intent": {
+        "action": "stop",
+        "id": "c77e5806-8dfb-40e5-9216-592d943592e6",
+        "previous": "7e59d3fe-38d2-4b79-b7fd-e0bcec5915e4",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "c77e5806-8dfb-40e5-9216-592d943592e6",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-23T06:03:26.833410Z",
+        "nonce": "13ec41df-cefd-40aa-a546-3a48aa87d78c",
+        "requested_at": "2026-10-23T05:33:26.833410Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 257,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "1b91ba09-4a3a-4124-9ee2-c5dffd89bf4c",
+      "intent": {
+        "action": "start",
+        "id": "1b91ba09-4a3a-4124-9ee2-c5dffd89bf4c",
+        "previous": "6e4d6a72-e6d5-48d9-baf7-2c6707a33b42",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "error": "RuntimeError: publication fence deadline",
+        "operation": "1b91ba09-4a3a-4124-9ee2-c5dffd89bf4c",
+        "outcome": "refused",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "candidate": null,
+      "candidate_present": false
+    },
+    {
+      "op": "b6aaaeef-25ad-4385-9875-e04d5aaf13d8",
+      "intent": {
+        "action": "start",
+        "id": "b6aaaeef-25ad-4385-9875-e04d5aaf13d8",
+        "previous": "ccd7bad3-85a1-42b3-97e9-e028d5d3e477",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "b6aaaeef-25ad-4385-9875-e04d5aaf13d8",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-24T04:45:54.404401Z",
+        "nonce": "92cc8d89-13fa-475c-84e0-adceacf8b07f",
+        "requested_at": "2026-10-24T04:35:54.404401Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 262,
+        "ttl_seconds": 600
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "9bf350bf-6305-485e-a0e3-4c6a009b68bb",
+      "intent": {
+        "action": "auto",
+        "id": "9bf350bf-6305-485e-a0e3-4c6a009b68bb",
+        "previous": "c77e5806-8dfb-40e5-9216-592d943592e6",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "9bf350bf-6305-485e-a0e3-4c6a009b68bb",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-23T06:04:12.355139Z",
+        "nonce": "eede0512-edba-484f-8ee6-cb6405b7e5ee",
+        "requested_at": "2026-10-23T05:34:12.355139Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 258,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "e941b67d-c7c5-475d-bd32-053313e4aaff",
+      "intent": {
+        "action": "stop",
+        "id": "e941b67d-c7c5-475d-bd32-053313e4aaff",
+        "previous": "754a9f9d-9103-4dc3-8d78-6203e40b2ba3",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "e941b67d-c7c5-475d-bd32-053313e4aaff",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "stop",
+        "expires_at": "2026-10-22T13:10:49.089271Z",
+        "nonce": "812a5182-3df6-4b74-8a6e-99b1ea54aeb2",
+        "requested_at": "2026-10-22T12:40:49.089271Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 248,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "7a974dfa-aaae-42e0-8f08-49bfdf838f5b",
+      "intent": {
+        "action": "auto",
+        "id": "7a974dfa-aaae-42e0-8f08-49bfdf838f5b",
+        "previous": "b53ab03d-583d-474b-86ea-96dd10c3fd0c",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "7a974dfa-aaae-42e0-8f08-49bfdf838f5b",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-22T13:25:13.394190Z",
+        "nonce": "f5bc1258-86a6-46c1-8f68-b271b39db9d8",
+        "requested_at": "2026-10-22T12:55:13.394190Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 252,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "6e4d6a72-e6d5-48d9-baf7-2c6707a33b42",
+      "intent": {
+        "action": "start",
+        "id": "6e4d6a72-e6d5-48d9-baf7-2c6707a33b42",
+        "previous": "9bf350bf-6305-485e-a0e3-4c6a009b68bb",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "6e4d6a72-e6d5-48d9-baf7-2c6707a33b42",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "start",
+        "expires_at": "2026-10-23T23:50:57.768555Z",
+        "nonce": "15272bdb-2d59-497f-a8c6-9c8b3032e227",
+        "requested_at": "2026-10-23T23:20:57.768555Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 259,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    },
+    {
+      "op": "6a8fe2e2-abfc-40e2-b338-32b12669ba02",
+      "intent": {
+        "action": "auto",
+        "id": "6a8fe2e2-abfc-40e2-b338-32b12669ba02",
+        "previous": "21b8d732-82bf-4cf9-b28a-04765e45db79",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187"
+      },
+      "result": {
+        "operation": "6a8fe2e2-abfc-40e2-b338-32b12669ba02",
+        "outcome": "published",
+        "window": "223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "writer_wait_status": 0
+      },
+      "candidate": {
+        "action": "auto",
+        "expires_at": "2026-10-22T12:48:12.393068Z",
+        "nonce": "bbcded37-e069-4741-91f0-e7a3a0234dc7",
+        "requested_at": "2026-10-22T12:18:12.393068Z",
+        "requested_by": "ubuntu:QWEN-OWNER-ADMISSION:capacity-only:223eb2de-b63a-4b19-a31e-a34d07a8e187",
+        "schema_version": 1,
+        "sequence": 243,
+        "ttl_seconds": 1800
+      },
+      "candidate_present": true
+    }
+  ],
+  "load_snapshot_note": "allfourenvironments fresh idle; no activity/bake/evaluation markers observed"
+}

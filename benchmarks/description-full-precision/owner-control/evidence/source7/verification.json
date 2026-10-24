@@ -1,0 +1,259 @@
+{
+  "status": "SOURCE_ONLY_GREEN; combined independent review pending",
+  "finding": "DW-IPC-R5-G1-01 / 19863",
+  "source_ordinal": 7,
+  "predeclared_stop_loud_decision": 19664,
+  "manifest_sha256": "6038b6e69ddfb87248bcd44a320cf749a0e19d2088a69220d95042e925f9e123",
+  "seed_commit": "e83c9d1",
+  "source6_archive_sha256": "327fa8fc0cb377bb9a42a4933eedd8f85faa25afb3240655844642b12809a4c9",
+  "candidate_native_sha256": "576bb83150af3f484996d3a49b05bc9b52d834215846030b64d4de022977f058",
+  "author_test_sha256": "022041a6b9acf8eadb7a5799b2fd78bd7354b97ce0414804b3f5c07c90074dd7",
+  "final_run": {
+    "argv": [
+      "/home/gate/description-import-environment-20261023/venv/bin/python3",
+      "-m",
+      "pytest",
+      "--noconftest",
+      "--import-mode=importlib",
+      "-p",
+      "no:cacheprovider",
+      "-v",
+      "benchmarks/description-full-precision/owner-control/test_native_transport.py",
+      "/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py"
+    ],
+    "cwd": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace",
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+      "OWNER_CONTROL_CANDIDATE": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py"
+    },
+    "exit_code": 0,
+    "result": "65 passed, 41 subtests passed in 20.87s",
+    "own_tests": 37,
+    "unchanged_independent_tests": 28,
+    "log": "source7-final-pytest.txt",
+    "log_sha256": "7780c62db279390c648149ab49fd194fc2bef1840ce3beb16fd945b79516c5b8"
+  },
+  "initial_frozen_seed_run": {
+    "exit_code": 0,
+    "result": "59 passed, 31 subtests passed in 7.97s",
+    "log": "source6-initial-pytest.txt"
+  },
+  "expanded_run_before_last_pid_probe": {
+    "exit_code": 0,
+    "result": "64 passed, 41 subtests passed in 21.03s",
+    "log": "source7-combined-pytest.txt"
+  },
+  "expected_red_runs": [
+    {
+      "name": "baseline-independent-red",
+      "argv": [
+        "/home/gate/description-import-environment-20261023/venv/bin/python3",
+        "-m",
+        "pytest",
+        "--noconftest",
+        "--import-mode=importlib",
+        "-p",
+        "no:cacheprovider",
+        "-v",
+        "/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+        "-k",
+        "candidate"
+      ],
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "OWNER_CONTROL_CANDIDATE": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/original-owner-custody.py"
+      },
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "seconds": 2.722,
+      "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/baseline-independent-red.txt",
+      "log_sha256": "ee49c0a101a367f94cc357b76e0c41cac1f95da553a25f53b379cdd5008d750d"
+    },
+    {
+      "name": "source5-independent-red",
+      "argv": [
+        "/home/gate/description-import-environment-20261023/venv/bin/python3",
+        "-m",
+        "pytest",
+        "--noconftest",
+        "--import-mode=importlib",
+        "-p",
+        "no:cacheprovider",
+        "-v",
+        "/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+        "-k",
+        "candidate"
+      ],
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "OWNER_CONTROL_CANDIDATE": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/source5-owner-custody.py"
+      },
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "seconds": 2.47,
+      "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/source5-independent-red.txt",
+      "log_sha256": "51987662e7f594f6ea5f5ade653abea65db272a5a34bafdcc770be1c6570b44f"
+    },
+    {
+      "name": "source5-completion-red",
+      "argv": [
+        "/home/gate/description-import-environment-20261023/venv/bin/python3",
+        "-B",
+        "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py",
+        "--subject",
+        "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/source5-owner-custody.py",
+        "CompletionProofTests.test_after_failure_keeps_complete_result_and_actual_status",
+        "CompletionProofTests.test_after_timeout_keeps_complete_result_after_positive_reaping",
+        "-v"
+      ],
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+      },
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "seconds": 1.317,
+      "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/source5-completion-red.txt",
+      "log_sha256": "a6915a1d04d235cd0bbf0c2f7c40213d887f1600a9b5eacce4196602d0238a05"
+    },
+    {
+      "name": "prefix-mutant-red",
+      "argv": [
+        "/home/gate/description-import-environment-20261023/venv/bin/python3",
+        "-B",
+        "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py",
+        "--subject",
+        "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/unframed-prefix-mutant.py",
+        "CompletionProofTests.test_valid_json_prefix_is_not_completion",
+        "-v"
+      ],
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+      },
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "seconds": 0.566,
+      "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/prefix-mutant-red.txt",
+      "log_sha256": "2126f276d32ff2e9838f147114f44111cc60056c6388015624ab16ffe3c870bd"
+    },
+    {
+      "name": "baseline-own-red",
+      "argv": [
+        "/home/gate/description-import-environment-20261023/venv/bin/python3",
+        "-B",
+        "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py",
+        "--baseline",
+        "NativeRealShapeTests",
+        "-v"
+      ],
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+      },
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "seconds": 0.365,
+      "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/baseline-own-red.txt",
+      "log_sha256": "239c531b7fd539718744506d4c23fbba191fac42a6fdc354e708aa6dc4ed9c96"
+    }
+  ],
+  "unchanged_independent_commit": "643a2dd6fc8f7b9d6c78c00eb2d077d4338b69e7",
+  "unchanged_independent_file_count": 45,
+  "unchanged_independent_before_after": true,
+  "static_trace": "native-consumers.json: five real source consumers, no fixture duplicates",
+  "strict_current_scope": "scope-and-hashes.json: byte-identical source5 prefix/suffix around native_job; six unchanged scripts, B scopes untouched, historical files preserved",
+  "composition_scope": "known_candidates / owner-window.operation and new bounded integer constants consumed exclusively there; guards/MAX/other functions remain checked; in-memory accept and reject probes passed",
+  "documentation_and_diff": "README.md, candidate-scripts.json, native-transport.patch refreshed; original README/pins/patch preserved in seed/",
+  "patch_applicability": {
+    "command": [
+      "patch",
+      "--dry-run",
+      "-p1",
+      "-i",
+      "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/native-transport.patch"
+    ],
+    "exit_code": 0,
+    "log": "patch-applicability.txt",
+    "note": "against a private temporary copy of original-owner-custody.py"
+  },
+  "canon": {
+    "version": "0.26.2",
+    "path": "/home/gate/heuristics-canon-v0.26.2",
+    "verified_hashes": {
+      "lexicons/engineering.md": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d",
+      "lexicons/graph-theory.md": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c",
+      "PRINCIPLES.md": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+      "reasoning/falsification-disconfirmers.md": "9e572c986919420c614c6ae26033480a25294874c6bc6b4bb81341d32bba0771",
+      "reasoning/measurement-integrity.md": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8"
+    },
+    "rules": [
+      "DBG-11",
+      "TEST-15",
+      "TEST-33",
+      "GRPH-14",
+      "GRPH-32"
+    ],
+    "original_distilled_read": [
+      {
+        "path": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/pragmatic-programmer.md",
+        "sha256": "18ee4cc144c4950db3565d53c2fb3d1645a63ebc086317e4d0a0cbf9c4748455"
+      },
+      {
+        "path": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/implementing-effective-code-reviews.md",
+        "sha256": "3979b158b1857a82961c487a286b375aa84804ef9a259403c6cb82fee46d4986"
+      },
+      {
+        "path": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/building-knowledge-graphs.md",
+        "sha256": "9562805e02ed2a34605bd19959db2e52ed45a42e21994e288106a708ab941a73"
+      },
+      {
+        "path": "/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/fixtures/original-distilled/refactoring/why-programs-fail.md",
+        "sha256": "79a30653fb318a6f7b530879cd67b1d0d7d6e75739f676d03dc9da919294f831"
+      },
+      {
+        "path": "/home/gate/src/context-alt-text-monorepo/literature/extracted/refactoring/distilled/debugging-9-rules.md",
+        "sha256": "f3901911daf3b9fdab22ff8f631a58dd5c587dcd5295dfee6c1463ad801c9b10"
+      },
+      {
+        "path": "/home/gate/description-owner-recovery-canon-supplement-20261024/original-distilled/why-programs-fail.md",
+        "sha256": "7975930e4eea54d53df664106a06533349e7959e9ca7dca5680e150140a6afa6"
+      },
+      {
+        "path": "/home/gate/description-owner-recovery-canon-supplement-20261024/original-distilled/debugging-9-rules.md",
+        "sha256": "51c51e6b0fe75b023bc3a29d6b11db9fd5796112477a2a1a8d655f0da328eebb"
+      }
+    ],
+    "original_digest_limit": "Resolved: exact pinned engineering originals located in the immutable recovery supplement, hash-verified and read (Why Programs Fail ch12; Debugging ch11). Earlier refactoring variants are retained as distinguished additional context.",
+    "supplement": {
+      "path": "/home/gate/description-owner-recovery-canon-supplement-20261024",
+      "manifest_sha256": "0b32ba981c5a7a5d1db59990e46f39982ee407f06a85eb45aaf3d54e3c059bf6",
+      "verified_files": 11,
+      "all_files_verified": true
+    }
+  },
+  "lineage": [
+    "verified manifest -> actual frozen source6 seed -> seed commit -> finishing changes",
+    "gate1668 finding19863 -> positive finish proof before after -> actual status after owned-PID reaping",
+    "native result marker -> unchanged guardian barrier -> persisted bytes under all fences -> publication receipt/release",
+    "unchanged 643a controls + sealed full-view fixture -> green candidate, RED baseline/source5 controls",
+    "proof-check removal mutant -> three valid-prefix failures -> negative oracle shown falsifiable",
+    "B shares custody module resource but has no A-result prerequisite; composition remains coordinator work"
+  ],
+  "limits": [
+    "No adoption, combined independent review, GPU/window/controller/service/network/model or customer-image action. Source tests do not establish runtime or quality acceptance.",
+    "1 MiB inclusive payload; 64-byte proof plus overflow byte. Byte bound is not fn/encoder/decoded heap or aggregate source-history guarantee.",
+    "before(pid) callback is synchronous and cannot be preempted; actual deadline checks gate release and streaming.",
+    "Unknown/uninterruptible reaping retains guardian/fences; kernel retention states simulated. EOF withheld by inherited pipe descriptor yields no usable completion.",
+    "No B budget changes imported. All 33 operation receipts and first32 history retained in immutable snapshot; hard32 defect remains separate.",
+    "Graph tools unavailable; supplied codemap plus complete source/AST trace used. All requested Canon/original pins verified, including recovery supplement."
+  ],
+  "effects": "Offline native forks, signals to owned test workers, private temporary files, own source/evidence and Git commits only.",
+  "whitespace_check": {
+    "source_tests_docs_pins_patch": "git diff --cached --check on the six changed source/test/doc/artifact paths: exit 0",
+    "full_diff": "exit 2 only on exact captured raw pytest/unittest output and contextual test diff whitespace; raw evidence retained without normalization"
+  }
+}

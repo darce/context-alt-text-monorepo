@@ -1,0 +1,65 @@
+{
+  "production_changed_region": "owner-custody.native_job only",
+  "prefix_suffix_equal_to_source5": true,
+  "unchanged_six_scripts": [
+    "capacity-read.sh",
+    "final-stop.sh",
+    "guest-read.sh",
+    "observe.py",
+    "owner-window.py",
+    "root-flow.sh"
+  ],
+  "all_seed_records_preserved": [
+    "final-stop.sh",
+    "owner-window.py",
+    "capacity-read.sh",
+    "observe.py",
+    "guest-read.sh",
+    "root-flow.sh",
+    "evidence/verification.json",
+    "evidence/pytest-green.txt",
+    "evidence/baseline-red-final-replay.txt",
+    "evidence/artifact-hashes.json",
+    "evidence/unittest-green.txt",
+    "evidence/initial-harness-count-error.txt",
+    "evidence/native-result-replay.json",
+    "evidence/unittest-first-expanded.txt",
+    "evidence/baseline-red.txt",
+    "evidence/unittest-24-green.txt",
+    "evidence/corrected-real-shape-green.txt",
+    "evidence/pytest-24-green.txt",
+    "evidence/provenance.json",
+    "evidence/corrected-green-final-replay.txt",
+    "fixtures/original-owner-custody.py",
+    "fixtures/input-manifest.json",
+    "fixtures/actual-view.json",
+    "fixtures/source5-owner-custody.py",
+    "evidence/prior/GPU-OWNER-R4-APPLICABILITY-VERIFY-20261024.json",
+    "evidence/prior/GPU-OWNER-R4-REPLAY-20261024.json",
+    "evidence/prior/GPU-OWNER-NATIVE-IPC-R5.canon-proposal.json"
+  ],
+  "candidate_script_hashes": {
+    "capacity-read.sh": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2",
+    "final-stop.sh": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e",
+    "guest-read.sh": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca",
+    "observe.py": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1",
+    "owner-custody.py": "576bb83150af3f484996d3a49b05bc9b52d834215846030b64d4de022977f058",
+    "owner-window.py": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600",
+    "root-flow.sh": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62"
+  },
+  "sibling_regions_untouched_here": [
+    "owner-custody.known_candidates",
+    "all module constants",
+    "owner-window.operation"
+  ],
+  "composition_verifier_exemptions": [
+    "owner-custody.known_candidates",
+    "owner-window.operation",
+    "new positive integer constants <=1024 consumed exclusively by these two functions"
+  ],
+  "independent_controls": "643a2dd6fc8f7b9d6c78c00eb2d077d4338b69e7 in place; all 45 hashes verified",
+  "body_bytes": 20087,
+  "proof_bytes": 64,
+  "payload_max": 1048576,
+  "max_wire_buffer": 1048641
+}

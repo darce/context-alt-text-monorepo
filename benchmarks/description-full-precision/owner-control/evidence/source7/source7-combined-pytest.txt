@@ -1,0 +1,80 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/gate/description-import-environment-20261023/venv/bin/python3
+rootdir: /home/gate
+collecting ... collected 64 items
+
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeRealShapeTests::test_actual_reconcile_auto_full_view_call_shape PASSED [  1%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeRealShapeTests::test_actual_reconcile_reads_real_shape_from_private_files PASSED [  3%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeRealShapeTests::test_full_saved_view_round_trips_without_projection PASSED [  4%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeRealShapeTests::test_small_cause_removal_same_native_control PASSED [  6%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_before_exhausts_deadline_does_not_release_effect PASSED [  7%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_before_registers_native_identity_before_effect_then_after PASSED [  9%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_budget_matches_custody_read_limit_and_exact_boundary PASSED [ 10%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_deadline_is_checked_while_stream_is_incomplete PASSED [ 12%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_failed_before_reaps_without_effect_or_after_and_closes_fds PASSED [ 14%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_fork_failure_closes_all_allocated_pipes PASSED [ 15%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_interrupted_parent_read_and_wait_retry_without_losing_result PASSED [ 17%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_malformed_or_truncated_or_oversized_stream_refused 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_malformed_or_truncated_or_oversized_stream_refused PASSED [ 18%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_nonserializable_and_child_exception_refuse 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_nonserializable_and_child_exception_refuse PASSED [ 20%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_parent_read_error_still_kills_reaps_and_closes_pipes PASSED [ 21%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_short_writes_and_interrupted_write_deliver_complete_value PASSED [ 23%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_timeout_kills_reaps_and_never_accepts_partial_result PASSED [ 25%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_unknown_reap_state_retains_native_guardian PASSED [ 26%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_unreaped_worker_retains_native_guardian PASSED [ 28%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::NativeBoundaryTests::test_zero_write_refuses_and_skips_after PASSED [ 29%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_after_failure_keeps_complete_result_and_actual_status 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_after_failure_keeps_complete_result_and_actual_status PASSED [ 31%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_after_timeout_keeps_complete_result_after_positive_reaping PASSED [ 32%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_complete_proof_cannot_make_malformed_json_usable 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_complete_proof_cannot_make_malformed_json_usable PASSED [ 34%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_finish_proof_keeps_one_mib_payload_bound PASSED [ 35%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_guardian_after_failure_reaches_persisted_byte_comparison 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_guardian_after_failure_reaches_persisted_byte_comparison PASSED [ 37%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_guardian_after_timeout_reaches_persisted_byte_comparison PASSED [ 39%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_guardian_complete_marker_still_requires_persisted_candidate PASSED [ 40%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_injection_harness_delivers_unaltered_stream PASSED [ 42%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_short_or_altered_finish_frame_refused 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_short_or_altered_finish_frame_refused PASSED [ 43%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_valid_json_prefix_is_not_completion 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::CompletionProofTests::test_valid_json_prefix_is_not_completion PASSED [ 45%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::AuthorityPreservationTests::test_foreign_publication_and_newer_authority_and_rejection_survive 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::AuthorityPreservationTests::test_foreign_publication_and_newer_authority_and_rejection_survive PASSED [ 46%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::AuthorityPreservationTests::test_owner_and_first_use_and_stop_load_proofs_unchanged PASSED [ 48%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::AuthorityPreservationTests::test_transport_preserves_all_fields_then_actual_guard_accepts PASSED [ 50%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::SourceCustodyTests::test_only_declared_production_regions_changed PASSED [ 51%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::SourceCustodyTests::test_scope_verifier_allows_only_declared_sibling_budget_regions 
+benchmarks/description-full-precision/owner-control/test_native_transport.py::SourceCustodyTests::test_scope_verifier_allows_only_declared_sibling_budget_regions PASSED [ 53%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::SourceCustodyTests::test_sealed_fixture_and_original_script_match_manifest PASSED [ 54%]
+benchmarks/description-full-precision/owner-control/test_native_transport.py::SourceCustodyTests::test_sealed_source5_inputs_match_expected_hashes PASSED [ 56%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_sealed_inputs_and_native_callsite_inventory PASSED [ 57%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_actual_137715_rejected_child71_none PASSED [ 59%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_cause_removal_91_bytes_child0_equal PASSED [ 60%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_real_reconcile_delegates_fullview_and_rejects PASSED [ 62%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_original_fails_same_positive_acceptance_oracle PASSED [ 64%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_before_identity_then_effect_then_after PASSED [ 65%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_before_refusal_prevents_effect_and_reaps PASSED [ 67%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_timeout_reaps_before_return PASSED [ 68%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_after_timeout_retains_completion_and_reaps PASSED [ 70%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_after_failure_retains_result_and_nonzero_status PASSED [ 71%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_function_failure_has_no_result_or_after PASSED [ 73%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_unserializable_failure_has_no_result_or_after PASSED [ 75%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_abrupt_exit_is_reaped_and_not_success PASSED [ 76%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_foreign_publication_is_retained_and_refused PASSED [ 78%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_baseline_authority_conflict_is_retained_and_refused PASSED [ 79%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_full_actual_roundtrip_preserves_every_field PASSED [ 81%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_small_control PASSED [ 82%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_real_reconcile_delivers_full_guard_input PASSED [ 84%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_before_identity_then_effect_then_after PASSED [ 85%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_before_refusal_prevents_effect_and_reaps PASSED [ 87%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_timeout_reaps_before_return PASSED [ 89%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_timeout_retains_completion_and_reaps PASSED [ 90%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_failure_retains_result_and_nonzero_status PASSED [ 92%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_function_failure_has_no_result_or_after PASSED [ 93%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_unserializable_failure_has_no_result_or_after PASSED [ 95%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_abrupt_exit_is_reaped_and_not_success PASSED [ 96%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_foreign_publication_survives_transport_and_is_refused PASSED [ 98%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_authority_conflict_survives_transport_and_is_refused PASSED [100%]
+
+=================== 64 passed, 41 subtests passed in 21.03s ====================

@@ -1,0 +1,68 @@
+{
+  "source_ordinal": 1,
+  "issue": "actualroot32recordcountcutslease renewal",
+  "rule_ids": [
+    "DBG-01",
+    "DBG-11",
+    "TEST-15",
+    "GRPH-14",
+    "GRPH-32"
+  ],
+  "canon_version": "0.26.2",
+  "change_from_previous": "NEWindependentnormal-lifetime defect: known_candidates hard32directorycap, actual33. PreviouslysourcefamilyrepairedIPC60000B only. SourceBchanges boundedopcapacity/recovery/admission anddoesnotredo callbackframing. Addnamed1024bound; retainall33andallpublished/failedproofs; readonlyrecoveryatcapacity; reservecleanupallowance; atomicallycheck/reservebeforecreatingintent/guardian sooverbudgetrefusalcannotwedgewindow. No pruning/reset/foreignauthoritybypass. Singleadjacentconstant+known_candidates+owner-window.operation scope; native_jobbelongsparallelA.",
+  "evidence_tests": [
+    5415,
+    5425
+  ],
+  "actual_failed_operation": "07a7a618-2c61-4a06-84ff-07849c5426c7",
+  "last_published_sequence": 264,
+  "existing_operation_count": 33,
+  "original_operation_bound": 32,
+  "new_finite_bound": 1024,
+  "planned_envelope": "up to48h, renewal240s gives720renewals plus33existing+modelrotation/cleanup allowance wellbelow1024.1MiBresult/readbudget remainsunchanged.",
+  "input_manifest_sha256": "6038b6e69ddfb87248bcd44a320cf749a0e19d2088a69220d95042e925f9e123",
+  "previous_paths": [
+    {
+      "ordinal": 1,
+      "result": "missing-carrier/missing callable context; no usable source"
+    },
+    {
+      "ordinal": 2,
+      "result": "controller source request auto-review rejection; no adopted source"
+    },
+    {
+      "ordinal": 3,
+      "source": "c8f3e463e4ba5c387a9cd68c2606e9350a9ffe29",
+      "review": 1659,
+      "result": "KeyError highest_sequence actual nested authority shape; REVISE"
+    },
+    {
+      "ordinal": 4,
+      "source": "506ecedda3cad4ac48be05d84518c649255785a4",
+      "review": 1660,
+      "result": "SOURCE_ONLY_PASS caller.patch30e4e8d targets caller_excerpt.txt;20GREEN but no actual installed adoption or normal reconcile coverage"
+    },
+    {
+      "ordinal": 5,
+      "source": "e1b7e1216d5416373bf625797866517f96ec47f1",
+      "review": 1668,
+      "result": "Full137715B history/realreconcile fixed and normalCLI conditionallyREADY; completed result discarded on after callbackfailure/timelimit. OneP2 mergeREVISE, independent2RED/51GREEN. LivecontrolledCLI adopted/rootnormalreconcile nowGREEN5415; no historyreset."
+    },
+    {
+      "ordinal": 6,
+      "backend": "claude-remote",
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "exit_code": 124,
+      "capacity_exhausted": false,
+      "seed_head": "8e275c8ccb45c47d3276b527ed0cee163ce3c768",
+      "result": "framing/source+test edits uncommitted, no finalJSON; fullcustody327fa8fc..., preserveandfinishactualpartial, never reimplementblindly."
+    }
+  ],
+  "original_distilled": [
+    "engineering/debugging-9-rules.md",
+    "engineering/why-programs-fail.md",
+    "engineering/pragmatic-programmer.md"
+  ],
+  "no_operator_approval_bypass": "This is a literal software-enumeration cap, not an externaldeniedpermission. Explicitoperator modelrun authorization persists. Keepa finitebound andnativeownerchecks; independentgate required beforeadoption."
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "file": "owner-custody.py",
+    "consumer": "guardian",
+    "line": 317,
+    "expression": "native_job(lambda:view(paths,plan['action']),5)",
+    "source_sha256": "576bb83150af3f484996d3a49b05bc9b52d834215846030b64d4de022977f058"
+  },
+  {
+    "file": "owner-custody.py",
+    "consumer": "guardian",
+    "line": 339,
+    "expression": "native_job(effect,12,after=(lambda:hook('written',candidate)) if hook else None,before=started)",
+    "source_sha256": "576bb83150af3f484996d3a49b05bc9b52d834215846030b64d4de022977f058"
+  },
+  {
+    "file": "owner-custody.py",
+    "consumer": "guardian",
+    "line": 346,
+    "expression": "native_job(lambda:view(paths,'auto'),5)",
+    "source_sha256": "576bb83150af3f484996d3a49b05bc9b52d834215846030b64d4de022977f058"
+  },
+  {
+    "file": "owner-custody.py",
+    "consumer": "reconcile",
+    "line": 396,
+    "expression": "native_job(lambda:view(paths,'auto'),5)",
+    "source_sha256": "576bb83150af3f484996d3a49b05bc9b52d834215846030b64d4de022977f058"
+  },
+  {
+    "file": "owner-window.py",
+    "consumer": "inspect",
+    "line": 44,
+    "expression": "c.native_job(lambda:c.view(paths,'inspect'),5)",
+    "source_sha256": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600"
+  }
+]

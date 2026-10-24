@@ -1,0 +1,33 @@
+test_valid_json_prefix_is_not_completion (__main__.CompletionProofTests.test_valid_json_prefix_is_not_completion) ... 
+  test_valid_json_prefix_is_not_completion (__main__.CompletionProofTests.test_valid_json_prefix_is_not_completion) [lying_success] ... FAIL
+  test_valid_json_prefix_is_not_completion (__main__.CompletionProofTests.test_valid_json_prefix_is_not_completion) [failed_after_prefix] ... FAIL
+  test_valid_json_prefix_is_not_completion (__main__.CompletionProofTests.test_valid_json_prefix_is_not_completion) [killed_after_prefix] ... FAIL
+
+======================================================================
+FAIL: test_valid_json_prefix_is_not_completion (__main__.CompletionProofTests.test_valid_json_prefix_is_not_completion) [lying_success]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 492, in test_valid_json_prefix_is_not_completion
+    self.assertIsNone(value, "syntactically valid prefix accepted as complete")
+AssertionError: 12345 is not None : syntactically valid prefix accepted as complete
+
+======================================================================
+FAIL: test_valid_json_prefix_is_not_completion (__main__.CompletionProofTests.test_valid_json_prefix_is_not_completion) [failed_after_prefix]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 492, in test_valid_json_prefix_is_not_completion
+    self.assertIsNone(value, "syntactically valid prefix accepted as complete")
+AssertionError: 12345 is not None : syntactically valid prefix accepted as complete
+
+======================================================================
+FAIL: test_valid_json_prefix_is_not_completion (__main__.CompletionProofTests.test_valid_json_prefix_is_not_completion) [killed_after_prefix]
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 492, in test_valid_json_prefix_is_not_completion
+    self.assertIsNone(value, "syntactically valid prefix accepted as complete")
+AssertionError: 12345 is not None : syntactically valid prefix accepted as complete
+
+----------------------------------------------------------------------
+Ran 1 test in 0.384s
+
+FAILED (failures=3)

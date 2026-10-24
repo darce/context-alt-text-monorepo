@@ -1,0 +1,41 @@
+{
+  "recorded_at_utc": "2026-10-24T04:02:23.768953+00:00",
+  "source_script_sha256": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9",
+  "test_source_sha256": "b2d41b63f988ae407f38a95149ba0e8c2878a05189ad897eb65a5d82de9e59f6",
+  "fixture_sha256": "e388f8be6741710f0399176368b633ef0894f9f123e13afb8f7bdad2aa5e9939",
+  "checks": [
+    {
+      "command": "python3 -B -m unittest discover -s benchmarks/description-full-precision/owner-control -p 'test_*.py' -v",
+      "exit_code": 0,
+      "output": "evidence/unittest-green.txt",
+      "summary": "Ran 25 tests in 2.626s; OK",
+      "output_sha256": "f79652516f9d2f20f3430b49df0932366c03ae26798be78f276466b81a514d0d"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q --noconftest benchmarks/description-full-precision/owner-control -p no:cacheprovider",
+      "exit_code": 0,
+      "output": "evidence/pytest-green.txt",
+      "summary": "25 passed, 17 subtests passed in 3.35s",
+      "output_sha256": "176ce73d88d6b1df6f8892b4ed8ec683a7546fd0315a18a6123eac08404d4057"
+    },
+    {
+      "command": "python3 -B benchmarks/description-full-precision/owner-control/test_native_transport.py --baseline NativeRealShapeTests -v",
+      "exit_code": 1,
+      "output": "evidence/baseline-red-final-replay.txt",
+      "summary": "Expected RED: full view child exit71, two reconciliation read unknown errors; small 91-byte control OK",
+      "output_sha256": "d50ddfbe4e157cc6a4b99e219b0e5e93a2109ec37d0bc243dd44374025e3a454"
+    },
+    {
+      "command": "python3 -B benchmarks/description-full-precision/owner-control/test_native_transport.py NativeRealShapeTests -v",
+      "exit_code": 0,
+      "output": "evidence/corrected-green-final-replay.txt",
+      "summary": "Same four real-shape/control tests, corrected native source: OK",
+      "output_sha256": "1f5efb5d066c53c61fbb9112745d4d1fa4145d452e22959cac177558f344be14"
+    }
+  ],
+  "static_validation": {
+    "exit_code": 0,
+    "summary": "AST parsed complete Python scripts/tests; bash -n all four copied shell scripts; no CLI executed"
+  },
+  "source_completion_scope": "private VM scratch source commit only; coordinator WorkBay import/adoption pending"
+}

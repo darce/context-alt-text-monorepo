@@ -1,0 +1,47 @@
+test_actual_reconcile_auto_full_view_call_shape (__main__.NativeRealShapeTests.test_actual_reconcile_auto_full_view_call_shape) ... ERROR
+test_actual_reconcile_reads_real_shape_from_private_files (__main__.NativeRealShapeTests.test_actual_reconcile_reads_real_shape_from_private_files) ... ERROR
+test_full_saved_view_round_trips_without_projection (__main__.NativeRealShapeTests.test_full_saved_view_round_trips_without_projection) ... FAIL
+test_small_cause_removal_same_native_control (__main__.NativeRealShapeTests.test_small_cause_removal_same_native_control) ... ok
+
+======================================================================
+ERROR: test_actual_reconcile_auto_full_view_call_shape (__main__.NativeRealShapeTests.test_actual_reconcile_auto_full_view_call_shape)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 86, in test_actual_reconcile_auto_full_view_call_shape
+    self.assertEqual(c.reconcile(wfd, paths), op)
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/original-owner-custody.py", line 357, in reconcile
+    status,v=native_job(lambda:view(paths,'auto'),5); check(status==0 and v is not None,'reconciliation read unknown')
+                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/original-owner-custody.py", line 16, in check
+    if not condition: raise RuntimeError(message)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: reconciliation read unknown
+
+======================================================================
+ERROR: test_actual_reconcile_reads_real_shape_from_private_files (__main__.NativeRealShapeTests.test_actual_reconcile_reads_real_shape_from_private_files)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 126, in test_actual_reconcile_reads_real_shape_from_private_files
+    self.assertEqual(c.reconcile(wfd, paths), op)
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/original-owner-custody.py", line 357, in reconcile
+    status,v=native_job(lambda:view(paths,'auto'),5); check(status==0 and v is not None,'reconciliation read unknown')
+                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/original-owner-custody.py", line 16, in check
+    if not condition: raise RuntimeError(message)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: reconciliation read unknown
+
+======================================================================
+FAIL: test_full_saved_view_round_trips_without_projection (__main__.NativeRealShapeTests.test_full_saved_view_round_trips_without_projection)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 50, in test_full_saved_view_round_trips_without_projection
+    self.assertEqual(os.waitstatus_to_exitcode(status), 0,
+AssertionError: 71 != 0 : native full-view child must succeed
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.207s
+
+FAILED (failures=1, errors=2)

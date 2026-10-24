@@ -1,0 +1,122 @@
+{
+  "README.md": {
+    "bytes": 12676,
+    "sha256": "40fcc854a3d3705e0fc82a3508ee5bb396e1eaee6b019afe923aab78a6e707fc"
+  },
+  "candidate-scripts.json": {
+    "bytes": 616,
+    "sha256": "f57040867845521c9bef4c98a9d287c2c5ac7759efd1c168e39e5c69ae39b526"
+  },
+  "capacity-read.sh": {
+    "bytes": 6975,
+    "sha256": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2"
+  },
+  "evidence/baseline-red-final-replay.txt": {
+    "bytes": 4337,
+    "sha256": "d50ddfbe4e157cc6a4b99e219b0e5e93a2109ec37d0bc243dd44374025e3a454"
+  },
+  "evidence/baseline-red.txt": {
+    "bytes": 2716,
+    "sha256": "ad1340833050559cab81d7ec12b5ca67a1ad34046c1aece5defebda0b8fc754e"
+  },
+  "evidence/corrected-green-final-replay.txt": {
+    "bytes": 660,
+    "sha256": "1f5efb5d066c53c61fbb9112745d4d1fa4145d452e22959cac177558f344be14"
+  },
+  "evidence/corrected-real-shape-green.txt": {
+    "bytes": 544,
+    "sha256": "cb0ddb1b3fc673834e2d3ee1c9b03921c32be06b4a5a157572f6242e7de2a503"
+  },
+  "evidence/initial-harness-count-error.txt": {
+    "bytes": 3364,
+    "sha256": "f4a89cdbb13de39a1e17824cf605f7caeeea49ff36e72fa3eacd19d8b3db4c8f"
+  },
+  "evidence/native-result-replay.json": {
+    "bytes": 1128,
+    "sha256": "546b2d0d1142c42f8fe31a3e6fc277a8de3b471bb0264ae7e249b50807d42eef"
+  },
+  "evidence/prior/GPU-OWNER-NATIVE-IPC-R5.canon-proposal.json": {
+    "bytes": 2258,
+    "sha256": "327fe9cf3732fbc2242a61348b0c9c2ac8b341dd53f6b42f924d92e6f9ff2731"
+  },
+  "evidence/prior/GPU-OWNER-R4-APPLICABILITY-VERIFY-20261024.json": {
+    "bytes": 3191,
+    "sha256": "1e1290cb9806cf96b865a26205fd977beee2984d62476ed35b6f2aacb9464e7b"
+  },
+  "evidence/prior/GPU-OWNER-R4-REPLAY-20261024.json": {
+    "bytes": 4591,
+    "sha256": "0fb5add02aaa8efc8e662afbc59eb80135e2b06c3faa546269a94546ed278d85"
+  },
+  "evidence/provenance.json": {
+    "bytes": 10749,
+    "sha256": "ef6da1e6d8245c49ac8aa9dbc879f7d1e72d8775941d1fd597425178f566a496"
+  },
+  "evidence/pytest-24-green.txt": {
+    "bytes": 102,
+    "sha256": "8254eca586db3db32f9642816332c6eb0344ca7d976b6f26acc21c91d3190407"
+  },
+  "evidence/pytest-green.txt": {
+    "bytes": 102,
+    "sha256": "176ce73d88d6b1df6f8892b4ed8ec683a7546fd0315a18a6123eac08404d4057"
+  },
+  "evidence/unittest-24-green.txt": {
+    "bytes": 3970,
+    "sha256": "d6def2db832cad517ebcee47e4aec83207edd193a78de6de4643477e3aea033c"
+  },
+  "evidence/unittest-first-expanded.txt": {
+    "bytes": 3354,
+    "sha256": "0a0dc4f7746238e9af45e77daa3a20a9aed0dc9263fd0b634e531921178a41a5"
+  },
+  "evidence/unittest-green.txt": {
+    "bytes": 4125,
+    "sha256": "f79652516f9d2f20f3430b49df0932366c03ae26798be78f276466b81a514d0d"
+  },
+  "evidence/verification.json": {
+    "bytes": 2229,
+    "sha256": "1f882cf0c472fd0096fba0b65c78b52c30b2d803cbfb370b47d9b620ec345ed5"
+  },
+  "final-stop.sh": {
+    "bytes": 1749,
+    "sha256": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e"
+  },
+  "fixtures/actual-view.json": {
+    "bytes": 137715,
+    "sha256": "e388f8be6741710f0399176368b633ef0894f9f123e13afb8f7bdad2aa5e9939"
+  },
+  "fixtures/input-manifest.json": {
+    "bytes": 4778,
+    "sha256": "80f7267a090a69fbe05e8a55ce6dce4f9c958290db3a9c97f1efc67cda95e7fc"
+  },
+  "fixtures/original-owner-custody.py": {
+    "bytes": 17715,
+    "sha256": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f"
+  },
+  "guest-read.sh": {
+    "bytes": 1463,
+    "sha256": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca"
+  },
+  "native-transport.patch": {
+    "bytes": 4294,
+    "sha256": "1148dd2d594d0d4001202c062d1f6350d781a98fbb736b2e4d0ca28ef7aec42f"
+  },
+  "observe.py": {
+    "bytes": 11326,
+    "sha256": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1"
+  },
+  "owner-custody.py": {
+    "bytes": 18974,
+    "sha256": "42b03d88a7cf89b4fcc4bf6ac6ce2c84ba0789abfa67abdadcab6dc5f37a1ef9"
+  },
+  "owner-window.py": {
+    "bytes": 6514,
+    "sha256": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600"
+  },
+  "root-flow.sh": {
+    "bytes": 4353,
+    "sha256": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62"
+  },
+  "test_native_transport.py": {
+    "bytes": 22475,
+    "sha256": "b2d41b63f988ae407f38a95149ba0e8c2878a05189ad897eb65a5d82de9e59f6"
+  }
+}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { ClusterResponse } from '../api/recognition';
-import { resolveScanErrorMessage } from '../api/recognition/scanApiError';
+import { resolveScanErrorMessage, resolveScanRefusalMessage } from '../api/recognition/scanApiError';
 import { classifyError } from '../utils/appError';
 import {
   createLogger,
@@ -157,6 +157,12 @@ export const useJobStateMachineMutations = ({
           total: job.progress?.total ?? 0,
         });
       });
+      // The accepted jobs above stay tracked; the refusal that stopped the rest still
+      // needs the same recovery path as a rejected submit.
+      if (data.refusal) {
+        batchLog.error('Scan submission stopped', classifiedLogFields(data.refusal));
+        onScanError?.(resolveScanRefusalMessage(data.refusal));
+      }
     },
     onError: (error) => {
       const failedLog = scanLog();

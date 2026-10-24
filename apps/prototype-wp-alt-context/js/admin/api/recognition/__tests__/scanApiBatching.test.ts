@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { scanFaces, scanFacesBatched } from '../scanApi';
 import type { AnalyzeResponse } from '../types';
 import type { HTTPOptions } from '../../../utils/http';
+import { AuthExpiredError, HTTPError } from '../../../utils/errorTaxonomy';
+import { _resetCooldownForTests, isCoolingDown } from '../../../utils/recognitionCooldown';
 
 interface ScanRequestBody {
   media_ids: number[];
@@ -62,6 +64,26 @@ vi.mock('../../../utils/http', () => ({
   stripTrailingSlash: (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value),
 }));
 
+const analyzeCalls = () => fetchMock.mock.calls.filter(([url]) => url === mockConfig.endpoints.recognitionAnalyze);
+
+const refusedStatus = (status: number): HTTPError =>
+  new HTTPError({
+    status,
+    endpoint: mockConfig.endpoints.recognitionAnalyze,
+    bodyPreview: '',
+    retryAfterSeconds: undefined,
+    message: 'Scan refused',
+  });
+
+/** Every run-wide refusal shape the submit loop must stop on (401/402/403/429 and session expiry). */
+const RUN_WIDE_REFUSALS: [string, () => Error][] = [
+  ['HTTP 401', () => refusedStatus(401)],
+  ['HTTP 402', () => refusedStatus(402)],
+  ['HTTP 403', () => refusedStatus(403)],
+  ['HTTP 429', () => refusedStatus(429)],
+  ['session expiry', () => new AuthExpiredError({ endpoint: mockConfig.endpoints.recognitionAnalyze, status: 403 })],
+];
+
 describe('scanFacesBatched chunk size', () => {
   beforeEach(() => {
     fetchMock.mockReset();
@@ -70,6 +92,131 @@ describe('scanFacesBatched chunk size', () => {
       return Promise.resolve(makeAnalyzeResponse(mediaIds));
     });
     mockConfig.maxMediaPerBatch = 10000;
+    _resetCooldownForTests();
+  });
+
+  it.each(RUN_WIDE_REFUSALS)(
+    'returns the accepted jobs with the original %s that stopped later submissions',
+    async (_label, makeRefusal) => {
+      const error = makeRefusal();
+      fetchMock.mockResolvedValueOnce(makeAnalyzeResponse([1, 2, 3, 4, 5])).mockRejectedValueOnce(error);
+      const result = await scanFacesBatched({ mediaIds: Array.from({ length: 15 }, (_, i) => i + 1) });
+      expect(result.jobs.map((job) => job.id)).toEqual(['job-1-2-3-4-5']);
+      expect(result.refusal).toBe(error);
+      expect(analyzeCalls()).toHaveLength(2);
+      expect(fetchMock.mock.calls[2]?.[0]).toContain('/client-failures');
+      expect(fetchMock.mock.calls[2]?.[1]?.body).toEqual({
+        batch_index: 1,
+        submitted_total: 15,
+        media_ids: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      });
+    },
+  );
+
+  it('keeps every accepted chunk when the refusal arrives on a later chunk', async () => {
+    const error = refusedStatus(402);
+    fetchMock
+      .mockResolvedValueOnce(makeAnalyzeResponse([1, 2, 3, 4, 5]))
+      .mockResolvedValueOnce(makeAnalyzeResponse([6, 7, 8, 9, 10]))
+      .mockRejectedValueOnce(error);
+    const result = await scanFacesBatched({ mediaIds: Array.from({ length: 20 }, (_, i) => i + 1) });
+    expect(result.jobs.map((job) => job.id)).toEqual(['job-1-2-3-4-5', 'job-6-7-8-9-10']);
+    expect(result.refusal).toBe(error);
+    expect(analyzeCalls()).toHaveLength(3);
+    expect(fetchMock.mock.calls[3]?.[1]?.body).toEqual({
+      batch_index: 2,
+      submitted_total: 20,
+      media_ids: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+    });
+  });
+
+  it('arms the shared recognition cooldown for a later 429 that no rejection will carry', async () => {
+    fetchMock.mockResolvedValueOnce(makeAnalyzeResponse([1, 2, 3, 4, 5])).mockRejectedValueOnce(refusedStatus(429));
+    await scanFacesBatched({ mediaIds: Array.from({ length: 15 }, (_, i) => i + 1) });
+    expect(isCoolingDown()).toBe(true);
+  });
+
+  it('leaves the cooldown alone for a later refusal that is not an ask-again-later', async () => {
+    fetchMock.mockResolvedValueOnce(makeAnalyzeResponse([1, 2, 3, 4, 5])).mockRejectedValueOnce(refusedStatus(402));
+    await scanFacesBatched({ mediaIds: Array.from({ length: 15 }, (_, i) => i + 1) });
+    expect(isCoolingDown()).toBe(false);
+  });
+
+  it.each(RUN_WIDE_REFUSALS)(
+    'rejects an initial ordinary multi-chunk %s with the identical error',
+    async (_label, makeRefusal) => {
+      const error = makeRefusal();
+      fetchMock.mockRejectedValueOnce(error);
+      await expect(scanFacesBatched({ mediaIds: Array.from({ length: 15 }, (_, i) => i + 1) })).rejects.toBe(error);
+      expect(analyzeCalls()).toHaveLength(1);
+      expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual({
+        batch_index: 0,
+        submitted_total: 15,
+        media_ids: Array.from({ length: 15 }, (_, i) => i + 1),
+      });
+    },
+  );
+
+  it('keeps submitting after a batch-local failure and reports no run-wide refusal', async () => {
+    fetchMock.mockResolvedValueOnce(makeAnalyzeResponse([1, 2, 3, 4, 5])).mockRejectedValueOnce(refusedStatus(500));
+    const result = await scanFacesBatched({ mediaIds: Array.from({ length: 15 }, (_, i) => i + 1) });
+    expect(result.jobs.map((job) => job.id)).toEqual(['job-1-2-3-4-5', 'job-11-12-13-14-15']);
+    expect(result.refusal).toBeUndefined();
+    expect(analyzeCalls()).toHaveLength(3);
+    expect(fetchMock.mock.calls[2]?.[1]?.body).toEqual({
+      batch_index: 1,
+      submitted_total: 15,
+      media_ids: [6, 7, 8, 9, 10],
+    });
+  });
+
+  it.each([401, 402, 403, 429])(
+    'stops all remaining submissions after HTTP %i and preserves the rejection',
+    async (status) => {
+      const error = new HTTPError({
+        status,
+        endpoint: mockConfig.endpoints.recognitionAnalyze,
+        bodyPreview: '',
+        retryAfterSeconds: undefined,
+        message: 'Scan refused',
+      });
+      const mediaIds = Array.from({ length: 100 }, (_, i) => i + 1);
+      fetchMock.mockRejectedValueOnce(error);
+      await expect(scanFacesBatched({ mediaIds, developmentFacesOnly: true })).rejects.toBe(error);
+      expect(fetchMock.mock.calls.filter(([url]) => url === mockConfig.endpoints.recognitionAnalyze)).toHaveLength(1);
+      expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual({ batch_index: 0, submitted_total: 100, media_ids: mediaIds });
+    },
+  );
+
+  it.each([402, 429])('surfaces HTTP %i for a single ordinary scan instead of empty success', async (status) => {
+    const error = new HTTPError({
+      status,
+      endpoint: mockConfig.endpoints.recognitionAnalyze,
+      bodyPreview: '',
+      retryAfterSeconds: undefined,
+      message: 'Scan refused',
+    });
+    fetchMock.mockRejectedValueOnce(error);
+    await expect(scanFacesBatched({ mediaIds: [1] })).rejects.toBe(error);
+  });
+
+  it('keeps accepted jobs trackable and accounts for all skipped media after a later refusal', async () => {
+    const error = new HTTPError({
+      status: 402,
+      endpoint: mockConfig.endpoints.recognitionAnalyze,
+      bodyPreview: '',
+      retryAfterSeconds: undefined,
+      message: 'Allowance exhausted',
+    });
+    fetchMock.mockResolvedValueOnce(makeAnalyzeResponse([1, 2, 3, 4, 5])).mockRejectedValueOnce(error);
+    const result = await scanFacesBatched({ mediaIds: Array.from({ length: 15 }, (_, i) => i + 1) });
+    expect(result.jobs.map((job) => job.id)).toEqual(['job-1-2-3-4-5']);
+    expect(fetchMock.mock.calls.filter(([url]) => url === mockConfig.endpoints.recognitionAnalyze)).toHaveLength(2);
+    expect(fetchMock.mock.calls[2]?.[1]?.body).toEqual({
+      batch_index: 1,
+      submitted_total: 15,
+      media_ids: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    });
   });
 
   it('sends a single request when total <= server multipart cap of 5', async () => {

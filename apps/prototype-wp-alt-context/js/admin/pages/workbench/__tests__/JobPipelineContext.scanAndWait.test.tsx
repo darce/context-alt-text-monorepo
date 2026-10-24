@@ -232,6 +232,29 @@ describe('JobPipelineContext.scanAndWait', () => {
     await rejected;
   });
 
+  it('a refusal reported after accepted jobs rejects the waiter but keeps those jobs tracked and running', async () => {
+    const { rerender } = render(<PipelineTree running={false} />);
+
+    let promise!: Promise<void>;
+    act(() => {
+      promise = pipeline().scanAndWait([1, 2, 3, 4, 5, 6]);
+    });
+    const rejected = expect(promise).rejects.toThrow('Check Usage & billing.');
+
+    // useJobStateMachineMutations tracks the accepted job, then reports the refusal.
+    act(() => {
+      rerender(<PipelineTree running={true} activeJobIds={['accepted-first-five']} />);
+      captured.onScanError?.('Allowance unavailable. Check Usage & billing.');
+    });
+
+    await rejected;
+    expect(pipeline().scanRun.errorMessage).toBe('Allowance unavailable. Check Usage & billing.');
+    expect(pipeline().scanRun.isScanning).toBe(true);
+    expect(pipeline().history.activeJobIds).toEqual(['accepted-first-five']);
+    // Accepted work is not the waiter's to abandon: nothing cancels it.
+    expect(machine.cancelScan).not.toHaveBeenCalled();
+  });
+
   it('rejects with cancelled when cancelScan runs while a waiter is pending', async () => {
     render(<PipelineTree running={false} />);
 

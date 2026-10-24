@@ -53,6 +53,12 @@ export type AnalyzeResponse = RecognitionJob;
 export interface BatchAnalyzeResponse {
   batchRunId: string;
   jobs: AnalyzeResponse[];
+  /**
+   * The original run-wide refusal (401/402/403/429, session expiry) that stopped
+   * submission after `jobs` were accepted. Callers keep tracking `jobs` and must
+   * still surface this; a refusal before any accepted job rejects instead.
+   */
+  refusal?: Error;
 }
 
 /**

@@ -1,0 +1,7 @@
+{
+  "configured_model": "/Volumes/Butter/cache/workbay/models/e7f6af7a9457d4fdd3af220c68e9a37325aad7c2d306bbc855fe0d019c326509/model_int8.onnx",
+  "model_sha256": "e7f6af7a9457d4fdd3af220c68e9a37325aad7c2d306bbc855fe0d019c326509",
+  "expected_sha256": "e7f6af7a9457d4fdd3af220c68e9a37325aad7c2d306bbc855fe0d019c326509",
+  "semantic_reinject": "1",
+  "mode": "configured_ONNX_artifact_hash_verified; live MCP embeddings verified GTE"
+}

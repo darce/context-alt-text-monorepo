@@ -1,0 +1,277 @@
+...............FFFFFFFFFFFFF                                             [100%]
+=================================== FAILURES ===================================
+__________ test_candidate_full_actual_roundtrip_preserves_every_field __________
+
+    def test_candidate_full_actual_roundtrip_preserves_every_field():
+>       assert_full_acceptance(probe(candidate_path(), "full"))
+                                     ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:481: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+_________________________ test_candidate_small_control _________________________
+
+    def test_candidate_small_control():
+>       r = probe(candidate_path(), "small")
+                  ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:485: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+___________ test_candidate_real_reconcile_delivers_full_guard_input ____________
+
+    def test_candidate_real_reconcile_delivers_full_guard_input():
+>       r = probe(candidate_path(), "reconcile")
+                  ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:490: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+____________ test_candidate_before_identity_then_effect_then_after _____________
+
+    def test_candidate_before_identity_then_effect_then_after():
+>       assert_contract(candidate_path(), "callbacks")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:496: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+___________ test_candidate_before_refusal_prevents_effect_and_reaps ____________
+
+    def test_candidate_before_refusal_prevents_effect_and_reaps():
+>       assert_contract(candidate_path(), "before_failure")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:500: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+__________________ test_candidate_timeout_reaps_before_return __________________
+
+    def test_candidate_timeout_reaps_before_return():
+>       assert_contract(candidate_path(), "timeout")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:504: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+__________ test_candidate_after_timeout_retains_completion_and_reaps ___________
+
+    def test_candidate_after_timeout_retains_completion_and_reaps():
+>       assert_contract(candidate_path(), "after_timeout")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:508: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+________ test_candidate_after_failure_retains_result_and_nonzero_status ________
+
+    def test_candidate_after_failure_retains_result_and_nonzero_status():
+>       assert_contract(candidate_path(), "after_failure")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:512: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+____________ test_candidate_function_failure_has_no_result_or_after ____________
+
+    def test_candidate_function_failure_has_no_result_or_after():
+>       assert_contract(candidate_path(), "fn_failure")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:516: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+_________ test_candidate_unserializable_failure_has_no_result_or_after _________
+
+    def test_candidate_unserializable_failure_has_no_result_or_after():
+>       assert_contract(candidate_path(), "serialization_failure")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+_____________ test_candidate_abrupt_exit_is_reaped_and_not_success _____________
+
+    def test_candidate_abrupt_exit_is_reaped_and_not_success():
+>       assert_contract(candidate_path(), "abrupt_exit")
+                        ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:524: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+_____ test_candidate_foreign_publication_survives_transport_and_is_refused _____
+
+    def test_candidate_foreign_publication_survives_transport_and_is_refused():
+>       assert probe(candidate_path(), "foreign_publication")["rejected"] == "foreign publication"
+                     ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:528: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+_____ test_candidate_authority_conflict_survives_transport_and_is_refused ______
+
+    def test_candidate_authority_conflict_survives_transport_and_is_refused():
+>       assert probe(candidate_path(), "authority_conflict")["rejected"] == "conflicting authority"
+                     ^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:532: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def candidate_path():
+        path = Path(os.environ.get(
+            "OWNER_CONTROL_CANDIDATE", str(HERE.parent / "owner-control/owner-custody.py")
+        )).resolve()
+>       assert path.is_file(), "candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE"
+E       AssertionError: candidate missing: supply owner-control/owner-custody.py or OWNER_CONTROL_CANDIDATE
+E       assert False
+E        +  where False = is_file()
+E        +    where is_file = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py').is_file
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:64: AssertionError
+=========================== short test summary info ============================
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_full_actual_roundtrip_preserves_every_field
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_small_control
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_real_reconcile_delivers_full_guard_input
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_before_identity_then_effect_then_after
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_before_refusal_prevents_effect_and_reaps
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_timeout_reaps_before_return
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_timeout_retains_completion_and_reaps
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_failure_retains_result_and_nonzero_status
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_function_failure_has_no_result_or_after
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_unserializable_failure_has_no_result_or_after
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_abrupt_exit_is_reaped_and_not_success
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_foreign_publication_survives_transport_and_is_refused
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_authority_conflict_survives_transport_and_is_refused
+13 failed, 15 passed in 6.30s

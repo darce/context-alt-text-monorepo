@@ -1,0 +1,177 @@
+{
+  "source_family_dispatch": 5,
+  "parent": "MAINT-LEXICON-EXTRACTION-20261022",
+  "lane": "B independent test-only first lane; source A not consumed",
+  "input_manifest_sha256": "80f7267a090a69fbe05e8a55ce6dce4f9c958290db3a9c97f1efc67cda95e7fc",
+  "original_custody_sha256": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+  "actual_view_sha256": "e388f8be6741710f0399176368b633ef0894f9f123e13afb8f7bdad2aa5e9939",
+  "accepted_r4_patch_sha256": "30e4e8db654a6f5af7e8291056a00640875ef0d67753d66ae93f9a0ee3a804ce",
+  "canon_version": "0.26.2",
+  "canon_operator_pin": "/Users/daniel/Development/heuristics-canon-current (read-only; remote matching copies used)",
+  "rules": [
+    "DBG-11",
+    "TEST-15",
+    "TEST-33",
+    "GRPH-14",
+    "GRPH-32"
+  ],
+  "source_lineage": [
+    {
+      "ordinal": 3,
+      "sha": "c8f3e463e4ba5c387a9cd68c2606e9350a9ffe29",
+      "review": 1659,
+      "status": "REVISE; top-level cursor bug"
+    },
+    {
+      "ordinal": 4,
+      "sha": "506ecedda3cad4ac48be05d84518c649255785a4",
+      "review": 1660,
+      "status": "SOURCE_ONLY_PASS; offline caller excerpt; unadopted"
+    }
+  ],
+  "decisions": [
+    19532,
+    19540,
+    19542,
+    19550,
+    19620,
+    19625
+  ],
+  "prior_test": 5406,
+  "candidate_status": "NOT_RUN; missing candidate gate and original negative candidate control only",
+  "graph_tool_status": "unavailable; direct exact-source AST/read fallback",
+  "edges": [
+    {
+      "from": "fixtures/manifest.json",
+      "to": "verify_seals",
+      "data": "files[].path, bytes, sha256; source_family_dispatch; accepted_r4_patch"
+    },
+    {
+      "from": "fixtures/baseline/owner-custody.py",
+      "to": "extract_namespace",
+      "data": "exact function ASTs, inert globals, stdlib imports"
+    },
+    {
+      "from": "fixtures/actual-view.json",
+      "to": "native_job lambda / reconcile view stub",
+      "data": "complete authority, publications, loads, deferred object"
+    },
+    {
+      "from": "native_job",
+      "to": "assert_full_acceptance",
+      "data": "native wait status, decoded result equality, observed reaping, elapsed duration"
+    },
+    {
+      "from": "retained original",
+      "to": "positive candidate tests",
+      "data": "same source fixture path, same sealed real view and oracle; expected RED"
+    },
+    {
+      "from": "candidate A",
+      "to": "lane B authoring",
+      "data": null,
+      "edge_exists": false,
+      "reason": "independent tests authored without A implementation"
+    }
+  ],
+  "retained_references": [
+    {
+      "source": "/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/references/GPU-OWNER-NATIVE-IPC-R5.canon-proposal.json",
+      "retained_path": "fixtures/lineage/GPU-OWNER-NATIVE-IPC-R5.canon-proposal.json",
+      "role": "supplied semantic/replay/repair lineage; not completion proof",
+      "bytes": 2258,
+      "sha256": "327fe9cf3732fbc2242a61348b0c9c2ac8b341dd53f6b42f924d92e6f9ff2731"
+    },
+    {
+      "source": "/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/references/GPU-OWNER-PROJECTION-R4-GATE1.semantic.json",
+      "retained_path": "fixtures/lineage/GPU-OWNER-PROJECTION-R4-GATE1.semantic.json",
+      "role": "supplied semantic/replay/repair lineage; not completion proof",
+      "bytes": 4030,
+      "sha256": "57c32964df472252821e16f99de3d78c8b9c4db27a9a7043ce440aa1fab9f221"
+    },
+    {
+      "source": "/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/references/GPU-OWNER-R4-APPLICABILITY-VERIFY-20261024.json",
+      "retained_path": "fixtures/lineage/GPU-OWNER-R4-APPLICABILITY-VERIFY-20261024.json",
+      "role": "supplied semantic/replay/repair lineage; not completion proof",
+      "bytes": 3191,
+      "sha256": "1e1290cb9806cf96b865a26205fd977beee2984d62476ed35b6f2aacb9464e7b"
+    },
+    {
+      "source": "/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/references/GPU-OWNER-R4-REPLAY-20261024.json",
+      "retained_path": "fixtures/lineage/GPU-OWNER-R4-REPLAY-20261024.json",
+      "role": "supplied semantic/replay/repair lineage; not completion proof",
+      "bytes": 4591,
+      "sha256": "0fb5add02aaa8efc8e662afbc59eb80135e2b06c3faa546269a94546ed278d85"
+    },
+    {
+      "source": "/home/gate/bakeoff-next-model-gpu-owner-ipc-controls-r1-a6271c120f24473d9d2a6b5b83481e51/references/onnx-reinjection-artifact.json",
+      "retained_path": "fixtures/lineage/onnx-reinjection-artifact.json",
+      "role": "supplied semantic/replay/repair lineage; not completion proof",
+      "bytes": 435,
+      "sha256": "3f7e670932aa290b35ff2f8763887affd376d05c80103faa53988729dcf8d298"
+    },
+    {
+      "source": "/home/gate/heuristics-canon-v0.26.2/lexicons/engineering.md",
+      "retained_path": "fixtures/canon/lexicons/engineering.md",
+      "role": "operator-pinned published Canon v0.26.2 remote copy",
+      "bytes": 328814,
+      "sha256": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d"
+    },
+    {
+      "source": "/home/gate/heuristics-canon-v0.26.2/lexicons/graph-theory.md",
+      "retained_path": "fixtures/canon/lexicons/graph-theory.md",
+      "role": "operator-pinned published Canon v0.26.2 remote copy",
+      "bytes": 73668,
+      "sha256": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c"
+    },
+    {
+      "source": "/home/gate/heuristics-canon-v0.26.2/reasoning/falsification-disconfirmers.md",
+      "retained_path": "fixtures/canon/reasoning/falsification-disconfirmers.md",
+      "role": "operator-pinned published Canon v0.26.2 remote copy",
+      "bytes": 8659,
+      "sha256": "9e572c986919420c614c6ae26033480a25294874c6bc6b4bb81341d32bba0771"
+    },
+    {
+      "source": "/home/gate/heuristics-canon-v0.26.2/reasoning/measurement-integrity.md",
+      "retained_path": "fixtures/canon/reasoning/measurement-integrity.md",
+      "role": "operator-pinned published Canon v0.26.2 remote copy",
+      "bytes": 9653,
+      "sha256": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8"
+    },
+    {
+      "source": "/home/gate/heuristics-canon-v0.26.2/PRINCIPLES.md",
+      "retained_path": "fixtures/canon/PRINCIPLES.md",
+      "role": "operator-pinned published Canon v0.26.2 remote copy",
+      "bytes": 35579,
+      "sha256": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205"
+    },
+    {
+      "source": "/home/gate/heuristics-canon-v0.26.2/meta/release-manifest.json",
+      "retained_path": "fixtures/canon/meta/release-manifest.json",
+      "role": "operator-pinned published Canon v0.26.2 remote copy",
+      "bytes": 75677,
+      "sha256": "46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260"
+    },
+    {
+      "source": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/pragmatic-programmer.md",
+      "retained_path": "fixtures/original-distilled/engineering/pragmatic-programmer.md",
+      "role": "original distillation provided in immutable description input snapshot",
+      "bytes": 43719,
+      "sha256": "18ee4cc144c4950db3565d53c2fb3d1645a63ebc086317e4d0a0cbf9c4748455"
+    },
+    {
+      "source": "/home/gate/description-gpu-start-inputs-20261023T2155/distilled/implementing-effective-code-reviews.md",
+      "retained_path": "fixtures/original-distilled/engineering/implementing-effective-code-reviews.md",
+      "role": "original distillation provided in immutable description input snapshot",
+      "bytes": 29981,
+      "sha256": "3979b158b1857a82961c487a286b375aa84804ef9a259403c6cb82fee46d4986"
+    },
+    {
+      "source": "/home/gate/firbench-1-context/source-anchor-65c0d8ac/literature/extracted/refactoring/distilled/why-programs-fail.md",
+      "retained_path": "fixtures/original-distilled/refactoring/why-programs-fail.md",
+      "role": "archived original distillation; Why Programs Fail ch12; not an engineering-path copy",
+      "bytes": 73952,
+      "sha256": "79a30653fb318a6f7b530879cd67b1d0d7d6e75739f676d03dc9da919294f831"
+    }
+  ]
+}

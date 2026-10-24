@@ -10,6 +10,7 @@ import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
 import { queryKeys } from '../../api/queryKeys';
 import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
+import { DevelopmentFaceScan } from './DevelopmentFaceScan';
 import { useJobPipeline } from './JobPipelineContext';
 import { descriptionWaitPresentation } from './gpuStatePresentation';
 
@@ -217,6 +218,8 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
   const detailQuery = mediaQuery.detailQuery;
   const bulkDescribe = useBulkDescribe();
   const pipeline = useJobPipeline();
+  const [faceOnly, setFaceOnly] = useState({ pending: false, message: '', error: '' });
+  const faceOnlySubmitting = useRef(false);
   const [identify, setIdentify] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
   const startDescribe = (ids: number[]) => {
     // The store parks only contexts explicitly awaiting terminal evidence.
@@ -249,6 +252,8 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
     .filter(([, selected]) => selected)
     .map(([id]) => Number(id))
     .filter((id) => Number.isFinite(id) && id > 0);
+  const developmentFaceScanAvailable =
+    settingsQuery.isSuccess && settingsQuery.data?.development_face_scan_available === true;
   const describeProgress = bulkDescribe.progress;
   const terminalDescribeRunId = bulkDescribe.runId;
   const activeDescribeRunId = bulkDescribe.activeRunId ?? null;
@@ -350,6 +355,51 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
     setSearchParams,
   ]);
 
+  const faceOnlyBlockedReason = offline
+    ? __('Reconnect to run face recognition.', 'alt-context')
+    : recognitionPolicy !== RECOGNITION_POLICY.ON
+      ? __('Turn on people identification in Settings to run a face scan.', 'alt-context')
+      : selectedMediaIds.length === 0
+        ? __('Select at least one image to recognize faces.', 'alt-context')
+        : isDescribeRunning || identify.pending || pipeline.scanRun.isScanning
+          ? __('Wait for the current operation to finish.', 'alt-context')
+          : null;
+  const startFaceOnlyScan = (): void => {
+    if (!developmentFaceScanAvailable || faceOnlyBlockedReason || faceOnlySubmitting.current) {
+      return;
+    }
+    faceOnlySubmitting.current = true;
+    setFaceOnly({
+      pending: true,
+      message: __('Running face-only recognition on the development API…', 'alt-context'),
+      error: '',
+    });
+    void pipeline.scanAndWait([...selectedMediaIds], { developmentFacesOnly: true }).then(
+      () => {
+        faceOnlySubmitting.current = false;
+        setFaceOnly({
+          pending: false,
+          message: __(
+            'Face scan finished. Check scan activity for per-image outcomes and review the face results. No descriptions were generated.',
+            'alt-context',
+          ),
+          error: '',
+        });
+      },
+      (error: unknown) => {
+        faceOnlySubmitting.current = false;
+        setFaceOnly({
+          pending: false,
+          message: '',
+          error: formatUserFacingError(
+            error,
+            __('Face scan did not finish. Check the scan activity before retrying.', 'alt-context'),
+          ),
+        });
+      },
+    );
+  };
+
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
   const detailStatusMessage = detailQuery.isLoading
@@ -445,13 +495,19 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
             errorMessage={identify.error ?? bulkDescribe.errorMessage}
-            remoteActionTitle={remoteGate.title}
-            remoteActionAriaDisabled={remoteGate['aria-disabled']}
+            remoteActionTitle={
+              faceOnly.pending || pipeline.scanRun.isScanning
+                ? __('Wait for face recognition to finish.', 'alt-context')
+                : remoteGate.title
+            }
+            remoteActionAriaDisabled={
+              remoteGate['aria-disabled'] ?? (faceOnly.pending || pipeline.scanRun.isScanning ? true : undefined)
+            }
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
             recognitionPolicy={recognitionPolicy}
             isIdentifying={identify.pending}
             onSubmit={() => {
-              if (isDescribeRunning) {
+              if (isDescribeRunning || faceOnly.pending || pipeline.scanRun.isScanning) {
                 return;
               }
               // WBUX6-W4-R-01: the container's own guard, named and unit-testable, so
@@ -498,6 +554,21 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             }}
             onDismiss={() => setDismissedRunId(terminalDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
+          />
+          <DevelopmentFaceScan
+            available={developmentFaceScanAvailable}
+            targetUrl={settingsQuery.data?.effective_target_url ?? ''}
+            selectedCount={selectedMediaIds.length}
+            blockedReason={faceOnlyBlockedReason}
+            pending={faceOnly.pending}
+            message={faceOnly.message}
+            error={faceOnly.error}
+            onScan={startFaceOnlyScan}
+            onCancel={
+              faceOnly.pending && pipeline.history.activeJobIds.length > 0
+                ? () => pipeline.cancelScan(pipeline.history.activeJobIds)
+                : undefined
+            }
           />
           {pendingRunIds
             .filter((runId) => runId !== (activeDescribeRunId ?? pendingRunIds[0]))

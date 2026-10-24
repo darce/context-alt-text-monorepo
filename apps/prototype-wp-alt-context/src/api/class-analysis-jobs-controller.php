@@ -221,6 +221,20 @@ class AnalysisJobsController extends AbstractRecognitionProxyController implemen
 	}
 
 	public function analyze_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$faces_only = $request->get_param( 'development_faces_only' );
+		if ( null !== $faces_only ) {
+			if ( true !== $faces_only ) {
+				return new WP_Error( 'invalid_development_faces_only', 'development_faces_only must be true.', array( 'status' => 400 ) );
+			}
+			if ( ! $this->can_manage_recognition() || ! $this->get_endpoint_resolver()->allows_development_face_scan() ) {
+				return new WP_Error(
+					'development_face_scan_unavailable',
+					__( 'Face-only developer scans require a development WordPress site and a supported remote development API.', 'alt-context' ),
+					array( 'status' => 403 )
+				);
+			}
+		}
+
 		if ( ! RecognitionPolicy::enabled() ) {
 			return new WP_Error(
 				'recognition_disabled',

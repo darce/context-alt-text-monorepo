@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
-import type { ClusterResponse } from '../api/recognition';
+import type { AnalyzeOptions, ClusterResponse } from '../api/recognition';
 import { isHttpStatus } from '../utils/appError';
 import { useSyncTrigger } from './useSyncTrigger';
 import { derivePipelinePhase, deriveLatestJobId, getLatestJobByType, type PipelinePhase } from './jobStateMachineUtils';
@@ -173,7 +173,8 @@ export const useJobStateMachine = ({
     retry: retryScanStream,
   } = useJobProgressStream(streamJobId, {
     resolveRequestId: resolveScanRequestId,
-    stallPhase: gpuState === GPU_STATE.STARTING || gpuState === GPU_STATE.WARMING ? STALL_PHASE.WARMING : STALL_PHASE.PROCESSING,
+    stallPhase:
+      gpuState === GPU_STATE.STARTING || gpuState === GPU_STATE.WARMING ? STALL_PHASE.WARMING : STALL_PHASE.PROCESSING,
   });
   const syncTrigger = useSyncTrigger(false);
 
@@ -216,14 +217,14 @@ export const useJobStateMachine = ({
   );
 
   const handleScan = useCallback(
-    (mediaIds: number[]) => {
+    (mediaIds: number[], options?: AnalyzeOptions) => {
       setProjectionSyncState('idle');
       setProjectionError(null);
       setProjectionSyncNonce(0);
       // A new run reclaims the cancel latch; leaving it set would suppress the stream for a
       // job id the backend legitimately re-issued.
       setCancelledStreamJobId(null);
-      scanMutation.mutate(mediaIds);
+      scanMutation.mutate(options?.developmentFacesOnly ? { mediaIds, developmentFacesOnly: true } : mediaIds);
     },
     [scanMutation],
   );

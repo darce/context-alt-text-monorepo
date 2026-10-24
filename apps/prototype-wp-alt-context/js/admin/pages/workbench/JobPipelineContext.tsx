@@ -1,3 +1,4 @@
+import type { AnalyzeOptions } from '../../api/recognition';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
@@ -61,9 +62,9 @@ export interface JobPipelineContextValue {
   scanRun: ScanRunViewModel;
   status: PipelineStatusModel;
   history: JobHistoryModel;
-  scan: (mediaIds: number[]) => void;
+  scan: (mediaIds: number[], options?: AnalyzeOptions) => void;
   /** Starts a scan and settles when that run reaches a terminal outcome. Bounded; never hangs. */
-  scanAndWait: (mediaIds: number[]) => Promise<void>;
+  scanAndWait: (mediaIds: number[], options?: AnalyzeOptions) => Promise<void>;
   cancelScan: (jobIds: string[]) => void;
   cluster: () => void;
   retryClustering: () => void;
@@ -202,7 +203,7 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, []);
 
   const scanAndWait = useCallback(
-    (mediaIds: number[]) =>
+    (mediaIds: number[], options?: AnalyzeOptions) =>
       new Promise<void>((resolve, reject) => {
         const superseded = scanWaiterRef.current;
         if (superseded) {
@@ -225,7 +226,11 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         scanWaiterRef.current = waiter;
         armWaiterDeadline(waiter, SCAN_START_TIMEOUT_MS);
         setScanError(null);
-        scan(mediaIds);
+        if (options) {
+          scan(mediaIds, options);
+        } else {
+          scan(mediaIds);
+        }
       }),
     [armWaiterDeadline, scan],
   );
@@ -280,7 +285,9 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   useEffect(() => {
     const waiter = scanWaiterRef.current;
-    if (!waiter) return;
+    if (!waiter) {
+      return;
+    }
     if (scanError) {
       scanWaiterRef.current = null;
       waiter.reject(new Error(scanError));
@@ -296,7 +303,9 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
       return;
     }
-    if (!waiter.started) return;
+    if (!waiter.started) {
+      return;
+    }
     scanWaiterRef.current = null;
     if (batchRunStatus?.terminal_state && batchRunStatus.completed_total === 0 && batchRunStatus.failed_total > 0) {
       waiter.reject(new Error(scanWaitFailedMessage()));

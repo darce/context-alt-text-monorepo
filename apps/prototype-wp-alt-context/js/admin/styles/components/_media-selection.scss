@@ -135,6 +135,27 @@
     border-radius: var(--acx-radius-md);
   }
 
+  &__developer-tools {
+    flex-basis: 100%;
+    border-top: 1px solid var(--acx-color-border);
+    padding-top: var(--acx-space-12);
+    font-size: var(--acx-text-sm);
+    overflow-wrap: anywhere;
+
+    summary {
+      cursor: pointer;
+      width: fit-content;
+    }
+
+    p {
+      margin-block: var(--acx-space-8);
+    }
+
+    [role='status']:empty {
+      margin: 0;
+    }
+  }
+
   &__bulk-describe {
     display: flex;
     flex-direction: column;

@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import type {
+  AnalyzeRequest,
   BatchAnalyzeResponse,
   BatchRunStatus,
   ClusterResponse,
@@ -241,7 +242,8 @@ describe('WorkbenchPage', () => {
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
-      const mutate = (mediaIds: number[]) => {
+      const mutate = (input: number[] | AnalyzeRequest) => {
+        const mediaIds = Array.isArray(input) ? input : input.mediaIds;
         // React Query 5.90+ callbacks have additional context arguments
         const mockContext = {} as never;
         options?.onMutate?.(mediaIds, mockContext);
@@ -269,7 +271,7 @@ describe('WorkbenchPage', () => {
         }
       };
 
-      return createMockMutation<BatchAnalyzeResponse, Error, number[]>({
+      return createMockMutation<BatchAnalyzeResponse, Error, number[] | AnalyzeRequest>({
         mutate,
       });
     });
@@ -593,8 +595,6 @@ describe('WorkbenchPage', () => {
     expect(screen.queryByRole('button', { name: 'Show media table' })).not.toBeInTheDocument();
   });
 
-
-
   it('clamps current page when total pages shrink', async () => {
     setupScanMutation('success');
     mockUseWorkbenchFilters.mockReturnValue(filtersMock({ currentPage: 2 }));
@@ -754,10 +754,7 @@ describe('WorkbenchPage', () => {
 
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   // E21-10 Slice 4 regression guard, ported to WBUX-5 S1c-2: the tab=confirm shim stays deleted.
@@ -784,10 +781,7 @@ describe('WorkbenchPage', () => {
     expect(screen.getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
     // Discriminating: shim is GONE — advanced stays closed, no tab UI exists.
-    expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('region', { name: 'Advanced: jobs & recovery' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
 
@@ -879,6 +873,5 @@ describe('WorkbenchPage', () => {
       // … while ?panel=conflicts independently opens the overlay (both restore together, NAV-11).
       expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
     });
-
   });
 });

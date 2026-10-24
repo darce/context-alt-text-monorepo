@@ -30,7 +30,12 @@ export interface RecentBatchRunsResponse {
   items: RecentBatchRunActivity[];
 }
 
-export interface AnalyzeRequest {
+export interface AnalyzeOptions {
+  /** One-shot developer command; PHP rechecks both environments for every batch. */
+  developmentFacesOnly?: boolean;
+}
+
+export interface AnalyzeRequest extends AnalyzeOptions {
   mediaIds: number[];
   sensitivity?: 'standard' | 'high';
   clusterId?: string;

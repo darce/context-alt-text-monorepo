@@ -134,6 +134,30 @@ final class RecognitionEndpointResolver {
 		return $this->resolve_recognition_source_source()['value'];
 	}
 
+	/**
+	 * The face-only developer command uses only the three mapped remote dev
+	 * deployments. This checks the effective target, including constant/filter
+	 * precedence; a localhost WordPress site alone grants no API capability.
+	 */
+	public function allows_development_face_scan(): bool {
+		if ( ! in_array( wp_get_environment_type(), array( 'local', 'development' ), true ) || 'service' !== $this->get_recognition_source() ) {
+			return false;
+		}
+
+		$url = $this->get_effective_base_url();
+		// Exact origins from scripts/deploy/recognition-service.sh. No suffix,
+		// path, credentials, arbitrary-port or unknown-environment inference.
+		return in_array(
+			rtrim( $url, '/' ),
+			array(
+				'https://dev.api.altcontext.com',
+				'https://fir.dev.api.altcontext.com',
+				'https://auraface.dev.altcontext.com',
+			),
+			true
+		);
+	}
+
 	public function get_effective_base_url(): string {
 		if ( 'local' === $this->get_recognition_source() ) {
 			return $this->resolve_local_url_source()['value'];

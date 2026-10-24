@@ -1,0 +1,28 @@
+{
+  "workbench": {
+    "exit_code": 0,
+    "findings": [],
+    "map_sha256": "b5a846e1b17bee32facfdc61ddbe99e7e40c05a78fe60deeb45610b6dee351c4"
+  },
+  "roster": {
+    "exit_code": 0,
+    "findings": [],
+    "map_sha256": "88dff5bf319db23dc47e010f0ba9bfba3d2b340055d7fa3f5b0dd1c44d03ae98"
+  },
+  "positive_control": {
+    "expected_rule": "INT-07",
+    "caught": true
+  },
+  "native_source_check": {
+    "workbench": {
+      "verified_files": 7,
+      "declared_states": 129
+    },
+    "roster": {
+      "verified_files": 7,
+      "declared_states": 94
+    },
+    "codemap_status": "unsupported; separate MCP source anchors supplied; declared runtime states are not acceptance"
+  },
+  "limitation": "Native pack reports canon_revision resume-20260912 and pack uxmap-critique/1. Exact currentCanon0.26.2 rows are independently included in canon-context; native proxy findings are necessary mapchecks, not source/runtime acceptance. Roster merge preview map intent is unverified source and excluded from first readability slice."
+}

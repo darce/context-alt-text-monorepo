@@ -1,0 +1,20 @@
+{
+  "source_baseline": "7dfc043bf245413854db4c4adb8d556f735cc0bf",
+  "plugin": "0.0.40",
+  "proposals_only": true,
+  "source_frontier_after_new_map_review": [
+    "GPU_STATUS",
+    "WB_CONTROL",
+    "ROSTER_EVIDENCE"
+  ],
+  "conditional_frontier_after_usage_owner_contract": [
+    "USAGE_READ_MODEL",
+    "USAGE_UI"
+  ],
+  "existing_repairs": "approved GPU/IDENTITY original subjects continue independently under gate1617",
+  "site_upgrade": "other session; not source authorprecedence",
+  "independent_contract_review": "remote Sol6.1xhigh before new geometry author; native critique necessary but insufficient",
+  "dispatch_performed": false,
+  "native_critique": "both exit0 with[] findings; activepack proved by INT07 positivecontrol",
+  "native_source_check": "all14 code_ref files verified; declaredstates notverified; codemapunsupported"
+}

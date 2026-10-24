@@ -1,0 +1,278 @@
+{
+  "task_ref": "UXREC-1",
+  "source_commit": "7dfc043bf245413854db4c4adb8d556f735cc0bf",
+  "findings": [
+    {
+      "finding_id": "UXA10033-SERVED-001",
+      "severity": "high",
+      "file_path": "apps/prototype-wp-alt-context/src/admin/class-menu.php",
+      "description": "At localhost10033 the authenticated browser serves admin-WgZWXGPO.js?ver=0.0.38 and retains Description Runs; disk plugin header is0.0.39/view14eb while published0.0.40/source7df already removes that submenu and redirects its old URL. Original symptoms cannot be closed against source or ZIP alone. Cause of served/disk divergence is unproved; repair exact-site artifact/PHP/asset binding and read back actual HTML/HTTP assets before recoding already integrated navigation.",
+      "details": {
+        "rules": [
+          "TEST-22",
+          "NAV-05"
+        ],
+        "evidence": [
+          "ux-audit-10033-20261024-workbench-1440.png",
+          "ux-audit-10033-20261024-description-runs.png"
+        ],
+        "acceptance": "Record actual site PHP/plugin version, manifest and served asset hashes on fresh and already-open pages; old history URL preserves fragment and reaches Workbench; submenu contains only distinct primary homes."
+      }
+    },
+    {
+      "finding_id": "UXA10033-WB-001",
+      "severity": "high",
+      "file_path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+      "description": "Live1440x1000 Workbench places Describe at y5567 under10 tallmedia rows; footer starts5502 while left warming hint begins1351. Selection, costly action and durable progress are not observable together. Keep one primary Describe N images beside selection/estimate and a persistent job-scoped progress/cancel/return-to-run surface; move pagination out of the action group. Preserve current primary-ownership rules and original tenant run/idempotency store.",
+      "details": {
+        "rules": [
+          "INT-05",
+          "PERC-01",
+          "INT-08",
+          "INT-10",
+          "INT-16"
+        ],
+        "acceptance": "At1440x1000 and719x960, 0/1/10 selection and loading/error/warming/running/terminal/cancel/reload states keep action and related status within the active viewport without covering rows, keyboard focus or live regions. No duplicate submit/run/credit effect."
+      }
+    },
+    {
+      "finding_id": "UXA10033-CONTROL-001",
+      "severity": "medium",
+      "file_path": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "description": "Live leftControl repeats Scan Media Queue description, no-face empty state, empty Review Suggestions controls, empty Recognition findings, further Run a scan prompts and Scan warm-up status while rightLibrary is the actual image-selection/action surface. Two-pane containers stretch5440px with the media list. Collapse empty secondary sections into one next-step; separate recognition findings from description-run status; keep selected-group context readable while browsing media.",
+      "details": {
+        "rules": [
+          "LAY-01",
+          "LAY-03",
+          "PERC-01"
+        ],
+        "acceptance": "One primary empty-state instruction; no enabled review actions with no work; selected face/group and image scopes remain explicit; panes retain useful height and keyboard scroll behavior without duplicate independent status pollers."
+      }
+    },
+    {
+      "finding_id": "UXA10033-ROSTER-001",
+      "severity": "medium",
+      "file_path": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx",
+      "description": "Source directory thumbnail is32px; avatar/name opens an existing person workspace and existing paginated Photos GET. User reports small evidence and unclear collection/curation path. Live exact site has0people so populated-state issue is source/user-supported, not visually reproduced. Increase preview legibility, make View photos/count an obvious stable-person link, and expose scoped correction actions in the existing workspace rather than adding another roster or media API.",
+      "details": {
+        "rules": [
+          "NAV-11",
+          "PERC-01",
+          "DATA-14"
+        ],
+        "acceptance": "Test proposed64\u201380px directory previews/96px detail header as design choices, not canon requirements. A populated fixture opens same-person media by stableID; wrong-association correction, rename-person, reassign, merge/split are distinct with real receipt/undo/pending/error states and survive reload/refetch; never dedupe by visible name."
+      }
+    },
+    {
+      "finding_id": "UXA10033-USAGE-001",
+      "severity": "high",
+      "file_path": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+      "description": "LiveSettings Description budget shows maximum attempts and attempts/success/failure0, but no authoritative account used/reserved/remaining/allowance/period/time. Workbench only estimates~Ncredits and separately displays GPU infrastructure cost. ADR014 says sitecap is not tenant balance and WP should show compact read-only balance+selected-run estimate beside Describe with one Usage & billing home. Source reserveslen(uniqueMedia); startedterminaljobs may commit reservation even failed/cancelled, so1creditpersuccessfuldescription is not established.",
+      "details": {
+        "rules": [
+          "INT-07",
+          "NAV-05",
+          "DATA-14"
+        ],
+        "acceptance": "Define/verify charging semantics against actual tenant ledger; distinguish estimate/reserved/used/released and localcap, unknown\u22600; same-id retry/polling/keyrotation do not add/reset allowance. Show timestamp/period and per-run debit/release link, no invented price/top-up/provider cutover. GPU cost shown as developer infrastructure info unless a customer contract actually charges it."
+      }
+    }
+  ],
+  "related_existing_findings": [
+    19714,
+    19852
+  ],
+  "prior_source_decisions": [
+    19337,
+    19602,
+    19640,
+    19645
+  ],
+  "semantic_reinjection": {
+    "ok": true,
+    "task_ref": "UXREC-1",
+    "status": "selected",
+    "skip_reason": null,
+    "embeddings_mode": "verified",
+    "semantic_degrade_reason": null,
+    "relevant_lines": [
+      "relevant:",
+      "- uxrec_retirement_cross_device_archive_resolved: Operator flags accumulating lanes/worktrees. Fresh audit20 UXREC rows represent19 unique checkouts:18 [decision:19025]",
+      "- uxrec_canonical_exact_cleanup_preview_source_pr\u2026: Installedcanonical plan_remote_sandboxes previewcompleted forONLY feature-uxrec-1-timeline-cabd2369, [decision:19055]",
+      "- Consume explicit effective jc552 Haiku joined-v\u2026: 1c e52908e6/29dd9806 confirms ACTIVATE_NOW canonical conditional_UX_VERIFY. [decision:19174]",
+      "- Rechecked blocker1254: admission not cleared ye\u2026: User requested continuewhenready. Native22:36:49j4c0a658c0efc9c7aa295 remainsQUEUED activefalse; [decision:18956]",
+      "- UXREC-1-D1-TIMELINE-01: The failed-default proposal does not specify how the two existing lists become the single attention [finding:19713]",
+      "- uxrec_timeline_transport_just_in_time_and_lane_\u2026: Materialized only /Volumes/Butter/WorkBay/uxrec-1-timeline at existingbranchb4c934c6 for imminent [decision:19043]",
+      "- uxrec_design_planning_r4_pass: Actual independent remoteSolxhighj7f5722dd9be237af3c3b readonlyPASS [decision:19000]",
+      "- uxrec_plan2_salvaged_for_independent_review: PLAN2je131dd7b2230e2da9f89 ended8 at1583s modelbound withoutJSON/commit. [decision:18932]"
+    ],
+    "semantic_reinjection": {
+      "anchor_sources": [
+        "visible_text"
+      ],
+      "chars_budget": 6500,
+      "chars_used": 1223,
+      "effective_config": {
+        "candidate_pool": 32,
+        "max_concepts": 8,
+        "max_redundancy": 0.92,
+        "max_score_drop": 0.2,
+        "min_score": 0.35,
+        "mmr_relevance_weight": 0.7,
+        "notify_allowance_chars": 220,
+        "refresh_budget_chars": 1500,
+        "snippet_chars": 120
+      },
+      "fallback_scope": null,
+      "model_id": "gte-base-en-v1.5",
+      "score_hi": 0.5981358289718628,
+      "score_lo": 0.5392178297042847,
+      "selected": [
+        {
+          "emitted_chars": 178,
+          "id": "19025",
+          "kind": "decision",
+          "label": "uxrec_retirement_cross_device_archive_resolved",
+          "score": 0.5981358289718628,
+          "snippet": "Operator flags accumulating lanes/worktrees. Fresh audit20 UXREC rows represent19 unique checkouts:18 [decision:19025]"
+        },
+        {
+          "emitted_chars": 170,
+          "id": "19055",
+          "kind": "decision",
+          "label": "uxrec_canonical_exact_cleanup_preview_source_pr\u2026",
+          "score": 0.5802633762359619,
+          "snippet": "Installedcanonical plan_remote_sandboxes previewcompleted forONLY feature-uxrec-1-timeline-cabd2369, [decision:19055]"
+        },
+        {
+          "emitted_chars": 145,
+          "id": "19174",
+          "kind": "decision",
+          "label": "Consume explicit effective jc552 Haiku joined-v\u2026",
+          "score": 0.5816943645477295,
+          "snippet": "1c e52908e6/29dd9806 confirms ACTIVATE_NOW canonical conditional_UX_VERIFY. [decision:19174]"
+        },
+        {
+          "emitted_chars": 166,
+          "id": "18956",
+          "kind": "decision",
+          "label": "Rechecked blocker1254: admission not cleared ye\u2026",
+          "score": 0.5693660974502563,
+          "snippet": "User requested continuewhenready. Native22:36:49j4c0a658c0efc9c7aa295 remainsQUEUED activefalse; [decision:18956]"
+        },
+        {
+          "emitted_chars": 142,
+          "id": "19713",
+          "kind": "finding",
+          "label": "UXREC-1-D1-TIMELINE-01",
+          "score": 0.5392178297042847,
+          "snippet": "The failed-default proposal does not specify how the two existing lists become the single attention [finding:19713]"
+        },
+        {
+          "emitted_chars": 167,
+          "id": "19043",
+          "kind": "decision",
+          "label": "uxrec_timeline_transport_just_in_time_and_lane_\u2026",
+          "score": 0.5940779447555542,
+          "snippet": "Materialized only /Volumes/Butter/WorkBay/uxrec-1-timeline at existingbranchb4c934c6 for imminent [decision:19043]"
+        },
+        {
+          "emitted_chars": 118,
+          "id": "19000",
+          "kind": "decision",
+          "label": "uxrec_design_planning_r4_pass",
+          "score": 0.5541297793388367,
+          "snippet": "Actual independent remoteSolxhighj7f5722dd9be237af3c3b readonlyPASS [decision:19000]"
+        },
+        {
+          "emitted_chars": 137,
+          "id": "18932",
+          "kind": "decision",
+          "label": "uxrec_plan2_salvaged_for_independent_review",
+          "score": 0.5558170080184937,
+          "snippet": "PLAN2je131dd7b2230e2da9f89 ended8 at1583s modelbound withoutJSON/commit. [decision:18932]"
+        }
+      ],
+      "skip_reason": null,
+      "status": "selected"
+    }
+  },
+  "codemap_symbols": [
+    {
+      "symbol": "WorkbenchPageContent",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "line": 87,
+      "mechanism": "Workbench control composition, shared primary ownership, current step derived from UI panel state"
+    },
+    {
+      "symbol": "useGpuStateToasts",
+      "file": "apps/prototype-wp-alt-context/js/admin/hooks/useGpuStateToasts.ts",
+      "line": 48,
+      "mechanism": "Edge dedupe; existing dormant no-run suppression; unconditional degraded review action matches prior19714"
+    },
+    {
+      "symbol": "commitRoutingFields",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+      "line": 605,
+      "mechanism": "Existing routing autosave; do not regress/reimplement"
+    },
+    {
+      "symbol": "DIRECTORY_THUMB_SIZE",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx",
+      "line": 31,
+      "value": 32
+    },
+    {
+      "symbol": "listPersonMedia",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx",
+      "line": 168,
+      "mechanism": "Existing stable-person-ID Photos GET"
+    },
+    {
+      "symbol": "PersonWorkspacePanel",
+      "file": "apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx",
+      "line": 755,
+      "mechanism": "Existing Photos grid; improve reuse and source correction"
+    },
+    {
+      "symbol": "Menu.register_menu",
+      "file": "apps/prototype-wp-alt-context/src/admin/class-menu.php",
+      "line": 49,
+      "mechanism": "Current code already culls duplicate Description Runs"
+    },
+    {
+      "symbol": "Menu.render_description_history_page",
+      "file": "apps/prototype-wp-alt-context/src/admin/class-menu.php",
+      "line": 108,
+      "mechanism": "Legacy redirect intentionally preserves fragment"
+    },
+    {
+      "symbol": "create_describe_run",
+      "file": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py",
+      "line": 615,
+      "mechanism": "Usage reservation cost_units=len(unique_media_ids)"
+    },
+    {
+      "symbol": "UsageSettlementService._describe_evidence",
+      "file": "apps/prototype-description-service/recognition/application/services/usage_settlement_service.py",
+      "line": 236,
+      "mechanism": "Terminal started run committed; never-picked failed/cancelled may release"
+    }
+  ],
+  "review_disconfirmers": [
+    "Served PHP/JS/manifest tuple disagrees with reviewed artifact",
+    "Action/progress hidden outside active viewport or keyboard focus obscured",
+    "Unknown/stale GPU implies CPU result or readiness",
+    "Review results CTA exists without actual completed items and valid run link",
+    "Same run resubmitted after navigation or credits charged again for same retry/poll",
+    "Site cap/counter rendered as authoritative account balance; unavailable displayed zero",
+    "Rename person used to repair one incorrect association; correction lost on refetch",
+    "New history menu duplicates Workbench or existing Photos API rebuilt"
+  ],
+  "source_vs_runtime": "These are source/map findings and live idle observations; populated roster and expensive workflow runtime acceptance remain separate.",
+  "transfer_contract": "Upload this immutable evidence packet and relevant exact canon/distilled excerpts to VM before reviewer/author dispatch; local /Volumes and /Users references are provenance, not assumed remote mounts.",
+  "models": "Implementation codex-remote gpt-6.1-sol high; 2nd defect dispatch claude-remote claude-opus-5-5 xhigh; merge/per-slice gate gpt-6.1-sol xhigh; later dispatches require LOUD canon proposal and prescribed alternation; no local fallback.",
+  "new_findings_embedding_receipt": "embedding-write-receipt.json",
+  "new_findings_mcp_readback": "embedding-readback.json",
+  "semantic_scope_note": "Broad reinjection returned historical workflow neighbors; these are advisory. Exact new findings and direct embedding readbacks are included explicitly so relevant current evidence is not lost."
+}

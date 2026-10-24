@@ -1,0 +1,13 @@
+{
+  "scope": "Proposal intent only. Existing runtime merge UI is not accepted by editing map metadata. Readability/View photos is a separate slice; source gap in undo preview, if observed by reviewer, retains a distinct follow-up.",
+  "resolutions": [
+    {
+      "finding": "INT-07 act-undo-person-merge",
+      "resolution": "Declare required pre-commit receipt preview naming exact restored entities/bindings; source must be separately verified."
+    },
+    {
+      "finding": "HAI-16 merge-preview",
+      "resolution": "max_candidates=2 for already selected survivor/loser comparison, separate bounded target selection if needed."
+    }
+  ]
+}

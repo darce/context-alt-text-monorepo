@@ -1,0 +1,1095 @@
+{
+  "map_ref": "workbench-2pane-audit-10033-proposal",
+  "codemap_status": "unsupported",
+  "item_count": 136,
+  "items": [
+    {
+      "pointer": "/screens/0/code_ref",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "status": "verified",
+      "kind": "file",
+      "detail": "",
+      "digest": "7819a95aa9f2a6ee8419f5df4f76d4dfce6e27f22c7f6741c5405939464852ae"
+    },
+    {
+      "pointer": "/screens/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/states/3",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/states/4",
+      "code_ref": "offline",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/0/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/0/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/0/states/3",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/1/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/1/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/1/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/1/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/2/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/3/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/3/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/3/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/3/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/4/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/0/zones/4/states/1",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/code_ref",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "status": "verified",
+      "kind": "file",
+      "detail": "",
+      "digest": "7819a95aa9f2a6ee8419f5df4f76d4dfce6e27f22c7f6741c5405939464852ae"
+    },
+    {
+      "pointer": "/screens/1/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/states/4",
+      "code_ref": "first_time",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/states/5",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/0/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/0/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/0/states/3",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/1/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/1/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/1/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/2/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/2/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/2/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/2/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/2/states/4",
+      "code_ref": "first_time",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/2/states/5",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/3/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/3/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/3/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/3/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/3/states/4",
+      "code_ref": "first_time",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/3/states/5",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/3/states/6",
+      "code_ref": "edge_input",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/4/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/4/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/4/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/1/zones/4/states/3",
+      "code_ref": "edge_input",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/code_ref",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+      "status": "verified",
+      "kind": "file",
+      "detail": "",
+      "digest": "94746e3a9b3fb6232e8b8ee7cd3fbcc276d466dc3fd909ddd4107dcc1b22dc44"
+    },
+    {
+      "pointer": "/screens/2/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/states/4",
+      "code_ref": "first_time",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/states/5",
+      "code_ref": "edge_input",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/0/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/0/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/1/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/1/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/1/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/1/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/1/states/4",
+      "code_ref": "first_time",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/1/states/5",
+      "code_ref": "edge_input",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/2/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/2/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/2/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/2/states/3",
+      "code_ref": "edge_input",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/3/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/3/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/3/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/3/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/4/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/4/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/4/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/4/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/4/states/4",
+      "code_ref": "offline",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/4/states/5",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/5/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/5/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/5/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/2/zones/5/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/code_ref",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx",
+      "status": "verified",
+      "kind": "file",
+      "detail": "",
+      "digest": "c7c78f6b321ceba2c60ce887c677ee240bb8cd466d3d2ee1e998015ec6297408"
+    },
+    {
+      "pointer": "/screens/3/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/0/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/0/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/0/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/1/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/1/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/1/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/1/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/2/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/2/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/2/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/3/zones/2/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/code_ref",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "status": "verified",
+      "kind": "file",
+      "detail": "",
+      "digest": "2d6ad5042de7599a7f55859e5624910fe13b93a1042d9850a014596fd775ae32"
+    },
+    {
+      "pointer": "/screens/4/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/0/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/0/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/0/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/1/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/1/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/1/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/4/zones/1/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/5/code_ref",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
+      "status": "verified",
+      "kind": "file",
+      "detail": "",
+      "digest": "0a1eb6e13ca7821f014ef0a8f8b4ae3d7f80a81f3eade18f7a9185abe1c4c6ff"
+    },
+    {
+      "pointer": "/screens/5/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/5/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/5/states/2",
+      "code_ref": "empty",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/5/states/3",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/5/zones/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/code_ref",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+      "status": "verified",
+      "kind": "file",
+      "detail": "",
+      "digest": "c870767f02d6c7d91f96a8c0a50abf6283be0d3ec1cf0fa8b42accacbe9294f5"
+    },
+    {
+      "pointer": "/screens/6/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/0/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/0/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/0/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/1/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/1/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/1/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/2/states/0",
+      "code_ref": "default",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/2/states/1",
+      "code_ref": "loading",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/2/states/2",
+      "code_ref": "error",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    },
+    {
+      "pointer": "/screens/6/zones/2/states/3",
+      "code_ref": "degraded",
+      "status": "declared",
+      "kind": "runtime_state",
+      "detail": "map cannot prove a UI state is implemented",
+      "digest": null
+    }
+  ]
+}

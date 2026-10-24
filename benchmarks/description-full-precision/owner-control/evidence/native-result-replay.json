@@ -1,0 +1,42 @@
+{
+  "command": "python3 -B inline native replay recorded in author tool transcript",
+  "test_source_sha256": "b2d41b63f988ae407f38a95149ba0e8c2878a05189ad897eb65a5d82de9e59f6",
+  "cases": [
+    {
+      "source": "sealed original",
+      "case": "full_saved_actual_view",
+      "json_bytes": 137715,
+      "wait_status": 18176,
+      "exit_code": 71,
+      "value_returned": false,
+      "returned_value_equal": false
+    },
+    {
+      "source": "sealed original",
+      "case": "small_cause_removal_control",
+      "json_bytes": 91,
+      "wait_status": 0,
+      "exit_code": 0,
+      "value_returned": true,
+      "returned_value_equal": true
+    },
+    {
+      "source": "corrected native source",
+      "case": "full_saved_actual_view",
+      "json_bytes": 137715,
+      "wait_status": 0,
+      "exit_code": 0,
+      "value_returned": true,
+      "returned_value_equal": true
+    },
+    {
+      "source": "corrected native source",
+      "case": "small_cause_removal_control",
+      "json_bytes": 91,
+      "wait_status": 0,
+      "exit_code": 0,
+      "value_returned": true,
+      "returned_value_equal": true
+    }
+  ]
+}

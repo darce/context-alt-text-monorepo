@@ -1,0 +1,9 @@
+test_actual_reconcile_auto_full_view_call_shape (__main__.NativeRealShapeTests.test_actual_reconcile_auto_full_view_call_shape) ... ok
+test_actual_reconcile_reads_real_shape_from_private_files (__main__.NativeRealShapeTests.test_actual_reconcile_reads_real_shape_from_private_files) ... ok
+test_full_saved_view_round_trips_without_projection (__main__.NativeRealShapeTests.test_full_saved_view_round_trips_without_projection) ... ok
+test_small_cause_removal_same_native_control (__main__.NativeRealShapeTests.test_small_cause_removal_same_native_control) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.369s
+
+OK

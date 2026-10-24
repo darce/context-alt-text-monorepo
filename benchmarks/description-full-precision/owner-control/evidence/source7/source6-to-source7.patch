@@ -1,0 +1,20 @@
+--- source6/owner-custody.py
++++ source7/owner-custody.py
+@@ -253,7 +253,7 @@
+    try: found,status=os.waitpid(pid,os.WNOHANG)
+    except InterruptedError: continue
+    except OSError: break  # unknown reaping state: retain guardian/fences
+-   if found: reaped=True; return
++   if found==pid: reaped=True; return
+    time.sleep(.02)
+   while True: time.sleep(1)  # unreaped owned worker: retain guardian/fences
+  def receive():
+@@ -278,7 +278,7 @@
+    if not reaped:
+     try: found,status=os.waitpid(pid,os.WNOHANG)
+     except InterruptedError: found=0
+-    if found: reaped=True
++    if found==pid: reaped=True
+    if reaped and eof: break
+    if not got: time.sleep(.02)
+   drain=True

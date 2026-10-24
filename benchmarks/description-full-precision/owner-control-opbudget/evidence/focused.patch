@@ -1,0 +1,74 @@
+diff --git a/benchmarks/description-full-precision/owner-control/owner-custody.py b/benchmarks/description-full-precision/owner-control/owner-custody.py
+index cf8240e..3c336d8 100644
+--- a/benchmarks/description-full-precision/owner-control/owner-custody.py
++++ b/benchmarks/description-full-precision/owner-control/owner-custody.py
+@@ -11,6 +11,7 @@ ENVS=('dev','dev-fir','prod','staging')
+ PIN='54f7bd837f20c24529ce3e1ea53e91a405b16234c62092890c22b507c149a2d9'
+ LOAD_PIN='0d08441a76a5f9f5c38ac32c3b4dd7956de07af3255fb31748bef36b5da26521'
+ MAX=1048576
++MAX_WINDOW_OPERATIONS=1024
+ 
+ def check(condition,message):
+  if not condition: raise RuntimeError(message)
+@@ -141,7 +142,7 @@ def view(paths,mode):
+ def known_candidates(wfd):
+  ops=subdir(wfd,'ops'); result={}
+  try:
+-  names=os.listdir(ops); check(len(names)<=32,'operation budget exhausted')
++  names=os.listdir(ops); check(len(names)<=MAX_WINDOW_OPERATIONS,'operation budget exhausted')
+   for name in names:
+    check(str(uuid.UUID(name))==name,'unexpected operation directory')
+    f=subdir(ops,name)
+diff --git a/benchmarks/description-full-precision/owner-control/owner-window.py b/benchmarks/description-full-precision/owner-control/owner-window.py
+index 939ee3a..7f01a16 100644
+--- a/benchmarks/description-full-precision/owner-control/owner-window.py
++++ b/benchmarks/description-full-precision/owner-control/owner-window.py
+@@ -44,22 +44,38 @@ print(json.dumps({'files':{n:base64.b64encode(b).decode() for n,b in files.items
+  status,view=c.native_job(lambda:c.view(paths,'inspect'),5); c.check(status==0 and view is not None,'read-only inspect unknown'); c.seal(wfd,'inspect.json',view)
+ 
+ def operation(wfd,w,action,previous):
+- op=str(uuid.uuid4()); ops=c.subdir(wfd,'ops'); ofd=c.subdir(ops,op,create=True); os.close(ops)
+- plan=dict(id=op,window=w['id'],action=action,previous=previous); c.seal(ofd,'intent.json',plan)
+- log=os.open('guardian.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=ofd)
+- try:
+-  child=subprocess.Popen([sys.executable,'-B',str(A/'owner-window.py'),'--guardian',w['path'],op],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,close_fds=True)
+-  # This is only launch diagnostics; native writer-stopped.json is proof.
+-  c.seal(ofd,'client-launch.json',dict(guardian_pid=child.pid,operation=op,window=w['id']))
+- finally: os.close(log)
+- deadline=time.monotonic()+35
++ c.check(action in ('start','stop','auto'),'unsupported operation')
++ ofd=None
+  try:
++  lock=c.lock_path(P(w['path'])/'window.lock',time.monotonic()+15)
++  try:
++   ops=c.subdir(wfd,'ops')
++   try:
++    c.known_candidates(wfd)  # Preserve validation of every retained directory/receipt.
++    # Every directory, including failed/pending custody, consumes one slot.
++    # START stops at 1022; STOP/AUTO share the final two cleanup slots.
++    # Neither cleanup action is guaranteed its own slot; no receipt is reused.
++    limit=c.MAX_WINDOW_OPERATIONS-(2 if action=='start' else 0)
++    c.check(len(os.listdir(ops))<limit,'operation budget exhausted; retain window custody')
++    op=str(uuid.uuid4()); ofd=c.subdir(ops,op,create=True)
++    plan=dict(id=op,window=w['id'],action=action,previous=previous); c.seal(ofd,'intent.json',plan)
++   finally: os.close(ops)
++  finally: c.unlock([lock])
++  # Release admission's window fence before the guardian acquires that fence.
++  log=os.open('guardian.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=ofd)
++  try:
++   child=subprocess.Popen([sys.executable,'-B',str(A/'owner-window.py'),'--guardian',w['path'],op],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,close_fds=True)
++   # This is only launch diagnostics; native writer-stopped.json is proof.
++   c.seal(ofd,'client-launch.json',dict(guardian_pid=child.pid,operation=op,window=w['id']))
++  finally: os.close(log)
++  deadline=time.monotonic()+35
+   while time.monotonic()<deadline:
+    try:
+     result=c.load_json(ofd,'result.json'); c.check(result['outcome']=='published','operation '+result['outcome']+'; retain custody'); return op
+    except FileNotFoundError: time.sleep(.1)
+   raise RuntimeError('client deadline; guardian/custody retained; reconcile exact window read-only')
+- finally: os.close(ofd)
++ finally:
++  if ofd is not None: os.close(ofd)
+ 
+ def reconciled(wfd):
+  deadline=time.monotonic()+30

@@ -1,0 +1,271 @@
+--- source6/test_native_transport.py
++++ source7/test_native_transport.py
+@@ -1,9 +1,10 @@
+-"""Offline tests of the actual installed native control, never a live CLI.
++"""Offline tests of the complete native source candidate, never a live CLI.
+ 
+ No pytest imports or service configuration. Implementations are compiled from
+ their complete source; only explicit test arguments select a sealed baseline,
+ the sealed source5 candidate or another subject for RED replay.
+ """
++import ast
+ import copy
+ import fcntl
+ import hashlib
+@@ -170,6 +171,21 @@
+         with mock.patch.object(self.c.os, "write", short_write):
+             self.assertEqual(self.run_owned(lambda: value), (0, value))
+ 
++    def test_interrupted_parent_read_and_wait_retry_without_losing_result(self):
++        parent = os.getpid()
++        real_read, real_wait = os.read, os.waitpid
++        interrupted = set()
++        def once(name, fn, *args):
++            if os.getpid() == parent and name not in interrupted:
++                interrupted.add(name)
++                raise InterruptedError()
++            return fn(*args)
++        with mock.patch.object(self.c.os, "read", lambda *a: once("read", real_read, *a)), \
++             mock.patch.object(self.c.os, "waitpid", lambda *a: once("wait", real_wait, *a)):
++            value = actual_view()
++            self.assertEqual(self.run_owned(lambda: value), (0, value))
++        self.assertEqual(interrupted, {"read", "wait"})
++
+     def test_zero_write_refuses_and_skips_after(self):
+         with tempfile.TemporaryDirectory() as tmp:
+             after = Path(tmp) / "after"
+@@ -366,6 +382,36 @@
+                 except OSError:
+                     pass
+ 
++    def test_wait_status_for_another_pid_is_not_owned_reaping_proof(self):
++        class Retained(BaseException):
++            pass
++        ticks = iter(range(100))
++        def sleep(seconds):
++            if seconds == 1:
++                raise Retained()
++        fds = []
++        real_pipe = os.pipe2
++        def pipe(flags):
++            pair = real_pipe(flags)
++            fds.extend(pair)
++            return pair
++        try:
++            with mock.patch.object(self.c.os, "fork", return_value=424242), \
++                 mock.patch.object(self.c.os, "pipe2", side_effect=pipe), \
++                 mock.patch.object(self.c.os, "waitpid", return_value=(424243, 0)), \
++                 mock.patch.object(self.c.os, "kill"), \
++                 mock.patch.object(self.c.time, "monotonic", side_effect=lambda: next(ticks)), \
++                 mock.patch.object(self.c.time, "sleep", side_effect=sleep):
++                with self.assertRaises(Retained):
++                    self.c.native_job(lambda: None, 0)
++                os.fstat(fds[0])
++        finally:
++            for fd in fds:
++                try:
++                    os.close(fd)
++                except OSError:
++                    pass
++
+     def test_fork_failure_closes_all_allocated_pipes(self):
+         fds = []
+         original_pipe = os.pipe2
+@@ -505,7 +551,17 @@
+         status, value = self.deliver(forged(b'"' + b"x" * (self.c.MAX - 1) + b'"'))
+         self.assertIsNone(value)
+ 
+-    def run_guardian(self, written_hook):
++    def test_complete_proof_cannot_make_malformed_json_usable(self):
++        for body in (b'{"broken":', b'{}{}', b'\xff', b'NaN', b'Infinity'):
++            with self.subTest(body=body):
++                def malformed(stream):
++                    tag = stream[len(PREFIX_PAYLOAD):-40]
++                    return body + tag + len(body).to_bytes(8, "big") + hashlib.sha256(body).digest()
++                status, value = self.deliver(malformed)
++                self.assertEqual(status, 0)
++                self.assertIsNone(value)
++
++    def run_guardian(self, written_hook, replace_persisted=False):
+         """Actual guardian, fences, native_job, view and receipts; fake writer only."""
+         c = self.c
+         class Retained(BaseException):
+@@ -534,6 +590,8 @@
+             owned = dict(id=str(uuid.UUID(int=4)), path=str(window))
+             def hook(stage, candidate):
+                 if stage == "written":
++                    if replace_persisted:
++                        (runtime / "prod/gpu-intent.json").write_text('{"foreign":true}')
+                     written_hook()
+             handlers = {s: signal.getsignal(s) for s in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)}
+             wfd = os.open(window, os.O_RDONLY | os.O_DIRECTORY)
+@@ -589,6 +647,30 @@
+                 self.assertEqual(receipts["publication.json"], receipts["candidate.json"])
+                 self.assertEqual(persisted, receipts["candidate.json"])
+ 
++    def test_guardian_after_timeout_reaches_persisted_byte_comparison(self):
++        # Keep the actual guardian's 12 s writer deadline. Bypass only the
++        # test's retain-loop escape so the child really stalls and is killed.
++        real_sleep = time.sleep
++        outcome, receipts, held, persisted = self.run_guardian(lambda: real_sleep(20))
++        self.assertEqual(outcome, "returned")
++        self.assertEqual(held, [])
++        stopped = receipts["writer-stopped.json"]
++        self.assertEqual(os.waitstatus_to_exitcode(stopped["wait_status"]), -signal.SIGKILL)
++        self.assertTrue(stopped["native_reaped"] and stopped["native_publish_completed"])
++        self.assertEqual(receipts["result.json"]["outcome"], "published")
++        self.assertEqual(receipts["publication.json"], persisted)
++        self.assertEqual(persisted, receipts["candidate.json"])
++
++    def test_guardian_complete_marker_still_requires_persisted_candidate(self):
++        outcome, receipts, held, persisted = self.run_guardian(lambda: None, replace_persisted=True)
++        self.assertEqual(outcome, "retained")
++        self.assertTrue(held)
++        self.assertTrue(receipts["writer-stopped.json"]["native_publish_completed"])
++        self.assertIn("unknown.json", receipts)
++        self.assertNotIn("result.json", receipts)
++        self.assertNotIn("publication.json", receipts)
++        self.assertNotEqual(persisted, receipts["candidate.json"])
++
+ 
+ class AuthorityPreservationTests(unittest.TestCase):
+     def setUp(self):
+@@ -654,23 +736,115 @@
+             self.c.guard(returned, self.previous, self.known, self.previous["requested_by"], "stop")
+ 
+ 
++def verify_production_scope(custody, client, reference="source5-owner-custody.py"):
++    """A owns native_job; declared sibling B owns known_candidates/operation.
++
++    The only additive global slot is new, literal positive integer constants
++    <=1024, consumed exclusively by B's two functions. Existing globals (MAX,
++    pins, imports), every other function/class and all signatures stay fixed.
++    This recognizes B's constant names from actual uses, without allowing a
++    wildcard function exemption or requiring B's source in A's workspace.
++    """
++    sources = {"custody": custody, "client": client}
++    originals = {"custody": (ROOT / "fixtures" / reference).read_text(),
++                 "client": (ROOT / "fixtures/source5-owner-window.py").read_text()}
++    regions = {"custody": {"native_job", "known_candidates"}, "client": {"operation"}}
++    sibling = {"custody": {"known_candidates"}, "client": {"operation"}}
++    trees = {key: ast.parse(text) for key, text in sources.items()}
++    bases = {key: ast.parse(text) for key, text in originals.items()}
++    additions = {key: [] for key in sources}
++    constants = set()
++    for key, tree in trees.items():
++        existing = {n.id for n in ast.walk(bases[key]) if isinstance(n, ast.Name)}
++        for node in tree.body:
++            if (isinstance(node, ast.Assign) and len(node.targets) == 1
++                    and isinstance(node.targets[0], ast.Name)
++                    and node.targets[0].id not in existing):
++                name = node.targets[0].id
++                assert key == "custody", "new constants belong to custody budget scope"
++                assert name.isupper() and name not in constants, "undeclared constant"
++                assert (isinstance(node.value, ast.Constant) and type(node.value.value) is int
++                        and 0 < node.value.value <= 1024), "budget constant must be bounded literal"
++                constants.add(name)
++                additions[key].append(node)
++    used = set()
++    for key, tree in trees.items():
++        for node in tree.body:
++            if node in additions[key]:
++                continue
++            references = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
++            references |= {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)}
++            found = references & constants
++            if found:
++                assert isinstance(node, ast.FunctionDef) and node.name in sibling[key], \
++                    "budget constant escaped declared sibling functions"
++                used |= found
++    assert used == constants, "unused budget constant"
++
++    def normalized(text, tree, key, new=False):
++        lines = text.splitlines(keepends=True)
++        spans = []
++        for node in tree.body:
++            if isinstance(node, ast.FunctionDef) and node.name in regions[key]:
++                spans.append((node.lineno - 1, node.end_lineno, f"<body:{node.name}>\n"))
++        if new:
++            for node in additions[key]:
++                start = node.lineno - 1
++                # New constant documentation belongs to the same narrow slot.
++                while start and lines[start - 1].lstrip().startswith("#"):
++                    start -= 1
++                spans.append((start, node.end_lineno, ""))
++        for start, end, replacement in sorted(spans, reverse=True):
++            lines[start:end] = [replacement]
++        return "".join(line for line in lines if line.strip())
++
++    for key, tree in trees.items():
++        for name in regions[key]:
++            old = next(n for n in bases[key].body if isinstance(n, ast.FunctionDef) and n.name == name)
++            new = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
++            assert len(new) == 1, "missing/duplicate declared function"
++            for field in ("args", "decorator_list", "returns", "type_comment"):
++                left, right = getattr(old, field), getattr(new[0], field)
++                assert (ast.dump(left) if isinstance(left, ast.AST) else left) == \
++                       (ast.dump(right) if isinstance(right, ast.AST) else right), "function interface changed"
++        assert normalized(originals[key], bases[key], key) == normalized(sources[key], tree, key, True), \
++            "production bytes outside declared regions changed"
++    return sorted(constants)
++
++
+ class SourceCustodyTests(unittest.TestCase):
+-    def test_only_native_job_bytes_changed_in_installed_script(self):
+-        old = (ROOT / "fixtures/original-owner-custody.py").read_bytes()
+-        new = (ROOT / "owner-custody.py").read_bytes()
+-        self.assertEqual(old.split(b"def native_job(", 1)[0],
+-                         new.split(b"def native_job(", 1)[0])
+-        self.assertEqual(old.split(b"\ndef guardian(", 1)[1],
+-                         new.split(b"\ndef guardian(", 1)[1])
+-
+-    def test_sealed_source5_differs_from_candidate_only_in_native_job(self):
++    def test_only_declared_production_regions_changed(self):
++        for reference in ("original-owner-custody.py", "source5-owner-custody.py"):
++            verify_production_scope((ROOT / "owner-custody.py").read_text(),
++                                    (ROOT / "owner-window.py").read_text(), reference)
++
++    def test_scope_verifier_allows_only_declared_sibling_budget_regions(self):
++        custody = (ROOT / "fixtures/source5-owner-custody.py").read_text()
++        client = (ROOT / "fixtures/source5-owner-window.py").read_text()
++        # In-memory scope probe, never copied into the production tree.
++        combined = custody.replace("MAX=1048576", "MAX=1048576\nOPERATION_LIMIT=1024\nCLEANUP_RESERVE=4")
++        combined = combined.replace("len(names)<=32", "len(names)<=OPERATION_LIMIT")
++        budget_client = client.replace("def operation(wfd,w,action,previous):",
++                                      "def operation(wfd,w,action,previous):\n c.check(c.CLEANUP_RESERVE<c.OPERATION_LIMIT,'budget')")
++        self.assertEqual(verify_production_scope(combined, budget_client),
++                         ["CLEANUP_RESERVE", "OPERATION_LIMIT"])
++        for bad, bad_client in ((combined.replace("MAX=1048576", "MAX=2097152"), budget_client),
++                                (combined.replace("def guard(v,previous,known,actor,mode):",
++                                                  "def guard(v,previous,known,actor,mode):\n return 0"), budget_client),
++                                (combined.replace("OPERATION_LIMIT=1024", "OPERATION_LIMIT=999999"), budget_client),
++                                (combined + "\ndef unrelated(): return OPERATION_LIMIT\n", budget_client),
++                                (combined, budget_client.replace("def reconciled(wfd):", "def reconciled(wfd):\n return None"))):
++            with self.subTest(bad=hashlib.sha256((bad + bad_client).encode()).hexdigest()):
++                with self.assertRaises(AssertionError):
++                    verify_production_scope(bad, bad_client)
++
++    def test_sealed_source5_inputs_match_expected_hashes(self):
+         source5 = (ROOT / "fixtures/source5-owner-custody.py").read_bytes()
+-        new = (ROOT / "owner-custody.py").read_bytes()
+         self.assertEqual(hashlib.sha256(source5).hexdigest(), SOURCE5_SHA)
+-        self.assertEqual(source5.split(b"def native_job(", 1)[0],
+-                         new.split(b"def native_job(", 1)[0])
+-        self.assertEqual(source5.split(b"\ndef guardian(", 1)[1],
+-                         new.split(b"\ndef guardian(", 1)[1])
++        # A's actual tree leaves B's regions untouched; the composition-aware
++        # check above still verifies all other production function bytes.
++        self.assertEqual(hashlib.sha256((ROOT / "fixtures/source5-owner-window.py").read_bytes()).hexdigest(),
++                         "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600")
+ 
+     def test_sealed_fixture_and_original_script_match_manifest(self):
+         raw = (ROOT / "fixtures/input-manifest.json").read_bytes()
+@@ -683,6 +857,8 @@
+                 path = ROOT / "fixtures/actual-view.json"
+             elif name == "baseline/owner-custody.py":
+                 path = ROOT / "fixtures/original-owner-custody.py"
++            elif name == "baseline/owner-window.py":
++                path = ROOT / "fixtures/source5-owner-window.py"
+             elif name.startswith("baseline/"):
+                 path = ROOT / Path(name).name
+             else:

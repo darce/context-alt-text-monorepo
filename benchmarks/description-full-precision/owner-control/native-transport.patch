@@ -1,0 +1,131 @@
+--- a/owner-custody.py
++++ b/owner-custody.py
+@@ -204,3 +204,6 @@
+- """One owned fork; reaping proves this native worker cannot publish later.
+-
+- Returns (wait status, JSON result). No IPC payload is accepted as authority.
++ """One owned fork; bounded full JSON evidence, never IPC authority.
++
++ Stream in 64 KiB blocks within the existing MAX custody-receipt byte budget,
++ then a finish proof (tag, exact length, SHA-256) BEFORE after(). A result needs
++ that proof as the final frame at EOF after positive reaping; the actual wait
++ status is returned separately, so after() failure/timeout cannot discard it.
+@@ -209,3 +212,15 @@
+- r,w=os.pipe2(os.O_CLOEXEC)
+- gate_r,gate_w=os.pipe2(os.O_CLOEXEC) if before else (None,None)
+- pid=os.fork()
++ def write_all(fd,data):
++  remaining=memoryview(data)
++  while remaining:
++   try: n=os.write(fd,remaining)
++   except InterruptedError: continue
++   check(n>0,'native result short write'); remaining=remaining[n:]
++ TAG=b'\0native-result-complete\0'; PROOF=len(TAG)+8+32; LIMIT=MAX+PROOF
++ r,w=os.pipe2(os.O_CLOEXEC); gate_r=gate_w=None
++ try:
++  if before: gate_r,gate_w=os.pipe2(os.O_CLOEXEC)
++  deadline=time.monotonic()+seconds; pid=os.fork()
++ except BaseException:
++  for fd in (r,w,gate_r,gate_w):
++   if fd is not None: os.close(fd)
++  raise
+@@ -219,2 +234,9 @@
+-   value=fn(); encoded=json.dumps(value).encode(); check(len(encoded)<60000,'job result budget')
+-   os.write(w,encoded)
++   total=0; pending=bytearray(); digest=hashlib.sha256()
++   for part in json.JSONEncoder(allow_nan=False).iterencode(fn()):
++    encoded=part.encode(); total+=len(encoded); check(total<=MAX,'job result budget')
++    digest.update(encoded); pending.extend(encoded)
++    while len(pending)>=65536:
++     write_all(w,pending[:65536]); del pending[:65536]
++   # Finish proof follows the whole value and precedes after(): a later callback
++   # failure or kill cannot unmake it, and a cut stream cannot carry it.
++   pending.extend(TAG+total.to_bytes(8,'big')+digest.digest()); write_all(w,pending)
+@@ -224,28 +246,5 @@
+- os.close(w)
+- if before:
+-  os.close(gate_r)
+-  try:
+-   before(pid)  # immutable native identity must be retained BEFORE effects
+-   os.write(gate_w,b'1')
+-  except BaseException:
+-   os.kill(pid,signal.SIGKILL)
+-   while True:
+-    found,_=os.waitpid(pid,os.WNOHANG)
+-    if found: break
+-    time.sleep(.02)
+-   raise
+-  finally: os.close(gate_w)
+- os.set_blocking(r,False); deadline=time.monotonic()+seconds; status=None; raw=b''
+- def drain():
+-  nonlocal raw
+-  while True:
+-   try: q=os.read(r,60001-len(raw))
+-   except BlockingIOError: return
+-   if not q: return
+-   raw+=q; check(len(raw)<=60000,'job result budget')
+- while time.monotonic()<deadline:
+-  drain(); found,status=os.waitpid(pid,os.WNOHANG)
+-  if found: break
+-  time.sleep(.02)
+- else:
+-  os.kill(pid,signal.SIGKILL)
++ os.close(w); status=None; reaped=False; raw=bytearray(); eof=False; drain=False
++ def stop_and_reap():
++  nonlocal status,reaped
++  try: os.kill(pid,signal.SIGKILL)
++  except OSError: pass  # still require positive waitpid proof below
+@@ -254,2 +253,4 @@
+-   found,status=os.waitpid(pid,os.WNOHANG)
+-   if found: break
++   try: found,status=os.waitpid(pid,os.WNOHANG)
++   except InterruptedError: continue
++   except OSError: break  # unknown reaping state: retain guardian/fences
++   if found==pid: reaped=True; return
+@@ -257,4 +258,42 @@
+-  else:
+-   while True: time.sleep(1)  # unreaped owned worker: retain guardian/fences
+- drain(); os.close(r)
+- return status,(json.loads(raw) if raw else None)
++  while True: time.sleep(1)  # unreaped owned worker: retain guardian/fences
++ def receive():
++  # One nonblocking read into the bounded buffer; False when nothing is ready.
++  nonlocal eof
++  try: q=os.read(r,min(65536,LIMIT+1-len(raw)))
++  except BlockingIOError: return False
++  except InterruptedError: return True  # retry at once
++  if not q: eof=True
++  raw.extend(q); return bool(q)
++ try:
++  if before:
++   os.close(gate_r)
++   try:
++    before(pid)  # immutable native identity must be retained BEFORE effects
++    check(time.monotonic()<deadline,'native job deadline before release')
++    write_all(gate_w,b'1')
++   finally: os.close(gate_w)
++  os.set_blocking(r,False)
++  while time.monotonic()<deadline and len(raw)<=LIMIT:
++   got=receive()
++   if not reaped:
++    try: found,status=os.waitpid(pid,os.WNOHANG)
++    except InterruptedError: found=0
++    if found==pid: reaped=True
++   if reaped and eof: break
++   if not got: time.sleep(.02)
++  drain=True
++ finally:
++  if not reaped: stop_and_reap()  # returns only with positive waitpid proof
++  try:
++   # Reaped: the worker can write no more. Collect what it delivered before a
++   # failed/timed-out after(); nonblocking and bounded, EOF still required.
++   while drain and not eof and len(raw)<=LIMIT and receive(): pass
++  finally: os.close(r)
++ # Completion is the worker's finish proof at EOF, never exit status or JSON
++ # syntax: a cut stream (even a valid number/string prefix) cannot carry it.
++ value=None; body,proof=raw[:-PROOF],raw[-PROOF:]
++ if eof and PROOF<len(raw)<=LIMIT and proof==TAG+len(body).to_bytes(8,'big')+hashlib.sha256(body).digest():
++  def reject_constant(text): raise ValueError('non-finite native JSON')
++  try: value=json.loads(body,parse_constant=reject_constant)
++  except (ValueError,UnicodeError,RecursionError): pass
++ return status,value

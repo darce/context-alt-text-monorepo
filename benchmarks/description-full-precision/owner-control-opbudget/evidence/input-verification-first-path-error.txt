@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-opbudget-r1-19858cbf13b740eea796bad0bad3f5a8/workspace/benchmarks/description-full-precision/owner-control-opbudget/verify_inputs.py", line 38, in <module>
+    main()
+  File "/home/gate/bakeoff-next-model-gpu-owner-opbudget-r1-19858cbf13b740eea796bad0bad3f5a8/workspace/benchmarks/description-full-precision/owner-control-opbudget/verify_inputs.py", line 23, in main
+    controls = next(row for row in json.loads(joined.read_bytes())['candidate_and_controls'] if row['role'] != 'candidate')
+                                              ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1021, in read_bytes
+    with self.open(mode='rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1015, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/gate/references/joined-manifest.json'

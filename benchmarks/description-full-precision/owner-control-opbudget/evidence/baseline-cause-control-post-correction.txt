@@ -1,0 +1,42 @@
+F.F.                                                                     [100%]
+=================================== FAILURES ===================================
+________ OperationBudgetTests.test_actual_33_snapshot_retained_readback ________
+
+self = <benchmarks.description-full-precision.owner-control-opbudget.test_operation_budget.OperationBudgetTests testMethod=test_actual_33_snapshot_retained_readback>
+
+    def test_actual_33_snapshot_retained_readback(self):
+        before = self.w.payloads()
+        self.assertEqual(len(os.listdir(self.w.ops)), 33)
+>       self.assertEqual(len(self.c.known_candidates(self.w.fd)), 31)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py:157: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-opbudget/fixtures/source5-owner-custody.py:144: in known_candidates
+    names=os.listdir(ops); check(len(names)<=32,'operation budget exhausted')
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+condition = False, message = 'operation budget exhausted'
+
+    def check(condition,message):
+>    if not condition: raise RuntimeError(message)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E    RuntimeError: operation budget exhausted
+
+benchmarks/description-full-precision/owner-control-opbudget/fixtures/source5-owner-custody.py:16: RuntimeError
+______ OperationBudgetTests.test_start_refused_before_custody_or_guardian ______
+
+self = <benchmarks.description-full-precision.owner-control-opbudget.test_operation_budget.OperationBudgetTests testMethod=test_start_refused_before_custody_or_guardian>
+
+    def test_start_refused_before_custody_or_guardian(self):
+        self.w.fill(1022)
+        before, names = self.w.payloads(), os.listdir(self.w.ops)
+>       with self.assertRaisesRegex(RuntimeError, 'budget exhausted'):
+E       AssertionError: RuntimeError not raised
+
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py:224: AssertionError
+=========================== short test summary info ============================
+FAILED benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_actual_33_snapshot_retained_readback
+FAILED benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_start_refused_before_custody_or_guardian
+2 failed, 2 passed, 11 deselected in 10.76s

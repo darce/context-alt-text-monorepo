@@ -1,0 +1,52 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/gate/description-import-environment-20261023/venv/bin/python3
+rootdir: /home/gate
+collecting ... collected 28 items / 15 deselected / 13 selected
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_full_actual_roundtrip_preserves_every_field FAILED [  7%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_small_control PASSED [ 15%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_real_reconcile_delivers_full_guard_input FAILED [ 23%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_before_identity_then_effect_then_after PASSED [ 30%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_before_refusal_prevents_effect_and_reaps PASSED [ 38%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_timeout_reaps_before_return PASSED [ 46%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_timeout_retains_completion_and_reaps PASSED [ 53%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_failure_retains_result_and_nonzero_status PASSED [ 61%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_function_failure_has_no_result_or_after PASSED [ 69%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_unserializable_failure_has_no_result_or_after PASSED [ 76%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_abrupt_exit_is_reaped_and_not_success PASSED [ 84%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_foreign_publication_survives_transport_and_is_refused PASSED [ 92%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_authority_conflict_survives_transport_and_is_refused PASSED [100%]
+
+=================================== FAILURES ===================================
+__________ test_candidate_full_actual_roundtrip_preserves_every_field __________
+
+    def test_candidate_full_actual_roundtrip_preserves_every_field():
+>       assert_full_acceptance(probe(candidate_path(), "full"))
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:481: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+report = {'authority_equal': False, 'case': 'full', 'deferred_equal': False, 'elapsed_seconds': 0.022753720986656845, ...}
+
+    def assert_full_acceptance(report):
+        assert report["encoded_input_bytes"] == 137715
+>       assert report["wait_status"] == 0, "137715-byte full actual view must survive native transport"
+E       AssertionError: 137715-byte full actual view must survive native transport
+E       assert 18176 == 0
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:363: AssertionError
+___________ test_candidate_real_reconcile_delivers_full_guard_input ____________
+
+    def test_candidate_real_reconcile_delivers_full_guard_input():
+        r = probe(candidate_path(), "reconcile")
+        assert r["native_seconds"] == [5] and r["native_reaped"]
+>       assert r.get("selected_expected") and r.get("guard_full") and r["guard_called"]
+E       AssertionError: assert (None)
+E        +  where None = <built-in method get of dict object at 0xe6605e0105c0>('selected_expected')
+E        +    where <built-in method get of dict object at 0xe6605e0105c0> = {'case': 'reconcile', 'elapsed_seconds': 0.023550483980216086, 'exception': 'reconciliation read unknown', 'guard_called': False, ...}.get
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:492: AssertionError
+=========================== short test summary info ============================
+FAILED ../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_full_actual_roundtrip_preserves_every_field
+FAILED ../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_real_reconcile_delivers_full_guard_input
+================= 2 failed, 11 passed, 15 deselected in 2.39s ==================

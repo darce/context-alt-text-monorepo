@@ -1,0 +1,10 @@
+{
+  "manifest_sha256": "6038b6e69ddfb87248bcd44a320cf749a0e19d2088a69220d95042e925f9e123",
+  "verified_files": 64,
+  "seed": "callback-source6-partial",
+  "seed_owner_custody_sha256": "426c3fe3e2530c298b10f091a36eb071f3e857cbc85bd5fbe85a0ddbb3bbc39f",
+  "source6_seed_head": "8e275c8ccb45c47d3276b527ed0cee163ce3c768",
+  "source6_archive_sha256": "327fa8fc0cb377bb9a42a4933eedd8f85faa25afb3240655844642b12809a4c9",
+  "source6_exit": 124,
+  "source6_capacity_exhausted": false
+}

@@ -1,0 +1,124 @@
+{
+  "codemap": {
+    "content": [
+      {
+        "type": "text",
+        "text": "results_refs: 2  (cols: id prefix)\n  0 description-owner-native-ipc-r5-e1b7.benchmarks.description-full-precision.owner-control.owner-custody.\n  1 benchmarks/description-full-precision/owner-control/owner-custody.py\nresults_ref_rule: @N+suffix=prefix+suffix\nresults: 4  (cols: qn label file lines in out)\n  @0+guardian Function @1+ 287-349 0 15\n  description-owner-native-ipc-r5-e1b7.benchmarks.description-full-precision.owner-control.owner-window.inspect Function benchmarks/description-full-precision/owner-control/owner-window.py 30-44 1 6\n  @0+native_job Function @1+ 203-285 2 3\n  @0+reconcile Function @1+ 359-383 0 8\ntotal: 4\nreturned: 4\nhas_more: false\ntruncated: false\n"
+      }
+    ],
+    "isError": false
+  },
+  "semantic": {
+    "content": [],
+    "structuredContent": {
+      "ok": true,
+      "task_ref": "MAINT-LEXICON-EXTRACTION-20261022",
+      "status": "selected",
+      "skip_reason": null,
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null,
+      "relevant_lines": [
+        "relevant:",
+        "- codex_use_same_backend_vm_only_source_carrier_a\u2026: All native managed attempts terminalpre-author (diskfloor/inspectionregistry/transientledger); [decision:19636]",
+        "- All six source groups independently PASS; corre\u2026: ACCOUNTING-R4-GATE1 PASS source71b1d159:27independenttests,10unchangedrepro [decision:19469]",
+        "- native_route_discovery_unblocked_with_attested_\u2026: Native-route remote plan2fd6baedf1b1a3ed63f042f5635ec41d2cd7aed1 completed, full77file [decision:19275]",
+        "- codex_materialize_two_remote_disjoint_ipc_lanes\u2026: Fresh preflights allow codex-remote Sol61XHIGH sourcepass5 and Sol61HIGH independenttestfirstpass [decision:19629]",
+        "- codex_ui_candidate_tuple_r2_ack_and_owner_ipc_f\u2026: Read cmuxc487... as coordination, not operator deployment authorization. Verified packet-r2 [decision:19621]",
+        "- codex_verify_previous_projection_fix_unadopted_\u2026: Operator asked if last wave already fixed oversized startup history. Verified ONNX/gte-base-en-v1.5 [decision:19625]",
+        "- Admit one fresh bounded overlay Sol61xhigh revi\u2026: Previous review failed capacity10:16:40 and is fullcustody/nativeempty/closed0. Same source285d5056 [decision:19446]",
+        "- GENUINE-IMPORT669cb3a9 independently REVISE: un\u2026: Gate exit0/clean/no edits, source_sha669cb3a9 retained. Actual genuine imports and5scopedtests PASS, [decision:19503]"
+      ],
+      "semantic_reinjection": {
+        "anchor_sources": [
+          "visible_text"
+        ],
+        "chars_budget": 6500,
+        "chars_used": 1310,
+        "effective_config": {
+          "candidate_pool": 32,
+          "max_concepts": 8,
+          "max_redundancy": 0.92,
+          "max_score_drop": 0.2,
+          "min_score": 0.35,
+          "mmr_relevance_weight": 0.7,
+          "notify_allowance_chars": 220,
+          "refresh_budget_chars": 1500,
+          "snippet_chars": 120
+        },
+        "fallback_scope": null,
+        "model_id": "gte-base-en-v1.5",
+        "score_hi": 0.6700355410575867,
+        "score_lo": 0.5879095792770386,
+        "selected": [
+          {
+            "emitted_chars": 173,
+            "id": "19636",
+            "kind": "decision",
+            "label": "codex_use_same_backend_vm_only_source_carrier_a\u2026",
+            "score": 0.6700355410575867,
+            "snippet": "All native managed attempts terminalpre-author (diskfloor/inspectionregistry/transientledger); [decision:19636]"
+          },
+          {
+            "emitted_chars": 145,
+            "id": "19469",
+            "kind": "decision",
+            "label": "All six source groups independently PASS; corre\u2026",
+            "score": 0.614632248878479,
+            "snippet": "ACCOUNTING-R4-GATE1 PASS source71b1d159:27independenttests,10unchangedrepro [decision:19469]"
+          },
+          {
+            "emitted_chars": 156,
+            "id": "19275",
+            "kind": "decision",
+            "label": "native_route_discovery_unblocked_with_attested_\u2026",
+            "score": 0.6329867243766785,
+            "snippet": "Native-route remote plan2fd6baedf1b1a3ed63f042f5635ec41d2cd7aed1 completed, full77file [decision:19275]"
+          },
+          {
+            "emitted_chars": 167,
+            "id": "19629",
+            "kind": "decision",
+            "label": "codex_materialize_two_remote_disjoint_ipc_lanes\u2026",
+            "score": 0.6464112997055054,
+            "snippet": "Fresh preflights allow codex-remote Sol61XHIGH sourcepass5 and Sol61HIGH independenttestfirstpass [decision:19629]"
+          },
+          {
+            "emitted_chars": 161,
+            "id": "19621",
+            "kind": "decision",
+            "label": "codex_ui_candidate_tuple_r2_ack_and_owner_ipc_f\u2026",
+            "score": 0.610750138759613,
+            "snippet": "Read cmuxc487... as coordination, not operator deployment authorization. Verified packet-r2 [decision:19621]"
+          },
+          {
+            "emitted_chars": 169,
+            "id": "19625",
+            "kind": "decision",
+            "label": "codex_verify_previous_projection_fix_unadopted_\u2026",
+            "score": 0.6185740232467651,
+            "snippet": "Operator asked if last wave already fixed oversized startup history. Verified ONNX/gte-base-en-v1.5 [decision:19625]"
+          },
+          {
+            "emitted_chars": 169,
+            "id": "19446",
+            "kind": "decision",
+            "label": "Admit one fresh bounded overlay Sol61xhigh revi\u2026",
+            "score": 0.5879095792770386,
+            "snippet": "Previous review failed capacity10:16:40 and is fullcustody/nativeempty/closed0. Same source285d5056 [decision:19446]"
+          },
+          {
+            "emitted_chars": 170,
+            "id": "19503",
+            "kind": "decision",
+            "label": "GENUINE-IMPORT669cb3a9 independently REVISE: un\u2026",
+            "score": 0.5988578796386719,
+            "snippet": "Gate exit0/clean/no edits, source_sha669cb3a9 retained. Actual genuine imports and5scopedtests PASS, [decision:19503]"
+          }
+        ],
+        "skip_reason": null,
+        "status": "selected"
+      }
+    },
+    "isError": false
+  }
+}

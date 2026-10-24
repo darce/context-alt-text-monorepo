@@ -1,0 +1,117 @@
+{
+  "finding": "DW-IPC-RECOVERY-G1-01-R1",
+  "source_family": "B3 operation-budget test verifier; not callback source8",
+  "seed": {
+    "source_commit": "a2bc6f7ac7e4a2247579383dab504902bd352c2c",
+    "manifest_sha256": "6e75bf64d55c5afb17c513c7b30f28c53e1a9e1b1c7b1a8fecabe296c5edce30",
+    "files_verified_before_copy": 136,
+    "seed_commit": "441993addd1085cc1d7279bfe4dddfa714d7608d"
+  },
+  "accepted_pin_fixture": {
+    "supplied_path": "/home/gate/bakeoff-next-model-gpu-owner-opbudget-source3-85ef4389766f458ca3f160e1d0a701a9/references/accepted-source7/candidate-scripts.json",
+    "destination": "fixtures/accepted-source7-candidate-scripts.json",
+    "sha256": "8af18937914f632d2cadac962c23c40945a3d016a607b062e2e44b04a6d06b88",
+    "expected_sha256_from_existing_64_file_fixture": "8af18937914f632d2cadac962c23c40945a3d016a607b062e2e44b04a6d06b88",
+    "commit": "3a680fc622c41f0fb303b27275226280bd40fda9",
+    "full_custody_sha256": "1d409dd0e946dff16a11f4902afe48d14cc59c7005cdada70bd3575ae8d577b6",
+    "exact_supplied_bytes": true,
+    "pin_count": 7,
+    "cross_checked_against": "COMPOSE-PREPIN-CORRECTION.json actual_source7_pins_from_verified_full_custody"
+  },
+  "change": "Verify accepted A7 pin bytes against existing A7 manifest, require exact key-set equality before existing two-B-pin and non-B value checks; all existing statements retained.",
+  "negative_controls": {
+    "method": "ScopeAndCauseTests.test_composed_scope_rejects_script_pin_tampering",
+    "target": "ScopeAndCauseTests.test_declared_regions_only_composed_against_accepted_source7",
+    "seam": "Only Path.read_bytes for actual candidate-scripts.json is replaced in memory; no inputs modified.",
+    "cases": [
+      "remove guest-read.sh",
+      "remove all five non-B pins",
+      "add README.md with its actual correct hash",
+      "change retained guest-read.sh hash to zero"
+    ],
+    "red_evidence": "red.txt",
+    "red_exit_code": 1,
+    "red_observation": "All three missing/extra-key mutants were accepted, producing AssertionError not raised; wrong retained hash was rejected."
+  },
+  "scope": {
+    "unchanged_outside_B": 109,
+    "prior_files": 136,
+    "only_modified_prior_file": "benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py",
+    "all_26_other_prior_B_files_unchanged": true,
+    "both_named_scopes_and_16_existing_tamper_controls_AST_unchanged": true,
+    "all_7_product_scripts_and_45_independent_643a_controls_unchanged": true,
+    "all_original_RED_and_evidence_unchanged": true
+  },
+  "canon": {
+    "version": "0.26.2",
+    "sealed_manifest_sha256": "0b32ba981c5a7a5d1db59990e46f39982ee407f06a85eb45aaf3d54e3c059bf6",
+    "all_11_files_hash_verified": true,
+    "rules": [
+      "TEST-15",
+      "TEST-33",
+      "DBG-11",
+      "GRPH-14",
+      "GRPH-32"
+    ],
+    "application": "Observed RED before the fix; exact accepted source lineage provides the baseline; one narrow requested-change recheck after the unfiltered suite.",
+    "prior_read": [
+      "OPBUDGET-ADJ2.result.json",
+      "OPBUDGET-ADJ2-GATE1.result.json",
+      "OPBUDGET-ADJ2-GATE1.named-pin-negatives.json",
+      "RECOVERY-GATE1.result.json",
+      "RECOVERY-ONNX-REINJECTION-20261024.json",
+      "COMPOSE-PREPIN-CORRECTION.json",
+      "source7 R6/R7/B1 proposals"
+    ],
+    "semantic_reinjection": "Supplied gte-base-en-v1.5 artifact reports verified, semantic_degrade_reason=null; no new semantic lookup or fallback."
+  },
+  "limitations": [
+    "Test-only change. No install, root, GPU, controller, keeper, live client, network, service or key actions.",
+    "Prior production acceptance is reused; no broadened production review.",
+    "No live quality, full120 or service-handoff116 claim.",
+    "No delegation or further dispatch."
+  ],
+  "results": {
+    "red": {
+      "exit_code": 1,
+      "unexpected_acceptances": 3,
+      "retained_hash_rejection_subtests": 1
+    },
+    "unfiltered": {
+      "exit_code": 0,
+      "passed": 81,
+      "subtests_passed": 61,
+      "pytest_seconds": 98.61
+    },
+    "narrow_recheck": {
+      "exit_code": 0,
+      "passed": 4,
+      "subtests_passed": 20,
+      "pytest_seconds": 0.4
+    }
+  },
+  "post_test_verification": {
+    "prior_files": 136,
+    "unchanged_prior_files": 135,
+    "unchanged_outside_B": 109,
+    "unchanged_other_B_files": 26,
+    "exact_added_file_set": [
+      "benchmarks/description-full-precision/owner-control-opbudget/evidence/source3/recheck-run.json",
+      "benchmarks/description-full-precision/owner-control-opbudget/evidence/source3/recheck.txt",
+      "benchmarks/description-full-precision/owner-control-opbudget/evidence/source3/red-run.json",
+      "benchmarks/description-full-precision/owner-control-opbudget/evidence/source3/red.txt",
+      "benchmarks/description-full-precision/owner-control-opbudget/evidence/source3/unfiltered-run.json",
+      "benchmarks/description-full-precision/owner-control-opbudget/evidence/source3/unfiltered.txt",
+      "benchmarks/description-full-precision/owner-control-opbudget/evidence/source3/verification.json",
+      "benchmarks/description-full-precision/owner-control-opbudget/fixtures/accepted-source7-candidate-scripts.json"
+    ],
+    "no_missing_files": true,
+    "all_14_original_composed_verifier_statements_retained_in_order": true,
+    "actual_test_file_sha256": "95d4baacb9cc94584827bc246b282c50da99eb5f2382b73a817331eb3ef00e52",
+    "log_sha256": {
+      "recheck.txt": "55b7c7a34793054800243e437dd51f7035fd3b9d459263e90096d148a34000d2",
+      "red.txt": "e812b43ccca8b1a070e9a431a3aaa9d2b55be443518282f40fe8f588cae92dcf",
+      "unfiltered.txt": "9541dad3d2fe8ffef607b5c6200957f1cb2c3680fa50a2475efaa721b4431d90"
+    }
+  }
+}

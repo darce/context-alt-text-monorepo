@@ -1,0 +1,71 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/gate/description-import-environment-20261023/venv/bin/python3
+rootdir: /home/gate
+collecting ... collected 28 items / 26 deselected / 2 selected
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_timeout_retains_completion_and_reaps FAILED [ 50%]
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_failure_retains_result_and_nonzero_status FAILED [100%]
+
+=================================== FAILURES ===================================
+__________ test_candidate_after_timeout_retains_completion_and_reaps ___________
+
+    def test_candidate_after_timeout_retains_completion_and_reaps():
+>       assert_contract(candidate_path(), "after_timeout")
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:508: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-opbudget-r1-19858cbf13b740eea796bad0bad3f5a8/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py')
+case = 'after_timeout'
+
+    def assert_contract(path, case):
+        r = probe(path, case)
+        assert r["native_reaped"]
+        if case == "callbacks":
+            assert r["wait_status"] == 0 and r["equal"]
+            assert r["events"] == ["fn", "after"]
+        elif case == "before_failure":
+            assert r["exception"] == "admission refused" and r["events"] == []
+        elif case == "timeout":
+            assert r["exit_code"] == -signal.SIGKILL and r["value_is_none"]
+            assert r["events"] == [] and r["elapsed_seconds"] < 2
+        elif case == "after_timeout":
+>           assert r["exit_code"] == -signal.SIGKILL and r["equal"]
+E           assert (-9 == -<Signals.SIGKILL: 9> and False)
+E            +  where <Signals.SIGKILL: 9> = signal.SIGKILL
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:382: AssertionError
+________ test_candidate_after_failure_retains_result_and_nonzero_status ________
+
+    def test_candidate_after_failure_retains_result_and_nonzero_status():
+>       assert_contract(candidate_path(), "after_failure")
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:512: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/home/gate/bakeoff-next-model-gpu-owner-opbudget-r1-19858cbf13b740eea796bad0bad3f5a8/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py')
+case = 'after_failure'
+
+    def assert_contract(path, case):
+        r = probe(path, case)
+        assert r["native_reaped"]
+        if case == "callbacks":
+            assert r["wait_status"] == 0 and r["equal"]
+            assert r["events"] == ["fn", "after"]
+        elif case == "before_failure":
+            assert r["exception"] == "admission refused" and r["events"] == []
+        elif case == "timeout":
+            assert r["exit_code"] == -signal.SIGKILL and r["value_is_none"]
+            assert r["events"] == [] and r["elapsed_seconds"] < 2
+        elif case == "after_timeout":
+            assert r["exit_code"] == -signal.SIGKILL and r["equal"]
+            assert r["events"] == ["fn"] and r["elapsed_seconds"] < 2
+        elif case == "after_failure":
+>           assert r["exit_code"] == 71 and r["equal"]
+E           assert (71 == 71 and False)
+
+../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:385: AssertionError
+=========================== short test summary info ============================
+FAILED ../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_timeout_retains_completion_and_reaps
+FAILED ../../description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_after_failure_retains_result_and_nonzero_status
+======================= 2 failed, 26 deselected in 0.60s =======================

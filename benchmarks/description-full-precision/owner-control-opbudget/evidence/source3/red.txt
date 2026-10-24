@@ -1,0 +1,79 @@
+.                                                                    [100%]
+=================================== FAILURES ===================================
+_ ScopeAndCauseTests.test_composed_scope_rejects_script_pin_tampering (tamper='removed-guest-read') _
+
+self = <owner-control-opbudget.test_operation_budget.ScopeAndCauseTests testMethod=test_composed_scope_rejects_script_pin_tampering>
+
+    def test_composed_scope_rejects_script_pin_tampering(self):
+        pins_path = CONTROL / 'candidate-scripts.json'
+        pins = json.loads(pins_path.read_bytes())
+        tampered = {
+            'removed-guest-read': {name: digest for name, digest in pins.items() if name != 'guest-read.sh'},
+            'removed-all-five-non-B': {name: digest for name, digest in pins.items() if name in ('owner-custody.py', 'owner-window.py')},
+            'added-README': dict(pins, **{'README.md': sha256((CONTROL / 'README.md').read_bytes())}),
+            'changed-guest-read-hash': dict(pins, **{'guest-read.sh': '0' * 64}),
+        }
+        read_bytes = Path.read_bytes
+        for label, changed in tampered.items():
+            with self.subTest(tamper=label):
+                data = json.dumps(changed).encode()
+                def candidate_pins_only(path):
+                    return data if path == pins_path else read_bytes(path)
+                with mock.patch.object(Path, 'read_bytes', candidate_pins_only):
+>                   with self.assertRaises(AssertionError):
+E                   AssertionError: AssertionError not raised
+
+owner-control-opbudget/test_operation_budget.py:423: AssertionError
+_ ScopeAndCauseTests.test_composed_scope_rejects_script_pin_tampering (tamper='removed-all-five-non-B') _
+
+self = <owner-control-opbudget.test_operation_budget.ScopeAndCauseTests testMethod=test_composed_scope_rejects_script_pin_tampering>
+
+    def test_composed_scope_rejects_script_pin_tampering(self):
+        pins_path = CONTROL / 'candidate-scripts.json'
+        pins = json.loads(pins_path.read_bytes())
+        tampered = {
+            'removed-guest-read': {name: digest for name, digest in pins.items() if name != 'guest-read.sh'},
+            'removed-all-five-non-B': {name: digest for name, digest in pins.items() if name in ('owner-custody.py', 'owner-window.py')},
+            'added-README': dict(pins, **{'README.md': sha256((CONTROL / 'README.md').read_bytes())}),
+            'changed-guest-read-hash': dict(pins, **{'guest-read.sh': '0' * 64}),
+        }
+        read_bytes = Path.read_bytes
+        for label, changed in tampered.items():
+            with self.subTest(tamper=label):
+                data = json.dumps(changed).encode()
+                def candidate_pins_only(path):
+                    return data if path == pins_path else read_bytes(path)
+                with mock.patch.object(Path, 'read_bytes', candidate_pins_only):
+>                   with self.assertRaises(AssertionError):
+E                   AssertionError: AssertionError not raised
+
+owner-control-opbudget/test_operation_budget.py:423: AssertionError
+_ ScopeAndCauseTests.test_composed_scope_rejects_script_pin_tampering (tamper='added-README') _
+
+self = <owner-control-opbudget.test_operation_budget.ScopeAndCauseTests testMethod=test_composed_scope_rejects_script_pin_tampering>
+
+    def test_composed_scope_rejects_script_pin_tampering(self):
+        pins_path = CONTROL / 'candidate-scripts.json'
+        pins = json.loads(pins_path.read_bytes())
+        tampered = {
+            'removed-guest-read': {name: digest for name, digest in pins.items() if name != 'guest-read.sh'},
+            'removed-all-five-non-B': {name: digest for name, digest in pins.items() if name in ('owner-custody.py', 'owner-window.py')},
+            'added-README': dict(pins, **{'README.md': sha256((CONTROL / 'README.md').read_bytes())}),
+            'changed-guest-read-hash': dict(pins, **{'guest-read.sh': '0' * 64}),
+        }
+        read_bytes = Path.read_bytes
+        for label, changed in tampered.items():
+            with self.subTest(tamper=label):
+                data = json.dumps(changed).encode()
+                def candidate_pins_only(path):
+                    return data if path == pins_path else read_bytes(path)
+                with mock.patch.object(Path, 'read_bytes', candidate_pins_only):
+>                   with self.assertRaises(AssertionError):
+E                   AssertionError: AssertionError not raised
+
+owner-control-opbudget/test_operation_budget.py:423: AssertionError
+=========================== short test summary info ============================
+SUBFAILED(tamper='removed-guest-read') owner-control-opbudget/test_operation_budget.py::ScopeAndCauseTests::test_composed_scope_rejects_script_pin_tampering
+SUBFAILED(tamper='removed-all-five-non-B') owner-control-opbudget/test_operation_budget.py::ScopeAndCauseTests::test_composed_scope_rejects_script_pin_tampering
+SUBFAILED(tamper='added-README') owner-control-opbudget/test_operation_budget.py::ScopeAndCauseTests::test_composed_scope_rejects_script_pin_tampering
+3 failed, 1 passed, 15 deselected, 1 subtests passed in 0.27s

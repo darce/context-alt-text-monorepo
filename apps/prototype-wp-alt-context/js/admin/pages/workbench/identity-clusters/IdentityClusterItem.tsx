@@ -20,6 +20,8 @@ import { useClusterEditState } from './useClusterEditState';
 import { useClusterMutations } from './useClusterMutations';
 import { useClusterSuggestions } from './useClusterSuggestions';
 import { ClusterPreview } from './ClusterPreview';
+import { RepeatedRegionEvidenceDisclosure } from './RepeatedRegionEvidenceDisclosure';
+import type { RepeatedRegionEvidenceView } from './repeatedRegionEvidence';
 import { ClusterActions } from './ClusterActions';
 import { ClusterEditForm } from './ClusterEditForm';
 import { MergeUndoBanner } from './MergeUndoBanner';
@@ -60,6 +62,7 @@ interface IdentityClusterItemProps {
   inlineSuggestionMatch?: ProjectedSuggestion;
   /** Pending labeled-survivor twin chip (HAI-11 propose, never auto-apply). */
   mergeTwin?: IdentityClusterMergeTwin;
+  repeatedRegionEvidence?: RepeatedRegionEvidenceView;
 }
 
 /**
@@ -77,6 +80,7 @@ export const IdentityClusterItem = ({
   canMutate = true,
   inlineSuggestionMatch,
   mergeTwin,
+  repeatedRegionEvidence,
 }: IdentityClusterItemProps): React.JSX.Element => {
   // Compute derived values
   const derivedLabel = React.useMemo(
@@ -520,6 +524,9 @@ export const IdentityClusterItem = ({
                 onReject={startEditing}
                 isPending={mutations.isPending}
               />
+            )}
+            {repeatedRegionEvidence && (
+              <RepeatedRegionEvidenceDisclosure view={repeatedRegionEvidence} />
             )}
           </>
         ) : (

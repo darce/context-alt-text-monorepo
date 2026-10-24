@@ -1,0 +1,6 @@
+{
+  "authored_source_docs_diff_check_exit_code": 0,
+  "all_artifacts_diff_check_exit_code": 2,
+  "all_artifacts_diff_check_note": "Whitespace warnings are confined to retained raw pytest failure logs and unchanged original-distilled reference text. Bytes intentionally retained; authored test/source docs check is clean.",
+  "all_artifacts_diff_check_log_sha256": "6d37edaa02108f13fd4625347d8f8b48b827cb3055c3071df485bb55ebe1fb06"
+}

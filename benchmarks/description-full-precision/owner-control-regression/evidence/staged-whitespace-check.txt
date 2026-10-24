@@ -1,0 +1,122 @@
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:9: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:481: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:10: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:29: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:485: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:30: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:49: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:490: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:50: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:69: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:496: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:70: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:89: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:500: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:90: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:109: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:504: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:110: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:129: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:508: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:130: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:149: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:512: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:150: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:169: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:516: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:170: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:189: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:520: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:190: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:209: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:524: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:210: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:229: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:528: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:230: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:249: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:532: 
+benchmarks/description-full-precision/owner-control-regression/evidence/missing-candidate.txt:250: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/original-as-candidate.txt:8: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:481: 
+benchmarks/description-full-precision/owner-control-regression/evidence/original-as-candidate.txt:9: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:9: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:458: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:10: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:29: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:462: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:30: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:49: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:467: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:50: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:69: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:473: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:70: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:89: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:477: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:90: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:109: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:481: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:110: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:129: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:485: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:130: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:149: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:489: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:150: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:169: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:493: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:170: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:189: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:497: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:190: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:209: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:501: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:210: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:229: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:505: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:230: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:249: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:509: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/missing-candidate.txt:250: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/original-as-candidate.txt:8: trailing whitespace.
++benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:458: 
+benchmarks/description-full-precision/owner-control-regression/evidence/pre-loader-portability/original-as-candidate.txt:9: trailing whitespace.
++_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+benchmarks/description-full-precision/owner-control-regression/fixtures/original-distilled/engineering/implementing-effective-code-reviews.md:22: trailing whitespace.
++Read fully: frontmatter (identity, edition, chapter list), ch-1, ch-2, ch-4, ch-6, ch-11, conclusions.  
+benchmarks/description-full-precision/owner-control-regression/fixtures/original-distilled/engineering/implementing-effective-code-reviews.md:23: trailing whitespace.
++Deep skim (openings, summaries, review checklists, key mechanism sections): ch-3, ch-5, ch-7, ch-8, ch-9, ch-10.  
+benchmarks/description-full-precision/owner-control-regression/fixtures/original-distilled/engineering/implementing-effective-code-reviews.md:115: trailing whitespace.
++- Before: project, reviewer, tech contact, developers, **scope**, iteration number, dates, **goal**, input docs  
+benchmarks/description-full-precision/owner-control-regression/fixtures/original-distilled/engineering/implementing-effective-code-reviews.md:116: trailing whitespace.
++- During: defect counts, impact ranks  
+benchmarks/description-full-precision/owner-control-regression/fixtures/original-distilled/engineering/implementing-effective-code-reviews.md:117: trailing whitespace.
++- After: detailed improvements, trade-offs/suggestions, prioritization input  

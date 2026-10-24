@@ -200,6 +200,22 @@ describe('JobPipelineContext.scanAndWait', () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it('passes the development command through to the existing scan machine', async () => {
+    const { rerender } = render(<PipelineTree running={false} />);
+    let promise!: Promise<void>;
+    act(() => {
+      promise = pipeline().scanAndWait([101], { developmentFacesOnly: true });
+    });
+    expect(machine.scan).toHaveBeenCalledWith([101], { developmentFacesOnly: true });
+    act(() => {
+      rerender(<PipelineTree running={true} />);
+    });
+    act(() => {
+      rerender(<PipelineTree running={false} />);
+    });
+    await expect(promise).resolves.toBeUndefined();
+  });
+
   it('rejects with onScanError message', async () => {
     render(<PipelineTree running={false} />);
 

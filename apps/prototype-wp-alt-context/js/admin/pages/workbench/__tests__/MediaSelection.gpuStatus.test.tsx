@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as gpuApi from '../../../api/gpuApi';
@@ -15,34 +15,38 @@ import {
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
 import { MediaSelection } from '../MediaSelection';
 
-const { bulkDescribeState, fetchGpuStatusMock, fetchSettingsMock } = vi.hoisted(() => ({
-  bulkDescribeState: {
-    submit: { isPending: false, mutate: vi.fn(), error: null },
-    cancel: { isPending: false, mutate: vi.fn(), error: null },
-    progress: {
-      status: null,
-      run: null,
-      isTerminal: false,
-      isError: false,
-      isPolling: false,
-      etaSeconds: null,
-      progressFraction: 0,
-      gpuState: 'unknown',
-      startupId: null,
-      isWarming: false,
-      timing: null,
-      retry: vi.fn(),
-      error: null,
-      stalledForSeconds: null,
-      isFrozen: false,
-    },
-    runId: null,
-    activeRunId: null,
-    unreadableMediaIds: [],
-  } as Record<string, any>,
-  fetchGpuStatusMock: vi.fn(),
-  fetchSettingsMock: vi.fn(),
-}));
+const { bulkDescribeState, fetchGpuStatusMock, fetchSettingsMock, scanAndWaitMock, mediaSelection } = vi.hoisted(
+  () => ({
+    bulkDescribeState: {
+      submit: { isPending: false, mutate: vi.fn(), error: null },
+      cancel: { isPending: false, mutate: vi.fn(), error: null },
+      progress: {
+        status: null,
+        run: null,
+        isTerminal: false,
+        isError: false,
+        isPolling: false,
+        etaSeconds: null,
+        progressFraction: 0,
+        gpuState: 'unknown',
+        startupId: null,
+        isWarming: false,
+        timing: null,
+        retry: vi.fn(),
+        error: null,
+        stalledForSeconds: null,
+        isFrozen: false,
+      },
+      runId: null,
+      activeRunId: null,
+      unreadableMediaIds: [],
+    } as Record<string, any>,
+    fetchGpuStatusMock: vi.fn(),
+    fetchSettingsMock: vi.fn(),
+    scanAndWaitMock: vi.fn(),
+    mediaSelection: {} as Record<string, boolean>,
+  }),
+);
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -92,7 +96,7 @@ vi.mock('../MediaSelectionTableBody', () => ({
 vi.mock('../WorkbenchMediaContext', () => ({
   useWorkbenchMediaContext: () => ({
     selection: {
-      selection: {},
+      selection: mediaSelection,
       selectedMedia: [],
       toggleRow: vi.fn(),
       toggleAll: vi.fn(),
@@ -146,7 +150,7 @@ vi.mock('../WorkbenchMediaContext', () => ({
 vi.mock('../JobPipelineContext', () => ({
   useJobPipeline: () => ({
     scanRun: { isScanning: false, progress: null },
-    scanAndWait: vi.fn(),
+    scanAndWait: scanAndWaitMock,
     cancelScan: vi.fn(),
     history: { activeJobIds: [] },
   }),
@@ -197,6 +201,10 @@ const renderSelection = (queryClient = new QueryClient({ defaultOptions: { queri
 describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    for (const key of Object.keys(mediaSelection)) {
+      delete mediaSelection[key];
+    }
+    scanAndWaitMock.mockResolvedValue(undefined);
     fetchSettingsMock.mockResolvedValue({ recognition_enabled: false });
     Object.assign(bulkDescribeState, {
       submit: { isPending: false, mutate: vi.fn(), error: null },
@@ -227,6 +235,66 @@ describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
   afterEach(() => {
     cleanup();
   });
+
+  it('runs selected faces through recognition only after explicit developer disclosure', async () => {
+    mediaSelection['101'] = true;
+    fetchSettingsMock.mockResolvedValue({
+      recognition_enabled: true,
+      development_face_scan_available: true,
+      effective_target_url: 'https://fir.dev.api.altcontext.com',
+    });
+    renderSelection();
+    fireEvent.click(await screen.findByText('Developer tools'));
+    fireEvent.click(screen.getByRole('button', { name: 'Run FIR pipeline (CPU)' }));
+    await waitFor(() => expect(scanAndWaitMock).toHaveBeenCalledWith([101], { developmentFacesOnly: true }));
+    await waitFor(() => expect(screen.getByText(/Face scan finished/)).toBeInTheDocument());
+    expect(bulkDescribeState.submit.mutate).not.toHaveBeenCalled();
+    expect(fetchGpuStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('holds repeat FIR and Describe clicks while the face-only run is pending', async () => {
+    mediaSelection['101'] = true;
+    scanAndWaitMock.mockImplementation(() => new Promise<void>(() => {}));
+    fetchSettingsMock.mockResolvedValue({ recognition_enabled: true, development_face_scan_available: true });
+    renderSelection();
+    fireEvent.click(await screen.findByText('Developer tools'));
+    const runButton = screen.getByRole('button', { name: 'Run FIR pipeline (CPU)' });
+    fireEvent.click(runButton);
+    fireEvent.click(runButton);
+    const describeButton = screen.getByRole('button', { name: 'Describe 1 selected' });
+    expect(describeButton).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(describeButton);
+    expect(scanAndWaitMock).toHaveBeenCalledTimes(1);
+    expect(bulkDescribeState.submit.mutate).not.toHaveBeenCalled();
+  });
+
+  it('keeps a rejected FIR run visible without starting a description', async () => {
+    mediaSelection['101'] = true;
+    scanAndWaitMock.mockRejectedValue(new Error('FIR service unavailable'));
+    fetchSettingsMock.mockResolvedValue({ recognition_enabled: true, development_face_scan_available: true });
+    renderSelection();
+    fireEvent.click(await screen.findByText('Developer tools'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Run FIR pipeline (CPU)' }));
+      await Promise.resolve();
+    });
+    expect(scanAndWaitMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Face scan did not finish. Check the scan activity before retrying.',
+    );
+    expect(bulkDescribeState.submit.mutate).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Face scan finished/)).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, false, 'true'])(
+    'hides developer tools unless the server capability is true (%s)',
+    async (available) => {
+      fetchSettingsMock.mockResolvedValue({ recognition_enabled: true, development_face_scan_available: available });
+      renderSelection();
+      await screen.findByRole('button', { name: 'Describe selected' });
+      expect(screen.queryByText('Developer tools')).not.toBeInTheDocument();
+    },
+  );
 
   it('keeps only the Describe CTA in the library footer and does not poll GPU (C7)', async () => {
     renderSelection();
@@ -287,5 +355,4 @@ describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
     expect(document.querySelector('.acx-media-selection__bulk-describe-progress')).toBeNull();
     expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
-
 });

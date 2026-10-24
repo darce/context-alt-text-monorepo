@@ -7,6 +7,7 @@
 
 // Types
 export type {
+  AnalyzeOptions,
   AnalyzeRequest,
   AnalyzeResponse,
   BatchAnalyzeResponse,

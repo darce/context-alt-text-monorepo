@@ -12,6 +12,7 @@ import {
   fetchBatchRunStatus,
   fetchScanStatus,
   cancelScanJob,
+  type AnalyzeRequest,
   type BatchAnalyzeResponse,
   type BatchRunStatus,
   type ClusterListResponse,
@@ -43,13 +44,16 @@ export const getJobRefetchInterval = (data: JobStatusResponse | undefined): numb
 export const getBatchRunRefetchInterval = (data: BatchRunStatus | undefined): number | false =>
   data && !data.terminal_state ? JOB_STATUS_POLL_MS : false;
 
-export const useScanIdentities = (options?: UseMutationOptions<BatchAnalyzeResponse, Error, number[], unknown>) =>
-  useMutation<BatchAnalyzeResponse, Error, number[]>({
-    mutationFn: async (mediaIds) => {
-      if (mediaIds.length === 0) {
+export const useScanIdentities = (
+  options?: UseMutationOptions<BatchAnalyzeResponse, Error, number[] | AnalyzeRequest, unknown>,
+) =>
+  useMutation<BatchAnalyzeResponse, Error, number[] | AnalyzeRequest>({
+    mutationFn: async (input) => {
+      const request = Array.isArray(input) ? { mediaIds: input } : input;
+      if (request.mediaIds.length === 0) {
         throw new Error('No media IDs provided for analysis.');
       }
-      return scanFacesBatched({ mediaIds });
+      return scanFacesBatched(request);
     },
     ...options,
   });

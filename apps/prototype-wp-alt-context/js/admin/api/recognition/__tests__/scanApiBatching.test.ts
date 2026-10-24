@@ -81,6 +81,25 @@ describe('scanFacesBatched chunk size', () => {
     expect(getRequestBody(0).idempotency_key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
   });
 
+  it('marks every face-only batch for the server development gate and calls only analyze', async () => {
+    await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5, 6], developmentFacesOnly: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [endpoint, options] of fetchMock.mock.calls) {
+      expect(endpoint).toBe(mockConfig.endpoints.recognitionAnalyze);
+      expect(options?.body).toEqual(expect.objectContaining({ development_faces_only: true }));
+    }
+  });
+
+  it.each([{ mediaIds: [1] }, { mediaIds: [1, 2, 3, 4, 5, 6] }])(
+    'surfaces rejected developer submissions for $mediaIds instead of an empty success',
+    async ({ mediaIds }) => {
+      fetchMock.mockRejectedValue(new Error('Development API unavailable'));
+      await expect(scanFacesBatched({ mediaIds, developmentFacesOnly: true })).rejects.toThrow(
+        'Development API unavailable',
+      );
+    },
+  );
+
   it('chunks into batches of 5 when total exceeds the cap', async () => {
     const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
     expect(fetchMock).toHaveBeenCalledTimes(2);

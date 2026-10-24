@@ -21,14 +21,117 @@ use WP_REST_Request;
 class AnalysisJobsControllerTest extends TestCase
 {
     private AnalysisJobsController $controller;
+    private ?string $originalWpEnvironment;
 
     protected function setUp(): void
     {
+        $this->originalWpEnvironment = $_ENV['WP_ENVIRONMENT_TYPE'] ?? null;
         parent::setUp();
         $this->setOption(RecognitionPolicy::OPTION, true);
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_tier', 'free');
         $this->controller = new AnalysisJobsController();
+    }
+
+    protected function tearDown(): void
+    {
+        if (null === $this->originalWpEnvironment) {
+            unset($_ENV['WP_ENVIRONMENT_TYPE']);
+        } else {
+            $_ENV['WP_ENVIRONMENT_TYPE'] = $this->originalWpEnvironment;
+        }
+        parent::tearDown();
+    }
+
+    /** @dataProvider developmentFaceScanDeniedProvider */
+    public function testDevelopmentFaceScanRejectsNonDevelopmentTargets(string $environment, string $url): void
+    {
+        $_ENV['WP_ENVIRONMENT_TYPE'] = $environment;
+        $this->setOption('acx_recognition_url', $url);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('development_faces_only', true);
+        $request->set_param('idempotency_key', 'devfir-environment-boundary-001');
+        $request->set_param('media_ids', [101]);
+        $response = $this->controller->analyze_media($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('development_face_scan_unavailable', $response->get_error_code());
+        $this->assertSame(403, $response->get_error_data()['status']);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public static function developmentFaceScanDeniedProvider(): array
+    {
+        return [
+            'production WP with dev API' => ['production', 'https://dev.api.altcontext.com'],
+            'staging WP with dev API' => ['staging', 'https://dev.api.altcontext.com'],
+            'demo WP with dev API' => ['demo', 'https://dev.api.altcontext.com'],
+            'local WP with production API' => ['local', 'https://api.altcontext.com'],
+            'dev WP with production API' => ['development', 'https://api.altcontext.com'],
+            'dev WP with demo API' => ['development', 'https://demo.api.altcontext.com'],
+            'dev WP with staging API' => ['development', 'https://staging.api.altcontext.com'],
+            'dev-looking suffix' => ['development', 'https://dev.api.altcontext.com.evil.test'],
+            'dev-looking userinfo' => ['development', 'https://dev.api.altcontext.com@api.altcontext.com'],
+            'unknown API' => ['development', 'https://example.test'],
+            'local API is not remote dev' => ['development', 'http://localhost:8000'],
+            'different upstream path' => ['development', 'https://dev.api.altcontext.com/production'],
+            'different upstream port' => ['development', 'https://dev.api.altcontext.com:8443'],
+            'unconfigured' => ['development', ''],
+        ];
+    }
+
+    /** @dataProvider developmentFaceScanAllowedProvider */
+    public function testDevelopmentFaceScanUsesOnlyAnalyze(string $url): void
+    {
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'development';
+        $this->setOption('acx_recognition_url', $url);
+        $GLOBALS['__ac_attachment_urls'][101] = 'https://example.test/media/101.jpg';
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+        \AltContext\Support\RecognitionTransport::set_resolver(static fn(string $host): array => ['93.184.216.34']);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['id' => '11111111-1111-4111-8111-111111111111', 'status' => 'pending']),
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('development_faces_only', true);
+        $request->set_param('idempotency_key', 'devfir-recognition-only-test-001');
+        $request->set_param('media_items', [['media_id' => 101, 'media_url' => 'https://example.test/media/101.jpg']]);
+        $response = $this->controller->analyze_media($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $response, $response instanceof \WP_Error ? $response->get_error_message() : '');
+        $this->assertSame('pending', $response->get_data()['status']);
+        $requests = $this->getHttpCalls();
+        $this->assertCount(1, $requests);
+        $this->assertSame(rtrim($url, '/') . '/recognition/analyze', $requests[0]['url']);
+    }
+
+    public static function developmentFaceScanAllowedProvider(): array
+    {
+        return [
+            'incumbent' => ['https://dev.api.altcontext.com'],
+            'SFace FIR' => ['https://fir.dev.api.altcontext.com'],
+            'AuraFace FIR' => ['https://auraface.dev.altcontext.com'],
+        ];
+    }
+
+    public function testLocalWpDevelopmentCapabilityUsesTheEffectiveEndpoint(): void
+    {
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'local';
+        $this->setOption('acx_recognition_url', 'https://fir.dev.api.altcontext.com');
+        $resolver = new \AltContext\Api\RecognitionEndpointResolver();
+        $this->assertTrue($resolver->allows_development_face_scan());
+        add_filter('acx_recognition_base_url', static fn(): string => 'https://api.altcontext.com');
+        $this->assertFalse($resolver->allows_development_face_scan());
+    }
+
+    public function testDevelopmentFaceScanRejectsMalformedFlag(): void
+    {
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'development';
+        $this->setOption('acx_recognition_url', 'https://fir.dev.api.altcontext.com');
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('development_faces_only', 'true');
+        $response = $this->controller->analyze_media($request);
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_development_faces_only', $response->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
     }
 
     public function testRegisterRoutesIncludesAnalyzeValidationCallback(): void

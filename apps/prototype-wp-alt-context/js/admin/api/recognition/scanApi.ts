@@ -45,6 +45,9 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
     media_ids: request.mediaIds,
     idempotency_key: `${batchRunId}-b${request.batchIndex ?? 0}`,
   };
+  if (request.developmentFacesOnly === true) {
+    body.development_faces_only = true;
+  }
   if (request.sensitivity) {
     body.sensitivity = request.sensitivity;
   }
@@ -77,17 +80,23 @@ export const scanFacesBatched = async (request: AnalyzeRequest): Promise<BatchAn
         submittedTotal: request.mediaIds.length,
       });
       return { batchRunId, jobs: [result] };
-    } catch {
+    } catch (error) {
       await recordClientBatchFailure(batchRunId, 0, request.mediaIds.length, request.mediaIds).catch(() => {
         // Best effort only: if the browser cannot report the synthetic failure,
         // the caller still receives an empty jobs list for the batch run.
       });
+      // The explicit developer command must not turn a refused dev-only write
+      // into a successful-looking empty run.
+      if (request.developmentFacesOnly) {
+        throw error;
+      }
       return { batchRunId, jobs: [] };
     }
   }
 
   const batches = chunkMediaIds(request.mediaIds, batchSize);
   const results: AnalyzeResponse[] = [];
+  let submissionError: Error | undefined;
   for (const [index, batch] of batches.entries()) {
     try {
       results.push(
@@ -99,12 +108,16 @@ export const scanFacesBatched = async (request: AnalyzeRequest): Promise<BatchAn
           submittedTotal: request.mediaIds.length,
         }),
       );
-    } catch {
+    } catch (error) {
+      submissionError = error instanceof Error ? error : new Error('Face scan submission failed.', { cause: error });
       await recordClientBatchFailure(batchRunId, index, request.mediaIds.length, batch).catch(() => {
         // Best effort only: if the browser cannot report the synthetic failure,
         // the caller still receives the successfully submitted jobs.
       });
     }
+  }
+  if (request.developmentFacesOnly && results.length === 0 && submissionError !== undefined) {
+    throw submissionError;
   }
   return { batchRunId, jobs: results };
 };

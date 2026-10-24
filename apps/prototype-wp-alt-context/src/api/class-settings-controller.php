@@ -226,6 +226,7 @@ class SettingsController {
 				'context_categories'        => $context_categories['categories'],
 				'context_categories_error'  => $context_categories['error'],
 				'recognition_enabled'       => RecognitionPolicy::enabled(),
+				'development_face_scan_available' => current_user_can( 'manage_options' ) && $this->endpoint_resolver->allows_development_face_scan(),
 				'allow_person_names'        => $naming_resolution['value'],
 				'allow_person_names_error'  => $naming_resolution['error'],
 				'allow_person_names_status' => $naming_resolution['status'],

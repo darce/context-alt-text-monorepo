@@ -5,6 +5,7 @@
  */
 
 import { fetchRequiredApi } from '../../utils/http';
+import { openCooldownFromError } from '../../utils/recognitionCooldown';
 import { getEndpoint, getConfig } from '../config';
 import type {
   AnalyzeRequest,
@@ -123,7 +124,10 @@ export const scanFacesBatched = async (request: AnalyzeRequest): Promise<BatchAn
         if (results.length === 0) {
           throw error;
         }
-        break;
+        // Resolving keeps the accepted jobs trackable, so no mutation rejection will
+        // arm the shared cooldown for this refusal; arm it here instead.
+        openCooldownFromError(error);
+        return { batchRunId, jobs: results, refusal: submissionError };
       }
     }
   }

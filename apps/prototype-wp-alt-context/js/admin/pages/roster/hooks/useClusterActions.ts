@@ -4,6 +4,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import type { BatchAnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry, type RosterClusterCommitResponse } from '../../../api/rosterApi';
 import { reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
+import { resolveScanRefusalMessage } from '../../../api/recognition/scanApiError';
 import { invalidateSuggestionProjection } from '../../workbench/identity-clusters/suggestionProjection';
 import { useToast } from '../../../context/ToastContext';
 import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
@@ -61,6 +62,9 @@ export const useClusterActions = ({
           : sprintf(__('Started sensitive rescan (job %s).', 'alt-context'), firstJob.id)
         : __('Started sensitive rescan.', 'alt-context');
       success(msg);
+      if (data.refusal) {
+        showToastError(resolveScanRefusalMessage(data.refusal));
+      }
     },
     onError: (err) => showToastError(err.message),
     onSettled: onRescanSettled,

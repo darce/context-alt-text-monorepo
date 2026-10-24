@@ -78,3 +78,7 @@ export const resolveScanErrorMessage = (error: unknown, fallbackMessage: string)
   }
   return formatScanSubmissionError(error) ?? fallbackMessage;
 };
+
+/** User-safe copy for a `BatchAnalyzeResponse.refusal` that stopped a partly accepted scan. */
+export const resolveScanRefusalMessage = (refusal: unknown): string =>
+  resolveScanErrorMessage(refusal, __('Scanning stopped before all selected images were submitted.', 'alt-context'));

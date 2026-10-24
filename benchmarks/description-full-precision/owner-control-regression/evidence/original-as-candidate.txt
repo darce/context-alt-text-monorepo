@@ -1,0 +1,34 @@
+F.F..........                                                            [100%]
+=================================== FAILURES ===================================
+__________ test_candidate_full_actual_roundtrip_preserves_every_field __________
+
+    def test_candidate_full_actual_roundtrip_preserves_every_field():
+>       assert_full_acceptance(probe(candidate_path(), "full"))
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:481: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+report = {'authority_equal': False, 'case': 'full', 'deferred_equal': False, 'elapsed_seconds': 0.0832392550073564, ...}
+
+    def assert_full_acceptance(report):
+        assert report["encoded_input_bytes"] == 137715
+>       assert report["wait_status"] == 0, "137715-byte full actual view must survive native transport"
+E       AssertionError: 137715-byte full actual view must survive native transport
+E       assert 18176 == 0
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:363: AssertionError
+___________ test_candidate_real_reconcile_delivers_full_guard_input ____________
+
+    def test_candidate_real_reconcile_delivers_full_guard_input():
+        r = probe(candidate_path(), "reconcile")
+        assert r["native_seconds"] == [5] and r["native_reaped"]
+>       assert r.get("selected_expected") and r.get("guard_full") and r["guard_called"]
+E       AssertionError: assert (None)
+E        +  where None = <built-in method get of dict object at 0xeda087b1c980>('selected_expected')
+E        +    where <built-in method get of dict object at 0xeda087b1c980> = {'case': 'reconcile', 'elapsed_seconds': 0.02231070795096457, 'exception': 'reconciliation read unknown', 'guard_called': False, ...}.get
+
+benchmarks/description-full-precision/owner-control-regression/test_native_transport.py:492: AssertionError
+=========================== short test summary info ============================
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_full_actual_roundtrip_preserves_every_field
+FAILED benchmarks/description-full-precision/owner-control-regression/test_native_transport.py::test_candidate_real_reconcile_delivers_full_guard_input
+2 failed, 11 passed, 15 deselected in 5.10s

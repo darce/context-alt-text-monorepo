@@ -1,0 +1,43 @@
+[
+  {
+    "authority_equal": false,
+    "case": "full",
+    "deferred_equal": false,
+    "elapsed_seconds": 0.02279934997204691,
+    "encoded_input_bytes": 137715,
+    "equal": false,
+    "exit_code": 71,
+    "loads_equal": false,
+    "native_reaped": true,
+    "publications_equal": false,
+    "source_sha256": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+    "value_is_none": true,
+    "wait_status": 18176
+  },
+  {
+    "authority_equal": true,
+    "case": "small",
+    "deferred_equal": true,
+    "elapsed_seconds": 0.021326065994799137,
+    "encoded_input_bytes": 91,
+    "equal": true,
+    "exit_code": 0,
+    "loads_equal": true,
+    "native_reaped": true,
+    "publications_equal": true,
+    "source_sha256": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+    "value_is_none": false,
+    "wait_status": 0
+  },
+  {
+    "case": "reconcile",
+    "elapsed_seconds": 0.02200590807478875,
+    "exception": "reconciliation read unknown",
+    "guard_called": false,
+    "native_reaped": true,
+    "native_seconds": [
+      5
+    ],
+    "source_sha256": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f"
+  }
+]

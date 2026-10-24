@@ -1,0 +1,9 @@
+--- a/caller_excerpt.txt
++++ b/caller_excerpt.txt
+@@ -1,3 +1,5 @@
+-  floor=0 if previous is None else previous['sequence']
++  floor=None if previous is None else previous['sequence']
++  check(previous is None or (type(floor) is int and floor>=0),'unknown authority floor')
+   status,v=native_job(lambda:view(paths,plan['action'],floor),5); check(status==0 and v is not None,'read-only preflight unknown')
++  if floor is None: floor=v['highest_sequence']
+   seal(ofd,'preflight.json',v)

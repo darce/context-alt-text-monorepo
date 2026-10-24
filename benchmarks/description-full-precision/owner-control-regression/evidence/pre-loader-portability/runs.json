@@ -1,0 +1,68 @@
+{
+  "candidate_implementation_status": "NOT_RUN: absent in independent private scratch; only missing-path gate and retained original negative control executed",
+  "initial_author_control_failure": {
+    "argv": [
+      "pytest",
+      "-q",
+      "--noconftest",
+      "benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+      "-k",
+      "baseline"
+    ],
+    "exit_code": 1,
+    "summary": "1 failed, 12 passed, 13 deselected in 4.80s",
+    "cause": "Pytest assertion rewriting appends comparison detail; exact error string equality fixed to startswith. Failure evidence retained, no production source changed."
+  },
+  "test_file_sha256": "06ffbe77a22891232a9e5d268d1158e99bad7617de4aeaf6d636d6e30eb4e2b1",
+  "runs": [
+    {
+      "name": "baseline",
+      "argv": [
+        "pytest",
+        "-q",
+        "--noconftest",
+        "benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+        "-k",
+        "baseline"
+      ],
+      "explicit_original_fixture": false,
+      "exit_code": 0,
+      "summary": "15 passed, 13 deselected in 5.48s",
+      "elapsed_seconds": 6.913,
+      "log": "baseline.txt",
+      "log_sha256": "9efc7e20f3ec26e4448e92f496dff9d152da91f241c3ddbed3c30a7c04c30c04"
+    },
+    {
+      "name": "missing-candidate",
+      "argv": [
+        "pytest",
+        "-q",
+        "--noconftest",
+        "benchmarks/description-full-precision/owner-control-regression/test_native_transport.py"
+      ],
+      "explicit_original_fixture": false,
+      "exit_code": 1,
+      "summary": "13 failed, 15 passed in 6.39s",
+      "elapsed_seconds": 7.882,
+      "log": "missing-candidate.txt",
+      "log_sha256": "81e5b715d27ab7bb1c17a416fa967b13381e8476eab6e84890a56e6d96b7eef2"
+    },
+    {
+      "name": "original-as-candidate",
+      "argv": [
+        "pytest",
+        "-q",
+        "--noconftest",
+        "benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+        "-k",
+        "candidate"
+      ],
+      "explicit_original_fixture": true,
+      "exit_code": 1,
+      "summary": "2 failed, 11 passed, 15 deselected in 5.03s",
+      "elapsed_seconds": 6.417,
+      "log": "original-as-candidate.txt",
+      "log_sha256": "19c0681bd37ff0d9c86236fab5d30b0860da3c7c50418ac0b48b9770555c3969"
+    }
+  ]
+}

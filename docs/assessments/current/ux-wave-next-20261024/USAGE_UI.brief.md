@@ -12,7 +12,7 @@ Display compact read-only authoritative usage and estimate, with separately labe
 
 ## anchors
 
-Current DescriptionBudgetUsage in settingsApi is local attempts. Existing routingautosave/health stays. Reusable new usagecomponent may be ownedhere; GPU_STATUS alone wires MediaSelection.
+Current DescriptionBudgetUsage in settingsApi is local attempts. Existing routingautosave/health stays. Reusable new usagecomponent may be ownedhere; ACTION_PROGRESS alone wires MediaSelection.
 
 ## rules
 

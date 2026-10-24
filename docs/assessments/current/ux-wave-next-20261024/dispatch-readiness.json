@@ -3,7 +3,7 @@
   "plugin": "0.0.40",
   "proposals_only": true,
   "source_frontier_after_new_map_review": [
-    "GPU_STATUS",
+    "ACTION_PROGRESS",
     "WB_CONTROL",
     "ROSTER_EVIDENCE"
   ],
@@ -16,5 +16,6 @@
   "independent_contract_review": "remote Sol6.1xhigh before new geometry author; native critique necessary but insufficient",
   "dispatch_performed": false,
   "native_critique": "both exit0 with[] findings; activepack proved by INT07 positivecontrol",
-  "native_source_check": "all14 code_ref files verified; declaredstates notverified; codemapunsupported"
+  "native_source_check": "all14 code_ref files verified; declaredstates notverified; codemapunsupported",
+  "ownership_correction": "Original GPU_STATUS owns hooks/vocab/settings; ACTION_PROGRESS owns MediaSelection and its stylesheet/scoped tests only. Independent authors, joined combination gate."
 }

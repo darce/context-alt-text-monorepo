@@ -1,28 +1,28 @@
 {
   "files": {
-    "COMMON.md": {
-      "bytes": 1312,
-      "sha256": "09fe60647454fe7512a114ad4588fed831fac447e542e57a5cf5865e08525d97"
+    "ACTION_PROGRESS.brief.md": {
+      "bytes": 2398,
+      "sha256": "163a5f5a213c55bd55198a9c538659677d6b0c4a130058ecb6fba2c5d6211a3c"
     },
-    "GPU_STATUS.brief.md": {
-      "bytes": 2081,
-      "sha256": "c40ff563794de97a31780d69ccdc419fb412a64a009cd3ebf74390e80d3a74e7"
+    "COMMON.md": {
+      "bytes": 1718,
+      "sha256": "e8f0c99d0456ded0e8e828110efeaa8f91c0a3924436e7d8c1e86fce52ea8658"
     },
     "ROSTER_EVIDENCE.brief.md": {
       "bytes": 1901,
       "sha256": "9a48284b2e26589c0d4c0ec5fc81151303f92bb84ac43b2b631132a382366979"
     },
     "UI-CONTRACTS.md": {
-      "bytes": 2565,
-      "sha256": "a84a18d58cd2c1c7919eae8905a57ea0c9fa3648ddd4c5e35c01e78ab1ed7024"
+      "bytes": 2836,
+      "sha256": "145531b7f80b15adbd863eeaba370766d4f3ee6bea88871b46baa2a46abc514d"
     },
     "USAGE_READ_MODEL.brief.md": {
       "bytes": 1343,
       "sha256": "151f59b07ada8c260f0be262350ad735b4f7c7dfb4d919a1828ddbabbfa9e261"
     },
     "USAGE_UI.brief.md": {
-      "bytes": 1610,
-      "sha256": "cbfc371db4af0049310bdcd50d642b3a276e5d058e0f32c630aa916b4804d4dd"
+      "bytes": 1615,
+      "sha256": "fddb9aca0ec9397f2f6dfec2c289c7546f7e6c99dce6428d09595d3fc210d5ec"
     },
     "WB_CONTROL.brief.md": {
       "bytes": 1765,
@@ -33,8 +33,8 @@
       "sha256": "b57a0e07d52a79de198ba97257898c2b9d9d0e36e468b699d814adf73e06a0d8"
     },
     "dispatch-readiness.json": {
-      "bytes": 847,
-      "sha256": "cc3b59908e1e82ae2ab6b446d41b05360fcc8cfe18aa00597401da37d89643e9"
+      "bytes": 1048,
+      "sha256": "9903c7dea3cd1346f08ef548e4412ac20ac11aff0ef51ca5b4939140cdbd5e44"
     },
     "native-critique-resolutions.json": {
       "bytes": 648,
@@ -101,5 +101,5 @@
       "sha256": "6aeb52af7badfcb7ad28a6cd8d8914a16b3959b971fd21d038a4ac620d602e10"
     }
   },
-  "scope": "Read-only nextwave map/contract review. Productsourceunchanged; native5419 proof; no implementationdispatch."
+  "scope": "Ownership-corrected independent map/contract review. ACTION_PROGRESS distinct from original GPU_STATUS. Prior immutablepacket remains unchanged."
 }

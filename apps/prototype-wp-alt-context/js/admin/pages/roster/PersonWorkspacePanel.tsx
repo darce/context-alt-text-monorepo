@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { getConfig, getEndpoint } from '../../api/config';
@@ -23,6 +24,8 @@ import { PersonFaceMetadataPanel } from './PersonFaceMetadataPanel';
 import { PersonFacePreview } from './PersonFacePreview';
 import { collectPersonFaces } from './personFaces';
 import { getSelectedFaceMetadataLines } from './similarityCopy';
+import { IdentityThumbnail } from './IdentityThumbnail';
+import { selectRepresentativeIdentity } from './RosterEntriesTable';
 
 const QUEUE_SECTIONS = [
   {
@@ -296,9 +299,23 @@ interface PersonWorkspacePanelProps {
 }
 
 export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePanelProps): React.JSX.Element => {
+  const [searchParams] = useSearchParams();
+  const photosRef = React.useRef<HTMLElement | null>(null);
+  const photosSectionRequested = searchParams.get('section') === 'photos';
+  const photosParams = new URLSearchParams(searchParams);
+  photosParams.set('section', 'photos');
+  const representative = selectRepresentativeIdentity(entry);
+  const focusPhotos = React.useCallback(() => {
+    photosRef.current?.focus({ preventScroll: true });
+    photosRef.current?.scrollIntoView({ block: 'start' });
+  }, []);
   const queueMemberships = new Set(entry.queue_memberships);
   const personUuid = typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0 ? entry.person_uuid : null;
   const entryIdentity = `${entry.id}:${typeof entry.person_uuid === 'string' ? entry.person_uuid : ''}`;
+  // [NAV-11] The existing face route preserves this query parameter on selection.
+  React.useEffect(() => {
+    if (photosSectionRequested) focusPhotos();
+  }, [entryIdentity, focusPhotos, photosSectionRequested]);
   const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
   const [photoOffset, setPhotoOffset] = React.useState(0);
   const [alsoWithPeople, setAlsoWithPeople] = React.useState<AlsoWithPerson[]>([]);
@@ -569,21 +586,27 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
       aria-label={sprintf(__('Person workspace: %s', 'alt-context'), entry.name)}
     >
       <header className="acx-roster__person-workspace-header">
-        <h3>{entry.name}</h3>
-        {entry.projection_status !== 'failed' ? (
+        <IdentityThumbnail identity={representative ?? { media_id: 0 }} size={EVIDENCE_IMAGE_SIZE} alt="" />
+        <div className="acx-roster__person-workspace-heading">
+          <h3>{entry.name}</h3>
+          {entry.projection_status !== 'failed' ? (
+            <p className="acx-roster__person-workspace-meta">
+              {sprintf(__('%d face groups assigned', 'alt-context'), entry.cluster_count)}
+            </p>
+          ) : null}
           <p className="acx-roster__person-workspace-meta">
-            {sprintf(__('%d face groups assigned', 'alt-context'), entry.cluster_count)}
+            {sprintf(__('Data status: %s', 'alt-context'), entry.projection_status)}
           </p>
-        ) : null}
-        <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('Data status: %s', 'alt-context'), entry.projection_status)}
-        </p>
-        <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('Last refreshed: %s', 'alt-context'), formatTimestamp(entry.projection_refreshed_at))}
-        </p>
-        <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('Record version: %d', 'alt-context'), entry.source_version)}
-        </p>
+          <p className="acx-roster__person-workspace-meta">
+            {sprintf(__('Last refreshed: %s', 'alt-context'), formatTimestamp(entry.projection_refreshed_at))}
+          </p>
+          <p className="acx-roster__person-workspace-meta">
+            {sprintf(__('Record version: %d', 'alt-context'), entry.source_version)}
+          </p>
+          <Link className="acx-roster__photos-link" to={{ search: `?${photosParams.toString()}` }} onClick={focusPhotos}>
+            {__('View photos', 'alt-context')}
+          </Link>
+        </div>
       </header>
 
       <div className="acx-roster__person-workspace-summary">
@@ -745,6 +768,9 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
       </section>
 
       <section
+        ref={photosRef}
+        tabIndex={-1}
+        className="acx-roster__person-photos"
         aria-labelledby="acx-person-workspace-photos"
         data-testid="acx-person-photo-grid"
         role="region"

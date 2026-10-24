@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link, useInRouterContext, useSearchParams } from 'react-router-dom';
 import { __, sprintf } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { RosterEntryInstance } from '../../api/generated/roster-entry';
@@ -27,8 +28,8 @@ interface EditableRowProps {
   onMergePerson?: (entry: RosterEntry) => void;
 }
 
-/** Dense table-row size — not the drawer default (96/128). */
-const DIRECTORY_THUMB_SIZE = 32;
+/** Legible directory evidence; header evidence keeps the existing 96px default. */
+const DIRECTORY_THUMB_SIZE = 64;
 
 /**
  * Pick the representative face for a directory row.
@@ -137,12 +138,31 @@ const PersonStateCell = ({ entry }: { entry: RosterEntry }): React.JSX.Element =
   const { label, Icon, className } = STATE_PRESENTATION[state];
 
   return (
-    <td>
+    <td data-label={__('State', 'alt-context')}>
       <span className={`acx-roster-entries__state ${className}`}>
         <Icon size={16} aria-hidden="true" />
         <span className="acx-roster-entries__state-label">{label}</span>
       </span>
     </td>
+  );
+};
+
+// [NAV-11] Preserve directory context while addressing the existing Photos view.
+const PersonPhotosLink = ({ entry }: { entry: RosterEntry }): React.JSX.Element => {
+  const [searchParams] = useSearchParams();
+  const next = new URLSearchParams(searchParams);
+  for (const key of ['face', 'cluster', 'tab']) next.delete(key);
+  next.set('person', getEntryPersonUuid(entry) ?? '');
+  next.set('section', 'photos');
+  const displayName = entry.name.trim() || __('Unnamed person', 'alt-context');
+  return (
+    <Link
+      className="acx-roster__photos-link"
+      to={{ search: `?${next.toString()}` }}
+      aria-label={sprintf(__('View photos for %s', 'alt-context'), displayName)}
+    >
+      {__('View photos', 'alt-context')}
+    </Link>
   );
 };
 
@@ -157,6 +177,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
   const updatePerson = useUpdatePerson();
   const deletePerson = useDeletePerson();
   const canOpenPerson = getEntryPersonUuid(entry) !== null;
+  const inRouter = useInRouterContext();
 
   const handleSave = () => {
     const trimmedName = name.trim();
@@ -216,7 +237,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
     const tagsInputId = `acx-roster-edit-tags-${entry.id}`;
     return (
       <tr>
-        <td>
+        <td data-label={__('Person', 'alt-context')}>
           <label className="acx-roster-field-label" htmlFor={nameInputId}>
             {__('Person name', 'alt-context')}
           </label>
@@ -245,7 +266,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
           )}
         </td>
         <PersonStateCell entry={entry} />
-        <td>
+        <td data-label={__('Tags', 'alt-context')}>
           <label className="acx-roster-field-label" htmlFor={tagsInputId}>
             {__('Tags', 'alt-context')}
           </label>
@@ -260,28 +281,30 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             disabled={updatePerson.isPending}
           />
         </td>
-        <td>{entry.cluster_count}</td>
-        <td className="acx-roster-entries__actions">
-          <button
-            type="button"
-            className="acx-icon-button"
-            onClick={handleSave}
-            aria-label={sprintf(__('Save changes to %s', 'alt-context'), displayName)}
-            title={__('Save changes', 'alt-context')}
-            disabled={updatePerson.isPending || !name.trim()}
-          >
-            <Check size={16} />
-          </button>
-          <button
-            type="button"
-            className="acx-icon-button"
-            onClick={handleCancel}
-            aria-label={sprintf(__('Cancel editing %s', 'alt-context'), displayName)}
-            title={__('Cancel', 'alt-context')}
-            disabled={updatePerson.isPending}
-          >
-            <X size={16} />
-          </button>
+        <td data-label={__('Face groups', 'alt-context')}>{entry.cluster_count}</td>
+        <td data-label={__('Actions', 'alt-context')}>
+          <div className="acx-roster-entries__actions">
+            <button
+              type="button"
+              className="acx-icon-button"
+              onClick={handleSave}
+              aria-label={sprintf(__('Save changes to %s', 'alt-context'), displayName)}
+              title={__('Save changes', 'alt-context')}
+              disabled={updatePerson.isPending || !name.trim()}
+            >
+              <Check size={16} />
+            </button>
+            <button
+              type="button"
+              className="acx-icon-button"
+              onClick={handleCancel}
+              aria-label={sprintf(__('Cancel editing %s', 'alt-context'), displayName)}
+              title={__('Cancel', 'alt-context')}
+              disabled={updatePerson.isPending}
+            >
+              <X size={16} />
+            </button>
+          </div>
         </td>
       </tr>
     );
@@ -290,7 +313,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
   return (
     <>
       <tr>
-        <td>
+        <td data-label={__('Person', 'alt-context')}>
           {canOpenPerson ? (
             <button
               type="button"
@@ -309,8 +332,8 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
           )}
         </td>
         <PersonStateCell entry={entry} />
-        <td>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
-        <td>
+        <td data-label={__('Tags', 'alt-context')}>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
+        <td data-label={__('Face groups', 'alt-context')}>
           {canOpenPerson ? (
             <button
               type="button"
@@ -334,29 +357,38 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             </span>
           )}
         </td>
-        <td className="acx-roster-entries__actions">
-          <button
-            type="button"
-            className="acx-icon-button"
-            onClick={() => setIsEditing(true)}
-            title={__('Edit person', 'alt-context')}
-          >
-            <Pencil size={16} />
-          </button>
-          <button type="button" className="acx-icon-button" title={__('Merge into…', 'alt-context')}
-            aria-label={sprintf(__('Merge %s into another person', 'alt-context'), displayName)}
-            onClick={() => onMergePerson?.(entry)}>
-            <Merge size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="acx-icon-button acx-icon-button--danger"
-            onClick={() => setIsDeleteConfirmOpen(true)}
-            title={__('Delete person', 'alt-context')}
-            disabled={deletePerson.isPending}
-          >
-            <Trash2 size={16} />
-          </button>
+        <td data-label={__('Actions', 'alt-context')}>
+          <div className="acx-roster-entries__actions">
+            {canOpenPerson && (inRouter ? (
+              <PersonPhotosLink entry={entry} />
+            ) : (
+              <button type="button" className="acx-roster__photos-link" onClick={() => onOpenPerson?.(entry)}>
+                {__('View photos', 'alt-context')}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="acx-icon-button"
+              onClick={() => setIsEditing(true)}
+              title={__('Edit person', 'alt-context')}
+            >
+              <Pencil size={16} />
+            </button>
+            <button type="button" className="acx-icon-button" title={__('Merge into…', 'alt-context')}
+              aria-label={sprintf(__('Merge %s into another person', 'alt-context'), displayName)}
+              onClick={() => onMergePerson?.(entry)}>
+              <Merge size={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="acx-icon-button acx-icon-button--danger"
+              onClick={() => setIsDeleteConfirmOpen(true)}
+              title={__('Delete person', 'alt-context')}
+              disabled={deletePerson.isPending}
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
         </td>
       </tr>
       <ConfirmDialog

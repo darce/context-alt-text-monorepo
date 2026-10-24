@@ -16,6 +16,8 @@ import { ClusterActions } from './ClusterActions';
 import { ClusterConfirmDialog } from './ClusterConfirmDialog';
 import { ClusterEditForm } from './ClusterEditForm';
 import { ClusterPreview } from './ClusterPreview';
+import { RepeatedRegionEvidenceDisclosure } from './RepeatedRegionEvidenceDisclosure';
+import { buildRepeatedRegionEvidence, repeatedRegionViewForGroup, type RepeatedRegionEvidenceView } from './repeatedRegionEvidence';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
 import { MergeUndoBanner } from './MergeUndoBanner';
@@ -24,6 +26,7 @@ import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
 import { TWIN_CHIP_PENDING_STATUS } from './twinChipCopy';
 import {
   filterEditableClusterMatch,
+  formatClusterLabel,
   groupIdentitiesByClusters,
   isUngroupedGroup,
   unlabeledSuggestionBatchIds,
@@ -49,6 +52,7 @@ interface IdentityClusterListProps {
 }
 
 interface UngroupedResidueSectionProps {
+  repeatedRegionEvidence?: RepeatedRegionEvidenceView;
   members: DetectedIdentity[];
   canMutate: boolean;
   getMatch: InlineSuggestionBatchResult['getMatch'];
@@ -365,6 +369,7 @@ const UngroupedResidueFace = ({
 };
 
 const UngroupedResidueSection = ({
+  repeatedRegionEvidence,
   members,
   canMutate,
   getMatch,
@@ -377,6 +382,7 @@ const UngroupedResidueSection = ({
       <h3 id={headingId} className="acx-identity-clusters__ungrouped-heading">
         {heading}
       </h3>
+      {repeatedRegionEvidence && <RepeatedRegionEvidenceDisclosure view={repeatedRegionEvidence} />}
       <ul className="acx-identity-clusters__ungrouped-faces">
         {members.map((member) => (
           <UngroupedResidueFace
@@ -409,6 +415,13 @@ export const IdentityClusterList = ({
   onRetry,
 }: IdentityClusterListProps): React.JSX.Element => {
   const clusters = React.useMemo(() => groupIdentitiesByClusters(identities), [identities]);
+  const evidence = React.useMemo(() => buildRepeatedRegionEvidence(identities), [identities]);
+  const groupLabels = React.useMemo(
+    () => new Map(clusters.map((cluster) => [
+      cluster.key, formatClusterLabel(cluster.clusterId, cluster.label, cluster.isAutoLabel),
+    ])),
+    [clusters],
+  );
   const identityGroups = React.useMemo(
     () => clusters.filter((cluster) => !isUngroupedGroup(cluster)),
     [clusters],
@@ -516,6 +529,7 @@ export const IdentityClusterList = ({
           <React.Fragment key={cluster.key}>
             <IdentityClusterItem
               cluster={cluster}
+              repeatedRegionEvidence={repeatedRegionViewForGroup(evidence, cluster.key, groupLabels)}
               canLabel
               canMutate={canMutate}
               inlineSuggestionMatch={getMatch(cluster.members[0]?.identity_id)}
@@ -551,7 +565,12 @@ export const IdentityClusterList = ({
         );
       })}
       {ungroupedGroup ? (
-        <UngroupedResidueSection members={ungroupedGroup.members} canMutate={canMutate} getMatch={getMatch} />
+        <UngroupedResidueSection
+          members={ungroupedGroup.members}
+          canMutate={canMutate}
+          getMatch={getMatch}
+          repeatedRegionEvidence={repeatedRegionViewForGroup(evidence, ungroupedGroup.key, groupLabels)}
+        />
       ) : null}
     </div>
   );

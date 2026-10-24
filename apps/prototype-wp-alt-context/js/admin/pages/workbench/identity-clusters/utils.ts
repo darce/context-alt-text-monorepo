@@ -9,6 +9,16 @@ import type { ClusterGroup } from './types';
 /** Bucket key for identities with neither a person nor a cluster (GPUFLOW-2 C5). */
 export const UNGROUPED_GROUP_KEY = 'ungrouped';
 
+/** Shared existing grouping precedence; evidence never changes group membership. */
+export const identityGroupKey = (
+  identity: Pick<DetectedIdentity, 'person_id' | 'cluster_id'>,
+): string => {
+  if (identity.person_id) {
+    return `person:${identity.person_id}`;
+  }
+  return identity.cluster_id != null ? `cluster:${identity.cluster_id}` : UNGROUPED_GROUP_KEY;
+};
+
 /** Same-media duplicate-face cutoff. Spatial overlap only; never similarity (GRPH-18). */
 const SAME_FACE_BBOX_IOU = 0.5;
 
@@ -116,12 +126,7 @@ export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): Clust
 
   identities.forEach((identity) => {
     const personId = identity.person_id || null;
-    const clusterKey =
-      personId !== null
-        ? `person:${personId}`
-        : identity.cluster_id != null
-          ? `cluster:${identity.cluster_id}`
-          : UNGROUPED_GROUP_KEY;
+    const clusterKey = identityGroupKey(identity);
 
     if (!groups.has(clusterKey)) {
       groups.set(clusterKey, {

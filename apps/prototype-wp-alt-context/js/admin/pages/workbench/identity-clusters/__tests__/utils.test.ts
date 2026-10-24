@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatClusterLabel, groupIdentitiesByClusters } from '../utils';
+import { formatClusterLabel, groupIdentitiesByClusters, identityGroupKey } from '../utils';
 import type { DetectedIdentity } from '../../../../api/recognition';
 
 const CLUSTER_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -177,5 +177,19 @@ describe('groupIdentitiesByClusters → formatClusterLabel display path (E21-15-
     const display = formatClusterLabel(groups[0].clusterId, groups[0].label, groups[0].isAutoLabel);
     expect(display).not.toBe('cluster-7');
     expect(display).toBeNull();
+  });
+});
+
+
+describe('UXREC-1 identityGroupKey', () => {
+  it.each([
+    [{ person_id: '7', cluster_id: 'c-1' }, 'person:7'],
+    [{ person_id: null, cluster_id: 'c-1' }, 'cluster:c-1'],
+    [{ person_id: null, cluster_id: null }, 'ungrouped'],
+    [{ person_id: '', cluster_id: 'c-1' }, 'cluster:c-1'],
+  ])('preserves existing key precedence for %j', (refs, key) => {
+    const member = identity(refs);
+    expect(identityGroupKey(member)).toBe(key);
+    expect(groupIdentitiesByClusters([member])[0].key).toBe(identityGroupKey(member));
   });
 });

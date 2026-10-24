@@ -1,0 +1,122 @@
+{
+  "at": "2026-10-24T03:07:25.602003+00:00",
+  "baseline_source": "/root/owner-stop-contract-r3/procedure",
+  "source_family_dispatch": 5,
+  "baseline_custody_sha256": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f",
+  "actual_view_bytes": 137715,
+  "native_job_limit": 60000,
+  "prior_r4_source_sha": "506ecedda3cad4ac48be05d84518c649255785a4",
+  "prior_r4_review": 1660,
+  "accepted_r4_patch": "prior-r4/accepted/caller.patch",
+  "failed_r3_seed_patch": "prior-r4/seed-failed-caller.patch",
+  "prior_members": [
+    {
+      "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/README.md",
+      "path": "prior-r4/accepted/README.md",
+      "sha256": "951ec0b881f5f6653672f32d52e6e89f3f539f9b6a70d0188b2d10a9966ca5d2"
+    },
+    {
+      "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/caller.patch",
+      "path": "prior-r4/accepted/caller.patch",
+      "sha256": "30e4e8db654a6f5af7e8291056a00640875ef0d67753d66ae93f9a0ee3a804ce"
+    },
+    {
+      "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/snapshot_cursor.py",
+      "path": "prior-r4/accepted/snapshot_cursor.py",
+      "sha256": "e7fd9187f685e41c6ef5b2a6a5577a4949b0f77ad211e3cfd13826618c7760ca"
+    },
+    {
+      "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/snapshot_source.py",
+      "path": "prior-r4/accepted/snapshot_source.py",
+      "sha256": "04917b66480bca3621e60668c06cae29c8c591941638f334c3e979869d8f98a0"
+    },
+    {
+      "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/test_snapshot_cursor.py",
+      "path": "prior-r4/accepted/test_snapshot_cursor.py",
+      "sha256": "bb315dbcebe72f688ba85172063cfa37b126559731ad2d02cdff9673572a22da"
+    },
+    {
+      "member": "bakeoff-next-model-gpu-owner-projection-r4-7aea73a9d59f4d0995504bada67b9d9b/workspace/offline-snapshot-fix/verify_inputs.py",
+      "path": "prior-r4/accepted/verify_inputs.py",
+      "sha256": "c8f3599f05e05fd147ef72dbd96b4f354808f5b5835b3424462fb132886be973"
+    }
+  ],
+  "files": [
+    {
+      "path": "actual-view.json",
+      "bytes": 137715,
+      "sha256": "e388f8be6741710f0399176368b633ef0894f9f123e13afb8f7bdad2aa5e9939"
+    },
+    {
+      "path": "baseline/capacity-read.sh",
+      "bytes": 6975,
+      "sha256": "35f64983953f813b16449055508ebbe47b34a3cfeb47d48d84b3abd1615706f2"
+    },
+    {
+      "path": "baseline/final-stop.sh",
+      "bytes": 1749,
+      "sha256": "941bacf28640512a76a878d19a44dac44c7997ff577d81138f52d07fbd2a954e"
+    },
+    {
+      "path": "baseline/guest-read.sh",
+      "bytes": 1463,
+      "sha256": "2f614b1747faab8dd41cfa055133cedc1b3f25376652d794429a5984b143e8ca"
+    },
+    {
+      "path": "baseline/observe.py",
+      "bytes": 11326,
+      "sha256": "d71f1cc76e9fa6bc3e59c1f56723d3896f4b40baacb59bfad2c2745e52463bd1"
+    },
+    {
+      "path": "baseline/owner-custody.py",
+      "bytes": 17715,
+      "sha256": "cba8527bf94603778e78910b60b04ad9c5bad38eafa0691bb21b3435990a158f"
+    },
+    {
+      "path": "baseline/owner-window.py",
+      "bytes": 6514,
+      "sha256": "1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600"
+    },
+    {
+      "path": "baseline/root-flow.sh",
+      "bytes": 4353,
+      "sha256": "12c7fe5a2d1256c4c6fe5d00dfbdbdd5c546db521694663214b5235d207deb62"
+    },
+    {
+      "path": "prior-r4/accepted/README.md",
+      "bytes": 5100,
+      "sha256": "951ec0b881f5f6653672f32d52e6e89f3f539f9b6a70d0188b2d10a9966ca5d2"
+    },
+    {
+      "path": "prior-r4/accepted/caller.patch",
+      "bytes": 499,
+      "sha256": "30e4e8db654a6f5af7e8291056a00640875ef0d67753d66ae93f9a0ee3a804ce"
+    },
+    {
+      "path": "prior-r4/accepted/snapshot_cursor.py",
+      "bytes": 3527,
+      "sha256": "e7fd9187f685e41c6ef5b2a6a5577a4949b0f77ad211e3cfd13826618c7760ca"
+    },
+    {
+      "path": "prior-r4/accepted/snapshot_source.py",
+      "bytes": 1195,
+      "sha256": "04917b66480bca3621e60668c06cae29c8c591941638f334c3e979869d8f98a0"
+    },
+    {
+      "path": "prior-r4/accepted/test_snapshot_cursor.py",
+      "bytes": 15903,
+      "sha256": "bb315dbcebe72f688ba85172063cfa37b126559731ad2d02cdff9673572a22da"
+    },
+    {
+      "path": "prior-r4/accepted/verify_inputs.py",
+      "bytes": 4919,
+      "sha256": "c8f3599f05e05fd147ef72dbd96b4f354808f5b5835b3424462fb132886be973"
+    },
+    {
+      "path": "prior-r4/seed-failed-caller.patch",
+      "bytes": 486,
+      "sha256": "2375bd2c9c8dafac95816b0bd83affdb5fe4167316aa91e3271d0064cc3379df"
+    }
+  ],
+  "control_or_model_effects": false
+}

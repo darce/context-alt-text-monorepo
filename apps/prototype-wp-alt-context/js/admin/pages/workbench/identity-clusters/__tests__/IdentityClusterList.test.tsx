@@ -28,7 +28,8 @@ import type { DetectedIdentity } from '../../../../api/recognition/types';
 import { IdentityClusterItem } from '../IdentityClusterItem';
 import { IdentityClusterList } from '../IdentityClusterList';
 import type { ClusterGroup } from '../types';
-import { unlabeledSuggestionBatchIds } from '../utils';
+import { buildRepeatedRegionEvidence } from '../repeatedRegionEvidence';
+import { getEditableClusterId, groupIdentitiesByClusters, unlabeledSuggestionBatchIds } from '../utils';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -51,6 +52,8 @@ vi.mock('../useClusterSuggestions', () => ({
   }),
 }));
 
+const repeatedRegionReassign = vi.fn();
+
 vi.mock('../useClusterMutations', () => ({
   useClusterMutations: () => ({
     isPending: false,
@@ -59,7 +62,7 @@ vi.mock('../useClusterMutations', () => ({
     assignToCluster: vi.fn(),
     rename: vi.fn(),
     createClusterForIdentity: vi.fn(),
-    reassign: vi.fn(),
+    reassign: repeatedRegionReassign,
     split: vi.fn(),
     revertMerge: vi.fn(),
     rejectSuggestion: vi.fn(),
@@ -423,4 +426,126 @@ describe('IdentityClusterItem remove gate (WBUX6-W3-L6-02)', () => {
     expect(screen.getByRole('button', { name: 'Edit label' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: REMOVE_LABEL })).not.toBeInTheDocument();
   });
+});
+
+const repeatedFace = (overrides: Partial<DetectedIdentity> = {}) => identity({
+  identity_id: 'face-a', person_id: '1', cluster_id: 'c-1', cluster_label: 'Alice',
+  media_id: 10, bbox: { x: 12, y: 20, width: 40, height: 48 }, ...overrides,
+});
+const repeatedA = repeatedFace();
+const repeatedA2 = repeatedFace({ cluster_id: 'c-2' });
+const repeatedB = repeatedFace({ identity_id: 'face-b', person_id: '2', cluster_id: 'c-2', cluster_label: 'Bob' });
+const repeatedC = repeatedFace({ identity_id: 'face-c', person_id: null, cluster_id: 'c-3', cluster_label: 'Carol' });
+const regionPermutations = <T,>(items: T[]): T[][] => items.length === 0 ? [[]] : items.flatMap((item, i) =>
+  regionPermutations(items.filter((_, j) => i !== j)).map((rest) => [item, ...rest]));
+const regionButtons = (container: HTMLElement) => Array.from(container.querySelectorAll('button')).map((button) => ({
+  name: button.textContent, disabled: button.disabled, ariaDisabled: button.getAttribute('aria-disabled'),
+}));
+
+describe('UXREC-1 repeated region wiring', () => {
+  let originalLang: string | null;
+  beforeEach(() => {
+    originalLang = document.documentElement.getAttribute('lang');
+    document.documentElement.lang = 'en-US';
+  });
+  afterEach(() => {
+    cleanup();
+    if (originalLang === null) document.documentElement.removeAttribute('lang');
+    else document.documentElement.lang = originalLang;
+  });
+  it('adds one disclosure per involved card while preserving all naming and removal controls', () => {
+    const control = renderList([repeatedA, repeatedB].map((f) => ({ ...f, bbox: { x: 0, y: 0, width: 1, height: 1 } })));
+    const buttons = regionButtons(control.container);
+    expect(screen.queryByTestId('acx-repeated-region-evidence')).not.toBeInTheDocument();
+    control.unmount();
+    const result = renderList([repeatedA, repeatedB]);
+    expect(screen.getAllByTestId('acx-repeated-region-evidence')).toHaveLength(2);
+    expect(regionButtons(result.container)).toEqual(buttons);
+    expect(result.container.querySelectorAll('.acx-identity-cluster')).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove from group' })[0]);
+    expect(repeatedRegionReassign).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove member' }));
+    expect(repeatedRegionReassign).toHaveBeenCalledWith(['face-a']);
+  });
+  it('does not disclose same-group observations or existing 1x1 fixtures', () => {
+    const result = renderList([repeatedA, { ...repeatedA, identity_id: 'face-a2' }]);
+    expect(screen.queryByTestId('acx-repeated-region-evidence')).not.toBeInTheDocument();
+    result.unmount();
+    renderList([identity(), identity({ identity_id: 'id-2', cluster_id: 'other' })]);
+    expect(screen.queryByTestId('acx-repeated-region-evidence')).not.toBeInTheDocument();
+  });
+  it('places the ungrouped disclosure beneath its heading, with exact group references', () => {
+    renderList([repeatedC, repeatedFace({ identity_id: 'face-u', person_id: null, cluster_id: null, cluster_label: null })]);
+    const section = screen.getByRole('region', { name: 'Not yet grouped (1)' });
+    const details = within(section).getByTestId('acx-repeated-region-evidence');
+    expect(section.querySelector('h3')?.nextElementSibling).toBe(details);
+    fireEvent.click(within(details).getByText(/Same photo region/));
+    expect(within(details).getAllByRole('listitem').some((li) => li.textContent === 'Not yet grouped — face record face-u')).toBe(true);
+    expect(within(details).getAllByRole('listitem').some((li) => li.textContent === 'Carol (face group c-3) — face record face-c')).toBe(true);
+  });
+  it.each(['en-US', 'ar-EG'])('abstains on every conflicting-copy permutation and preserves targets under %s', (lang) => {
+    expect(Intl.NumberFormat.supportedLocalesOf([lang])).toContain(lang);
+    document.documentElement.lang = lang;
+    const format = new Intl.NumberFormat(lang, { maximumFractionDigits: 0 });
+    for (const input of regionPermutations([repeatedA, repeatedA2, repeatedB])) {
+      const result = renderList(input);
+      expect(screen.queryByTestId('acx-repeated-region-evidence')).not.toBeInTheDocument();
+      result.unmount();
+    }
+    for (const input of regionPermutations([repeatedA, repeatedA2, repeatedB, repeatedC])) {
+      const before = groupIdentitiesByClusters(input);
+      const targets = before.map((g) => [g.key, getEditableClusterId(g), g.members[0]?.identity_id]);
+      const control = renderList(input.map((f) => f.identity_id === 'face-b' ? { ...f, media_id: 11 } :
+        f.identity_id === 'face-c' ? { ...f, media_id: 12 } : f));
+      const buttons = regionButtons(control.container);
+      expect(screen.queryByTestId('acx-repeated-region-evidence')).not.toBeInTheDocument();
+      control.unmount();
+      const result = renderList(input);
+      expect(regionButtons(result.container)).toEqual(buttons);
+      const details = screen.getAllByTestId('acx-repeated-region-evidence');
+      expect(details).toHaveLength(2);
+      expect(screen.getByRole('button', { name: 'Alice' }).closest('.acx-identity-cluster')?.querySelector('details.acx-identity-cluster__repeated-region')).toBeNull();
+      for (const detail of details) {
+        expect(within(detail).getByText(`Same photo region is also listed in ${format.format(1)} other group`)).toBeInTheDocument();
+        fireEvent.click(within(detail).getByText(/Same photo region/));
+        expect(within(detail).getByText(`Checked ${format.format(2)} of ${format.format(3)} loaded face records with usable box coordinates.`)).toBeVisible();
+        expect(within(detail).getByText(`${format.format(1)} face record was skipped because its loaded copies disagree.`)).toBeVisible();
+        expect(within(detail).getByText('Photo 10 — box x 12, y 20, width 40, height 48')).toBeVisible();
+        expect(detail.textContent).not.toContain('face-a');
+      }
+      expect(groupIdentitiesByClusters(input)).toEqual(before);
+      expect(groupIdentitiesByClusters(input).map((g) => [g.key, getEditableClusterId(g), g.members[0]?.identity_id])).toEqual(targets);
+      result.unmount();
+    }
+  });
+  it.each(['en-US', 'ar-EG'])('shows two abstentions beside a valid region and preserves raw signed-zero evidence in %s', (lang) => {
+    document.documentElement.lang = lang;
+    const format = new Intl.NumberFormat(lang, { maximumFractionDigits: 0 });
+    const c = { ...repeatedC, bbox: { ...repeatedC.bbox, x: -0 } };
+    const u = repeatedFace({ identity_id: 'face-u', person_id: null, cluster_id: null, cluster_label: null,
+      bbox: { ...repeatedC.bbox, x: 0 } });
+    const input = [repeatedA, repeatedA2, repeatedB, { ...repeatedB, cluster_id: 'c-9' }, c, u];
+    const evidence = buildRepeatedRegionEvidence(input);
+    const groups = groupIdentitiesByClusters(input);
+    const targets = groups.map((g) => [getEditableClusterId(g), g.members[0]?.identity_id]);
+    expect(evidence.pool).toEqual({ loadedObservationCount: 4, eligibleObservationCount: 2, abstainedIdentityIds: ['face-a', 'face-b'] });
+    expect(evidence.regions[0].bbox.x).toBe(-0);
+    renderList(input);
+    const details = screen.getAllByTestId('acx-repeated-region-evidence');
+    expect(details).toHaveLength(2);
+    for (const detail of details) {
+      fireEvent.click(within(detail).getByText(/Same photo region/));
+      expect(within(detail).getByText(`Checked ${format.format(2)} of ${format.format(4)} loaded face records with usable box coordinates.`)).toBeVisible();
+      expect(within(detail).getByText(`${format.format(2)} face records were skipped because their loaded copies disagree.`)).toBeVisible();
+      expect(within(detail).getByText('Photo 10 — box x 0, y 20, width 40, height 48')).toBeVisible();
+    }
+    const after = buildRepeatedRegionEvidence(input);
+    expect(after).toEqual(evidence);
+    for (const coordinate of ['x', 'y', 'width', 'height'] as const) {
+      expect(Object.is(after.regions[0].bbox[coordinate], evidence.regions[0].bbox[coordinate])).toBe(true);
+    }
+    expect(groupIdentitiesByClusters(input)).toEqual(groups);
+    expect(groupIdentitiesByClusters(input).map((g) => [getEditableClusterId(g), g.members[0]?.identity_id])).toEqual(targets);
+  });
+
 });

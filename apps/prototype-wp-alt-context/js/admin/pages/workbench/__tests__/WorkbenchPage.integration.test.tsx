@@ -326,7 +326,10 @@ describe('WorkbenchPage (integration-lite)', () => {
     const strip = await screen.findByTestId('active-job-strip');
     expect(strip).toBeInTheDocument();
     expect(strip.textContent).toMatch(/Scanning/i);
-    expect(within(strip).getByRole('button', { name: 'Cancel run' })).toBeEnabled();
+    // UXREC-1 WB_CONTROL: the one shared run status, with its Cancel run, lives in Library.
+    expect(
+      within(screen.getByTestId('workbench-two-pane-library')).getByRole('button', { name: 'Cancel run' }),
+    ).toBeEnabled();
   });
 
   it.each([
@@ -737,7 +740,9 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     // Initial paint: queues are empty and the panel says so explicitly.
     expect(
-      await screen.findByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
+      await screen.findByText(
+        'No recognition suggestions to review. Description drafts are separate results in the media library.',
+      ),
     ).toBeInTheDocument();
 
     // The projected results become available server-side only now.
@@ -794,7 +799,9 @@ describe('WorkbenchPage (integration-lite)', () => {
     expect(await screen.findByText('1 unlabeled group')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeEnabled();
     expect(
-      screen.queryByText('No recognition suggestions to review. Description drafts are separate results in the media library.'),
+      screen.queryByText(
+        'No recognition suggestions to review. Description drafts are separate results in the media library.',
+      ),
     ).not.toBeInTheDocument();
   });
 

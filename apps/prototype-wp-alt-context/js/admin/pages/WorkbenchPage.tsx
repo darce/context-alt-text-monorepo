@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { StepMap, STEP_MAP_VALUES, type StepMapValue } from '../components/ui/StepMap';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
+import { ScanActionPanel } from './workbench/Panels';
 import { RecognitionPolicyControl } from './workbench/RecognitionPolicyControl';
 import { MediaSelection } from './workbench/MediaSelection';
 import { WorkbenchTwoPaneLayout } from './workbench/WorkbenchTwoPaneLayout';
@@ -78,6 +79,15 @@ export const WorkbenchStepMap = ({
   />
 );
 
+const focusLibrarySearch = (): void => {
+  const search = document.getElementById('acx-media-search');
+  if (!search || search.closest('[hidden]')) {
+    return;
+  }
+  search.focus();
+  search.scrollIntoView?.({ block: 'nearest' });
+};
+
 export const WorkbenchPage = (): React.JSX.Element => (
   <WorkbenchProvider>
     <WorkbenchPageContent />
@@ -95,7 +105,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     setAdvancedOpen,
   } = useWorkbenchNav();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
-  const { scanRun, status, retryProjectionSync } = useJobPipeline();
+  const { scanRun, status, history, cancelScan, retryProjectionSync, retryScanStream } = useJobPipeline();
   const { detailTruncationNotice } = useWorkbenchMediaContext().mediaQueue;
   const [panes, setPanes] = usePanesParam();
 
@@ -128,6 +138,25 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     controlCollapsed: panes === APP_LINK_VALUES.panesControlCollapsed,
   });
 
+  // Same scan source and cancel targets as the Control scan section (ScanTabContent).
+  const handleCancelScan = (): void => {
+    const targets = history.activeJobIds.length > 0 ? history.activeJobIds : history.jobId ? [history.jobId] : [];
+    if (targets.length > 0) {
+      cancelScan(targets);
+    }
+  };
+
+  // A hidden search cannot take focus, and the router commits `?panes=` in a transition.
+  // The request waits for that commit; it is consumed by the first pane change.
+  const searchFocusRequested = React.useRef(false);
+  React.useEffect(() => {
+    if (!searchFocusRequested.current) {
+      return;
+    }
+    searchFocusRequested.current = false;
+    focusLibrarySearch();
+  }, [panes]);
+
   // The existing empty-state link retains its route fallback. On this surface,
   // its useful next step is the Library search, including reopening that pane.
   const handleEmptyRecognitionStep = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -145,13 +174,11 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     }
     event.preventDefault();
     if (panes === APP_LINK_VALUES.panesLibraryCollapsed) {
+      searchFocusRequested.current = true;
       setPanes(APP_LINK_VALUES.panesBoth);
+      return;
     }
-    queueMicrotask(() => {
-      const search = document.getElementById('acx-media-search');
-      search?.focus();
-      search?.scrollIntoView?.({ block: 'nearest' });
-    });
+    focusLibrarySearch();
   };
 
   return (
@@ -251,14 +278,27 @@ const WorkbenchPageContent = (): React.JSX.Element => {
                   onRetry={retryProjectionSync}
                 />
               </div>
-              <ScanTabContent compactEmptySections />
+              <ScanTabContent compactEmptySections externalActivityStatus />
               <RecognitionPolicyControl />
             </div>
           }
           library={
             <>
               {detailTruncationNotice && <div className="acx-notice acx-notice--info">{detailTruncationNotice}</div>}
-              <MediaSelection reviewActive={reviewSurfaceActive} />
+              {/* [INT-08][PERC-01] The one shared run status sits beside Describe, so description
+                  progress/cancel/recovery stay visible while recognition chrome is idle. */}
+              <MediaSelection
+                reviewActive={reviewSurfaceActive}
+                activityStatus={
+                  <ScanActionPanel
+                    variant="compact"
+                    scanRun={scanRun}
+                    currentPhase={status.currentPhase}
+                    onCancelScan={handleCancelScan}
+                    onRetryStream={retryScanStream}
+                  />
+                }
+              />
             </>
           }
         />

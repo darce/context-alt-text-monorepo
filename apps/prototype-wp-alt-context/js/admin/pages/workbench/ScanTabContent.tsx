@@ -54,13 +54,17 @@ export const NoMediaPanel = () => (
   />
 );
 
+interface ScanTabContentOptions {
+  compactEmptySections?: boolean;
+  /** The outer composition mounts the shared run status elsewhere; never mount a second strip here. */
+  externalActivityStatus?: boolean;
+}
+
 const ScanTabContentBody = ({
   compactEmptySections = false,
+  externalActivityStatus = false,
   emptyReviews = false,
-}: {
-  compactEmptySections?: boolean;
-  emptyReviews?: boolean;
-}): React.JSX.Element => {
+}: ScanTabContentOptions & { emptyReviews?: boolean }): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
@@ -226,13 +230,15 @@ const ScanTabContentBody = ({
         // L3R-01: strip is visual-only — no role="status". Job announcements live on the
         // demoted panel's phase-stable live region (buildCoarseJobAnnouncement), not statusText ticks.
         <div className="acx-active-job-strip" data-testid="active-job-strip">
-          <ScanActionPanel
-            variant="compact"
-            scanRun={scanRun}
-            currentPhase={status.currentPhase}
-            onCancelScan={handleCancelScan}
-            onRetryStream={retryScanStream}
-          />
+          {externalActivityStatus ? null : (
+            <ScanActionPanel
+              variant="compact"
+              scanRun={scanRun}
+              currentPhase={status.currentPhase}
+              onCancelScan={handleCancelScan}
+              onRetryStream={retryScanStream}
+            />
+          )}
           <JobTimeline
             compact
             scanProgress={status.scanProgress}
@@ -344,7 +350,7 @@ const ScanTabContentBody = ({
           scanRun={scanRun}
           onCancelScan={handleCancelScan}
           onRetryStream={retryScanStream}
-          suppressPrimaryChrome={isJobActive}
+          suppressPrimaryChrome={isJobActive || externalActivityStatus}
         />
         {!isJobActive ? (
           <JobTimeline
@@ -362,15 +368,20 @@ const ScanTabContentBody = ({
 /** Remount the session-owned HAI state when the active tenant changes. */
 export const ScanTabContent = ({
   compactEmptySections = false,
-}: {
-  compactEmptySections?: boolean;
-}): React.JSX.Element => {
+  externalActivityStatus = false,
+}: ScanTabContentOptions): React.JSX.Element => {
   const tenantId = typeof window === 'undefined' ? '' : (window.AltContextAdmin?.tenant_id ?? '');
-  return compactEmptySections ? <CompactScanTabContent key={tenantId} /> : <ScanTabContentBody key={tenantId} />;
+  return compactEmptySections ? (
+    <CompactScanTabContent key={tenantId} externalActivityStatus={externalActivityStatus} />
+  ) : (
+    <ScanTabContentBody key={tenantId} externalActivityStatus={externalActivityStatus} />
+  );
 };
 
 /** Presentation only: reuse the shared query cache and existing findings model; no poller or run state. */
-const CompactScanTabContent = (): React.JSX.Element => {
+const CompactScanTabContent = ({
+  externalActivityStatus,
+}: Pick<ScanTabContentOptions, 'externalActivityStatus'>): React.JSX.Element => {
   const findings = useWorkbenchFindings();
   const { assignmentQuery, mergeQuery, nameQuery, topUnlabeledQuery } = useSuggestionReviewQueries();
   // Partial failures and unresolved reads never certify an empty review surface.
@@ -384,5 +395,11 @@ const CompactScanTabContent = (): React.JSX.Element => {
     !findings.isError &&
     !findings.isAssignmentError &&
     !findings.isTopUnlabeledError;
-  return <ScanTabContentBody compactEmptySections emptyReviews={emptyReviews} />;
+  return (
+    <ScanTabContentBody
+      compactEmptySections
+      externalActivityStatus={externalActivityStatus}
+      emptyReviews={emptyReviews}
+    />
+  );
 };

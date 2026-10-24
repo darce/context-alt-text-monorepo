@@ -696,7 +696,7 @@ describe('WorkbenchPage', () => {
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
     const control = screen.getByTestId('workbench-two-pane-control');
-    expect(within(control).getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
+    expect(within(control).getByRole('heading', { name: 'Recognition evidence' })).toBeInTheDocument();
   });
 
   it('keeps the Describe footer CTA while backend-driven clustering is active', async () => {
@@ -778,7 +778,7 @@ describe('WorkbenchPage', () => {
     );
 
     // Two-pane workbench renders (scan control host); ?panel=conflicts opens the overlay.
-    expect(screen.getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Recognition evidence' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
     // Discriminating: shim is GONE — advanced stays closed, no tab UI exists.
     expect(screen.getByRole('button', { name: 'Advanced: jobs & recovery' })).toHaveAttribute('aria-expanded', 'false');
@@ -846,7 +846,7 @@ describe('WorkbenchPage', () => {
 
       // Scan content lives left; the media library lives right — MediaSelection appears
       // exactly once, inside the library host (rehomed, not duplicated).
-      expect(within(control).getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
+      expect(within(control).getByRole('heading', { name: 'Recognition evidence' })).toBeInTheDocument();
       const mediaRegions = container.querySelectorAll('.acx-media-selection');
       expect(mediaRegions).toHaveLength(1);
       expect(library).toContainElement(mediaRegions[0] as HTMLElement);
@@ -856,7 +856,7 @@ describe('WorkbenchPage', () => {
       setupScanMutation('success');
       renderWorkbench();
 
-      const panelHost = document.querySelector('.acx-workbench__panel');
+      const panelHost = document.querySelector('.acx-workbench__control');
       expect(panelHost).not.toBeNull();
       // Nested narrow live regions may exist; the panel host itself must not re-announce.
       expect(panelHost).not.toHaveAttribute('aria-live');

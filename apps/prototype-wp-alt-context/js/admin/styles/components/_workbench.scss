@@ -140,6 +140,23 @@
   &__two-pane-library {
     flex: 1 1 auto;
     block-size: 70dvh;
+
+    // [PERC-01] One bounded Library: the slot left after the heading and padding is handed
+    // to MediaSelection, and slot notices shrink it, so its action/status/pagination group
+    // stays put and only its rows scroll. The pane's own overflow is a short-viewport fallback.
+    > .acx-workbench__two-pane-slot {
+      --acx-media-selection-available-height: 100%;
+
+      display: flex;
+      flex: 1 1 0;
+      flex-direction: column;
+      gap: var(--acx-space-12);
+    }
+
+    // The supplied run status spans the action group like its siblings, not a centred island.
+    .acx-apply-panel--compact {
+      align-items: stretch;
+    }
   }
 
   &__two-pane-control[data-collapsed='true'],

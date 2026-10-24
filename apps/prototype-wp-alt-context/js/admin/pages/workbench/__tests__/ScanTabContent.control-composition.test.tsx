@@ -237,3 +237,40 @@ describe('UXREC-1 compact recognition composition', () => {
     expect(screen.getByTestId('review-queue')).toBeInTheDocument();
   });
 });
+
+describe('UXREC-1 shared run status is left to the Library composition (finding 19874)', () => {
+  beforeEach(() => {
+    panelState.mode = 'none';
+    panelState.clusterId = null;
+    lifecycleState.reviewClusterId = null;
+    pipelineState.isScanning = false;
+    pipelineState.currentPhase = 'idle';
+    pipelineState.errorMessage = null;
+    findings.hasFindings = false;
+  });
+  afterEach(cleanup);
+
+  it('mounts no Control run status while idle and still collapses idle recognition chrome', () => {
+    render(<ScanTabContent compactEmptySections externalActivityStatus />);
+    expect(screen.queryByTestId('scan-action-panel-compact')).toBeNull();
+    expect(screen.queryAllByRole('progressbar', { hidden: true })).toHaveLength(0);
+    expect(screen.getByTestId('scan-action-panel')).not.toBeVisible();
+  });
+
+  it('keeps the compact recognition timeline without a second run status while scanning', () => {
+    pipelineState.isScanning = true;
+    pipelineState.currentPhase = 'scanning';
+    render(<ScanTabContent compactEmptySections externalActivityStatus />);
+    expect(screen.getByTestId('active-job-strip')).toBeVisible();
+    expect(screen.getByTestId('job-timeline-compact')).toBeVisible();
+    expect(screen.queryByTestId('scan-action-panel-compact')).toBeNull();
+    expect(screen.queryAllByRole('progressbar', { hidden: true })).toHaveLength(0);
+  });
+
+  it('keeps recognition failure detail visible in Control', () => {
+    pipelineState.errorMessage = 'Recognition failed';
+    render(<ScanTabContent compactEmptySections externalActivityStatus />);
+    expect(screen.getByTestId('scan-action-panel')).toBeVisible();
+    expect(screen.queryAllByRole('progressbar', { hidden: true })).toHaveLength(0);
+  });
+});

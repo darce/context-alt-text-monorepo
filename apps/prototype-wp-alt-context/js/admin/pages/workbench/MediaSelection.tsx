@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { ChangeEvent, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
@@ -58,6 +58,8 @@ import {
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
 
 interface MediaSelectionProps {
+  /** Existing job status supplied once by the outer composition; no new run owner. */
+  activityStatus?: ReactNode;
   /**
    * §7: a review card / label / review panel primary is on screen. When true the
    * card owns the single viewport accent primary, so the footer Describe CTA steps down.
@@ -147,19 +149,19 @@ export const workbenchDraftQueueHref = (runId?: string | null): string => {
   return `#${descriptionHistoryQueuePath(serialized ? `${APP_LINK_PARAMS.run}=${serialized}` : '')}`;
 };
 
-export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
+export const MediaSelection = ({ reviewActive = false, activityStatus }: MediaSelectionProps): React.JSX.Element => {
   const inRouter = useInRouterContext();
   if (!inRouter) {
     return (
       <MemoryRouter initialEntries={['/workbench']}>
-        <MediaSelectionRouted reviewActive={reviewActive} />
+        <MediaSelectionRouted reviewActive={reviewActive} activityStatus={activityStatus} />
       </MemoryRouter>
     );
   }
-  return <MediaSelectionRouted reviewActive={reviewActive} />;
+  return <MediaSelectionRouted reviewActive={reviewActive} activityStatus={activityStatus} />;
 };
 
-const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
+const MediaSelectionRouted = ({ reviewActive = false, activityStatus }: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -437,54 +439,13 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
           onClearDraftFilters={clearDraftFilters}
         />
 
-        <table className="acx-media-selection__table">
-          <thead>
-            <tr>
-              <th scope="col">
-                <Checkbox
-                  ariaLabel={__('Select all items on this page', 'alt-context')}
-                  checked={areAllPageRowsChecked}
-                  onCheckedChange={(checked: boolean) => onToggleAll(checked)}
-                  disabled={items.length === 0}
-                />
-              </th>
-              <th scope="col">{__('Preview', 'alt-context')}</th>
-              <th scope="col">{__('Details', 'alt-context')}</th>
-              <th scope="col">{__('Tags', 'alt-context')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <MediaSelectionTableBody
-              items={items}
-              isLoading={isLoading}
-              detailIsLoading={detailQuery.isPending || detailQuery.isFetching}
-              onToggleRow={onToggleRow}
-              selection={selection}
-              identitiesDataSource={deriveIdentitiesPresentationSource(identityQuery.isError, identityQuery.data)}
-              identitiesLoading={
-                identityQuery.isLoading || (identityQuery.isPlaceholderData && identityQuery.isFetching)
-              }
-              onRetryIdentities={() => void identityQuery.refetch()}
-              searchQuery={searchQuery}
-              statusFilter={statusFilter}
-              onClearSearch={clearSearch}
-              onClearStatusFilter={() => onStatusFilterChange('all')}
-              draftRunId={draftRunId}
-              hasDraftFilter={hasDraftFilter}
-              onClearDraftFilters={clearDraftFilters}
-            />
-          </tbody>
-        </table>
+        {/* PERC-01 / INT-05: selected-media actions stay beside their run status,
+            while only the tall media rows scroll. Outer composition owns the status node. */}
+        <section className="acx-media-selection__actions" aria-label={__('Selected media actions', 'alt-context')}>
+          <p className="acx-media-selection__selected-count">
+            {sprintf(__('%d selected', 'alt-context'), selectedMediaIds.length)}
+          </p>
 
-        <div className="acx-media-selection__footer">
-          <MediaSelectionPagination
-            currentPage={currentPage}
-            totalPages={totalPages}
-            perPage={perPage}
-            onPerPageChange={onPerPageChange}
-            onPageChange={onPageChange}
-            labelId="acx-media-page-size-label"
-          />
           <BulkDescribeCta
             selectedCount={selectedMediaIds.length}
             isSubmitting={bulkDescribe.submit.isPending}
@@ -555,6 +516,7 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             onDismiss={() => setDismissedRunId(terminalDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
+          {activityStatus}
           <DevelopmentFaceScan
             available={developmentFaceScanAvailable}
             targetUrl={settingsQuery.data?.effective_target_url ?? ''}
@@ -590,6 +552,61 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
               </ul>
             </div>
           ) : null}
+        </section>
+        <div
+          className="acx-media-selection__rows"
+          role="region"
+          aria-label={__('Media library', 'alt-context')}
+          tabIndex={0}
+        >
+          <table className="acx-media-selection__table">
+            <thead>
+              <tr>
+                <th scope="col">
+                  <Checkbox
+                    ariaLabel={__('Select all items on this page', 'alt-context')}
+                    checked={areAllPageRowsChecked}
+                    onCheckedChange={(checked: boolean) => onToggleAll(checked)}
+                    disabled={items.length === 0}
+                  />
+                </th>
+                <th scope="col">{__('Preview', 'alt-context')}</th>
+                <th scope="col">{__('Details', 'alt-context')}</th>
+                <th scope="col">{__('Tags', 'alt-context')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <MediaSelectionTableBody
+                items={items}
+                isLoading={isLoading}
+                detailIsLoading={detailQuery.isPending || detailQuery.isFetching}
+                onToggleRow={onToggleRow}
+                selection={selection}
+                identitiesDataSource={deriveIdentitiesPresentationSource(identityQuery.isError, identityQuery.data)}
+                identitiesLoading={
+                  identityQuery.isLoading || (identityQuery.isPlaceholderData && identityQuery.isFetching)
+                }
+                onRetryIdentities={() => void identityQuery.refetch()}
+                searchQuery={searchQuery}
+                statusFilter={statusFilter}
+                onClearSearch={clearSearch}
+                onClearStatusFilter={() => onStatusFilterChange('all')}
+                draftRunId={draftRunId}
+                hasDraftFilter={hasDraftFilter}
+                onClearDraftFilters={clearDraftFilters}
+              />
+            </tbody>
+          </table>
+        </div>
+        <div className="acx-media-selection__pagination-region">
+          <MediaSelectionPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            perPage={perPage}
+            onPerPageChange={onPerPageChange}
+            onPageChange={onPageChange}
+            labelId="acx-media-page-size-label"
+          />
         </div>
       </div>
       {detailAuthExpired ? (

@@ -61,6 +61,54 @@ export interface GpuStatePresentation {
   terminal: boolean;
 }
 
+type HumanCountLocale =
+  | { kind: 'localized'; tag: string }
+  | { kind: 'neutral-raw'; reason: 'missing' | 'invalid' | 'unsupported' | 'unavailable' };
+
+const resolveHumanCountLocale = (raw: string | null): HumanCountLocale => {
+  const requested = raw?.trim();
+  if (!requested) {
+    return { kind: 'neutral-raw', reason: 'missing' };
+  }
+  if (
+    typeof Intl === 'undefined' ||
+    typeof Intl.getCanonicalLocales !== 'function' ||
+    typeof Intl.NumberFormat !== 'function' ||
+    typeof Intl.NumberFormat.supportedLocalesOf !== 'function'
+  ) {
+    return { kind: 'neutral-raw', reason: 'unavailable' };
+  }
+  let tag: string | undefined;
+  try {
+    [tag] = Intl.getCanonicalLocales(requested);
+  } catch {
+    return { kind: 'neutral-raw', reason: 'invalid' };
+  }
+  if (tag === undefined) {
+    return { kind: 'neutral-raw', reason: 'invalid' };
+  }
+  try {
+    return Intl.NumberFormat.supportedLocalesOf([tag], { localeMatcher: 'lookup' }).includes(tag)
+      ? { kind: 'localized', tag }
+      : { kind: 'neutral-raw', reason: 'unsupported' };
+  } catch {
+    return { kind: 'neutral-raw', reason: 'unavailable' };
+  }
+};
+
+const formatHumanCount = (count: number, uiLocale: string | null): string => {
+  const locale = resolveHumanCountLocale(uiLocale);
+  if (locale.kind === 'localized') {
+    try {
+      return new Intl.NumberFormat(locale.tag, { style: 'decimal', maximumFractionDigits: 0 }).format(count);
+    } catch {
+      // Capability failures retain usable copy with deliberate, ungrouped raw numbers.
+      return String(count);
+    }
+  }
+  return String(count);
+};
+
 /** Centralized GPU copy consumed by the chip and its calm consequence line. */
 export const GPU_STATE_VOCABULARY = {
   tierPrefix: __('GPU tier:', 'alt-context'),
@@ -77,9 +125,20 @@ export const GPU_STATE_VOCABULARY = {
   readyNotice: __('GPU ready. Review results for each description’s compute tier.', 'alt-context'),
   degradedNotice: (_draftCount: number): string =>
     __('GPU unavailable. Existing results remain available; review each description’s compute tier.', 'alt-context'),
-  warmingToast: __('GPU warming — CPU drafts first', 'alt-context'),
+  warmingToast: __('GPU warming — this run is waiting for the description service', 'alt-context'),
   readyToast: __('GPU ready — review results for compute tiers', 'alt-context'),
-  degradedToast: __('GPU unavailable — CPU drafts kept', 'alt-context'),
+  degradedToast: __('GPU unavailable — no descriptions returned yet', 'alt-context'),
+  degradedToastWithDrafts: (draftCount: number, uiLocale: string | null): string =>
+    sprintf(
+      _n(
+        'GPU unavailable — %s draft ready to review',
+        'GPU unavailable — %s drafts ready to review',
+        draftCount,
+        'alt-context',
+      ),
+      formatHumanCount(draftCount, uiLocale),
+    ),
+  doneToastWithoutDrafts: __('Description run finished — no drafts returned.', 'alt-context'),
   doneToast: (draftCount: number): string =>
     sprintf(_n('%d draft ready to review', '%d drafts ready to review', draftCount, 'alt-context'), draftCount),
   failedToastWarmupTimeout: __('GPU warm-up timed out. Retry to continue.', 'alt-context'),

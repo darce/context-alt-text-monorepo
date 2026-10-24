@@ -96,6 +96,10 @@ const CLOSED_REASON_COPY: Record<UnavailableReason, { why: string; fix: string }
     why: 'it is not configured',
     fix: 'Set the API URL in Settings.',
   },
+  [UNAVAILABLE_REASON.ENDPOINT_UNCONFIGURED]: {
+    why: 'its GPU endpoint is not configured',
+    fix: 'An administrator must set the GPU endpoint for the Description service. Retry only checks again; it does not change the setting.',
+  },
   [UNAVAILABLE_REASON.API_KEY_MISSING]: {
     why: 'the API key is missing',
     fix: 'Add the API key in Settings.',
@@ -156,4 +160,13 @@ describe('unavailable copy', () => {
       fix: 'Retry. If it continues, check Settings and the service logs.',
     });
   });
+});
+
+it('UXREC-1 endpoint_unconfigured maps to configuration copy', () => {
+  const copy = unavailableReasonCopy('endpoint_unconfigured');
+  expect(copy).toEqual({
+    why: 'its GPU endpoint is not configured',
+    fix: 'An administrator must set the GPU endpoint for the Description service. Retry only checks again; it does not change the setting.',
+  });
+  expect(copy.why).not.toMatch(/unexpected error/);
 });

@@ -66,6 +66,7 @@
   }
 
   &__info {
+    min-width: 0;
     flex: 1;
     display: flex;
     align-items: center;
@@ -487,5 +488,29 @@
       border-color: var(--acx-color-success-text);
       color: var(--acx-color-surface-alt);
     }
+  }
+}
+
+
+.acx-identity-cluster__repeated-region {
+  flex-basis: 100%;
+  min-width: 0;
+  margin-block-start: var(--acx-space-8);
+
+  summary {
+    cursor: pointer;
+  }
+
+  p,
+  ul {
+    margin-block: var(--acx-space-8);
+  }
+
+  ul {
+    padding-inline-start: var(--acx-space-16);
+  }
+
+  code {
+    overflow-wrap: anywhere;
   }
 }

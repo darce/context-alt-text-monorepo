@@ -1,0 +1,176 @@
+{
+  "map_ref": "dev-face-recognition",
+  "product": "AltContext WordPress developer face-only recognition",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+  "goals": [
+    "Recognize selected images on the configured remote development API CPU without creating descriptions or starting GPU work.",
+    "Expose the one-shot action only when WordPress is local/development and the effective hosted API is one of the explicitly mapped development deployments. Server rechecks on every submission.",
+    "Reuse scan progress, cancellation, failure recovery, clustering, projection and existing evidence review. Manual diagnosis is not a benchmark or a model winner claim.",
+    "One fixed model per LocalWP instance, selected only in that instance's API settings. The command runs that pipeline; its target display is read-only."
+  ],
+  "jobs": [
+    {
+      "id": "inspect-fir",
+      "label": "Inspect faces and occlusion outcomes on one isolated development model stack"
+    }
+  ],
+  "screens": [
+    {
+      "id": "media-selection",
+      "kind": "screen",
+      "title": "Review Queue media selection",
+      "purpose": "Select images; Describe selected remains the normal primary. A collapsed Developer tools disclosure offers a separate CPU face-only command. Production/demo/staging environments and unknown settings omit this disclosure.",
+      "route": "#/workbench",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": ["tab", "run_id"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+      "primary_action_id": "describe",
+      "states": ["default", "loading", "empty", "error", "degraded"],
+      "zones": [
+        {
+          "id": "selected-media",
+          "label": "Selected image thumbnails and filenames, shared with Describe",
+          "role": "content",
+          "states": ["default", "loading", "empty", "error"]
+        },
+        {
+          "id": "developer-tools",
+          "label": "Collapsed Developer tools; read-only configured API target; Run FIR pipeline (CPU). Preview explains selected image count, recognition writes and no descriptions/GPU. Disabled with an explanation for empty selection, recognition off, offline or another active operation. One fixed model per LocalWP instance; this command runs its configured pipeline.",
+          "role": "job",
+          "states": ["default", "loading", "empty", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "scan-activity",
+      "kind": "screen",
+      "title": "Face-only run activity",
+      "purpose": "Accepted work uses existing scan progress, Cancel, stream Retry and job history beside the selected media. Starting is pending; failures remain visible and do not start descriptions. Collapsing developer disclosure does not hide the shared job activity.",
+      "route": "#/workbench",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["tab", "run_id"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
+      "states": ["loading", "error", "degraded", "default"],
+      "zones": [
+        {
+          "id": "scan-status",
+          "label": "Existing face scan progress, phase and processed counts; polite announcement; Cancel; read-only stream Retry",
+          "role": "status",
+          "states": ["loading", "error", "degraded", "default"]
+        }
+      ],
+      "primary_action_id": null
+    },
+    {
+      "id": "face-review",
+      "kind": "exit",
+      "title": "Existing face review",
+      "purpose": "Inspect found face boxes beside the source image and review suggestions in the existing queue; unknown or missed faces remain observable. Completion never promises a match, complete coverage, a model winner or a new description.",
+      "route": "#/workbench",
+      "deep_link": true,
+      "url_params": ["tab", "panel", "clusterId"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
+      "states": ["default", "empty", "error", "degraded"],
+      "zones": [
+        {
+          "id": "face-evidence",
+          "label": "Existing source image, face boxes and recognition evidence; empty and error states remain distinct",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "empty", "error", "degraded"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "describe",
+      "verb": "Describe selected",
+      "target": "Existing describe submission",
+      "hierarchy": "primary",
+      "screen_id": "media-selection",
+      "costly": true,
+      "preview_required": true,
+      "irreversible": false
+    },
+    {
+      "id": "recognize-only",
+      "verb": "Run FIR pipeline (CPU)",
+      "target": "POST recognition/analyze {development_faces_only:true}; existing scan pipeline only",
+      "hierarchy": "secondary",
+      "screen_id": "media-selection",
+      "costly": true,
+      "preview_required": true,
+      "irreversible": false
+    },
+    {
+      "id": "cancel",
+      "verb": "Cancel face scan",
+      "target": "Existing cancelScan; never describe",
+      "hierarchy": "secondary",
+      "screen_id": "scan-activity",
+      "costly": false,
+      "preview_required": false,
+      "irreversible": false
+    },
+    {
+      "id": "retry-observation",
+      "verb": "Retry status connection",
+      "target": "Existing retryScanStream; no duplicate inference",
+      "hierarchy": "secondary",
+      "screen_id": "scan-activity",
+      "costly": false,
+      "preview_required": false,
+      "irreversible": false
+    }
+  ],
+  "flows": [
+    {
+      "id": "recognize-selected",
+      "job": "inspect-fir",
+      "label": "Run selected media through CPU recognition only",
+      "steps": [
+        {
+          "screen_id": "media-selection",
+          "branch_label": "Select images; expand Developer tools; inspect target and count; invoke face-only action"
+        },
+        {
+          "screen_id": "scan-activity",
+          "branch_label": "Pending then observed progress; no Describe callback"
+        },
+        {
+          "screen_id": "face-review",
+          "branch_label": "Terminal success: inspect actual face results, including unknown or empty"
+        }
+      ]
+    },
+    {
+      "id": "cancel-or-failure",
+      "job": "inspect-fir",
+      "label": "Recover without a description or hidden GPU work",
+      "steps": [
+        {
+          "screen_id": "media-selection",
+          "branch_label": "Start one explicit face-only command"
+        },
+        {
+          "screen_id": "scan-activity",
+          "branch_label": "Cancel or typed error; keep selection, show outcome; stream Retry only reconnects"
+        },
+        {
+          "screen_id": "media-selection",
+          "branch_label": "A new face scan requires another explicit command"
+        }
+      ]
+    }
+  ],
+  "not_doing": [
+    "No persistent processing-mode switch or relabelled Describe button.",
+    "No per-request model switching, embedding-space mixing, production/demo access or local laptop execution.",
+    "No comparison metrics, ground-truth editor or claim that the face UI chooses AuraFace vs SFace. Use the existing isolated benchmark harness and fixed occlusion corpus.",
+    "No new review tab, modal, navigation hierarchy or GPU readiness gate."
+  ],
+  "open_questions": []
+}

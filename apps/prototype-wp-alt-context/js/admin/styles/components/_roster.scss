@@ -108,6 +108,8 @@
 }
 
 .acx-roster-entries {
+  min-width: 0;
+
   &__open {
     display: inline-flex;
     align-items: center;
@@ -119,7 +121,13 @@
     color: var(--acx-color-text);
     font: inherit;
     text-align: left;
+    max-width: 100%;
+    overflow-wrap: anywhere;
     cursor: pointer;
+
+    strong {
+      min-width: 0;
+    }
 
     &:hover {
       background: var(--acx-color-surface);
@@ -144,6 +152,7 @@
 
   &__table {
     width: 100%;
+    table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
     background: var(--acx-color-surface-alt);
@@ -156,6 +165,19 @@
       padding: var(--acx-space-16);
       text-align: left;
       border-bottom: 1px solid var(--acx-color-border);
+      overflow-wrap: anywhere;
+    }
+
+    th:first-child {
+      width: 30%;
+    }
+
+    th:nth-child(3) {
+      width: 20%;
+    }
+
+    th:last-child {
+      width: 23%;
     }
 
     th {
@@ -188,7 +210,53 @@
 
   &__actions {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: var(--acx-space-8);
+  }
+
+  @media (max-width: 780px) {
+    &__table {
+      display: block;
+
+      thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+      }
+
+      tbody,
+      tr,
+      td {
+        display: block;
+        width: 100%;
+      }
+
+      tr {
+        padding: var(--acx-space-12) 0;
+        border-bottom: 1px solid var(--acx-color-border);
+      }
+
+      tr:last-child {
+        border-bottom: 0;
+      }
+
+      td {
+        padding: var(--acx-space-8) var(--acx-space-12);
+        border-bottom: 0;
+      }
+
+      td:not(:first-child)::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: var(--acx-space-4);
+        font-weight: var(--acx-font-weight-semibold);
+        font-size: var(--acx-text-sm);
+        color: var(--acx-color-text-muted);
+      }
+    }
   }
 
   /* Person state chip: icon + text (not colour alone) [PERC-02] [sr-004]. */
@@ -526,8 +594,8 @@
 
 .acx-roster__person-workspace-header {
   display: flex;
-  flex-direction: column;
-  gap: var(--acx-space-4);
+  align-items: flex-start;
+  gap: var(--acx-space-16);
 
   h3 {
     margin: 0;
@@ -535,6 +603,40 @@
     font-weight: var(--acx-font-weight-semibold);
     line-height: var(--acx-leading-tight);
     color: var(--acx-color-text);
+  }
+}
+
+.acx-roster__person-workspace-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.acx-roster__photos-link {
+  display: inline-block;
+  width: fit-content;
+  padding: var(--acx-space-4);
+  border-radius: var(--acx-radius-md);
+  color: var(--acx-color-accent);
+  font: inherit;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+
+  &:focus-visible {
+    outline: var(--acx-space-2) solid var(--acx-color-accent);
+    outline-offset: var(--acx-space-2);
+  }
+}
+
+.acx-roster__person-photos {
+  min-width: 0;
+  scroll-margin-block: var(--acx-space-16);
+
+  &:focus-visible {
+    outline: var(--acx-space-2) solid var(--acx-color-accent);
+    outline-offset: var(--acx-space-4);
   }
 }
 

@@ -1,27 +1,10 @@
- .../ux-wave-next-20261024/ACTION_PROGRESS.brief.md |   35 +
- .../current/ux-wave-next-20261024/COMMON.md        |    7 +
- .../ux-wave-next-20261024/ROSTER_EVIDENCE.brief.md |   34 +
- .../current/ux-wave-next-20261024/UI-CONTRACTS.md  |   13 +
- .../USAGE_READ_MODEL.brief.md                      |   32 +
- .../ux-wave-next-20261024/USAGE_UI.brief.md        |   33 +
- .../ux-wave-next-20261024/WB_CONTROL.brief.md      |   33 +
- .../ux-wave-next-20261024/canon-context.json       |  146 +++
- .../ux-wave-next-20261024/dispatch-readiness.json  |   21 +
- .../native-critique-resolutions.json               |   13 +
- .../ux-wave-next-20261024/native-map-receipt.json  |   28 +
- .../native-positive-control-critique.json          |   14 +
- .../native-positive-control.uxmap.json             |  791 ++++++++++++++
- .../ux-wave-next-20261024/packet-custody.json      |  105 ++
- .../prior-embedding-readback.json                  |  157 +++
- .../prior-review-context.json                      |  278 +++++
- .../roster-native-critique.json                    |    1 +
- .../roster-native-schema-normalization.json        |   71 ++
- .../roster-native-source-check.json                |  815 +++++++++++++++
- .../roster-proposal.uxmap.json                     |  668 ++++++++++++
- .../current/ux-wave-next-20261024/roster-render.md |  327 ++++++
- .../ux-wave-next-20261024/source-anchors.json      |  122 +++
- .../workbench-native-critique.json                 |    1 +
- .../workbench-native-source-check.json             | 1095 ++++++++++++++++++++
- .../workbench-proposal.uxmap.json                  |  791 ++++++++++++++
- .../ux-wave-next-20261024/workbench-render.md      |  468 +++++++++
- 26 files changed, 6099 insertions(+)
+ apps/app-portal/.env.example                       |   7 +
+ apps/app-portal/src/App.tsx                        | 193 +++++++++-
+ .../src/__tests__/account-navigation.test.tsx      | 422 +++++++++++++++++++++
+ .../src/__tests__/portal-request.test.ts           | 188 +++++++++
+ apps/app-portal/src/api/portalRequest.ts           | 157 ++++++++
+ apps/app-portal/src/config.ts                      |  30 +-
+ apps/app-portal/src/screens/AccountScreen.tsx      |  19 +
+ apps/app-portal/src/screens/NotAdmittedScreen.tsx  |   7 +
+ apps/app-portal/src/styles.css                     |  76 +++-
+ 9 files changed, 1081 insertions(+), 18 deletions(-)

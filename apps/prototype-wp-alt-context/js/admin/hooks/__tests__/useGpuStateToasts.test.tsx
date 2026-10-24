@@ -3,6 +3,8 @@ import { act, cleanup, render } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { __, _n } from '@wordpress/i18n';
+
 import { GPU_STATE } from '../../api/describeApi';
 import type { ToastOptions } from '../../context/ToastContext';
 import { GPU_STATE_VOCABULARY } from '../../pages/workbench/gpuStatePresentation';
@@ -42,6 +44,11 @@ vi.mock('../useActivityStatus', async (importOriginal) => {
     ...actual,
     useActivityStatus: (...args: unknown[]) => useActivityStatusMock(...args),
   };
+});
+
+vi.mock('@wordpress/i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wordpress/i18n')>();
+  return { ...actual, _n: vi.fn(actual._n) };
 });
 
 const idleStatus = (overrides: Partial<ActivityStatus> = {}): ActivityStatus => ({
@@ -160,8 +167,14 @@ const runStatus = (
   });
 
 describe('useGpuStateToasts edge policy', () => {
+  let originalLang: string | null;
+  let originalFormatDescriptor: PropertyDescriptor | undefined;
   beforeEach(() => {
     vi.clearAllMocks();
+    originalLang = document.documentElement.getAttribute('lang');
+    originalFormatDescriptor = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, 'format');
+    document.documentElement.lang = 'en-US';
+    vi.mocked(_n).mockImplementation((single, plural, count) => count === 1 ? __(single, 'alt-context') : __(plural, 'alt-context'));
     useActivityStatusMock.mockReturnValue(hookResult());
     act(() => {
       setActiveDescribeRunId(null);
@@ -175,6 +188,11 @@ describe('useGpuStateToasts edge policy', () => {
       setDescribeProgressMounted(false);
     });
     cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    if (originalFormatDescriptor) Object.defineProperty(Intl.NumberFormat.prototype, 'format', originalFormatDescriptor);
+    if (originalLang === null) document.documentElement.removeAttribute('lang');
+    else document.documentElement.lang = originalLang;
   });
 
   it('reads useActivityStatus as the sole activity-status authority', () => {
@@ -343,13 +361,14 @@ describe('useGpuStateToasts edge policy', () => {
           hookResult({
             status: runStatus(ACTIVITY_KIND.DESCRIBING, {
               gpuState: GPU_STATE.DEGRADED,
+              draftCount: 1,
               canCancel: true,
             }),
           }),
         ],
         { mounted: true },
       );
-      const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.degradedToast);
+      const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.degradedToastWithDrafts(1, 'en-US'));
       expect(options.action).toMatchObject({
         label: GPU_STATE_VOCABULARY.reviewResults,
         altText: GPU_STATE_VOCABULARY.reviewResultsAltText,
@@ -498,4 +517,160 @@ describe('useGpuStateToasts edge policy', () => {
     view.rerender(harnessTree());
     expect(infoMock).toHaveBeenCalledTimes(2);
   });
+  describe('UXREC-1 GPU toast evidence', () => {
+    const degrade = (draftCount: number): ReturnType<typeof render> => observeSequence([
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING) }),
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: GPU_STATE.DEGRADED, draftCount }) }),
+    ]);
+
+    it('warming toast makes no CPU draft claim', () => {
+      observeSequence([
+        hookResult({ status: runStatus(ACTIVITY_KIND.IDLE) }),
+        hookResult({ status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING }) }),
+      ]);
+      expectOnlyInfoToast('GPU warming — this run is waiting for the description service');
+      expect(infoMock.mock.calls[0]?.[0]).not.toMatch(/CPU/);
+    });
+
+    it('degraded toast without returned drafts offers no review', () => {
+      const view = degrade(0);
+      const options = expectOnlyErrorToast('GPU unavailable — no descriptions returned yet');
+      expect(options.action).toBeUndefined();
+      expect(options.durationMs).toBeNull();
+      expect(view.getByTestId('location')).toHaveTextContent('/people');
+    });
+
+    it('degraded toast with returned drafts names the count and keeps Review results', () => {
+      const view = degrade(2);
+      const options = expectOnlyErrorToast('GPU unavailable — 2 drafts ready to review');
+      expect(options.action).toMatchObject({ label: 'Review results', altText: GPU_STATE_VOCABULARY.reviewResultsAltText });
+      expect(options.durationMs).toBeNull();
+      act(() => options.action?.onClick());
+      expect(view.getByTestId('location')).toHaveTextContent('/workbench');
+    });
+
+    it.each(['en-US', 'ar-EG'])('new degraded count follows host locale %s and numeric plural selection', (locale) => {
+      expect(Intl.NumberFormat.supportedLocalesOf([locale])).toEqual([locale]);
+      const formatter = new Intl.NumberFormat(locale, { style: 'decimal', maximumFractionDigits: 0 });
+      if (locale === 'ar-EG') expect(formatter.format(2)).not.toBe('2');
+      document.documentElement.lang = locale;
+      for (const count of [1, 2, 22, 1234]) {
+        const expected = `GPU unavailable — ${formatter.format(count)} ${count === 1 ? 'draft' : 'drafts'} ready to review`;
+        const view = degrade(count);
+        const options = expectOnlyErrorToast(expected);
+        expect(options.action?.label).toBe('Review results');
+        expect(view.getByTestId('location')).toHaveTextContent('/people');
+        expect(GPU_STATE_VOCABULARY.degradedToastWithDrafts(count, locale)).toBe(expected);
+        expect(_n).toHaveBeenCalledWith('GPU unavailable — %s draft ready to review', 'GPU unavailable — %s drafts ready to review', count, 'alt-context');
+        view.unmount();
+        vi.clearAllMocks();
+      }
+    });
+
+    it.each([null, '', '   ', 'en_US', 'not_a_locale'])('neutral raw fallback for host locale %s never uses the browser default', (locale) => {
+      vi.spyOn(window.navigator, 'language', 'get').mockReturnValue('ar-EG');
+      if (locale === null) document.documentElement.removeAttribute('lang');
+      else document.documentElement.lang = locale;
+      const constructor = vi.spyOn(Intl, 'NumberFormat');
+      degrade(1234);
+      expectOnlyErrorToast('GPU unavailable — 1234 drafts ready to review');
+      expect(constructor).not.toHaveBeenCalled();
+      expect(GPU_STATE_VOCABULARY.degradedToastWithDrafts(1234, locale)).toBe('GPU unavailable — 1234 drafts ready to review');
+      expect(constructor).not.toHaveBeenCalled();
+    });
+
+    it('valid but unsupported locale never constructs a default formatter', () => {
+      document.documentElement.lang = 'zz-ZZ';
+      const support = vi.spyOn(Intl.NumberFormat, 'supportedLocalesOf').mockReturnValue([]);
+      const constructor = vi.spyOn(Intl, 'NumberFormat');
+      degrade(1234);
+      expectOnlyErrorToast('GPU unavailable — 1234 drafts ready to review');
+      expect(support).toHaveBeenCalledWith(['zz-ZZ'], { localeMatcher: 'lookup' });
+      expect(constructor).not.toHaveBeenCalled();
+    });
+
+    it.each(['canonical', 'support', 'constructor', 'format', 'Intl'])('missing Intl API %s gives neutral raw fallback', (api) => {
+      if (api === 'canonical') vi.stubGlobal('Intl', { ...Intl, NumberFormat: Intl.NumberFormat, getCanonicalLocales: undefined });
+      if (api === 'support') vi.spyOn(Intl.NumberFormat, 'supportedLocalesOf').mockImplementation(() => { throw new Error('unavailable'); });
+      if (api === 'constructor') vi.spyOn(Intl, 'NumberFormat').mockImplementation(() => { throw new Error('unavailable'); });
+      if (api === 'format') Object.defineProperty(Intl.NumberFormat.prototype, 'format', { configurable: true, get: () => () => { throw new Error('unavailable'); } });
+      if (api === 'Intl') vi.stubGlobal('Intl', undefined);
+      degrade(1234);
+      const options = expectOnlyErrorToast('GPU unavailable — 1234 drafts ready to review');
+      expect(options.action?.label).toBe('Review results');
+    });
+
+    it('host lang read failure gives neutral raw fallback', () => {
+      vi.spyOn(document.documentElement, 'lang', 'get').mockImplementation(() => { throw new Error('unavailable'); });
+      degrade(1234);
+      expectOnlyErrorToast('GPU unavailable — 1234 drafts ready to review');
+    });
+
+    it.each([1, 2, 22, 5, 11])('Polish catalog selects with raw numeric N=%s and both literal messages', (count) => {
+      document.documentElement.lang = 'pl-PL';
+      vi.mocked(_n).mockImplementation((_single, _plural, n) => n === 1 ? __('one:%s', 'alt-context') : n === 2 || n === 22 ? __('few:%s', 'alt-context') : __('many:%s', 'alt-context'));
+      degrade(count);
+      const category = count === 1 ? 'one' : count === 2 || count === 22 ? 'few' : 'many';
+      expectOnlyErrorToast(`${category}:${new Intl.NumberFormat('pl-PL').format(count)}`);
+      expect(_n).toHaveBeenCalledWith('GPU unavailable — %s draft ready to review', 'GPU unavailable — %s drafts ready to review', count, 'alt-context');
+    });
+
+    it.each([null, '#/workbench?hasDraft=1&run=stale'])('DONE zero returned drafts has neutral completion copy and no review action (%s)', (href) => {
+      const view = observeSequence([
+        hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING) }),
+        hookResult({ status: runStatus(ACTIVITY_KIND.DONE), actions: idleActions({ reviewDraftsHref: href }) }),
+      ]);
+      const options = requireToastOptions(expectOnlySuccessToast('Description run finished — no drafts returned.'));
+      expect(options.action).toBeUndefined();
+      expect(options.durationMs).toBeNull();
+      expect(view.getByTestId('location')).toHaveTextContent('/people');
+    });
+
+    it.each([null, '#/workbench?hasDraft=1&run=run-1'])('DONE positive drafts keeps copy and only actionable review (%s)', (href) => {
+      const view = observeSequence([
+        hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING) }),
+        hookResult({ status: runStatus(ACTIVITY_KIND.DONE, { draftCount: 2 }), actions: idleActions({ reviewDraftsHref: href }) }),
+      ]);
+      const options = requireToastOptions(expectOnlySuccessToast(GPU_STATE_VOCABULARY.doneToast(2)));
+      expect(options.durationMs).toBeNull();
+      if (href === null) {
+        expect(options.action).toBeUndefined();
+        expect(view.getByTestId('location')).toHaveTextContent('/people');
+      } else {
+        expect(options.action).toMatchObject({ label: GPU_STATE_VOCABULARY.reviewDrafts(2), altText: GPU_STATE_VOCABULARY.reviewDraftsAltText });
+        act(() => options.action?.onClick());
+        expect(view.getByTestId('location')).toHaveTextContent('/workbench?hasDraft=1&run=run-1');
+      }
+    });
+
+    it('repeated DONE polls and later href alone do not emit another DONE edge', () => {
+      const done = runStatus(ACTIVITY_KIND.DONE, { draftCount: 2 });
+      observeSequence([
+        hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING) }),
+        hookResult({ status: done }),
+        hookResult({ status: done }),
+        hookResult({ status: done, actions: idleActions({ reviewDraftsHref: '#/workbench?hasDraft=1&run=run-1' }) }),
+        hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING) }),
+        hookResult({ status: done }),
+      ]);
+      expectOnlySuccessToast(GPU_STATE_VOCABULARY.doneToast(2));
+    });
+
+    it('review destinations and raw run tokens stay identical across locales and fallback', () => {
+      const href = '#/workbench?hasDraft=1&run=run%2F1';
+      for (const locale of ['en-US', 'ar-EG', 'en_US']) {
+        document.documentElement.lang = locale;
+        const view = observeSequence([
+          hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { runId: 'run/1' }) }),
+          hookResult({ status: runStatus(ACTIVITY_KIND.DONE, { runId: 'run/1', draftCount: 2 }), actions: idleActions({ reviewDraftsHref: href }) }),
+        ]);
+        const options = requireToastOptions(expectOnlySuccessToast(GPU_STATE_VOCABULARY.doneToast(2)));
+        act(() => options.action?.onClick());
+        expect(view.getByTestId('location')).toHaveTextContent('/workbench?hasDraft=1&run=run%2F1');
+        view.unmount();
+        vi.clearAllMocks();
+      }
+    });
+  });
+
 });

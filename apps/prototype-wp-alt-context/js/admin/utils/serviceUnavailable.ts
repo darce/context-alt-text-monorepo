@@ -2,6 +2,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 export const UNAVAILABLE_REASON = {
   NOT_CONFIGURED: 'not_configured',
+  ENDPOINT_UNCONFIGURED: 'endpoint_unconfigured',
   API_KEY_MISSING: 'api_key_missing',
   CIRCUIT_OPEN: 'circuit_open',
   UPSTREAM_5XX: 'upstream_5xx',
@@ -101,6 +102,13 @@ export const unavailableServiceLabel = (service: string): string => {
 export type UnavailableReason = (typeof UNAVAILABLE_REASON)[keyof typeof UNAVAILABLE_REASON];
 
 const UNAVAILABLE_REASON_COPY: Record<UnavailableReason, { why: string; fix: string }> = {
+  [UNAVAILABLE_REASON.ENDPOINT_UNCONFIGURED]: {
+    why: __('its GPU endpoint is not configured', 'alt-context'),
+    fix: __(
+      'An administrator must set the GPU endpoint for the Description service. Retry only checks again; it does not change the setting.',
+      'alt-context',
+    ),
+  },
   [UNAVAILABLE_REASON.NOT_CONFIGURED]: {
     why: __('it is not configured', 'alt-context'),
     fix: __('Set the API URL in Settings.', 'alt-context'),

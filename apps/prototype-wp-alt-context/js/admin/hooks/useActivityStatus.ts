@@ -17,7 +17,7 @@ import {
 } from '../api/describeApi';
 import { createDescribeIdempotencyKey } from '../api/describeIdempotencyKey';
 import type { GpuIntentAction, GpuIntentStatus, GpuStatusResponse } from '../api/gpuApi';
-import { toDescriptionHistoryRun, toWorkbench } from '../navigation/appLinks';
+import { serializeRunParam, toDescriptionHistoryRun, toWorkbench } from '../navigation/appLinks';
 import { useActiveDescribeRun } from './activeDescribeRun';
 import {
   clearPendingDescribeSubmitAction,
@@ -104,6 +104,16 @@ export interface ActivityStatus {
   /** Finite live-warming observation for copy/state integration. */
   warmingObservation?: WarmingObservation;
 }
+
+export const reviewDraftsHrefForStatus = (
+  status: Pick<ActivityStatus, 'kind' | 'draftCount' | 'runId'>,
+): string | null => {
+  if (status.kind !== ACTIVITY_KIND.DONE || !(status.draftCount > 0)) {
+    return null;
+  }
+  const runId = serializeRunParam(status.runId);
+  return runId === null ? null : toDescriptionHistoryRun(runId);
+};
 
 export interface ActivityStatusActions {
   onCancel: (() => void) | null;
@@ -624,10 +634,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     return {
       onCancel,
       onRetry,
-      reviewDraftsHref:
-        status.kind === ACTIVITY_KIND.DONE && status.runId !== null
-          ? toDescriptionHistoryRun(status.runId)
-          : null,
+      reviewDraftsHref: reviewDraftsHrefForStatus(status),
       backToRunHref:
         status.kind === ACTIVITY_KIND.WARMING || status.kind === ACTIVITY_KIND.DESCRIBING
           ? toWorkbench()

@@ -3,6 +3,8 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toDescriptionHistoryRun } from '../../navigation/appLinks';
+
 import { registerConfig, resetConfigCache } from '../../api/config';
 import {
   DESCRIBE_RUN_PHASE,
@@ -34,6 +36,7 @@ import {
   ACTIVITY_KIND,
   ACTIVITY_REASON,
   resolveActivityStatus,
+  reviewDraftsHrefForStatus,
   useActivityStatus,
   type DescribeActivityInput,
   type GpuActivityInput,
@@ -590,6 +593,46 @@ describe('useActivityStatus', () => {
     sessionStorage.clear();
     resetConfigCache();
     cleanup();
+  });
+
+  describe('UXREC-1 review href evidence', () => {
+    it.each([
+      [DESCRIBE_RUN_STATUS.COMPLETED, 0, 0, 4],
+      [DESCRIBE_RUN_STATUS.COMPLETED, 2, 0, 2],
+      [DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS, 2, 2, 0],
+    ] as const)('DONE %s completed=%s offers review only for returned items', async (status, completed, failed, skipped) => {
+      fetchBulkDescribeRunMock.mockResolvedValue(describeRun({
+        status,
+        phase: DESCRIBE_RUN_PHASE.COMPLETE,
+        completed,
+        failed,
+        skipped,
+        total: 4,
+        eta_seconds: null,
+      }));
+      queryClient = buildTestQueryClient();
+      const { result } = renderHook(() => useActivityStatus({ describeRunId: 'run-1' }), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+      await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.DONE));
+      expect(result.current.status.draftCount).toBe(completed);
+      expect(result.current.actions.reviewDraftsHref).toBe(completed > 0 ? toDescriptionHistoryRun('run-1') : null);
+      expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+      expect(describeApi.cancelBulkDescribeRun).not.toHaveBeenCalled();
+    });
+
+    it.each([null, '', '   '])('review href rejects missing id %s', (runId) => {
+      expect(reviewDraftsHrefForStatus({ kind: ACTIVITY_KIND.DONE, draftCount: 2, runId })).toBeNull();
+    });
+
+    it('review href rejects zero results and canonicalizes a non-empty id', () => {
+      expect(reviewDraftsHrefForStatus({ kind: ACTIVITY_KIND.DONE, draftCount: 0, runId: 'run-1' })).toBeNull();
+      expect(reviewDraftsHrefForStatus({ kind: ACTIVITY_KIND.DONE, draftCount: 2, runId: '  run/1  ' })).toBe(toDescriptionHistoryRun('run/1'));
+    });
+
+    it.each(Object.values(ACTIVITY_KIND).filter((kind) => kind !== ACTIVITY_KIND.DONE))('review href rejects non-DONE %s', (kind) => {
+      expect(reviewDraftsHrefForStatus({ kind, draftCount: 2, runId: 'run-1' })).toBeNull();
+    });
   });
 
   it('owns one idle GPU status poll while no describe run is live', async () => {

@@ -527,6 +527,31 @@ describe('GpuControlCard', () => {
       },
     });
 
+  it('UXREC-1 endpoint_unconfigured envelope shows configuration copy', () => {
+    const refetch = vi.fn();
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z', { reason: 'endpoint_unconfigured', http_status: 503, retry_after_seconds: null }),
+      refetch,
+    });
+    render(<GpuControlCard />);
+    expect(screen.getByText('Description service is unavailable because its GPU endpoint is not configured.')).toBeInTheDocument();
+    expect(screen.getByText('An administrator must set the GPU endpoint for the Description service. Retry only checks again; it does not change the setting.')).toBeInTheDocument();
+    expect(screen.queryByText(/unexpected error/)).not.toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it('UXREC-1 stale snapshot never shows configuration copy', () => {
+    mockControl({ ...statusResponse({ state: 'ready' }), snapshot_age_seconds: 240, snapshot_fresh: false });
+    render(<GpuControlCard />);
+    expect(screen.queryByText(/not configured/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+  });
+
   it('names the service, reason, fix, last checked, and retry countdown from unavailable', () => {
     const refetch = vi.fn();
     mockControl(statusResponse(), {

@@ -24,6 +24,14 @@ type GpuToastEdge = (typeof GPU_TOAST_EDGE)[keyof typeof GPU_TOAST_EDGE];
 
 const pathFromAppHref = (href: string): string => (href.startsWith('#') ? href.slice(1) : href);
 
+const readHostUiCountLocale = (): string | null => {
+  try {
+    return typeof document === 'undefined' ? null : document.documentElement?.lang ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const failedToastMessage = (reason: string | null): string => {
   switch (reason) {
     case ACTIVITY_REASON.GPU_WARMUP_TIMEOUT:
@@ -89,16 +97,24 @@ export const useGpuStateToasts = (): void => {
       previousGpu !== GPU_STATE.UNKNOWN
     ) {
       emit(GPU_TOAST_EDGE.DEGRADED, () => {
-        error(GPU_STATE_VOCABULARY.degradedToast, {
-          action: {
-            label: GPU_STATE_VOCABULARY.reviewResults,
-            altText: GPU_STATE_VOCABULARY.reviewResultsAltText,
-            onClick: () => {
-              void navigate('/workbench');
-            },
+        const hasDrafts = status.draftCount > 0;
+        error(
+          hasDrafts
+            ? GPU_STATE_VOCABULARY.degradedToastWithDrafts(status.draftCount, readHostUiCountLocale())
+            : GPU_STATE_VOCABULARY.degradedToast,
+          {
+            action: hasDrafts
+              ? {
+                  label: GPU_STATE_VOCABULARY.reviewResults,
+                  altText: GPU_STATE_VOCABULARY.reviewResultsAltText,
+                  onClick: () => {
+                    void navigate('/workbench');
+                  },
+                }
+              : undefined,
+            durationMs: null,
           },
-          durationMs: null,
-        });
+        );
       });
       return;
     }
@@ -135,19 +151,23 @@ export const useGpuStateToasts = (): void => {
       const reviewHref = actions.reviewDraftsHref;
       const draftCount = status.draftCount;
       emit(GPU_TOAST_EDGE.DONE, () => {
-        success(GPU_STATE_VOCABULARY.doneToast(draftCount), {
-          action: {
-            label: GPU_STATE_VOCABULARY.reviewDrafts(draftCount),
-            altText: GPU_STATE_VOCABULARY.reviewDraftsAltText,
-            onClick: () => {
-              if (reviewHref === null) {
-                return;
-              }
-              void navigate(pathFromAppHref(reviewHref));
-            },
+        success(
+          draftCount > 0
+            ? GPU_STATE_VOCABULARY.doneToast(draftCount)
+            : GPU_STATE_VOCABULARY.doneToastWithoutDrafts,
+          {
+            action: draftCount > 0 && reviewHref !== null
+              ? {
+                  label: GPU_STATE_VOCABULARY.reviewDrafts(draftCount),
+                  altText: GPU_STATE_VOCABULARY.reviewDraftsAltText,
+                  onClick: () => {
+                    void navigate(pathFromAppHref(reviewHref));
+                  },
+                }
+              : undefined,
+            durationMs: null,
           },
-          durationMs: null,
-        });
+        );
       });
       return;
     }

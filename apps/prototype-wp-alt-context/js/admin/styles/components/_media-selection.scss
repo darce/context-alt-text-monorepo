@@ -1,5 +1,7 @@
 :root {
   --acx-media-selection-thumb-size: 300px;
+  // Default only; a WB_CONTROL ancestor declaration overrides it by inheritance.
+  --acx-media-selection-available-height: calc(100dvh - 12rem);
 }
 
 .acx-media-selection {
@@ -8,7 +10,7 @@
   gap: var(--acx-space-16);
   // WB_CONTROL may supply the space left by its outer chrome. Only the table
   // scrolls inside this bounded surface; actions never overlay focused rows.
-  block-size: var(--acx-media-selection-available-height, calc(100dvh - 12rem));
+  block-size: var(--acx-media-selection-available-height);
   min-block-size: 0;
   min-inline-size: 0;
 
@@ -35,10 +37,19 @@
 
   &__rows {
     flex: 1 1 auto;
-    min-block-size: 0;
+    // One row at the smallest readable preview, so the scrollport never collapses.
+    min-block-size: calc(var(--acx-thumb-size-md) + var(--acx-space-48));
     min-inline-size: 0;
     overflow: auto;
     scroll-padding: var(--acx-space-8);
+    // Previews fit the actual scrollport (less row padding, scroll padding and the
+    // baseline gap), so the preview link, a row's tallest focus target, can always
+    // be scrolled fully into view.
+    container-type: size;
+    --acx-media-selection-preview-size: max(
+      var(--acx-thumb-size-md),
+      min(var(--acx-media-selection-thumb-size), calc(100cqb - var(--acx-space-48)))
+    );
 
     &:focus-visible {
       outline: 2px solid var(--acx-color-accent);
@@ -100,15 +111,15 @@
   }
 
   &__thumb-cell {
-    width: calc(var(--acx-media-selection-thumb-size) + var(--acx-space-24));
+    width: calc(var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size)) + var(--acx-space-24));
   }
 
   &__thumb {
     border: 1px solid var(--acx-color-border);
     object-fit: contain;
     display: inline-block;
-    width: var(--acx-media-selection-thumb-size);
-    height: var(--acx-media-selection-thumb-size);
+    width: var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size));
+    height: var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size));
     background-color: var(--acx-color-panel);
 
     &--placeholder {

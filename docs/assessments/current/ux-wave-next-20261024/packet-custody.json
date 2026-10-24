@@ -1,0 +1,105 @@
+{
+  "files": {
+    "ACTION_PROGRESS.brief.md": {
+      "bytes": 2398,
+      "sha256": "163a5f5a213c55bd55198a9c538659677d6b0c4a130058ecb6fba2c5d6211a3c"
+    },
+    "COMMON.md": {
+      "bytes": 1718,
+      "sha256": "e8f0c99d0456ded0e8e828110efeaa8f91c0a3924436e7d8c1e86fce52ea8658"
+    },
+    "ROSTER_EVIDENCE.brief.md": {
+      "bytes": 1901,
+      "sha256": "9a48284b2e26589c0d4c0ec5fc81151303f92bb84ac43b2b631132a382366979"
+    },
+    "UI-CONTRACTS.md": {
+      "bytes": 2836,
+      "sha256": "145531b7f80b15adbd863eeaba370766d4f3ee6bea88871b46baa2a46abc514d"
+    },
+    "USAGE_READ_MODEL.brief.md": {
+      "bytes": 1343,
+      "sha256": "151f59b07ada8c260f0be262350ad735b4f7c7dfb4d919a1828ddbabbfa9e261"
+    },
+    "USAGE_UI.brief.md": {
+      "bytes": 1615,
+      "sha256": "fddb9aca0ec9397f2f6dfec2c289c7546f7e6c99dce6428d09595d3fc210d5ec"
+    },
+    "WB_CONTROL.brief.md": {
+      "bytes": 1765,
+      "sha256": "48335505b59d9427c8bcb57bfafe26eceb1617d4bbf4a16c308e7e96650fa916"
+    },
+    "canon-context.json": {
+      "bytes": 51807,
+      "sha256": "b57a0e07d52a79de198ba97257898c2b9d9d0e36e468b699d814adf73e06a0d8"
+    },
+    "dispatch-readiness.json": {
+      "bytes": 1048,
+      "sha256": "9903c7dea3cd1346f08ef548e4412ac20ac11aff0ef51ca5b4939140cdbd5e44"
+    },
+    "native-critique-resolutions.json": {
+      "bytes": 648,
+      "sha256": "2863235eb7922df48e833b47c7c239ef628722d9fb8711556ca9ce5f3019fc65"
+    },
+    "native-map-receipt.json": {
+      "bytes": 1029,
+      "sha256": "1fa29d4bee9f22a62c8104c408af4ab9f09b6ad6ce16d9c0bccf911d681c9c5d"
+    },
+    "native-positive-control-critique.json": {
+      "bytes": 625,
+      "sha256": "704822a3c88bd496689a51f7149ef338a94b1d05a7392eeacce0b5ca9c75185b"
+    },
+    "native-positive-control.uxmap.json": {
+      "bytes": 28865,
+      "sha256": "4d7abf5cda5e8fd571aef16bb1caf0b20ff7b6a652552bcc2f7daf72c1822b40"
+    },
+    "prior-embedding-readback.json": {
+      "bytes": 5218,
+      "sha256": "44b6c5e4abd2169d332fbaf3daacc9c88d80836fdf94c444f6c3bb94ac051e79"
+    },
+    "prior-review-context.json": {
+      "bytes": 15069,
+      "sha256": "ef87e760efc71c0fd9e92a390232eee0200103191bc8aa88234d73e4dc6bbb5a"
+    },
+    "roster-native-critique.json": {
+      "bytes": 3,
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "roster-native-schema-normalization.json": {
+      "bytes": 1559,
+      "sha256": "675addc61def82d9f7630b8e8a7c09f966198890f74f9d1cbbbb9c3bc1f79e6e"
+    },
+    "roster-native-source-check.json": {
+      "bytes": 23733,
+      "sha256": "353fe2f8b303c43414b2a7f8a0b7812d169e1e47285c2acf21b4c0496c124223"
+    },
+    "roster-proposal.uxmap.json": {
+      "bytes": 20538,
+      "sha256": "88dff5bf319db23dc47e010f0ba9bfba3d2b340055d7fa3f5b0dd1c44d03ae98"
+    },
+    "roster-render.md": {
+      "bytes": 17399,
+      "sha256": "2b1613452798f2c167451b1ed887d4aa6aa5c3aeea3305300e29db9c6edf1aaa"
+    },
+    "source-anchors.json": {
+      "bytes": 30319,
+      "sha256": "febfa3f839ff0e4233acb14095880d20810b9b8c980f5709bdd31d673016df7a"
+    },
+    "workbench-native-critique.json": {
+      "bytes": 3,
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "workbench-native-source-check.json": {
+      "bytes": 31802,
+      "sha256": "a9642178197ba693724fad12cd1f8f4438b9fa48732fbfa9712a3de0f695743e"
+    },
+    "workbench-proposal.uxmap.json": {
+      "bytes": 28863,
+      "sha256": "b5a846e1b17bee32facfdc61ddbe99e7e40c05a78fe60deeb45610b6dee351c4"
+    },
+    "workbench-render.md": {
+      "bytes": 26590,
+      "sha256": "6aeb52af7badfcb7ad28a6cd8d8914a16b3959b971fd21d038a4ac620d602e10"
+    }
+  },
+  "scope": "Ownership-corrected independent map/contract review. ACTION_PROGRESS distinct from original GPU_STATUS. Prior immutablepacket remains unchanged."
+}

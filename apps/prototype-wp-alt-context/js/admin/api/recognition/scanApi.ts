@@ -17,6 +17,7 @@ import type {
 } from './types';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
 import { chunkMediaIds, createBatchRunId, getEffectiveBatchSize } from './scanBatchHelpers';
+import { shouldStopScanSubmission } from './scanApiError';
 
 const recordClientBatchFailure = async (
   batchRunId: string,
@@ -87,7 +88,7 @@ export const scanFacesBatched = async (request: AnalyzeRequest): Promise<BatchAn
       });
       // The explicit developer command must not turn a refused dev-only write
       // into a successful-looking empty run.
-      if (request.developmentFacesOnly) {
+      if (request.developmentFacesOnly || shouldStopScanSubmission(error)) {
         throw error;
       }
       return { batchRunId, jobs: [] };
@@ -110,10 +111,20 @@ export const scanFacesBatched = async (request: AnalyzeRequest): Promise<BatchAn
       );
     } catch (error) {
       submissionError = error instanceof Error ? error : new Error('Face scan submission failed.', { cause: error });
-      await recordClientBatchFailure(batchRunId, index, request.mediaIds.length, batch).catch(() => {
+      const stopSubmission = shouldStopScanSubmission(error);
+      // Account for skipped media in one local record so accepted jobs can
+      // still reach a terminal batch state without more analyze calls.
+      const failedMediaIds = stopSubmission ? batches.slice(index).flat() : batch;
+      await recordClientBatchFailure(batchRunId, index, request.mediaIds.length, failedMediaIds).catch(() => {
         // Best effort only: if the browser cannot report the synthetic failure,
         // the caller still receives the successfully submitted jobs.
       });
+      if (stopSubmission) {
+        if (results.length === 0) {
+          throw error;
+        }
+        break;
+      }
     }
   }
   if (request.developmentFacesOnly && results.length === 0 && submissionError !== undefined) {

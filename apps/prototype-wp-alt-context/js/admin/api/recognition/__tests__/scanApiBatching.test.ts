@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { scanFaces, scanFacesBatched } from '../scanApi';
 import type { AnalyzeResponse } from '../types';
 import type { HTTPOptions } from '../../../utils/http';
+import { HTTPError } from '../../../utils/errorTaxonomy';
 
 interface ScanRequestBody {
   media_ids: number[];
@@ -70,6 +71,55 @@ describe('scanFacesBatched chunk size', () => {
       return Promise.resolve(makeAnalyzeResponse(mediaIds));
     });
     mockConfig.maxMediaPerBatch = 10000;
+  });
+
+  it.each([401, 402, 403, 429])(
+    'stops all remaining submissions after HTTP %i and preserves the rejection',
+    async (status) => {
+      const error = new HTTPError({
+        status,
+        endpoint: mockConfig.endpoints.recognitionAnalyze,
+        bodyPreview: '',
+        retryAfterSeconds: undefined,
+        message: 'Scan refused',
+      });
+      const mediaIds = Array.from({ length: 100 }, (_, i) => i + 1);
+      fetchMock.mockRejectedValueOnce(error);
+      await expect(scanFacesBatched({ mediaIds, developmentFacesOnly: true })).rejects.toBe(error);
+      expect(fetchMock.mock.calls.filter(([url]) => url === mockConfig.endpoints.recognitionAnalyze)).toHaveLength(1);
+      expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual({ batch_index: 0, submitted_total: 100, media_ids: mediaIds });
+    },
+  );
+
+  it.each([402, 429])('surfaces HTTP %i for a single ordinary scan instead of empty success', async (status) => {
+    const error = new HTTPError({
+      status,
+      endpoint: mockConfig.endpoints.recognitionAnalyze,
+      bodyPreview: '',
+      retryAfterSeconds: undefined,
+      message: 'Scan refused',
+    });
+    fetchMock.mockRejectedValueOnce(error);
+    await expect(scanFacesBatched({ mediaIds: [1] })).rejects.toBe(error);
+  });
+
+  it('keeps accepted jobs trackable and accounts for all skipped media after a later refusal', async () => {
+    const error = new HTTPError({
+      status: 402,
+      endpoint: mockConfig.endpoints.recognitionAnalyze,
+      bodyPreview: '',
+      retryAfterSeconds: undefined,
+      message: 'Allowance exhausted',
+    });
+    fetchMock.mockResolvedValueOnce(makeAnalyzeResponse([1, 2, 3, 4, 5])).mockRejectedValueOnce(error);
+    const result = await scanFacesBatched({ mediaIds: Array.from({ length: 15 }, (_, i) => i + 1) });
+    expect(result.jobs.map((job) => job.id)).toEqual(['job-1-2-3-4-5']);
+    expect(fetchMock.mock.calls.filter(([url]) => url === mockConfig.endpoints.recognitionAnalyze)).toHaveLength(2);
+    expect(fetchMock.mock.calls[2]?.[1]?.body).toEqual({
+      batch_index: 1,
+      submitted_total: 15,
+      media_ids: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    });
   });
 
   it('sends a single request when total <= server multipart cap of 5', async () => {

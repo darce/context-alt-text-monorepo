@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { formatScanSubmissionError, resolveScanErrorMessage } from '../scanApiError';
+import { HTTPError } from '../../../utils/errorTaxonomy';
 
 describe('formatScanSubmissionError', () => {
   it('surfaces embedding runtime rejection detail verbatim', () => {
@@ -18,6 +19,20 @@ describe('formatScanSubmissionError', () => {
 
 describe('resolveScanErrorMessage', () => {
   const FALLBACK = 'Recognition job failed. Please try again.';
+
+  it.each([402, 429])('explains HTTP %i without exposing the response body', (status) => {
+    const error = new HTTPError({
+      status,
+      endpoint: '/recognition/analyze',
+      bodyPreview: 'private body',
+      retryAfterSeconds: undefined,
+      message: 'private body',
+    });
+    const message = resolveScanErrorMessage(error, FALLBACK);
+    expect(message).not.toBe(FALLBACK);
+    expect(message).not.toContain('private body');
+    expect(message).toMatch(status === 402 ? /allowance/i : /wait/i);
+  });
 
   it('returns the structured rejection detail when present', () => {
     const error = new Error(

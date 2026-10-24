@@ -1,0 +1,56 @@
+{
+  "status": "REVISE",
+  "summary": "Verified candidate e1b7e1216d5416373bf625797866517f96ec47f1 and controls 643a2dd6fc8f7b9d6c78c00eb2d077d4338b69e7 against joined manifest SHA256 5e6a6ea2eb9c523d734e1c38ffcf8a86c760b0f88ef1fde78a845a8a1d14ff35. One compatibility/liveness defect group blocks whole-contract merge. The candidate is conditionally ready for controlled normal CLI use. Installed cba8527 remains old and unadopted.",
+  "source_sha": "e1b7e1216d5416373bf625797866517f96ec47f1",
+  "changed_files": [],
+  "commits": [],
+  "findings": [
+    {
+      "id": "R5-G1-01",
+      "severity": "P2",
+      "file": "/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control/owner-custody.py:281",
+      "description": "Preserve completed results independently of post-result worker success. The status==0 requirement discards a fully delivered publication marker when after() fails or times out. Guardian then fixes barrier=False and retains fences indefinitely instead of reaching its persisted-byte comparison. Both failures represent this single compatibility/liveness regression.",
+      "evidence": "Fresh joined run: 51 passed, 17 subtests passed, 2 failed. Additional unchanged probes confirm both implementations reap their children and return exit codes -9/71; baseline retains the completed marker, candidate returns None. Guardian lines 325-338 intentionally derives barrier from the marker without requiring status 0, then verifies actual persisted bytes under fences. owner-window.py:91 supplies no hook; guardian defaults hook=None, so normal CLI supplies no after callback. All four read consumers require status 0 and a non-None result. These callback failures do not demonstrate a normal successful CLI blocker; abnormal termination after delivery can still leave custody unresolved.",
+      "fix": "Separate complete-result evidence from worker success inside native_job. Positively identify full bounded-result completion before after(), preserve/drain completed evidence after failure or timeout, and return it with the actual wait status only after positive reaping. Keep partial, malformed and oversized results unusable; accepting a syntactically valid prefix is insufficient. Preserve identity gating, deadlines, reaping, retained fences and guardian persisted-byte verification. Align README semantics and independently re-review the correction without suppressing or changing the independent oracle."
+    }
+  ],
+  "tests": [
+    {
+      "command": "python3 -B -",
+      "exit_code": 0,
+      "summary": "Verified all 76 immutable files and exact committed Git blobs, 15 original input members, both custody archive hashes and prior joined log cf07d07d0b4f871fb1a0a40c2e130726d3ef04116ba81fc9faeb2faabad568b2. Only native_job changed; six scripts are byte-identical."
+    },
+    {
+      "command": "pytest -q --noconftest --import-mode=importlib -p no:cacheprovider /home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control/test_native_transport.py /home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+      "exit_code": 1,
+      "summary": "51 passed, 17 subtests passed, 2 failed in 14.89s. Only after_timeout/after_failure retention failed. Complete 137715-byte roundtrip, fixture reconciliation, 15 baseline controls, ownership guards, identity ordering and reaping checks passed."
+    },
+    {
+      "command": "OWNER_CONTROL_CANDIDATE=/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/fixtures/baseline/owner-custody.py pytest -q --noconftest --import-mode=importlib -p no:cacheprovider /home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py -k candidate",
+      "exit_code": 1,
+      "summary": "Expected negative control: 2 failed for full roundtrip and reconciliation, 11 passed, 15 deselected."
+    },
+    {
+      "command": "OWNER_CONTROL_CANDIDATE=/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r5-gate1-d7b8000636524de09f36d83b24bd6a01/output/no-candidate-at-this-path.py pytest -q --noconftest --import-mode=importlib -p no:cacheprovider /home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py -k candidate",
+      "exit_code": 1,
+      "summary": "Expected negative control: 13 failed, 15 deselected. No fallback or oracle edits."
+    }
+  ],
+  "limitations": [
+    "Review and offline fixture verification only. No source/test-input edits, commits, adoption, services, controller, GPU, model or customer-image effects. No native/runtime/quality acceptance is implied.",
+    "Installed cba8527 still has the original transport defect. Fixture success neither establishes live adoption nor validates the disproved old owner-window workaround.",
+    "The inclusive 1048576-byte bound covers aggregate encoded results, not arbitrary input collections or fn() heap use. The synchronous before callback cannot be preempted. Unknown/uninterruptible reaping retention was simulated.",
+    "Graph tools were unavailable. Direct source/AST inspection verified all five native_job consumers and the sole CLI guardian call, excluding duplicate fixture symbols.",
+    "Author tests assert discard semantics opposite to the independent retention controls. Their green results do not resolve that contract conflict; both suites remain unchanged.",
+    "Detailed reports and retained logs are in OUTPUT/review.json and OUTPUT/review-evidence.json. Workspace remains clean."
+  ],
+  "merge_readiness": "revise",
+  "controlled_cli_readiness": "ready",
+  "conditions": [
+    "Readiness applies to the exact candidate on the normal CLI path with hook=None, after separately authorized adoption. It does not approve the installed old helper or authorize live effects.",
+    "Before any helper installation, back up all seven original root scripts and their approved pin manifest; write and verify the exact rollback. Stage all seven candidate hashes in a fresh root-owned sealed directory. Rollback restores the known original size failure.",
+    "Require legitimate window/procedure bindings, proven ownership and previous-operation custody. Preserve native identity before effects, all fences, positive reaping and persisted-byte verification. Never force release, guess custody or republish uncertain operations.",
+    "Keep complete unprojected evidence within the explicit byte bound and existing deadlines. Unknown or failed reads retain existing refusal/custody behavior; no history pruning or guard relaxation.",
+    "This private-hook compatibility issue alone does not justify halting otherwise authorized image collection. Whole-contract merge requires the correction and independent re-review. No automatic author redispatch is authorized."
+  ]
+}

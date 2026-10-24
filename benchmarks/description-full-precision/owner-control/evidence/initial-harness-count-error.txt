@@ -1,0 +1,39 @@
+test_actual_reconcile_auto_full_view_call_shape (test_native_transport.NativeRealShapeTests.test_actual_reconcile_auto_full_view_call_shape) ... ERROR
+test_full_saved_view_round_trips_without_projection (test_native_transport.NativeRealShapeTests.test_full_saved_view_round_trips_without_projection) ... FAIL
+test_small_cause_removal_same_native_control (test_native_transport.NativeRealShapeTests.test_small_cause_removal_same_native_control) ... FAIL
+
+======================================================================
+ERROR: test_actual_reconcile_auto_full_view_call_shape (test_native_transport.NativeRealShapeTests.test_actual_reconcile_auto_full_view_call_shape)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r5-a75280dcab10495aaa06c98b8ec6c22c/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 81, in test_actual_reconcile_auto_full_view_call_shape
+    self.assertEqual(c.reconcile(wfd, paths), op)
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r5-a75280dcab10495aaa06c98b8ec6c22c/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py", line 357, in reconcile
+    status,v=native_job(lambda:view(paths,'auto'),5); check(status==0 and v is not None,'reconciliation read unknown')
+                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r5-a75280dcab10495aaa06c98b8ec6c22c/workspace/benchmarks/description-full-precision/owner-control/owner-custody.py", line 16, in check
+    if not condition: raise RuntimeError(message)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: reconciliation read unknown
+
+======================================================================
+FAIL: test_full_saved_view_round_trips_without_projection (test_native_transport.NativeRealShapeTests.test_full_saved_view_round_trips_without_projection)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r5-a75280dcab10495aaa06c98b8ec6c22c/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 45, in test_full_saved_view_round_trips_without_projection
+    self.assertEqual(os.waitstatus_to_exitcode(status), 0,
+AssertionError: 71 != 0 : native full-view child must succeed
+
+======================================================================
+FAIL: test_small_cause_removal_same_native_control (test_native_transport.NativeRealShapeTests.test_small_cause_removal_same_native_control)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r5-a75280dcab10495aaa06c98b8ec6c22c/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 53, in test_small_cause_removal_same_native_control
+    self.assertEqual(len(json.dumps(value).encode()), 106)
+AssertionError: 104 != 106
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.191s
+
+FAILED (failures=2, errors=1)

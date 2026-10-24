@@ -1,0 +1,21 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ ScopeAndCauseTests.test_declared_regions_only_against_source5 _________
+
+self = <benchmarks.description-full-precision.owner-control-opbudget.test_operation_budget.ScopeAndCauseTests testMethod=test_declared_regions_only_against_source5>
+
+    def test_declared_regions_only_against_source5(self):
+        old = (HERE / 'fixtures/source5-owner-custody.py').read_text()
+        new = (CONTROL / 'owner-custody.py').read_text()
+        # Permit precisely the B constant and known_candidates region. Every
+        # other byte, especially native_job/guard/guardian/reconcile, must match.
+        normalized = new.replace('MAX_WINDOW_OPERATIONS=1024\n', '', 1)
+        normalized = normalized.replace('len(names)<=MAX_WINDOW_OPERATIONS', 'len(names)<=32', 1)
+>       self.assertEqual(normalized, old)
+E       AssertionError: '#!/u[10544 chars]udget,\n then a finish proof (tag, exact lengt[10343 chars]op\n' != '#!/u[10544 chars]udget.\n Only a complete JSON value AND succes[9209 chars]op\n'
+E       Diff is 22464 characters long. Set self.maxDiff to None to see it.
+
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py:324: AssertionError
+=========================== short test summary info ============================
+FAILED benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::ScopeAndCauseTests::test_declared_regions_only_against_source5
+1 failed, 12 deselected in 0.10s

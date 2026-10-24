@@ -1,0 +1,33 @@
+test_after_failure_keeps_complete_result_and_actual_status (__main__.CompletionProofTests.test_after_failure_keeps_complete_result_and_actual_status) ... 
+  test_after_failure_keeps_complete_result_and_actual_status (__main__.CompletionProofTests.test_after_failure_keeps_complete_result_and_actual_status) (exit_code=71) ... FAIL
+  test_after_failure_keeps_complete_result_and_actual_status (__main__.CompletionProofTests.test_after_failure_keeps_complete_result_and_actual_status) (exit_code=23) ... FAIL
+test_after_timeout_keeps_complete_result_after_positive_reaping (__main__.CompletionProofTests.test_after_timeout_keeps_complete_result_after_positive_reaping) ... FAIL
+
+======================================================================
+FAIL: test_after_failure_keeps_complete_result_and_actual_status (__main__.CompletionProofTests.test_after_failure_keeps_complete_result_and_actual_status) (exit_code=71)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 465, in test_after_failure_keeps_complete_result_and_actual_status
+    self.assertEqual(returned, value,
+AssertionError: None != {'authority': {'highest_sequence': 261, '[137669 chars]None} : complete 137715-byte result was delivered before after()
+
+======================================================================
+FAIL: test_after_failure_keeps_complete_result_and_actual_status (__main__.CompletionProofTests.test_after_failure_keeps_complete_result_and_actual_status) (exit_code=23)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 465, in test_after_failure_keeps_complete_result_and_actual_status
+    self.assertEqual(returned, value,
+AssertionError: None != {'authority': {'highest_sequence': 261, '[137669 chars]None} : complete 137715-byte result was delivered before after()
+
+======================================================================
+FAIL: test_after_timeout_keeps_complete_result_after_positive_reaping (__main__.CompletionProofTests.test_after_timeout_keeps_complete_result_after_positive_reaping)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py", line 474, in test_after_timeout_keeps_complete_result_after_positive_reaping
+    self.assertEqual(returned, value, "killed after delivery; result must survive")
+AssertionError: None != {'authority': {'highest_sequence': 261, '[137669 chars]None} : killed after delivery; result must survive
+
+----------------------------------------------------------------------
+Ran 2 tests in 1.140s
+
+FAILED (failures=3)

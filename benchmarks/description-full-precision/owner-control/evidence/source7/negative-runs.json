@@ -1,0 +1,117 @@
+[
+  {
+    "name": "baseline-independent-red",
+    "argv": [
+      "/home/gate/description-import-environment-20261023/venv/bin/python3",
+      "-m",
+      "pytest",
+      "--noconftest",
+      "--import-mode=importlib",
+      "-p",
+      "no:cacheprovider",
+      "-v",
+      "/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+      "-k",
+      "candidate"
+    ],
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+      "OWNER_CONTROL_CANDIDATE": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/original-owner-custody.py"
+    },
+    "exit_code": 1,
+    "expected_exit_code": 1,
+    "seconds": 2.722,
+    "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/baseline-independent-red.txt",
+    "log_sha256": "ee49c0a101a367f94cc357b76e0c41cac1f95da553a25f53b379cdd5008d750d"
+  },
+  {
+    "name": "source5-independent-red",
+    "argv": [
+      "/home/gate/description-import-environment-20261023/venv/bin/python3",
+      "-m",
+      "pytest",
+      "--noconftest",
+      "--import-mode=importlib",
+      "-p",
+      "no:cacheprovider",
+      "-v",
+      "/home/gate/description-owner-ipc-join-20261024T0408/code/benchmarks/description-full-precision/owner-control-regression/test_native_transport.py",
+      "-k",
+      "candidate"
+    ],
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+      "OWNER_CONTROL_CANDIDATE": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/source5-owner-custody.py"
+    },
+    "exit_code": 1,
+    "expected_exit_code": 1,
+    "seconds": 2.47,
+    "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/source5-independent-red.txt",
+    "log_sha256": "51987662e7f594f6ea5f5ade653abea65db272a5a34bafdcc770be1c6570b44f"
+  },
+  {
+    "name": "source5-completion-red",
+    "argv": [
+      "/home/gate/description-import-environment-20261023/venv/bin/python3",
+      "-B",
+      "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py",
+      "--subject",
+      "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/fixtures/source5-owner-custody.py",
+      "CompletionProofTests.test_after_failure_keeps_complete_result_and_actual_status",
+      "CompletionProofTests.test_after_timeout_keeps_complete_result_after_positive_reaping",
+      "-v"
+    ],
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+    },
+    "exit_code": 1,
+    "expected_exit_code": 1,
+    "seconds": 1.317,
+    "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/source5-completion-red.txt",
+    "log_sha256": "a6915a1d04d235cd0bbf0c2f7c40213d887f1600a9b5eacce4196602d0238a05"
+  },
+  {
+    "name": "prefix-mutant-red",
+    "argv": [
+      "/home/gate/description-import-environment-20261023/venv/bin/python3",
+      "-B",
+      "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py",
+      "--subject",
+      "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/unframed-prefix-mutant.py",
+      "CompletionProofTests.test_valid_json_prefix_is_not_completion",
+      "-v"
+    ],
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+    },
+    "exit_code": 1,
+    "expected_exit_code": 1,
+    "seconds": 0.566,
+    "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/prefix-mutant-red.txt",
+    "log_sha256": "2126f276d32ff2e9838f147114f44111cc60056c6388015624ab16ffe3c870bd"
+  },
+  {
+    "name": "baseline-own-red",
+    "argv": [
+      "/home/gate/description-import-environment-20261023/venv/bin/python3",
+      "-B",
+      "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/workspace/benchmarks/description-full-precision/owner-control/test_native_transport.py",
+      "--baseline",
+      "NativeRealShapeTests",
+      "-v"
+    ],
+    "env": {
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+    },
+    "exit_code": 1,
+    "expected_exit_code": 1,
+    "seconds": 0.365,
+    "log": "/home/gate/bakeoff-next-model-gpu-owner-native-ipc-r7-d657bb8d8ec44789a6a0ebda15e2d315/output/baseline-own-red.txt",
+    "log_sha256": "239c531b7fd539718744506d4c23fbba191fac42a6fdc354e708aa6dc4ed9c96"
+  }
+]

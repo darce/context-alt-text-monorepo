@@ -1,0 +1,17 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/gate/description-import-environment-20261023/venv/bin/python3
+rootdir: /home/gate/bakeoff-next-model-gpu-owner-opbudget-r1-19858cbf13b740eea796bad0bad3f5a8/workspace
+collecting ... collected 10 items
+
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_actual_33_snapshot_retained_readback PASSED [ 10%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_cleanup_slots_shared_auto_can_use_both PASSED [ 20%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_foreign_guard_still_refuses_at_capacity PASSED [ 30%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_invalid_directory_fails_closed_before_creation PASSED [ 40%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_near_and_exact_capacity_readonly PASSED [ 50%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_original_32_cause_removal PASSED [ 60%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_real_concurrent_cleanup_contenders_share_last_slot PASSED [ 70%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_real_concurrent_start_contenders_share_last_regular_slot PASSED [ 80%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_start_last_regular_slot_then_stop_auto_cleanup PASSED [ 90%]
+benchmarks/description-full-precision/owner-control-opbudget/test_operation_budget.py::OperationBudgetTests::test_start_refused_before_custody_or_guardian PASSED [100%]
+
+======================== 10 passed in 60.51s (0:01:00) =========================

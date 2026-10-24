@@ -1,0 +1,79 @@
+{
+  "source_ordinal": 6,
+  "rule_ids": [
+    "DBG-11",
+    "TEST-15",
+    "TEST-33",
+    "GRPH-14",
+    "GRPH-32"
+  ],
+  "change_from_previous": "Preserve positively identified complete bounded result independently of post-result worker failure/timeout; actualwaitstatus retained onlyafterpositivereaping. Rootguardian derives barrier fromcompletedTrue without requiringwaitstatus0; then checks actualpersistedbytes. R5 clearingnonzero result losescompletion proof and canretainfencesforever. Introduce explicit complete-result framing/equivalent positivefinish proof beforeafter callback; neveraccept a merely syntacticallyvalidpartialJSONprefix. Keep1MiBbound/streaming/identity/deadline/reaping/fences/allunrelatedbytes; alignownsource tests/docs withoutchanging independent643aoracle. Onecoupleddefectgroup; fixesatnative_job sharedstate cannot split safely. CLIhookNone conditionallyapproved, so correction proceeds independently while authorizedprimarybenchmarkstarts.",
+  "canon_version": "0.26.2",
+  "decision_ids": [
+    19642,
+    19643,
+    19646
+  ],
+  "verified_test_ids": [
+    5404,
+    5406
+  ],
+  "previous_review_id": 1660,
+  "previous_paths": [
+    {
+      "ordinal": 1,
+      "result": "missing-carrier/missing callable context; no usable source"
+    },
+    {
+      "ordinal": 2,
+      "result": "controller source request auto-review rejection; no adopted source"
+    },
+    {
+      "ordinal": 3,
+      "source": "c8f3e463e4ba5c387a9cd68c2606e9350a9ffe29",
+      "review": 1659,
+      "result": "KeyError highest_sequence actual nested authority shape; REVISE"
+    },
+    {
+      "ordinal": 4,
+      "source": "506ecedda3cad4ac48be05d84518c649255785a4",
+      "review": 1660,
+      "result": "SOURCE_ONLY_PASS caller.patch30e4e8d targets caller_excerpt.txt;20GREEN but no actual installed adoption or normal reconcile coverage"
+    },
+    {
+      "ordinal": 5,
+      "source": "e1b7e1216d5416373bf625797866517f96ec47f1",
+      "review": 1668,
+      "result": "Full137715B history/realreconcile fixed and normalCLI conditionallyREADY; completed result discarded on after callbackfailure/timelimit. OneP2 mergeREVISE, independent2RED/51GREEN. LivecontrolledCLI adopted/rootnormalreconcile nowGREEN5415; no historyreset."
+    }
+  ],
+  "input_manifest": {
+    "path": "/home/gate/description-owner-ipc-r5-inputs-20261024T0303/manifest.json",
+    "sha256": "80f7267a090a69fbe05e8a55ce6dce4f9c958290db3a9c97f1efc67cda95e7fc"
+  },
+  "constraints": [
+    "All source/tests/review on remote VM",
+    "No production root helper edit, controller/GPU/model start by worker",
+    "No history truncation, authority reset, foreign ownership weakening, or reaping bypass",
+    "One exact joined independent merge gate; preserve original failed evidence",
+    "No current controlled CLI installation/GPU/backend service effects by author; coordinator already uses exact reviewed e1b7 on normal path",
+    "Independent oracle643a remains unchanged; one scoped Sol61XHIGH recheck of requested source6 correction required before merge"
+  ],
+  "original_distilled": [
+    "engineering/why-programs-fail.md",
+    "engineering/pragmatic-programmer.md",
+    "engineering/implementing-effective-code-reviews.md"
+  ],
+  "cause_removal": "Exact installed native_job child71/None on137715-byte actualview; child0/equal on91-byte control. Actual readonly reconcile exits1.",
+  "review_run_db_id": 1668,
+  "finding_db_id": 19863,
+  "finding_id": "DW-IPC-R5-G1-01",
+  "seed_commit": "e1b7e1216d5416373bf625797866517f96ec47f1",
+  "independent_controls_commit": "643a2dd6fc8f7b9d6c78c00eb2d077d4338b69e7",
+  "canon_judgment": {
+    "DBG-11": "Prove causation by absence, WhyProgramsFail: originalcompletedmarker retained vsR5None reproducesbarrierloss; preservepositivefinishproof fixesnamedcause.",
+    "TEST-15": "Provegreen canred, PragmaticProgrammerch9: original-as-candidate sizeRED and R5callbackRED retained; correctionmustpassunchangedindependentoracle andpartialvalidJSON-prefixnegative.",
+    "TEST-33": "Rerevieweveryrequestedchange, ImplementingEffectiveCodeReviewsch11: one narrowed independentlycheckedcompletioncontract, no repeatedreviewunchangedfiles.",
+    "GRPH-32": "Anedgeexistsonlywhere datamoves, practicelabel: source6 consumes gate1668 finding19863+candidatee1b7, runtimebranch consumes controlledCLIapproval notmergedstatus."
+  }
+}

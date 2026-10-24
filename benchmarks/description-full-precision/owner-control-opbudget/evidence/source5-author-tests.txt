@@ -1,0 +1,43 @@
+.......................FF                               [100%]
+=================================== FAILURES ===================================
+__ SourceCustodyTests.test_only_native_job_bytes_changed_in_installed_script ___
+
+self = <benchmarks.description-full-precision.owner-control.test_native_transport.SourceCustodyTests testMethod=test_only_native_job_bytes_changed_in_installed_script>
+
+    def test_only_native_job_bytes_changed_in_installed_script(self):
+        old = (ROOT / "fixtures/original-owner-custody.py").read_bytes()
+        new = (ROOT / "owner-custody.py").read_bytes()
+>       self.assertEqual(old.split(b"def native_job(", 1)[0],
+                         new.split(b"def native_job(", 1)[0])
+E       AssertionError: b'#!/[633 chars]576\n\ndef check(condition,message):\n if not [9667 chars]\n\n' != b'#!/[633 chars]576\nMAX_WINDOW_OPERATIONS=1024\n\ndef check(c[9714 chars]\n\n'
+
+benchmarks/description-full-precision/owner-control/test_native_transport.py:461: AssertionError
+__ SourceCustodyTests.test_sealed_fixture_and_original_script_match_manifest ___
+
+self = <benchmarks.description-full-precision.owner-control.test_native_transport.SourceCustodyTests testMethod=test_sealed_fixture_and_original_script_match_manifest>
+
+    def test_sealed_fixture_and_original_script_match_manifest(self):
+        raw = (ROOT / "fixtures/input-manifest.json").read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         "80f7267a090a69fbe05e8a55ce6dce4f9c958290db3a9c97f1efc67cda95e7fc")
+        manifest = json.loads(raw)
+        for row in manifest["files"]:
+            name = row["path"]
+            if name == "actual-view.json":
+                path = ROOT / "fixtures/actual-view.json"
+            elif name == "baseline/owner-custody.py":
+                path = ROOT / "fixtures/original-owner-custody.py"
+            elif name.startswith("baseline/"):
+                path = ROOT / Path(name).name
+            else:
+                continue
+>           self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), row["sha256"])
+E           AssertionError: 'f2cc6f0187867cbb8533d41e37d4c4dee97f60dba2c5f0f529977a3851d467da' != '1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600'
+E           - f2cc6f0187867cbb8533d41e37d4c4dee97f60dba2c5f0f529977a3851d467da
+E           + 1983f8684de3d03a59c090b1b469e65f5b84ad201283e787bdf5fb872b8b6600
+
+benchmarks/description-full-precision/owner-control/test_native_transport.py:481: AssertionError
+=========================== short test summary info ============================
+FAILED benchmarks/description-full-precision/owner-control/test_native_transport.py::SourceCustodyTests::test_only_native_job_bytes_changed_in_installed_script
+FAILED benchmarks/description-full-precision/owner-control/test_native_transport.py::SourceCustodyTests::test_sealed_fixture_and_original_script_match_manifest
+2 failed, 23 passed, 17 subtests passed in 2.42s

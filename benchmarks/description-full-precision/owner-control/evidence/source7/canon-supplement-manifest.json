@@ -1,0 +1,16 @@
+{
+  "canon_version": "0.26.2",
+  "files": {
+    "canon/PRINCIPLES.md": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+    "canon/matched-rows.md": "a69cc0fa6a4984dddc19ba144a22a38fd83b526890292658be02379808704721",
+    "canon/meta/release-manifest.json": "46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260",
+    "canon/reasoning/falsification-disconfirmers.md": "9e572c986919420c614c6ae26033480a25294874c6bc6b4bb81341d32bba0771",
+    "canon/reasoning/measurement-integrity.md": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8",
+    "original-distilled/debugging-9-rules.md": "51c51e6b0fe75b023bc3a29d6b11db9fd5796112477a2a1a8d655f0da328eebb",
+    "original-distilled/implementing-effective-code-reviews.md": "3979b158b1857a82961c487a286b375aa84804ef9a259403c6cb82fee46d4986",
+    "original-distilled/pragmatic-programmer.md": "18ee4cc144c4950db3565d53c2fb3d1645a63ebc086317e4d0a0cbf9c4748455",
+    "original-distilled/why-programs-fail.md": "7975930e4eea54d53df664106a06533349e7959e9ca7dca5680e150140a6afa6",
+    "prior/LAUNCHER-FIX-VERIFICATION-20261024.json": "e59ada58ac8c184b37f32ca9de45d6294d736373c7c3e93536831c9787bcfb1c",
+    "prior/RECOVERY-ONNX-REINJECTION-20261024.json": "cafbe3bc7fe2ae2e9d06f480346d6f7644d7b781ea70f99773f418d5337971f5"
+  }
+}

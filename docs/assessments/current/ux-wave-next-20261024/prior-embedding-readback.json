@@ -1,0 +1,157 @@
+[
+  {
+    "status": "fulfilled",
+    "value": {
+      "finding_id": "UXA10033-SERVED-001",
+      "response": {
+        "content": [],
+        "structuredContent": {
+          "status": "ok_with_results",
+          "results": [
+            {
+              "entity_kind": "finding.description",
+              "entity_id": "11193",
+              "task_ref": "FEBT-2",
+              "score": 0.6190791130065918,
+              "snippet": "A THIRD verbatim copy of the sessionExpired and reloadPage strings lives here, outside every lane's write fence. Same REF-19 single-owner defect as FEBT-1-W1-E-03 but at the post.php surface, and it matches prior finding UXP-NET-2 #4846.\u2026",
+              "model_id": "gte-base-en-v1.5"
+            }
+          ],
+          "min_score": 0.35,
+          "query_mode": "finding_id",
+          "query_model_id": "gte-base-en-v1.5",
+          "note": null,
+          "ok": true,
+          "task_ref": "UXREC-1",
+          "embeddings_mode": "verified",
+          "semantic_degrade_reason": null
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "finding_id": "UXA10033-WB-001",
+      "response": {
+        "content": [],
+        "structuredContent": {
+          "status": "ok_with_results",
+          "results": [
+            {
+              "entity_kind": "finding.fix",
+              "entity_id": "118",
+              "task_ref": "MAINT-workbench-findings-panel-plan-20260605",
+              "score": 0.6187088489532471,
+              "snippet": null,
+              "model_id": "gte-base-en-v1.5"
+            }
+          ],
+          "min_score": 0.35,
+          "query_mode": "finding_id",
+          "query_model_id": "gte-base-en-v1.5",
+          "note": null,
+          "ok": true,
+          "task_ref": "UXREC-1",
+          "embeddings_mode": "verified",
+          "semantic_degrade_reason": null
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "finding_id": "UXA10033-CONTROL-001",
+      "response": {
+        "content": [],
+        "structuredContent": {
+          "status": "ok_with_results",
+          "results": [
+            {
+              "entity_kind": "decision.rationale",
+              "entity_id": "7327",
+              "task_ref": "WBUX-6",
+              "score": 0.6112297177314758,
+              "snippet": "L2c landed @65d2e7f32: MediaAnalyzeCta.tsx and its test deleted, MediaSelection mount removed, FOOTER_ACCENT_OWNER.ANALYZE/analyzeVariant dropped from mediaFooterCtaState, WorkbenchPage tests now trigger the scan via the Describe primary\u2026",
+              "model_id": "gte-base-en-v1.5"
+            }
+          ],
+          "min_score": 0.35,
+          "query_mode": "finding_id",
+          "query_model_id": "gte-base-en-v1.5",
+          "note": null,
+          "ok": true,
+          "task_ref": "UXREC-1",
+          "embeddings_mode": "verified",
+          "semantic_degrade_reason": null
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "finding_id": "UXA10033-ROSTER-001",
+      "response": {
+        "content": [],
+        "structuredContent": {
+          "status": "ok_with_results",
+          "results": [
+            {
+              "entity_kind": "finding.resolution_notes",
+              "entity_id": "6569",
+              "task_ref": "WBUX-5",
+              "score": 0.6452494263648987,
+              "snippet": "Unblocked by BR-01 and fixed in 05771d66. Now that the projection emits a pixel rect in object form, DirectoryFace passes bbox: rep.bbox at RosterEntriesTable.tsx:76 in the resolvable-media branch, so directory thumbnails canvas-crop the\u2026",
+              "model_id": "gte-base-en-v1.5"
+            }
+          ],
+          "min_score": 0.35,
+          "query_mode": "finding_id",
+          "query_model_id": "gte-base-en-v1.5",
+          "note": null,
+          "ok": true,
+          "task_ref": "UXREC-1",
+          "embeddings_mode": "verified",
+          "semantic_degrade_reason": null
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "finding_id": "UXA10033-USAGE-001",
+      "response": {
+        "content": [],
+        "structuredContent": {
+          "status": "ok_with_results",
+          "results": [
+            {
+              "entity_kind": "decision.rationale",
+              "entity_id": "19311",
+              "task_ref": "MAINT-FIR-CORPUS-20261022",
+              "score": 0.5727072358131409,
+              "snippet": "ADR014 read; this is development fixture tenant/API-key provisioning through existing scripts.manage_api_keys --env matched to each actual container ACX_ENV. Four deterministic task/site UUIDs separate old galleries without deleting shared\u2026",
+              "model_id": "gte-base-en-v1.5"
+            }
+          ],
+          "min_score": 0.35,
+          "query_mode": "finding_id",
+          "query_model_id": "gte-base-en-v1.5",
+          "note": null,
+          "ok": true,
+          "task_ref": "UXREC-1",
+          "embeddings_mode": "verified",
+          "semantic_degrade_reason": null
+        },
+        "isError": false
+      }
+    }
+  }
+]

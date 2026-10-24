@@ -1,0 +1,791 @@
+{
+  "map_ref": "workbench-2pane-audit-10033-proposal",
+  "product": "prototype-wp-alt-context",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+  "goals": [
+    "NEXT-WAVE PROPOSAL: corrected audit map; native critique receipt and independent implementation review required. Source baseline7df0.0.40; no live-state acceptance claimed.",
+    "Four ACX submenus have distinct goals: Overview orients; Review Queue owns recognizing people and reviewing/editing/approving descriptions beside each image; People manages named people; Settings configures the service. Previous description runs are choices within the image Alt text area. The retired Description Runs URL redirects to Workbench.",
+    "One primary action according to existing review-surface ownership. The library action/status panel holds Describe beside selection and related progress; recognition is the global Settings toggle disclosed under Describe, not a second competing inference CTA.",
+    "Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)",
+    "Read face-group status at a glance in the control pane and act on the selection in the same viewport",
+    "Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan"
+  ],
+  "jobs": [
+    {
+      "id": "job-cluster-recognize",
+      "label": "Build & recognize face groups (refresh groups, run recognition)"
+    },
+    {
+      "id": "job-name-curate",
+      "label": "Name & curate people (confirm/correct/merge/split, assign names)"
+    },
+    {
+      "id": "job-caption-library",
+      "label": "Caption & describe media (alt-text + long description on library rows)"
+    },
+    {
+      "id": "job-triage-sync",
+      "label": "Triage people conflicts / failed sync (overlays)"
+    }
+  ],
+  "screens": [
+    {
+      "id": "workbench-2pane-shell",
+      "kind": "screen",
+      "title": "Workbench (2-pane)",
+      "purpose": "Two-pane operator surface: left control (face-group/recognize/name/curate), right media library (alt-text + long-description). Overlays host conflicts and dead-letter.",
+      "route": "#/workbench",
+      "wp_page": "alt-context-workbench",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [
+        "panes",
+        "cluster",
+        "media",
+        "panel",
+        "status",
+        "endpoint",
+        "s",
+        "p",
+        "perPage"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "primary_action_id": "act-bulk-describe",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "degraded",
+        "offline"
+      ],
+      "zones": [
+        {
+          "id": "z-topbar",
+          "label": "Workbench header + recognition endpoint (read-only status; server-resolved) + sync/projection status strip",
+          "role": "status",
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "degraded"
+          ]
+        },
+        {
+          "id": "z-left-host",
+          "label": "Left pane host (control surface)",
+          "role": "content",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "z-splitter",
+          "label": "Pane divider / collapse-left control",
+          "role": "other",
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "z-right-host",
+          "label": "Right pane host (media library)",
+          "role": "content",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "z-overlay-host",
+          "label": "Overlay host (conflicts | dead-letter)",
+          "role": "other",
+          "states": [
+            "default",
+            "empty"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workbench-control",
+      "kind": "screen",
+      "title": "Control surface (left pane)",
+      "purpose": "Current selected face-group context and actionable review queue; one empty-state action, collapsed irrelevant empty sections, secondary scan control. Description lifecycle status belongs with Describe.",
+      "route": "#/workbench",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [
+        "panes",
+        "cluster",
+        "endpoint"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "primary_action_id": "act-run-recognition",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "first_time",
+        "degraded"
+      ],
+      "zones": [
+        {
+          "id": "z-endpoint",
+          "label": "Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)",
+          "role": "status",
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "degraded"
+          ]
+        },
+        {
+          "id": "z-recognition-controls",
+          "label": "Face-group/recognition controls (run, refresh, threshold)",
+          "role": "job",
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
+        },
+        {
+          "id": "z-cluster-umap",
+          "label": "Face-group status (scan/sync health; not a 2D scatter)",
+          "role": "status",
+          "evidence_linked": true,
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "first_time",
+            "degraded"
+          ]
+        },
+        {
+          "id": "z-cluster-list",
+          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? \u2014 Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item \u2014 see code_ref.",
+          "role": "queue",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "first_time",
+            "degraded",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "z-name-curate",
+          "label": "Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open)",
+          "role": "forced_choice",
+          "evidence_linked": true,
+          "max_candidates": 5,
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "edge_input"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workbench-library",
+      "kind": "screen",
+      "title": "Media library (right pane)",
+      "purpose": "Library selection and one persistent Describe action, usage estimate, job-scoped progress/cancel/return in the same viewport; list may scroll without hiding action/status or focused rows.",
+      "route": "#/workbench",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [
+        "panes",
+        "media",
+        "cluster",
+        "status",
+        "s",
+        "p",
+        "perPage"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+      "primary_action_id": "act-bulk-describe",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "first_time",
+        "edge_input"
+      ],
+      "zones": [
+        {
+          "id": "z-lib-filters",
+          "label": "Library filters (status, has-alt, has-description, face group, search)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
+        },
+        {
+          "id": "z-lib-table",
+          "label": "Media library table (thumb | title | status | alt-text | long description | people)",
+          "role": "queue",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "first_time",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "z-lib-inline-edit",
+          "label": "Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "z-lib-ai-suggest",
+          "label": "AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "z-lib-actions",
+          "label": "Persistent library action/status panel: ONE job CTA \u2014 'Describe N selected' (plain count, no plural switch; primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. MediaAnalyzeCta / 'Analyze selected' is deleted (L2c, WBUX-6) \u2014 Describe owns the scan trigger, so recognition is never a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). Four hold reasons keep the primary focusable with aria-disabled=\"true\" plus an onClick no-op \u2014 never the HTML disabled attribute \u2014 and each contributes a reason id joined into aria-describedby: offline (empty/offline state), zero-selection (empty state), identifying (loading state, label 'Identifying people\u2026'), settings-pending (loading state, label 'Loading settings\u2026'). settings-unavailable is a fifth, hold-adjacent state and NOT a hold: when the recognition-settings query errors the hold is RELEASED, Describe proceeds with recognition treated as off, and the disclosure reads 'Recognition settings unavailable \u2014 describing without identifying people \u00b7 ~N credits' paired with an AlertTriangle icon so the degradation is never colour-alone (sr-004; degraded state; RLSE-05 the failure is visible, never silent). A11Y contract for that notice (WBUX6-W4-B-02): the disclosure text node stays the aria-describedby target and is therefore only reachable on focus, so the degraded copy is ALSO mirrored into a separate polite live region (role=\"status\" aria-live=\"polite\") that is not the describedby target \u2014 one surface to describe, one surface to announce, never the same node doing both (A11Y-21). A single Cancel control spans the identifying and describing phases; its visible label is state-dependent, not a fixed string \u2014 identifying = 'Cancel people identification', describing = 'Cancel describe run', in-flight cancel = 'Cancelling\u2026' \u2014 and exactly one control matching /^Cancel / is rendered at a time. Run progress phases queued -> warming -> describing -> complete | failed | cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: \u2714 N drafts ready to review[ \u00b7 M failed]; Review drafts links to #/workbench?hasDraft=1&run=<id>. Credit estimates describe selected images; zero selection prompts choosing images and does not imply a zero account balance. The panel remains visible with the active selection at desktop and narrow viewports; existing run progress and cancellation are collocated, while pagination remains separate. Balance/estimate stays explicitly unknown until a tenant-bound read contract is qualified.",
+          "role": "job",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "degraded"
+          ]
+        },
+        {
+          "id": "z-lib-description-history",
+          "label": "Alt text per image: latest generated draft on the normal media view, visible previous-description chooser with run/time provenance, edit and explicit approval using the existing correction contract. Older versions load in bounded pages; unavailable history is visible and retryable. Choosing a version only previews it and never saves or starts inference.",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workbench-conflicts",
+      "kind": "overlay",
+      "title": "Conflict Inbox",
+      "purpose": "Review people conflicts; commit human judgment with evidence",
+      "route": "#/workbench?panel=conflicts",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "panel"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx",
+      "primary_action_id": "act-resolve-conflict",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "z-conflict-list",
+          "label": "Conflict list",
+          "role": "queue",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "z-conflict-detail",
+          "label": "Conflict detail / candidates",
+          "role": "forced_choice",
+          "evidence_linked": true,
+          "max_candidates": 5,
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "z-conflict-actions",
+          "label": "Resolve / defer actions",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workbench-dead-letter",
+      "kind": "overlay",
+      "title": "Failed Sync Queue (Dead Letter)",
+      "purpose": "Inspect failed sync ops; retry or discard",
+      "route": "#/workbench?panel=dead-letter",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "panel"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "primary_action_id": "act-retry-dead-letter",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "z-dl-list",
+          "label": "Dead-letter items",
+          "role": "queue",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        },
+        {
+          "id": "z-dl-actions",
+          "label": "Retry / discard",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exit-roster",
+      "kind": "exit",
+      "title": "Roster (person workspace)",
+      "purpose": "Manage identified persons after naming/curating in Workbench",
+      "route": "#/roster",
+      "wp_page": "alt-context-roster",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [
+        "personFilter",
+        "person"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "z-roster-entry",
+          "label": "Roster entry",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exit-settings",
+      "kind": "exit",
+      "title": "Settings / service health",
+      "purpose": "Configure the service: recognition endpoint + connection health, the global recognition ON/OFF toggle, and Data & retention (consolidated from the retired alt-context-retention submenu, E1)",
+      "route": "#/settings",
+      "wp_page": "alt-context-settings",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "section"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+      "states": [
+        "default",
+        "loading",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "z-settings-form",
+          "label": "Settings form + test connection",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
+        },
+        {
+          "id": "z-settings-recognition",
+          "label": "Recognition toggle (acx_recognition_enabled; default ON; global, not per-image \u2014 OFF makes Describe produce descriptions only and the Workbench footer disclosure says so; analyze endpoint answers 409 recognition_disabled)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
+        },
+        {
+          "id": "z-settings-retention",
+          "label": "Data & retention section (RetentionSection on the retention screen; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "degraded"
+          ]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "act-run-recognition",
+      "verb": "Run / refresh recognition + grouping",
+      "target": "job-pipeline",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "act-select-cluster",
+      "verb": "Select face group (list)",
+      "target": "workbench-library",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "act-name-cluster",
+      "verb": "Save name (NameFaceControl)",
+      "target": "identity-store",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "act-curate-cluster",
+      "verb": "Merge / split / correct group",
+      "target": "identity-store",
+      "hierarchy": "destructive",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "merge_twin",
+      "verb": "Merge twin into labeled survivor",
+      "target": "identity-store",
+      "hierarchy": "destructive",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "keep_separate",
+      "verb": "Keep twin separate",
+      "target": "identity-store",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "act-view-endpoint-settings",
+      "verb": "View / change recognition endpoint + recognition ON/OFF toggle (Settings; server-resolved endpoint)",
+      "target": "exit-settings",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "act-edit-alt",
+      "verb": "Edit alt-text inline",
+      "target": "media-store",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-library"
+    },
+    {
+      "id": "act-edit-desc",
+      "verb": "Edit long description inline",
+      "target": "media-store",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-library"
+    },
+    {
+      "id": "act-accept-ai-caption",
+      "verb": "Accept AI caption/description (editable)",
+      "target": "media-store",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-library"
+    },
+    {
+      "id": "act-bulk-describe",
+      "verb": "Describe N selected (footer primary; runs recognition first when the Settings toggle is ON, then description; disclosure states ON/OFF/unknown)",
+      "target": "job-pipeline",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-library"
+    },
+    {
+      "id": "act-open-conflicts",
+      "verb": "Open Conflict Inbox",
+      "target": "workbench-conflicts",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-2pane-shell"
+    },
+    {
+      "id": "act-open-dead-letter",
+      "verb": "Open Failed Sync Queue",
+      "target": "workbench-dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-2pane-shell"
+    },
+    {
+      "id": "act-resolve-conflict",
+      "verb": "Resolve conflict",
+      "target": "identity-store",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-conflicts"
+    },
+    {
+      "id": "act-retry-dead-letter",
+      "verb": "Retry failed op",
+      "target": "sync",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-dead-letter"
+    },
+    {
+      "id": "act-discard-dead-letter",
+      "verb": "Discard failed op",
+      "target": "sync",
+      "hierarchy": "destructive",
+      "costly": true,
+      "irreversible": true,
+      "preview_required": true,
+      "screen_id": "workbench-dead-letter"
+    },
+    {
+      "id": "act-goto-roster",
+      "verb": "Go to Roster",
+      "target": "exit-roster",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-recognize-name-curate",
+      "job": "job-name-curate",
+      "label": "Run recognition -> select face group -> name/curate -> library people column updates",
+      "steps": [
+        {
+          "screen_id": "workbench-2pane-shell",
+          "branch_label": "enter"
+        },
+        {
+          "screen_id": "workbench-control",
+          "branch_label": "run recognition (preview cost)"
+        },
+        {
+          "screen_id": "workbench-control",
+          "branch_label": "select face group (umap/list)"
+        },
+        {
+          "screen_id": "workbench-control",
+          "branch_label": "name / curate"
+        },
+        {
+          "screen_id": "workbench-library",
+          "branch_label": "right pane reflects assignment"
+        }
+      ]
+    },
+    {
+      "id": "flow-caption-library",
+      "job": "job-caption-library",
+      "label": "Filter needs-alt -> accept/edit AI caption -> edit long description",
+      "steps": [
+        {
+          "screen_id": "workbench-library",
+          "branch_label": "filter has-alt=false"
+        },
+        {
+          "screen_id": "workbench-library",
+          "branch_label": "accept/edit AI caption"
+        },
+        {
+          "screen_id": "workbench-library",
+          "branch_label": "edit long description"
+        }
+      ]
+    },
+    {
+      "id": "flow-umap-select-to-library",
+      "job": "job-cluster-recognize",
+      "label": "UMAP scatter -> select face group -> right library filters to face-group media",
+      "steps": [
+        {
+          "screen_id": "workbench-control",
+          "branch_label": "umap scatter"
+        },
+        {
+          "screen_id": "workbench-control",
+          "branch_label": "select face-group point/region"
+        },
+        {
+          "screen_id": "workbench-library",
+          "branch_label": "face-group= filters library"
+        }
+      ]
+    },
+    {
+      "id": "flow-scan-to-conflict",
+      "job": "job-triage-sync",
+      "label": "Recognition produces conflicts -> conflict overlay -> resolve -> roster if needed",
+      "steps": [
+        {
+          "screen_id": "workbench-control",
+          "branch_label": "recognition produces conflicts"
+        },
+        {
+          "screen_id": "workbench-conflicts",
+          "branch_label": "open panel=conflicts"
+        },
+        {
+          "screen_id": "workbench-conflicts",
+          "branch_label": "resolve"
+        },
+        {
+          "screen_id": "exit-roster",
+          "branch_label": "optional manage person"
+        }
+      ]
+    },
+    {
+      "id": "flow-dead-letter-recover",
+      "job": "job-triage-sync",
+      "label": "Sync failure -> dead letter -> retry/discard",
+      "steps": [
+        {
+          "screen_id": "workbench-2pane-shell",
+          "branch_label": "degraded sync strip"
+        },
+        {
+          "screen_id": "workbench-dead-letter",
+          "branch_label": "panel=dead-letter"
+        },
+        {
+          "screen_id": "workbench-2pane-shell",
+          "branch_label": "retry or discard complete"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "OPEN: long-description has no data field yet (media items have only alt text). Ship the alt-text column first, long-description behind a new field? [FORM]",
+    "OPEN: no 2D projection data exists (only bbox + 3D head pose). Ship the left pane as a face-group list first; scatter map is a fast-follow once a projection endpoint exists? [VIZ-01,VIZ-15]",
+    "RESOLVED: operator vocab is group / person / face \u2014 never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.",
+    "OPEN: Selecting a face group in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]",
+    "RESOLVED: one naming surface (NameFaceControl) with a single-gesture Save name; overlay candidates and confirm share that control.",
+    "OPEN: Endpoint switch (InsightFace vs FIR/SFace) changes the recognition model server-side; do existing face groups invalidate and need a fresh grouping on switch? [HAI-02]",
+    "OPEN: Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]",
+    "OPEN: Alt-text vs long-description: two fixed columns or one expandable row-detail? [PERC-01,UI-04]",
+    "RESOLVED (WBUX-6): 'Describe selected' vs 'Analyze selected' unified into one Describe CTA; recognition on/off is a GLOBAL Settings toggle (default ON), not a per-image choice \u2014 one decision per operator, per-image override deferred until a real demand appears (COG-03, INT-05).",
+    "OPEN: Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]"
+  ],
+  "not_doing": [
+    "Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)",
+    "UI toggle for the recognition endpoint (server-resolved per RECOG-1; topbar is read-only status)",
+    "Pixel/token values (design tokens referenced --acx-*, not specified here)",
+    "Attachment-edit SPA (separate map_ref)",
+    "Big-bang removal of the current tabbed shell (migration path, not in this map)",
+    "REST sequence diagrams (see docs/workbench-data-flow.mmd)",
+    "Per-image recognition opt-out on the library row (global Settings toggle only; revisit if operators ask)",
+    "Standalone Data Retention admin submenu (retired into Settings ?section=retention)"
+  ]
+}

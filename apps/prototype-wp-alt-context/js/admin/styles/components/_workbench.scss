@@ -69,18 +69,41 @@
     color: var(--acx-color-text-muted);
   }
 
+  // [LAY-01, PERC-01] Evidence uses the existing pane boundary, without a second box.
+  &__control {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  &__control-title {
+    margin: 0 0 var(--acx-space-8);
+    font-size: var(--acx-text-lg);
+  }
+
+  &__control-scope {
+    margin: 0 0 var(--acx-space-8);
+    color: var(--acx-color-text-secondary);
+    font-size: var(--acx-text-sm);
+  }
+
+  // [LAY-03] Scope and evidence form one group; policy and reviews have more separation.
+  &__control > .acx-recognition-policy {
+    margin-block: var(--acx-space-24);
+  }
+
   /* WBUX-5 two-pane shell host (presentational; do not reuse &__layout) */
   &__two-pane {
     display: flex;
     flex-direction: row;
-    align-items: stretch;
+    align-items: flex-start;
     gap: var(--acx-pane-gap);
     width: 100%;
     min-width: 0;
-    overflow: hidden;
+    overflow: visible;
 
     &[data-layout='stacked'] {
       flex-direction: column;
+      align-items: stretch;
     }
 
     &[data-panes='control-collapsed'] .acx-workbench__two-pane-library,
@@ -97,6 +120,10 @@
     gap: var(--acx-space-12);
     min-width: 0;
     min-height: var(--acx-pane-min-height);
+    max-block-size: 70dvh;
+    box-sizing: border-box;
+    scroll-padding-block: var(--acx-space-16);
+    scrollbar-gutter: stable;
     padding: var(--acx-space-16);
     border: 1px solid var(--acx-color-border);
     border-radius: var(--acx-radius-md);
@@ -112,6 +139,7 @@
 
   &__two-pane-library {
     flex: 1 1 auto;
+    block-size: 70dvh;
   }
 
   &__two-pane-control[data-collapsed='true'],
@@ -893,6 +921,10 @@ button.acx-accent-primary-action {
   padding-top: var(--acx-space-12);
   border-top: 1px solid var(--acx-color-border);
 
+  &[hidden] {
+    display: none;
+  }
+
   &__title {
     margin: 0;
     font-size: var(--acx-text-base);
@@ -1332,12 +1364,7 @@ button.acx-accent-primary-action {
     margin: 0 auto var(--acx-space-8);
     max-width: 16rem;
     border-radius: var(--acx-radius-md);
-    background: linear-gradient(
-      90deg,
-      var(--acx-gray-100) 0%,
-      var(--acx-gray-50) 50%,
-      var(--acx-gray-100) 100%
-    );
+    background: linear-gradient(90deg, var(--acx-gray-100) 0%, var(--acx-gray-50) 50%, var(--acx-gray-100) 100%);
     background-size: 200% 100%;
     animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
   }

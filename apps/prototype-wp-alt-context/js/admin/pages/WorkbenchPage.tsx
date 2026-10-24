@@ -128,6 +128,32 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     controlCollapsed: panes === APP_LINK_VALUES.panesControlCollapsed,
   });
 
+  // The existing empty-state link retains its route fallback. On this surface,
+  // its useful next step is the Library search, including reopening that pane.
+  const handleEmptyRecognitionStep = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      !(event.target instanceof Element) ||
+      !event.target.closest('a') ||
+      !document.getElementById('acx-media-search')
+    ) {
+      return;
+    }
+    event.preventDefault();
+    if (panes === APP_LINK_VALUES.panesLibraryCollapsed) {
+      setPanes(APP_LINK_VALUES.panesBoth);
+    }
+    queueMicrotask(() => {
+      const search = document.getElementById('acx-media-search');
+      search?.focus();
+      search?.scrollIntoView?.({ block: 'nearest' });
+    });
+  };
+
   return (
     <section className="acx-workbench" aria-labelledby="acx-workbench-title">
       <h1 id="acx-workbench-title" className="acx-dashboard__title">
@@ -196,30 +222,37 @@ const WorkbenchPageContent = (): React.JSX.Element => {
         <WorkbenchTwoPaneLayout
           panes={panes}
           onPanesChange={setPanes}
+          stackBelowPx={719}
           control={
-            <div className="acx-workbench__panel">
-              <h2>{__('Scan Media Queue', 'alt-context')}</h2>
-              <p>
-                {__(
-                  'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
-                  'alt-context',
-                )}
+            <div className="acx-workbench__control">
+              <h3 id="acx-workbench-recognition-heading" className="acx-workbench__control-title" tabIndex={-1}>
+                {__('Recognition evidence', 'alt-context')}
+              </h3>
+              {clusterPanel.clusterId && clusterPanel.mode !== 'none' ? (
+                <p className="acx-workbench__control-scope">
+                  {sprintf(__('Reviewing face group: %s', 'alt-context'), clusterPanel.clusterId)}
+                </p>
+              ) : null}
+              <p className="acx-workbench__control-scope">
+                {__('Selected images and description runs are in Library.', 'alt-context')}
               </p>
-              <FaceGroupScatter
-                state={deriveFaceGroupScatterState({
-                  isOnline: status.isOnline,
-                  projectionSyncState: status.projectionSyncState,
-                  isSynced: Boolean(scanRun.isSynced),
-                  currentPhase: status.currentPhase,
-                  clustersCreated:
-                    scanRun.progress?.clusters_created ??
-                    status.clusterProgress?.clusters_created ??
-                    status.scanProgress?.clusters_created,
-                })}
-                onRetry={retryProjectionSync}
-              />
+              <div onClickCapture={handleEmptyRecognitionStep}>
+                <FaceGroupScatter
+                  state={deriveFaceGroupScatterState({
+                    isOnline: status.isOnline,
+                    projectionSyncState: status.projectionSyncState,
+                    isSynced: Boolean(scanRun.isSynced),
+                    currentPhase: status.currentPhase,
+                    clustersCreated:
+                      scanRun.progress?.clusters_created ??
+                      status.clusterProgress?.clusters_created ??
+                      status.scanProgress?.clusters_created,
+                  })}
+                  onRetry={retryProjectionSync}
+                />
+              </div>
+              <ScanTabContent compactEmptySections />
               <RecognitionPolicyControl />
-              <ScanTabContent />
             </div>
           }
           library={

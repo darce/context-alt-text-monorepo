@@ -570,7 +570,7 @@ describe('IdentityClusterList', () => {
       await resolveFindClusterDeferreds(null);
     });
 
-    expect(screen.getByRole('option', { name: /Ada Lovelace \(Group\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Confirm match with Ada Lovelace' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /cancel/i }));
     await waitForEditClosed();
   });

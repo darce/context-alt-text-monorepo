@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { StepMap, STEP_MAP_VALUES, type StepMapValue } from '../components/ui/StepMap';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
+import { ScanActionPanel } from './workbench/Panels';
 import { RecognitionPolicyControl } from './workbench/RecognitionPolicyControl';
 import { MediaSelection } from './workbench/MediaSelection';
 import { WorkbenchTwoPaneLayout } from './workbench/WorkbenchTwoPaneLayout';
@@ -78,6 +79,15 @@ export const WorkbenchStepMap = ({
   />
 );
 
+const focusLibrarySearch = (): void => {
+  const search = document.getElementById('acx-media-search');
+  if (!search || search.closest('[hidden]')) {
+    return;
+  }
+  search.focus();
+  search.scrollIntoView?.({ block: 'nearest' });
+};
+
 export const WorkbenchPage = (): React.JSX.Element => (
   <WorkbenchProvider>
     <WorkbenchPageContent />
@@ -95,7 +105,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     setAdvancedOpen,
   } = useWorkbenchNav();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
-  const { scanRun, status, retryProjectionSync } = useJobPipeline();
+  const { scanRun, status, history, cancelScan, retryProjectionSync, retryScanStream } = useJobPipeline();
   const { detailTruncationNotice } = useWorkbenchMediaContext().mediaQueue;
   const [panes, setPanes] = usePanesParam();
 
@@ -127,6 +137,49 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     cardPrimaryPresent,
     controlCollapsed: panes === APP_LINK_VALUES.panesControlCollapsed,
   });
+
+  // Same scan source and cancel targets as the Control scan section (ScanTabContent).
+  const handleCancelScan = (): void => {
+    const targets = history.activeJobIds.length > 0 ? history.activeJobIds : history.jobId ? [history.jobId] : [];
+    if (targets.length > 0) {
+      cancelScan(targets);
+    }
+  };
+
+  // A hidden search cannot take focus, and the router commits `?panes=` in a transition.
+  // The request waits for that commit; it is consumed by the first pane change.
+  const searchFocusRequested = React.useRef(false);
+  React.useEffect(() => {
+    if (!searchFocusRequested.current) {
+      return;
+    }
+    searchFocusRequested.current = false;
+    focusLibrarySearch();
+  }, [panes]);
+
+  // The existing empty-state link retains its route fallback. On this surface,
+  // its useful next step is the Library search, including reopening that pane.
+  const handleEmptyRecognitionStep = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      !(event.target instanceof Element) ||
+      !event.target.closest('a') ||
+      !document.getElementById('acx-media-search')
+    ) {
+      return;
+    }
+    event.preventDefault();
+    if (panes === APP_LINK_VALUES.panesLibraryCollapsed) {
+      searchFocusRequested.current = true;
+      setPanes(APP_LINK_VALUES.panesBoth);
+      return;
+    }
+    focusLibrarySearch();
+  };
 
   return (
     <section className="acx-workbench" aria-labelledby="acx-workbench-title">
@@ -196,36 +249,56 @@ const WorkbenchPageContent = (): React.JSX.Element => {
         <WorkbenchTwoPaneLayout
           panes={panes}
           onPanesChange={setPanes}
+          stackBelowPx={719}
           control={
-            <div className="acx-workbench__panel">
-              <h2>{__('Scan Media Queue', 'alt-context')}</h2>
-              <p>
-                {__(
-                  'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
-                  'alt-context',
-                )}
+            <div className="acx-workbench__control">
+              <h3 id="acx-workbench-recognition-heading" className="acx-workbench__control-title" tabIndex={-1}>
+                {__('Recognition evidence', 'alt-context')}
+              </h3>
+              {clusterPanel.clusterId && clusterPanel.mode !== 'none' ? (
+                <p className="acx-workbench__control-scope">
+                  {sprintf(__('Reviewing face group: %s', 'alt-context'), clusterPanel.clusterId)}
+                </p>
+              ) : null}
+              <p className="acx-workbench__control-scope">
+                {__('Selected images and description runs are in Library.', 'alt-context')}
               </p>
-              <FaceGroupScatter
-                state={deriveFaceGroupScatterState({
-                  isOnline: status.isOnline,
-                  projectionSyncState: status.projectionSyncState,
-                  isSynced: Boolean(scanRun.isSynced),
-                  currentPhase: status.currentPhase,
-                  clustersCreated:
-                    scanRun.progress?.clusters_created ??
-                    status.clusterProgress?.clusters_created ??
-                    status.scanProgress?.clusters_created,
-                })}
-                onRetry={retryProjectionSync}
-              />
+              <div onClickCapture={handleEmptyRecognitionStep}>
+                <FaceGroupScatter
+                  state={deriveFaceGroupScatterState({
+                    isOnline: status.isOnline,
+                    projectionSyncState: status.projectionSyncState,
+                    isSynced: Boolean(scanRun.isSynced),
+                    currentPhase: status.currentPhase,
+                    clustersCreated:
+                      scanRun.progress?.clusters_created ??
+                      status.clusterProgress?.clusters_created ??
+                      status.scanProgress?.clusters_created,
+                  })}
+                  onRetry={retryProjectionSync}
+                />
+              </div>
+              <ScanTabContent compactEmptySections externalActivityStatus />
               <RecognitionPolicyControl />
-              <ScanTabContent />
             </div>
           }
           library={
             <>
               {detailTruncationNotice && <div className="acx-notice acx-notice--info">{detailTruncationNotice}</div>}
-              <MediaSelection reviewActive={reviewSurfaceActive} />
+              {/* [INT-08][PERC-01] The one shared run status sits beside Describe, so description
+                  progress/cancel/recovery stay visible while recognition chrome is idle. */}
+              <MediaSelection
+                reviewActive={reviewSurfaceActive}
+                activityStatus={
+                  <ScanActionPanel
+                    variant="compact"
+                    scanRun={scanRun}
+                    currentPhase={status.currentPhase}
+                    onCancelScan={handleCancelScan}
+                    onRetryStream={retryScanStream}
+                  />
+                }
+              />
             </>
           }
         />

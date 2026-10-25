@@ -23,12 +23,11 @@ import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { useReviewSurface } from './ReviewSurfaceContext';
-import {
-  createEmptyHAIReviewState,
-  type HAIReviewState,
-} from './identity-clusters/haiReviewState';
+import { createEmptyHAIReviewState, type HAIReviewState } from './identity-clusters/haiReviewState';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 import { toWorkbench } from '../../navigation/appLinks';
+import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
+import { useSuggestionReviewQueries } from './identity-clusters/useSuggestionReviewQueries';
 
 export const WORKBENCH_SCAN_HEADING_ID = 'acx-workbench-scan-heading';
 
@@ -55,13 +54,24 @@ export const NoMediaPanel = () => (
   />
 );
 
-const ScanTabContentBody = (): React.JSX.Element => {
+interface ScanTabContentOptions {
+  compactEmptySections?: boolean;
+  /** The outer composition mounts the shared run status elsewhere; never mount a second strip here. */
+  externalActivityStatus?: boolean;
+}
+
+const ScanTabContentBody = ({
+  compactEmptySections = false,
+  externalActivityStatus = false,
+  emptyReviews = false,
+}: ScanTabContentOptions & { emptyReviews?: boolean }): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
   const { queueState, dispatchQueue } = useWorkbenchFilters();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
+  const findingsSectionRef = React.useRef<HTMLElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
   // Open-target lifecycle announce (§11 / A11Y-21). Owned here so it survives
   // the review panel's rebind remount and retirement unmount. Always-mounted
@@ -123,16 +133,12 @@ const ScanTabContentBody = (): React.JSX.Element => {
   // REF-09 — derive, don't mirror). One user action → one dispatchQueue write;
   // kind/band/clear reset the index inside the reducer.
   // PR-31: id-keyed selection lifted beside index — panel round-trips preserve it.
-  const [selectedSuggestionIds, setSelectedSuggestionIds] = React.useState<Set<string>>(
-    () => new Set(),
-  );
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = React.useState<Set<string>>(() => new Set());
   // HAI-15 state lives on this stable body while the queue swaps with label or
   // review panels. It is intentionally session-only; no localStorage/backend
   // durability is implied. The exported tenant-keyed shell clears it at a
   // tenant boundary by remounting this body.
-  const [haiReviewState, setHAIReviewState] = React.useState<HAIReviewState>(
-    () => createEmptyHAIReviewState(),
-  );
+  const [haiReviewState, setHAIReviewState] = React.useState<HAIReviewState>(() => createEmptyHAIReviewState());
   const handleHAIReviewStateChange = React.useCallback((next: HAIReviewState): void => {
     setHAIReviewState(next);
   }, []);
@@ -193,6 +199,30 @@ const ScanTabContentBody = (): React.JSX.Element => {
 
   // E21-18 S1 / L3R-03: strip while scanning OR projecting (projection can outlive isScanning).
   const isJobActive = Boolean(scanRun.isScanning) || status.currentPhase === 'projecting';
+  const collapseReviews = emptyReviews && clusterPanel.mode === 'none';
+  const hideIdleScan =
+    compactEmptySections &&
+    !isJobActive &&
+    !scanRun.statusText &&
+    !scanRun.errorMessage &&
+    !scanRun.jobId &&
+    !scanRun.batchRunStatus &&
+    !(scanRun.progress && scanRun.progress.total > 0);
+
+  React.useEffect(() => {
+    const active = document.activeElement;
+    if (
+      collapseReviews &&
+      active instanceof HTMLElement &&
+      (findingsDetailRef.current?.contains(active) || findingsSectionRef.current?.contains(active))
+    ) {
+      const search = document.getElementById('acx-media-search');
+      const target =
+        search && !search.closest('[hidden]') ? search : document.getElementById('acx-workbench-recognition-heading');
+      target?.focus();
+      target?.scrollIntoView?.({ block: 'nearest' });
+    }
+  }, [collapseReviews]);
 
   return (
     <>
@@ -200,13 +230,15 @@ const ScanTabContentBody = (): React.JSX.Element => {
         // L3R-01: strip is visual-only — no role="status". Job announcements live on the
         // demoted panel's phase-stable live region (buildCoarseJobAnnouncement), not statusText ticks.
         <div className="acx-active-job-strip" data-testid="active-job-strip">
-          <ScanActionPanel
-            variant="compact"
-            scanRun={scanRun}
-            currentPhase={status.currentPhase}
-            onCancelScan={handleCancelScan}
-            onRetryStream={retryScanStream}
-          />
+          {externalActivityStatus ? null : (
+            <ScanActionPanel
+              variant="compact"
+              scanRun={scanRun}
+              currentPhase={status.currentPhase}
+              onCancelScan={handleCancelScan}
+              onRetryStream={retryScanStream}
+            />
+          )}
           <JobTimeline
             compact
             scanProgress={status.scanProgress}
@@ -219,17 +251,23 @@ const ScanTabContentBody = (): React.JSX.Element => {
 
       <ScanScrollRestoration />
 
+      {/* This owner stays mounted and announces even when empty secondary chrome collapses. */}
+      <p
+        className="acx-review-lifecycle-announce"
+        role="status"
+        aria-live="polite"
+        data-announce-seq={reviewLifecycleSeq}
+      >
+        {reviewLifecycleMessage}
+      </p>
+
       {/* (b) Review queue promoted to top — named region (L3R-04 / design B.1) */}
-      <section className="acx-workbench-control-queue" aria-labelledby="acx-workbench-queue-heading">
+      <section
+        className="acx-workbench-control-queue"
+        aria-labelledby="acx-workbench-queue-heading"
+        hidden={collapseReviews || undefined}
+      >
         <ErrorBoundary>
-          <p
-            className="acx-review-lifecycle-announce"
-            role="status"
-            aria-live="polite"
-            data-announce-seq={reviewLifecycleSeq}
-          >
-            {reviewLifecycleMessage}
-          </p>
           {/* L3R-08: ReviewQueue owns #acx-workbench-queue-heading; label/review panels do not —
               supply a stable region heading so aria-labelledby never dangles. */}
           {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
@@ -255,9 +293,7 @@ const ScanTabContentBody = (): React.JSX.Element => {
                 clusterId={reviewClusterId}
                 onClose={() => {
                   dispatchClusterPanel({ type: 'close' });
-                  announceReviewLifecycle(
-                    __('Returned to review suggestions', 'alt-context'),
-                  );
+                  announceReviewLifecycle(__('Returned to review suggestions', 'alt-context'));
                   focusQueueRoot();
                 }}
               />
@@ -287,16 +323,25 @@ const ScanTabContentBody = (): React.JSX.Element => {
       </section>
 
       {/* (c) Findings demoted below the queue — named region (L3R-04 / design B.1) */}
-      <section className="acx-workbench-control-findings" aria-labelledby="acx-workbench-findings-heading">
+      <section
+        ref={findingsSectionRef}
+        className="acx-workbench-control-findings"
+        aria-labelledby="acx-workbench-findings-heading"
+        hidden={collapseReviews || undefined}
+      >
         <ErrorBoundary>
           <WorkbenchFindingsPanel onTargetFindings={handleTargetFindings} />
         </ErrorBoundary>
       </section>
 
-      {!scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
+      {!compactEmptySections && !scanRun.isScanning && !hasIdentities && <NoMediaPanel />}
 
       {/* (d) Scan CTA + full timeline demoted to bottom; reachable from zero state (rg-003) */}
-      <section className="acx-workbench-control-scan" aria-labelledby="acx-workbench-scan-heading">
+      <section
+        className="acx-workbench-control-scan"
+        aria-labelledby="acx-workbench-scan-heading"
+        hidden={hideIdleScan || undefined}
+      >
         <h3 id={WORKBENCH_SCAN_HEADING_ID} tabIndex={-1} className="acx-workbench-control-scan__title">
           {__('Scan', 'alt-context')}
         </h3>
@@ -305,7 +350,7 @@ const ScanTabContentBody = (): React.JSX.Element => {
           scanRun={scanRun}
           onCancelScan={handleCancelScan}
           onRetryStream={retryScanStream}
-          suppressPrimaryChrome={isJobActive}
+          suppressPrimaryChrome={isJobActive || externalActivityStatus}
         />
         {!isJobActive ? (
           <JobTimeline
@@ -321,8 +366,40 @@ const ScanTabContentBody = (): React.JSX.Element => {
 };
 
 /** Remount the session-owned HAI state when the active tenant changes. */
-export const ScanTabContent = (): React.JSX.Element => {
-  const tenantId =
-    typeof window === 'undefined' ? '' : window.AltContextAdmin?.tenant_id ?? '';
-  return <ScanTabContentBody key={tenantId} />;
+export const ScanTabContent = ({
+  compactEmptySections = false,
+  externalActivityStatus = false,
+}: ScanTabContentOptions): React.JSX.Element => {
+  const tenantId = typeof window === 'undefined' ? '' : (window.AltContextAdmin?.tenant_id ?? '');
+  return compactEmptySections ? (
+    <CompactScanTabContent key={tenantId} externalActivityStatus={externalActivityStatus} />
+  ) : (
+    <ScanTabContentBody key={tenantId} externalActivityStatus={externalActivityStatus} />
+  );
+};
+
+/** Presentation only: reuse the shared query cache and existing findings model; no poller or run state. */
+const CompactScanTabContent = ({
+  externalActivityStatus,
+}: Pick<ScanTabContentOptions, 'externalActivityStatus'>): React.JSX.Element => {
+  const findings = useWorkbenchFindings();
+  const { assignmentQuery, mergeQuery, nameQuery, topUnlabeledQuery } = useSuggestionReviewQueries();
+  // Partial failures and unresolved reads never certify an empty review surface.
+  const emptyReviews =
+    [assignmentQuery, mergeQuery, nameQuery, topUnlabeledQuery].every((query) => query.isSuccess) &&
+    findings.queueSettled &&
+    !findings.hasFindings &&
+    !findings.repairPending &&
+    !findings.isReadOnly &&
+    !findings.isUnavailable &&
+    !findings.isError &&
+    !findings.isAssignmentError &&
+    !findings.isTopUnlabeledError;
+  return (
+    <ScanTabContentBody
+      compactEmptySections
+      externalActivityStatus={externalActivityStatus}
+      emptyReviews={emptyReviews}
+    />
+  );
 };

@@ -269,7 +269,7 @@ describe('administrator live state', () => {
     render(<WorkbenchPage />, { wrapper: createQueryWrapper(client) });
 
     const scan = screen.getByRole('button', { name: 'Scan media' });
-    const panel = screen.getByRole('heading', { name: 'Scan Media Queue' }).parentElement;
+    const panel = screen.getByRole('heading', { name: 'Recognition evidence' }).parentElement;
     expect(panel).toContainElement(control());
     expect(panel).toContainElement(scan);
     const action = await within(control()).findByRole('button', { name: COPY.enable });

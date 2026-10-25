@@ -7,7 +7,7 @@
 .acx-media-selection {
   display: flex;
   flex-direction: column;
-  gap: var(--acx-space-16);
+  gap: var(--acx-space-6);
   // WB_CONTROL may supply the space left by its outer chrome. Only the table
   // scrolls inside this bounded surface; actions never overlay focused rows.
   block-size: var(--acx-media-selection-available-height);
@@ -25,7 +25,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--acx-space-8);
-    padding: var(--acx-space-12);
+    padding: var(--acx-space-4);
     background-color: var(--acx-color-surface-alt);
     overflow-wrap: anywhere;
   }
@@ -64,10 +64,45 @@
   &__toolbar {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-space-12);
+    gap: var(--acx-space-6);
+  }
+
+  // Labels stay beside their controls; wrapping uses the Library's actual width.
+  // Reclaim chrome space rather than taking the readable row/focus budget.
+  &__search-field {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    min-inline-size: 0;
+  }
+
+  &__filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8) var(--acx-space-12);
+    min-inline-size: 0;
+  }
+
+  &__draft-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-4);
+  }
+
+  &__run-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    overflow-wrap: anywhere;
   }
 
   &__search {
+    flex: 1 1 12rem;
+    min-inline-size: 0;
+    box-sizing: border-box;
     padding: var(--acx-space-12);
     border: 1px solid var(--acx-color-border);
     width: 100%;
@@ -212,8 +247,8 @@
   &__bulk-describe {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-space-8);
-    min-width: 16rem;
+    gap: var(--acx-space-4);
+    min-inline-size: 0;
   }
 
   // Reserve the live-region row while telemetry changes so the action row and

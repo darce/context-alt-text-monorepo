@@ -10,8 +10,83 @@ import console from 'node:console';
 import { setTimeout } from 'node:timers';
 
 const stage = process.env.ACCEPTANCE_STAGE ?? 'GREEN';
-const artifacts = path.resolve('../../artifacts/action-progress/browser', stage);
+const artifacts = path.resolve(process.env.ACCEPTANCE_OUT ?? `../../source3-evidence/browser-${stage}`);
 await mkdir(artifacts, { recursive: true });
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+// Frozen coordinator input, including native PHP shell with root-ID substitution
+// only. Core bytes are served in place, never copied into the source/artifact tree.
+const hostManifestPath = process.env.UXREC_HOST_INPUTS;
+const hostAssets = new Map();
+let host;
+try {
+  if (!hostManifestPath) {
+    throw new Error('UXREC_HOST_INPUTS must name the pinned WordPress host manifest');
+  }
+  const bytes = await readFile(hostManifestPath);
+  host = JSON.parse(bytes.toString('utf8'));
+  if (
+    host.wordpress_version !== '7.1.3' ||
+    host.html_classes !== 'wp-toolbar' ||
+    !host.body_classes?.includes('wp-admin wp-core-ui') ||
+    !host.body_classes?.includes('admin-bar') ||
+    !host.provenance ||
+    host.assets?.length !== 27 ||
+    !host.root_html?.includes('class="wrap alt-context-admin"') ||
+    !host.root_html?.includes('id="root" class="alt-context-workbench"') ||
+    !host.root_html?.includes('id="wpbody-content"') ||
+    !host.root_html?.includes('class="screen-reader-text"')
+  ) {
+    throw new Error('Incomplete WordPress host markers');
+  }
+  if (sha256(bytes) !== '0ca7ab4bbbb08f9c79e5573a66f3ef4b6c4c8c62dc554e1ff056edd288b9ce6a') {
+    throw new Error('Pinned WordPress host manifest digest mismatch');
+  }
+  for (const [index, asset] of host.assets.entries()) {
+    const css = await readFile(asset.path);
+    if (sha256(css) !== asset.sha256) {
+      throw new Error(`WordPress host asset digest mismatch: ${asset.path}`);
+    }
+    hostAssets.set(`/acx-host/${index}.css`, css);
+  }
+} catch (error) {
+  await writeFile(
+    path.join(artifacts, 'geometry.json'),
+    JSON.stringify({ stage, verdict: 'FAIL', browser_assertions_executed: 0, host_failure: String(error) }, null, 2) +
+      '\n',
+  );
+  throw error;
+}
+// TEST-22: record the actual source combination exercised, without inventing a
+// merged commit identity for this scoped native assembly.
+const sourceTupleFiles = [
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.actionSurface.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/action-progress-browser/acceptance.mjs',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/action-progress-browser/fixture.tsx',
+  'apps/prototype-wp-alt-context/js/admin/styles/components/_media-selection.scss',
+  'apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.control-composition.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.library-lifecycle.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/fixtures/wb-control/acceptance.mjs',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/fixtures/wb-control/entry.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/fixtures/wb-control/index.html',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/RecognitionPolicyControl.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.control-composition.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.integration.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/styles/components/_workbench.scss',
+];
+const sourceTuple = {
+  integration_base: 'aacec8779fd8bb9e70758e0fbc73a6f6a81b1ccd',
+  action_original_source2_tip: '70aa52f3ad7e976d7fb0bdfb7aacbce4875813b2',
+  frozen_wb_source2_tip: '67f0d037df194ce954b9eb7a8560641d0d914323',
+  actual_files: Object.fromEntries(
+    await Promise.all(
+      sourceTupleFiles.map(async (file) => [file, sha256(await readFile(path.resolve('../..', file)))]),
+    ),
+  ),
+};
 const bundle = path.join(artifacts, 'bundle');
 const fixtureEntry = 'js/admin/pages/workbench/__tests__/action-progress-browser/fixture.tsx';
 // Same build as `npm run build`: the app's own config in production mode, only the
@@ -56,6 +131,9 @@ const endpointNames = [
   'recognitionJobs',
   'recognitionClusters',
   'recognitionSyncTrigger',
+  'recognitionSuggestions',
+  'recognitionMergeSuggestions',
+  'recognitionNameSuggestions',
 ];
 // TenantIdentity::derive_site_url_tenant_id for the fixture site URL.
 const deriveSiteTenantId = (siteUrl) => {
@@ -71,20 +149,23 @@ const config = {
   nonce: 'offline-fixture',
   ajaxUrl: '/fixture-api/ajax',
   tenant_id: tenantId,
+  recognitionSource: 'service',
+  effectiveTargetUrl: origin,
+  recognitionPolicy: { enabled: false, canManage: false },
   endpoints: Object.fromEntries(endpointNames.map((name) => [name, `${origin}/fixture-api/${name}`])),
 };
 const entry = manifest[fixtureEntry];
 await writeFile(
   path.join(bundle, 'index.html'),
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ACTION_PROGRESS</title>${collectCss(
+  `<!doctype html><html lang="en" class="${host.html_classes}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ACTION_PROGRESS</title>${[...hostAssets.keys()].map((file) => `<link rel="stylesheet" href="${file}">`).join('')}${collectCss(
     fixtureEntry,
   )
     .map((file) => `<link rel="stylesheet" href="./${file}">`)
     .join(
       '',
-    )}<script type="application/json" id="acx-fixture-config">${JSON.stringify(config).replaceAll('<', '\\u003c')}</script></head><body><div id="root"></div><script type="module" src="./${entry?.file}"></script></body></html>`,
+    )}<script type="application/json" id="acx-fixture-config">${JSON.stringify(config).replaceAll('<', '\\u003c')}</script></head><body class="${host.body_classes}">${host.root_html}<script type="module" src="./${entry?.file}"></script></body></html>`,
 );
-const url = `${appBase}index.html`;
+const url = `${appBase}index.html#/workbench`;
 const contentTypes = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -103,15 +184,15 @@ const image =
 const items = Array.from({ length: 10 }, (_, i) => ({
   id: i + 1,
   title: `Tall fixture photo ${i + 1}`,
-  status: 'missing',
+  status: 'complete',
   thumbnailUrl: image,
-  altText: null,
+  thumbnailSrcset: null,
+  thumbnailSizes: null,
+  thumbnailDimensions: { width: 300, height: 300 },
+  altText: 'Long existing media evidence. '.repeat(60),
   isDecorative: false,
-  editUrl: '#edit',
-  tags: ['Fixture'],
-  mimeType: 'image/jpeg',
-  updatedAt: '2026-10-24T12:00:00Z',
-  dimensions: { width: 300, height: 300 },
+  editUrl: null,
+  tags: [],
 }));
 const gpu = {
   gpu_state: {
@@ -180,12 +261,37 @@ const createTransport = () => {
         return json(200, { recognition_enabled: state.settingsMode === 'on', development_face_scan_available: false });
       },
     ],
-    ['GET workbenchMedia', () => json(200, { items, total: 10, totalPages: 2 })],
+    [
+      'GET workbenchMedia',
+      ({ query }) => {
+        const visible = query.get('status') === 'missing' || query.get('search') === 'no-matching-fixture' ? [] : items;
+        return json(200, { items: visible, total: visible.length, totalPages: 1 });
+      },
+    ],
     ['GET workbenchMediaDetail', () => json(200, { details_by_media: {}, limit: 100, total: 10, truncated: false })],
     ['GET recognitionMediaIdentities', () => json(200, { identities_by_media: {}, data_source: 'local_projection' })],
     ['GET recognitionDescribeHistory', () => json(200, { items: [], total: 0, limit: 50, offset: 0, has_more: false })],
     ['GET recognitionGpuStatus', () => json(200, gpu)],
     ['GET recognitionBatchRuns', () => json(200, { items: [] })],
+    [
+      'GET recognitionClusters/top-unlabeled',
+      () =>
+        json(200, {
+          clusters: [],
+          limit: 20,
+          total: 0,
+          truncated: false,
+          repair_pending: false,
+          singleton_count: 0,
+          has_clusters: false,
+          data_source: 'local_projection',
+          projection_status: 'available',
+        }),
+    ],
+    ...['recognitionSuggestions', 'recognitionMergeSuggestions', 'recognitionNameSuggestions'].map((name) => [
+      `GET ${name}`,
+      () => json(200, { suggestions: [], limit: 25, offset: 0, total: 0, data_source: 'local_projection' }),
+    ]),
     [
       'GET recognitionSyncHealth',
       () =>
@@ -280,7 +386,7 @@ const createTransport = () => {
               tier: done ? 'final_gpu' : null,
               result_generation: done ? 1 : 0,
               processing_ms: done ? 1200 : null,
-              existing_alt: false,
+              existing_alt: true,
               thumbnail_url: image,
               thumbnail_srcset: null,
             };
@@ -367,6 +473,14 @@ const checkItems = (label, response, run) => {
     }),
   };
   contract(validateItems(upstream), `${label}: producer schema ${ajv.errorsText(validateItems.errors)}`);
+  // Escaped producer regression: schema preflight must reject each missing field,
+  // even though the deliberately tolerant frontend consumer may accept it.
+  const noTenant = { ...upstream };
+  delete noTenant.tenant_id;
+  contract(!validateItems(noTenant), `${label}: schema failed to detect a missing tenant_id`);
+  const noProcessing = { ...upstream, items: upstream.items.map((item) => ({ ...item })) };
+  delete noProcessing.items[0].processing_ms;
+  contract(!validateItems(noProcessing), `${label}: schema failed to detect a missing processing_ms`);
   const completed = upstream.items.filter((item) => item.status === 'completed' && item.alt_text_draft !== null);
   contract(
     upstream.tenant_id === run.tenant_id &&
@@ -458,6 +572,7 @@ let browser;
 try {
   browser = await chromium.launch({
     headless: true,
+    chromiumSandbox: true,
     executablePath:
       process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ??
       '/home/gate/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/chrome-headless-shell',
@@ -471,6 +586,9 @@ try {
         verdict: 'BLOCKED',
         browser_assertions_executed: 0,
         actual_components_bundled: true,
+        source_tuple: sourceTuple,
+        host_inputs: { path: hostManifestPath, sha256: sha256(await readFile(hostManifestPath)), host },
+        producer_contract_failures: contractFailures,
         error: String(error),
         reason: 'Browser startup denied; no geometry or screenshot PASS claimed.',
       },
@@ -483,17 +601,12 @@ try {
 const results = [];
 const errors = [];
 
-// Default height, and a smaller remaining height bound by a WB_CONTROL-style host.
-const boundHeight = 'calc(100dvh - 16rem)';
-const scenarios = [
-  { viewport: { width: 1440, height: 1000 }, available: null },
-  { viewport: { width: 719, height: 960 }, available: null },
-  { viewport: { width: 1440, height: 1000 }, available: boundHeight },
-  { viewport: { width: 719, height: 960 }, available: boundHeight },
-];
+// Exact joined Library budgets are supplied by frozen WB_CONTROL production CSS.
+// The earlier isolated default/bound runs remain historical evidence only.
+const scenarios = [{ viewport: { width: 1440, height: 1000 } }, { viewport: { width: 719, height: 960 } }];
 
 try {
-  for (const { viewport, available } of scenarios) {
+  for (const { viewport } of scenarios) {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
     const runtimeErrors = [];
@@ -512,6 +625,9 @@ try {
       if (parsed.origin !== origin) {
         runtimeErrors.push(`Unexpected external request ${request.url()}`);
         return route.abort();
+      }
+      if (request.method() === 'GET' && hostAssets.has(parsed.pathname)) {
+        return route.fulfill({ status: 200, contentType: 'text/css', body: hostAssets.get(parsed.pathname) });
       }
       if (parsed.pathname.startsWith('/acx-fixture/')) {
         const file = path.resolve(bundle, decodeURIComponent(parsed.pathname.slice('/acx-fixture/'.length)));
@@ -547,16 +663,19 @@ try {
         body: JSON.stringify(response.body),
       });
     });
-    const dimensions = `${viewport.width}x${viewport.height}${available === null ? '' : '-bound'}`;
-    const scenarioUrl = available === null ? url : `${url}?available=${encodeURIComponent(available)}`;
+    const dimensions = `${viewport.width}x${viewport.height}`;
+    const scenarioUrl = url;
     let checks = 0;
     const geometry = async (state) => {
       const action = page.getByRole('region', { name: 'Selected media actions' });
       const scroller = page.getByRole('region', { name: 'Media library', exact: true });
       await expect(action).toBeVisible();
+      await expect(page.getByRole('button', { name: /^Describe/ })).toHaveCount(1);
+      await expect(page.locator('.acx-activity-status-strip')).toHaveCount(1);
+      await expect(action.locator('.acx-activity-status-strip')).toHaveCount(1);
       const measure = await page.evaluate(() => {
         const rect = (selector) => {
-          const node = document.querySelector(selector);
+          const node = typeof selector === 'string' ? document.querySelector(selector) : selector;
           const r = node.getBoundingClientRect();
           return { x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
         };
@@ -565,6 +684,35 @@ try {
           rows: rect('.acx-media-selection__rows'),
           pagination: rect('.acx-media-selection__pagination-region'),
           preview: rect('.acx-media-selection__thumb'),
+          media: rect('.acx-media-selection'),
+          toolbar: rect('.acx-media-selection__toolbar'),
+          library: rect('.acx-workbench__two-pane-library'),
+          outerScroll: (() => {
+            const library = document.querySelector('.acx-workbench__two-pane-library');
+            return {
+              clientHeight: library.clientHeight,
+              scrollHeight: library.scrollHeight,
+              scrollTop: library.scrollTop,
+              overflow: getComputedStyle(library).overflowY,
+            };
+          })(),
+          host: {
+            htmlClass: document.documentElement.className,
+            bodyClass: document.body.className,
+            bodyFont: getComputedStyle(document.body).fontFamily,
+            bodySize: getComputedStyle(document.body).fontSize,
+            buttonSize: getComputedStyle(document.querySelector('.acx-media-selection__bulk-describe-actions button'))
+              .fontSize,
+            screenReaderPosition: getComputedStyle(document.querySelector('.screen-reader-text')).position,
+            hostLinks: [...document.querySelectorAll('link[rel="stylesheet"]')].map(
+              (link) => new URL(link.href).pathname,
+            ),
+          },
+          disclosures: [...document.querySelectorAll('.acx-media-selection__bulk-describe-disclosure')].map((node) => ({
+            rect: rect(node),
+            clientHeight: node.clientHeight,
+            scrollHeight: node.scrollHeight,
+          })),
           pageWidth: document.documentElement.scrollWidth,
           viewportWidth: innerWidth,
           scrollHeight: document.querySelector('.acx-media-selection__rows').scrollHeight,
@@ -573,6 +721,23 @@ try {
       expect(measure.actions.y).toBeGreaterThanOrEqual(0);
       expect(measure.actions.bottom).toBeLessThanOrEqual(viewport.height);
       expect(measure.actions.right).toBeLessThanOrEqual(viewport.width);
+      expect(measure.outerScroll.scrollHeight - measure.outerScroll.clientHeight).toBeLessThanOrEqual(1);
+      expect(measure.outerScroll.scrollTop).toBe(0);
+      expect(measure.media.bottom).toBeLessThanOrEqual(measure.library.bottom);
+      expect(measure.pagination.bottom).toBeLessThanOrEqual(measure.media.bottom + 1);
+      expect(measure.host.htmlClass).toBe(host.html_classes);
+      expect(measure.host.bodyClass).toBe(host.body_classes);
+      expect(measure.host.bodySize).toBe('13px');
+      expect(measure.host.bodyFont).toContain('sans-serif');
+      expect(measure.host.screenReaderPosition).toBe('absolute');
+      expect(measure.host.hostLinks.slice(0, 27)).toEqual([...hostAssets.keys()]);
+      expect(measure.host.hostLinks.length).toBeGreaterThan(27);
+      expect(measure.disclosures).toHaveLength(2);
+      for (const disclosure of measure.disclosures) {
+        expect(disclosure.rect.y).toBeGreaterThanOrEqual(measure.actions.y);
+        expect(disclosure.rect.bottom).toBeLessThanOrEqual(measure.actions.bottom);
+        expect(disclosure.scrollHeight).toBeLessThanOrEqual(disclosure.clientHeight + 1);
+      }
       expect(measure.rows.y).toBeGreaterThanOrEqual(measure.actions.bottom);
       expect(measure.rows.height).toBeGreaterThan(100);
       expect(measure.pagination.y).toBeGreaterThanOrEqual(measure.rows.bottom - 1);
@@ -584,6 +749,7 @@ try {
       expect(measure.preview.height).toBeGreaterThanOrEqual(80);
       expect(measure.preview.height).toBeLessThanOrEqual(300);
       const before = await action.boundingBox();
+      const beforePagination = await page.locator('.acx-media-selection__pagination-region').boundingBox();
       await scroller.evaluate((node) => {
         node.scrollTop = node.scrollHeight;
       });
@@ -598,16 +764,69 @@ try {
       await page.keyboard.press('Tab');
       const focused = await page.evaluate(() => {
         const r = document.activeElement.getBoundingClientRect();
-        return { y: r.y, bottom: r.bottom, label: document.activeElement.getAttribute('aria-label') };
+        const style = getComputedStyle(document.activeElement);
+        const image = document.activeElement.querySelector('img').getBoundingClientRect();
+        return {
+          y: r.y,
+          bottom: r.bottom,
+          tag: document.activeElement.tagName,
+          label: document.activeElement.getAttribute('aria-label'),
+          outlineStyle: style.outlineStyle,
+          outlineWidth: style.outlineWidth,
+          previewTop: image.top,
+          previewBottom: image.bottom,
+        };
       });
+      expect(focused.tag).toBe('A');
+      expect(focused.label).toBe('Edit Tall fixture photo 10');
       expect(focused.y).toBeGreaterThanOrEqual(measure.rows.y);
       expect(focused.bottom).toBeLessThanOrEqual(measure.rows.bottom);
+      expect(focused.previewTop).toBeGreaterThanOrEqual(measure.rows.y);
+      expect(focused.previewBottom).toBeLessThanOrEqual(measure.rows.bottom);
+      expect(focused.outlineStyle).not.toBe('none');
+      expect(parseFloat(focused.outlineWidth)).toBeGreaterThan(0);
+      const afterKeyboard = await action.boundingBox();
+      const afterPagination = await page.locator('.acx-media-selection__pagination-region').boundingBox();
+      expect(afterKeyboard.y).toBe(before.y);
+      expect(afterPagination.y).toBe(beforePagination.y);
+      expect(await page.locator('.acx-workbench__two-pane-library').evaluate((node) => node.scrollTop)).toBe(0);
       await scroller.evaluate((node) => {
         node.scrollTop = 0;
         node.scrollLeft = 0;
       });
       await page.screenshot({ path: path.join(artifacts, `${dimensions}-${state}.png`), fullPage: true });
-      results.push({ viewport, available, state, measure, focus, focused, checks: ++checks });
+      results.push({ viewport, state, measure, focus, focused, afterKeyboard, afterPagination, checks: ++checks });
+    };
+    const emptyGeometry = async (state) => {
+      await expect(page.getByRole('heading', { name: 'No media matches your search.' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Clear search', exact: true })).toBeVisible();
+      const measure = await page.evaluate(() => {
+        const box = (selector) => {
+          const node = document.querySelector(selector);
+          const rect = node.getBoundingClientRect();
+          return {
+            top: rect.top,
+            bottom: rect.bottom,
+            height: rect.height,
+            clientHeight: node.clientHeight,
+            scrollHeight: node.scrollHeight,
+          };
+        };
+        return {
+          library: box('.acx-workbench__two-pane-library'),
+          actions: box('.acx-media-selection__actions'),
+          rows: box('.acx-media-selection__rows'),
+          pagination: box('.acx-media-selection__pagination-region'),
+        };
+      });
+      expect(measure.library.scrollHeight - measure.library.clientHeight).toBeLessThanOrEqual(1);
+      expect(measure.actions.top).toBeGreaterThanOrEqual(0);
+      expect(measure.actions.bottom).toBeLessThanOrEqual(viewport.height);
+      expect(measure.rows.height).toBeGreaterThan(100);
+      expect(measure.pagination.bottom).toBeLessThanOrEqual(viewport.height);
+      expect(measure.pagination.bottom).toBeLessThanOrEqual(measure.library.bottom);
+      await page.screenshot({ path: path.join(artifacts, `${dimensions}-${state}.png`), fullPage: true });
+      results.push({ viewport, state, measure, checks: ++checks });
     };
     try {
       await page.goto(scenarioUrl);
@@ -627,6 +846,17 @@ try {
       await page.getByRole('checkbox', { name: 'Select all items on this page' }).click();
       await expect(submit).toHaveText('Describe 10 selected');
       await geometry('ten-selection');
+      // A filtered empty page keeps its recovery and persistent controls. Restoring
+      // the filter must preserve the selection and must never submit a job.
+      await page.getByRole('searchbox', { name: 'Search media' }).fill('no-matching-fixture');
+      await emptyGeometry('search-empty');
+      await page.getByRole('button', { name: 'Clear search', exact: true }).click();
+      await expect(
+        page.getByRole('checkbox', { name: 'Select media item Tall fixture photo 10', exact: true }),
+      ).toBeAttached();
+      await expect(submit).toHaveText('Describe 10 selected');
+      expect(requests.filter((r) => r.method === 'POST')).toHaveLength(0);
+      await geometry('filter-restored');
       await submit.click();
       await expect(submit).toBeDisabled();
       await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(1);
@@ -667,7 +897,14 @@ try {
         'href',
         new RegExp(`run=${runId}`),
       );
+      // Terminal status precedes the URL-owned draft filter effect. Wait for its
+      // real controls and items before measuring focus stability in that state.
+      await expect(page.getByRole('button', { name: 'Clear run filter', exact: true })).toBeVisible();
+      await expect(page.getByText('Fixture draft for media 10', { exact: true })).toBeAttached();
       await geometry('terminal');
+      await expect(
+        page.getByRole('checkbox', { name: 'Select media item Tall fixture photo 10', exact: true }),
+      ).toBeAttached();
       expect(postCount()).toBe(1);
       expect(requests.filter((r) => r.key.endsWith('/cancel'))).toHaveLength(1);
       expect(runtimeErrors).toEqual([]);
@@ -675,7 +912,6 @@ try {
       await page.screenshot({ path: path.join(artifacts, `${dimensions}-FAILURE.png`), fullPage: true });
       errors.push({
         viewport,
-        available,
         error: String(error),
         stack: error.stack,
         runtimeErrors,
@@ -691,14 +927,17 @@ try {
 }
 const report = {
   stage,
+  source_tuple: sourceTuple,
   actual_components: true,
   real_providers_and_styles: true,
   mocked: 'HTTP transport/data only, all remote requests blocked',
+  host_inputs: { path: hostManifestPath, sha256: sha256(await readFile(hostManifestPath)), host },
+  browser: { version: browser.version(), chromiumSandbox: true },
   results,
   errors,
   verdict: errors.length ? 'FAIL' : 'PASS',
   limitations: [
-    'Bounded MediaSelection slot harness; joined WB_CONTROL outer composition is separate. No live WordPress, GPU, inference or deployment acceptance.',
+    'Actual joined Workbench provider tree with immutable offline WordPress7.1.3 CSS, html/body classes and native PHP shell. No live WordPress, GPU, inference or deployment acceptance.',
   ],
 };
 await writeFile(path.join(artifacts, 'geometry.json'), JSON.stringify(report, null, 2) + '\n');
@@ -709,7 +948,6 @@ console.log(
       states: results.length,
       failures: errors.map((e) => ({
         viewport: e.viewport,
-        available: e.available,
         error: e.error,
         runtimeErrors: e.runtimeErrors,
       })),
@@ -720,4 +958,4 @@ console.log(
   ),
 );
 process.exitCode = errors.length ? 1 : 0;
-/* global document, innerWidth, window */
+/* global document, innerWidth, window, getComputedStyle */

@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache } from '../../../api/config';
@@ -93,10 +93,10 @@ vi.mock('../WorkbenchMediaContext', () => ({
 }));
 
 let client: QueryClient;
-const mount = (reviewActive = false) =>
+const mount = (reviewActive = false, activityStatus?: React.ReactNode) =>
   render(
     <QueryClientProvider client={client}>
-      <MediaSelection reviewActive={reviewActive} />
+      <MediaSelection reviewActive={reviewActive} activityStatus={activityStatus} />
     </QueryClientProvider>,
   );
 beforeEach(() => {
@@ -166,5 +166,19 @@ describe('MediaSelection persistent selected-media action surface', () => {
     const submit = await screen.findByRole('button', { name: 'Describe 1 selected' });
     expect(submit).not.toHaveClass('acx-accent-primary-action');
     expect(describeApi.submitBulkDescribeRun).not.toHaveBeenCalled();
+  });
+  it('keeps the supplied status and complete disclosures with the guarded selection action', async () => {
+    mount(false, <div role="status">Existing run status</div>);
+    const submit = await screen.findByRole('button', { name: 'Describe selected' });
+    const actions = screen.getByRole('region', { name: 'Selected media actions' });
+    expect(within(actions).getAllByText('Existing run status')).toHaveLength(1);
+    expect(actions).toContainElement(screen.getByText('0 selected', { exact: true }));
+    for (const id of submit.getAttribute('aria-describedby')!.split(' ')) {
+      expect(actions).toContainElement(document.getElementById(id));
+    }
+    expect(within(actions).getByText(/People are not identified/)).toBeVisible();
+    expect(within(actions).getByTestId('acx-bulk-describe-gpu-cost')).toBeVisible();
+    expect(actions).not.toContainElement(screen.getByRole('searchbox', { name: 'Search media' }));
+    expect(actions).not.toContainElement(screen.getByRole('navigation', { name: 'Media pagination' }));
   });
 });

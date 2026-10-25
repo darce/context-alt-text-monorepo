@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:altcontext:schema:three-surfaces:v2",
+  "title": "Three description surfaces",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "alt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "caption": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "title",
+    "alt",
+    "caption"
+  ],
+  "additionalProperties": false
+}

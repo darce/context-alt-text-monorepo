@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { ChangeEvent, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
@@ -58,6 +58,8 @@ import {
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
 
 interface MediaSelectionProps {
+  /** Existing job status supplied once by the outer composition; no new run owner. */
+  activityStatus?: ReactNode;
   /**
    * §7: a review card / label / review panel primary is on screen. When true the
    * card owns the single viewport accent primary, so the footer Describe CTA steps down.
@@ -147,19 +149,19 @@ export const workbenchDraftQueueHref = (runId?: string | null): string => {
   return `#${descriptionHistoryQueuePath(serialized ? `${APP_LINK_PARAMS.run}=${serialized}` : '')}`;
 };
 
-export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
+export const MediaSelection = ({ reviewActive = false, activityStatus }: MediaSelectionProps): React.JSX.Element => {
   const inRouter = useInRouterContext();
   if (!inRouter) {
     return (
       <MemoryRouter initialEntries={['/workbench']}>
-        <MediaSelectionRouted reviewActive={reviewActive} />
+        <MediaSelectionRouted reviewActive={reviewActive} activityStatus={activityStatus} />
       </MemoryRouter>
     );
   }
-  return <MediaSelectionRouted reviewActive={reviewActive} />;
+  return <MediaSelectionRouted reviewActive={reviewActive} activityStatus={activityStatus} />;
 };
 
-const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
+const MediaSelectionRouted = ({ reviewActive = false, activityStatus }: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -437,54 +439,9 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
           onClearDraftFilters={clearDraftFilters}
         />
 
-        <table className="acx-media-selection__table">
-          <thead>
-            <tr>
-              <th scope="col">
-                <Checkbox
-                  ariaLabel={__('Select all items on this page', 'alt-context')}
-                  checked={areAllPageRowsChecked}
-                  onCheckedChange={(checked: boolean) => onToggleAll(checked)}
-                  disabled={items.length === 0}
-                />
-              </th>
-              <th scope="col">{__('Preview', 'alt-context')}</th>
-              <th scope="col">{__('Details', 'alt-context')}</th>
-              <th scope="col">{__('Tags', 'alt-context')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <MediaSelectionTableBody
-              items={items}
-              isLoading={isLoading}
-              detailIsLoading={detailQuery.isPending || detailQuery.isFetching}
-              onToggleRow={onToggleRow}
-              selection={selection}
-              identitiesDataSource={deriveIdentitiesPresentationSource(identityQuery.isError, identityQuery.data)}
-              identitiesLoading={
-                identityQuery.isLoading || (identityQuery.isPlaceholderData && identityQuery.isFetching)
-              }
-              onRetryIdentities={() => void identityQuery.refetch()}
-              searchQuery={searchQuery}
-              statusFilter={statusFilter}
-              onClearSearch={clearSearch}
-              onClearStatusFilter={() => onStatusFilterChange('all')}
-              draftRunId={draftRunId}
-              hasDraftFilter={hasDraftFilter}
-              onClearDraftFilters={clearDraftFilters}
-            />
-          </tbody>
-        </table>
-
-        <div className="acx-media-selection__footer">
-          <MediaSelectionPagination
-            currentPage={currentPage}
-            totalPages={totalPages}
-            perPage={perPage}
-            onPerPageChange={onPerPageChange}
-            onPageChange={onPageChange}
-            labelId="acx-media-page-size-label"
-          />
+        {/* PERC-01 / INT-05: selected-media actions stay beside their run status,
+            while only the tall media rows scroll. Outer composition owns the status node. */}
+        <section className="acx-media-selection__actions" aria-label={__('Selected media actions', 'alt-context')}>
           <BulkDescribeCta
             selectedCount={selectedMediaIds.length}
             isSubmitting={bulkDescribe.submit.isPending}
@@ -555,6 +512,7 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             onDismiss={() => setDismissedRunId(terminalDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
+          {activityStatus}
           <DevelopmentFaceScan
             available={developmentFaceScanAvailable}
             targetUrl={settingsQuery.data?.effective_target_url ?? ''}
@@ -590,6 +548,61 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
               </ul>
             </div>
           ) : null}
+        </section>
+        <div
+          className="acx-media-selection__rows"
+          role="region"
+          aria-label={__('Media library', 'alt-context')}
+          tabIndex={0}
+        >
+          <table className="acx-media-selection__table">
+            <thead>
+              <tr>
+                <th scope="col">
+                  <Checkbox
+                    ariaLabel={__('Select all items on this page', 'alt-context')}
+                    checked={areAllPageRowsChecked}
+                    onCheckedChange={(checked: boolean) => onToggleAll(checked)}
+                    disabled={items.length === 0}
+                  />
+                </th>
+                <th scope="col">{__('Preview', 'alt-context')}</th>
+                <th scope="col">{__('Details', 'alt-context')}</th>
+                <th scope="col">{__('Tags', 'alt-context')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <MediaSelectionTableBody
+                items={items}
+                isLoading={isLoading}
+                detailIsLoading={detailQuery.isPending || detailQuery.isFetching}
+                onToggleRow={onToggleRow}
+                selection={selection}
+                identitiesDataSource={deriveIdentitiesPresentationSource(identityQuery.isError, identityQuery.data)}
+                identitiesLoading={
+                  identityQuery.isLoading || (identityQuery.isPlaceholderData && identityQuery.isFetching)
+                }
+                onRetryIdentities={() => void identityQuery.refetch()}
+                searchQuery={searchQuery}
+                statusFilter={statusFilter}
+                onClearSearch={clearSearch}
+                onClearStatusFilter={() => onStatusFilterChange('all')}
+                draftRunId={draftRunId}
+                hasDraftFilter={hasDraftFilter}
+                onClearDraftFilters={clearDraftFilters}
+              />
+            </tbody>
+          </table>
+        </div>
+        <div className="acx-media-selection__pagination-region">
+          <MediaSelectionPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            perPage={perPage}
+            onPerPageChange={onPerPageChange}
+            onPageChange={onPageChange}
+            labelId="acx-media-page-size-label"
+          />
         </div>
       </div>
       {detailAuthExpired ? (
@@ -688,62 +701,99 @@ export const MediaSelectionToolbar = ({
 
   return (
     <div className="acx-media-selection__toolbar">
-      <label htmlFor="acx-media-search" className="acx-media-selection__search-label">
-        {__('Search media', 'alt-context')}
-      </label>
-      <input
-        id="acx-media-search"
-        className="acx-media-selection__search"
-        type="search"
-        placeholder={__('Filter by alt text or tag…', 'alt-context')}
-        value={searchQuery}
-        onChange={onSearchChange}
-      />
-      <div className="acx-media-selection__status-filter">
-        <span id="acx-media-status-label">{__('Status', 'alt-context')}</span>
-        <Select.Root
-          value={statusFilter}
-          onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}
-        >
-          <Select.Trigger
-            className="acx-media-selection__status-filter-trigger"
-            aria-labelledby="acx-media-status-label"
-          >
-            <Select.Value />
-            <Select.Icon className="acx-media-selection__status-filter-icon">
-              <ChevronDown aria-hidden="true" size={16} />
-            </Select.Icon>
-          </Select.Trigger>
-          <Select.Portal>
-            <Select.Content className="acx-media-selection__status-filter-content" position="popper" sideOffset={6}>
-              <Select.Viewport className="acx-media-selection__status-filter-viewport">
-                <Select.Item value="all" className="acx-media-selection__status-filter-item">
-                  <Select.ItemText>{__('All media', 'alt-context')}</Select.ItemText>
-                  <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
-                    <Check aria-hidden="true" size={14} />
-                  </Select.ItemIndicator>
-                </Select.Item>
-                <Select.Item value="missing" className="acx-media-selection__status-filter-item">
-                  <Select.ItemText>{__('Missing alt text', 'alt-context')}</Select.ItemText>
-                  <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
-                    <Check aria-hidden="true" size={14} />
-                  </Select.ItemIndicator>
-                </Select.Item>
-              </Select.Viewport>
-            </Select.Content>
-          </Select.Portal>
-        </Select.Root>
-      </div>
-
-      <div className="acx-media-selection__draft-filter">
-        <Checkbox
-          ariaLabel={__('Has draft', 'alt-context')}
-          checked={hasDraftFilter}
-          onCheckedChange={(checked) => onHasDraftFilterChange?.(checked)}
+      <div className="acx-media-selection__search-field">
+        <label htmlFor="acx-media-search" className="acx-media-selection__search-label">
+          {__('Search media', 'alt-context')}
+        </label>
+        <input
+          id="acx-media-search"
+          className="acx-media-selection__search"
+          type="search"
+          placeholder={__('Filter by alt text or tag…', 'alt-context')}
+          value={searchQuery}
+          onChange={onSearchChange}
         />
-        <span id="acx-media-has-draft-label" aria-hidden="true">
-          {__('Has draft', 'alt-context')}
-        </span>
+      </div>
+      <div className="acx-media-selection__filters">
+        <div className="acx-media-selection__status-filter">
+          <span id="acx-media-status-label">{__('Status', 'alt-context')}</span>
+          <Select.Root
+            value={statusFilter}
+            onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}
+          >
+            <Select.Trigger
+              className="acx-media-selection__status-filter-trigger"
+              aria-labelledby="acx-media-status-label"
+            >
+              <Select.Value />
+              <Select.Icon className="acx-media-selection__status-filter-icon">
+                <ChevronDown aria-hidden="true" size={16} />
+              </Select.Icon>
+            </Select.Trigger>
+            <Select.Portal>
+              <Select.Content className="acx-media-selection__status-filter-content" position="popper" sideOffset={6}>
+                <Select.Viewport className="acx-media-selection__status-filter-viewport">
+                  <Select.Item value="all" className="acx-media-selection__status-filter-item">
+                    <Select.ItemText>{__('All media', 'alt-context')}</Select.ItemText>
+                    <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
+                      <Check aria-hidden="true" size={14} />
+                    </Select.ItemIndicator>
+                  </Select.Item>
+                  <Select.Item value="missing" className="acx-media-selection__status-filter-item">
+                    <Select.ItemText>{__('Missing alt text', 'alt-context')}</Select.ItemText>
+                    <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
+                      <Check aria-hidden="true" size={14} />
+                    </Select.ItemIndicator>
+                  </Select.Item>
+                </Select.Viewport>
+              </Select.Content>
+            </Select.Portal>
+          </Select.Root>
+        </div>
+
+        <div className="acx-media-selection__draft-filter">
+          <Checkbox
+            ariaLabel={__('Has draft', 'alt-context')}
+            checked={hasDraftFilter}
+            onCheckedChange={(checked) => onHasDraftFilterChange?.(checked)}
+          />
+          <span id="acx-media-has-draft-label" aria-hidden="true">
+            {__('Has draft', 'alt-context')}
+          </span>
+        </div>
+
+        <div className="acx-media-selection__toolbar-actions">
+          <span className="acx-media-selection__status">
+            {/* Visual status — full message including transient Updating… */}
+            <span aria-hidden="true">{statusMessage}</span>
+            {/*
+            Always-mounted polite region [B-01][A11Y-08]. Debounced settled text
+            only — never "Updating media queue…". Per-correction success strings
+            live on the row region, not here [B-02].
+          */}
+            <span
+              role="status"
+              aria-live="polite"
+              className="screen-reader-text"
+              data-testid="media-selection-toolbar-live-status"
+            >
+              {announcedStatus}
+            </span>
+          </span>
+          {isStatusPending ? (
+            <p data-testid="acx-zone-z-filters-loading">{__('Loading media…', 'alt-context')}</p>
+          ) : null}
+          {isError ? (
+            <p role="alert" data-testid="acx-zone-z-filters-error">
+              {__('Unable to load media.', 'alt-context')}
+            </p>
+          ) : null}
+          {isError && onRetry && (
+            <button type="button" className="acx-media-selection__retry" onClick={onRetry}>
+              {__('Retry', 'alt-context')}
+            </button>
+          )}
+        </div>
       </div>
       {draftRunId ? (
         <div className="acx-media-selection__run-filter">
@@ -755,37 +805,6 @@ export const MediaSelectionToolbar = ({
           ) : null}
         </div>
       ) : null}
-
-      <div className="acx-media-selection__toolbar-actions">
-        <span className="acx-media-selection__status">
-          {/* Visual status — full message including transient Updating… */}
-          <span aria-hidden="true">{statusMessage}</span>
-          {/*
-            Always-mounted polite region [B-01][A11Y-08]. Debounced settled text
-            only — never "Updating media queue…". Per-correction success strings
-            live on the row region, not here [B-02].
-          */}
-          <span
-            role="status"
-            aria-live="polite"
-            className="screen-reader-text"
-            data-testid="media-selection-toolbar-live-status"
-          >
-            {announcedStatus}
-          </span>
-        </span>
-        {isStatusPending ? <p data-testid="acx-zone-z-filters-loading">{__('Loading media…', 'alt-context')}</p> : null}
-        {isError ? (
-          <p role="alert" data-testid="acx-zone-z-filters-error">
-            {__('Unable to load media.', 'alt-context')}
-          </p>
-        ) : null}
-        {isError && onRetry && (
-          <button type="button" className="acx-media-selection__retry" onClick={onRetry}>
-            {__('Retry', 'alt-context')}
-          </button>
-        )}
-      </div>
     </div>
   );
 };
@@ -884,6 +903,9 @@ export const BulkDescribeCta = ({
   return (
     <div className="acx-media-selection__bulk-describe">
       <div className="acx-media-selection__bulk-describe-actions">
+        <p className="acx-media-selection__selected-count">
+          {sprintf(__('%d selected', 'alt-context'), selectedCount)}
+        </p>
         <button
           type="button"
           // BR-73: the accent marker + accent chrome live on the submit button (the

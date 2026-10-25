@@ -1,20 +1,108 @@
 :root {
   --acx-media-selection-thumb-size: 300px;
+  // Default only; a WB_CONTROL ancestor declaration overrides it by inheritance.
+  --acx-media-selection-available-height: calc(100dvh - 12rem);
 }
 
 .acx-media-selection {
-  margin-top: var(--acx-space-24);
   display: flex;
   flex-direction: column;
-  gap: var(--acx-space-16);
+  gap: var(--acx-space-6);
+  // WB_CONTROL may supply the space left by its outer chrome. Only the table
+  // scrolls inside this bounded surface; actions never overlay focused rows.
+  block-size: var(--acx-media-selection-available-height);
+  min-block-size: 0;
+  min-inline-size: 0;
+
+  &__toolbar,
+  &__actions,
+  &__pagination-region {
+    flex: 0 0 auto;
+    min-inline-size: 0;
+  }
+
+  &__actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-8);
+    padding: var(--acx-space-4);
+    background-color: var(--acx-color-surface-alt);
+    overflow-wrap: anywhere;
+  }
+
+  &__selected-count {
+    margin: 0;
+    font-weight: var(--acx-font-weight-semibold);
+  }
+
+  &__rows {
+    flex: 1 1 auto;
+    // One row at the smallest readable preview, so the scrollport never collapses.
+    min-block-size: calc(var(--acx-thumb-size-md) + var(--acx-space-48));
+    min-inline-size: 0;
+    overflow: auto;
+    scroll-padding: var(--acx-space-8);
+    // Previews fit the actual scrollport (less row padding, scroll padding and the
+    // baseline gap), so the preview link, a row's tallest focus target, can always
+    // be scrolled fully into view.
+    container-type: size;
+    --acx-media-selection-preview-size: max(
+      var(--acx-thumb-size-md),
+      min(var(--acx-media-selection-thumb-size), calc(100cqb - var(--acx-space-48)))
+    );
+
+    &:focus-visible {
+      outline: 2px solid var(--acx-color-accent);
+      outline-offset: -2px;
+    }
+  }
+
+  &__pagination-region {
+    padding-block: var(--acx-space-8);
+  }
 
   &__toolbar {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-space-12);
+    gap: var(--acx-space-6);
+  }
+
+  // Labels stay beside their controls; wrapping uses the Library's actual width.
+  // Reclaim chrome space rather than taking the readable row/focus budget.
+  &__search-field {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    min-inline-size: 0;
+  }
+
+  &__filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8) var(--acx-space-12);
+    min-inline-size: 0;
+  }
+
+  &__draft-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--acx-space-4);
+  }
+
+  &__run-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    overflow-wrap: anywhere;
   }
 
   &__search {
+    flex: 1 1 12rem;
+    min-inline-size: 0;
+    box-sizing: border-box;
     padding: var(--acx-space-12);
     border: 1px solid var(--acx-color-border);
     width: 100%;
@@ -58,15 +146,15 @@
   }
 
   &__thumb-cell {
-    width: calc(var(--acx-media-selection-thumb-size) + var(--acx-space-24));
+    width: calc(var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size)) + var(--acx-space-24));
   }
 
   &__thumb {
     border: 1px solid var(--acx-color-border);
     object-fit: contain;
     display: inline-block;
-    width: var(--acx-media-selection-thumb-size);
-    height: var(--acx-media-selection-thumb-size);
+    width: var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size));
+    height: var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size));
     background-color: var(--acx-color-panel);
 
     &--placeholder {
@@ -159,8 +247,8 @@
   &__bulk-describe {
     display: flex;
     flex-direction: column;
-    gap: var(--acx-space-8);
-    min-width: 16rem;
+    gap: var(--acx-space-4);
+    min-inline-size: 0;
   }
 
   // Reserve the live-region row while telemetry changes so the action row and

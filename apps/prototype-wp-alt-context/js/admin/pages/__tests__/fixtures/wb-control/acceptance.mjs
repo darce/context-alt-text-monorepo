@@ -4,15 +4,17 @@
 // headless Chromium. No component, hook, guard or style is substituted.
 //
 // node acceptance.mjs <source-root> <label> <out-dir>
+// BROWSER_HOST_INPUTS must name the pinned immutable WordPress host manifest.
+// WB_CONTROL_PREFLIGHT_ONLY=1 validates transport/host inputs without launching Chrome.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import console from 'node:console';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { URL, fileURLToPath, pathToFileURL } from 'node:url';
+import { URL, URLSearchParams, fileURLToPath, pathToFileURL } from 'node:url';
 // Browser globals below are only referenced inside page.evaluate/addInitScript callbacks.
-/* global window, document, location, getComputedStyle, innerWidth, innerHeight, scrollY, MouseEvent */
+/* global window, document, location, getComputedStyle, innerWidth, innerHeight, scrollY, MouseEvent, Response */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runnerApp = path.resolve(here, '../../../../../..');
@@ -41,6 +43,17 @@ const TUPLE_FILES = [
   'apps/prototype-wp-alt-context/js/admin/pages/workbench/ActivityStatusStrip.tsx',
   'apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx',
   'apps/prototype-wp-alt-context/js/admin/pages/__tests__/fixtures/wb-control/entry.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/fixtures/wb-control/acceptance.mjs',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/fixtures/wb-control/index.html',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.control-composition.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.library-lifecycle.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/RecognitionPolicyControl.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.control-composition.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.integration.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.actionSurface.test.tsx',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/action-progress-browser/acceptance.mjs',
+  'apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/action-progress-browser/fixture.tsx',
 ];
 const tuple = {};
 for (const file of TUPLE_FILES) {
@@ -135,7 +148,67 @@ const runPayload = (run) => ({
   recognition_enabled: false,
 });
 
-const preflight = { checks: [] };
+const preflight = { checks: [], items_responses: [] };
+const HOST_MANIFEST_SHA256 = '0ca7ab4bbbb08f9c79e5573a66f3ef4b6c4c8c62dc554e1ff056edd288b9ce6a';
+const failPreflight = async () => {
+  preflight.pass = false;
+  await fs.writeFile(
+    path.join(out, 'results.json'),
+    JSON.stringify(
+      { label, source, tuple, status: 'FAIL', stage: 'preflight', browser_launched: false, preflight },
+      null,
+      2,
+    ) + '\n',
+  );
+  throw new Error('WB acceptance preflight failed before Chromium; see results.json');
+};
+let host;
+const hostAssets = [];
+try {
+  if (!process.env.BROWSER_HOST_INPUTS) {
+    throw new Error('BROWSER_HOST_INPUTS is required; isolated geometry is not acceptance');
+  }
+  const manifestPath = path.resolve(process.env.BROWSER_HOST_INPUTS);
+  const bytes = await fs.readFile(manifestPath);
+  if (sha256(bytes) !== HOST_MANIFEST_SHA256) {
+    throw new Error('WordPress host manifest digest differs from the pinned immutable input');
+  }
+  host = JSON.parse(bytes);
+  if (
+    host.wordpress_version !== '7.1.3' ||
+    host.html_classes !== 'wp-toolbar' ||
+    !host.body_classes.split(' ').includes('wp-admin') ||
+    !host.body_classes.split(' ').includes('wp-core-ui') ||
+    !host.root_html.includes('class="wrap alt-context-admin"') ||
+    !host.root_html.includes('id="root" class="alt-context-workbench"') ||
+    !host.root_html.includes('id="wpbody-content"') ||
+    host.assets.length !== 27
+  ) {
+    throw new Error('WordPress host version, classes, native PHP wrapper or ordered 27-asset cascade is missing');
+  }
+  for (const [index, asset] of host.assets.entries()) {
+    const assetBytes = await fs.readFile(asset.path);
+    if (sha256(assetBytes) !== asset.sha256) {
+      throw new Error(`WordPress host asset digest mismatch: ${asset.path}`);
+    }
+    hostAssets.push({ ...asset, href: `/wp-host/${index}.css`, bytes: assetBytes });
+  }
+  preflight.host = {
+    manifestPath,
+    sha256: sha256(bytes),
+    wordpress_version: host.wordpress_version,
+    html_classes: host.html_classes,
+    body_classes: host.body_classes,
+    root_html: host.root_html,
+    assets: host.assets.map((asset, index) => ({ ...asset, href: hostAssets[index].href })),
+    cascade: '27 verified WordPress assets in manifest order, then candidate main.scss',
+    limits: host.limits,
+  };
+  preflight.checks.push({ name: 'pinned WordPress host inputs verified', pass: true });
+} catch (error) {
+  preflight.checks.push({ name: 'pinned WordPress host inputs verified', pass: false, error: String(error) });
+  await failPreflight();
+}
 {
   const php = await fs.readFile(path.join(app, 'src/api/class-api.php'), 'utf8');
   const rowStart = php.indexOf("\t\t\t\t\t'id'           => $attachment_id");
@@ -162,11 +235,34 @@ const preflight = { checks: [] };
   if (schema === null) {
     preflight.checks.push({ name: 'describe run schema available', pass: false, path: schemaPath });
   } else {
-    const validate = new Ajv({ allErrors: true }).compile(JSON.parse(schema));
+    const contractSchema = JSON.parse(schema);
+    const ajv = new Ajv({ allErrors: true });
+    ajv.addSchema(contractSchema);
+    const validate = ajv.getSchema(contractSchema.$id);
+    const validateItems = ajv.getSchema(`${contractSchema.$id}#/definitions/items`);
+    preflight.schema_sha256 = sha256(schema);
+    // Run the real frontend boundary as well as the stricter producer schema.
+    // registerConfig and fetch are fixture-local; no request can reach a live service.
+    const apiFile = path.join(out, 'preflight-api.mjs');
+    await build({
+      stdin: {
+        contents: `export { parseDescribeRunResponse, fetchDescribeRunItems } from ${JSON.stringify(path.join(app, 'js/admin/api/describeApi.ts'))};\nexport { registerConfig } from ${JSON.stringify(path.join(app, 'js/admin/api/config.ts'))};`,
+        resolveDir: app,
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      outfile: apiFile,
+      define: { 'import.meta.env': '{"DEV":false,"PROD":true,"MODE":"test","BASE_URL":"./"}' },
+      logLevel: 'error',
+    });
+    const api = await import(pathToFileURL(apiFile).href);
+    api.registerConfig({ nonce: 'offline-fixture', ajaxUrl: '/mock/ajax', tenant_id: tenant, endpoints });
     for (const run of [
       { phase: 'queued', status: 'running', completed: 0, cancelling: false },
       { phase: 'warming', status: 'running', completed: 0, cancelling: false },
       { phase: 'describing', status: 'running', completed: 0, cancelling: false },
+      { phase: 'describing', status: 'running', completed: 3, cancelling: false },
       { phase: 'describing', status: 'running', completed: 0, cancelling: true },
       { phase: 'cancelled', status: 'cancelled', completed: 0, cancelling: true },
       { phase: 'complete', status: 'completed', completed: 10, cancelling: false },
@@ -176,9 +272,110 @@ const preflight = { checks: [] };
         pass: validate(runPayload(run)),
         errors: validate.errors ?? null,
       });
+      const transport = makeTransport({ ...run, submitted: true });
+      const status = (await transport(`recognitionDescribeRuns/${runId}`, 'GET')).body;
+      api.parseDescribeRunResponse(status);
+      const response = (await transport(`recognitionDescribeRuns/${runId}/items`, 'GET')).body;
+      preflight.items_responses.push({ phase: run.phase, status: run.status, completed: run.completed, response });
+      // PHP preserves the upstream envelope and enriches only these item keys.
+      const upstream = globalThis.structuredClone(response);
+      for (const item of upstream.items) {
+        delete item.existing_alt;
+        delete item.thumbnail_url;
+        delete item.thumbnail_srcset;
+      }
+      preflight.checks.push({
+        name: `actual GET items ${run.phase}/${run.status}/${run.completed} matches #/definitions/items`,
+        pass: validateItems(upstream),
+        errors: globalThis.structuredClone(validateItems.errors),
+      });
+      preflight.checks.push({
+        name: `actual GET items ${run.phase}/${run.status}/${run.completed} matches accepted identity/counts and WP annotations`,
+        pass:
+          response.tenant_id === status.tenant_id &&
+          response.run_id === status.run_id &&
+          response.items.length === status.total &&
+          response.items.filter((item) => item.status === 'completed' && item.alt_text_draft !== null).length ===
+            status.completed &&
+          response.items.every(
+            (item, index) =>
+              item.media_id === items[index].id &&
+              item.existing_alt === true &&
+              item.thumbnail_url === items[index].thumbnailUrl &&
+              item.thumbnail_srcset === null,
+          ),
+      });
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = async (url, options) => {
+          if (String(url) !== `${endpoints.recognitionDescribeRuns}/${runId}/items` || options?.method !== 'GET') {
+            throw new Error(`Unexpected preflight request: ${options?.method} ${url}`);
+          }
+          const actual = await transport(`recognitionDescribeRuns/${runId}/items`, 'GET');
+          return new Response(JSON.stringify(actual.body), { status: actual.status ?? 200 });
+        };
+        const parsed = await api.fetchDescribeRunItems(runId);
+        preflight.checks.push({
+          name: `actual GET items ${run.phase}/${run.status}/${run.completed} accepted by real frontend boundary`,
+          pass: JSON.stringify(parsed) === JSON.stringify(response),
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      // [TEST-15] Escaped fixture defects must be rejected by the same schema check.
+      const missingTenant = globalThis.structuredClone(upstream);
+      delete missingTenant.tenant_id;
+      preflight.checks.push({
+        name: `items ${run.phase}/${run.completed} rejects missing tenant_id`,
+        pass:
+          !validateItems(missingTenant) &&
+          validateItems.errors.some((error) => error.params.missingProperty === 'tenant_id'),
+      });
+      for (let index = 0; index < upstream.items.length; index += 1) {
+        const missingTiming = globalThis.structuredClone(upstream);
+        delete missingTiming.items[index].processing_ms;
+        preflight.checks.push({
+          name: `items ${run.phase}/${run.completed} rejects missing processing_ms at item ${index + 1}`,
+          pass:
+            !validateItems(missingTiming) &&
+            validateItems.errors.some((error) => error.params.missingProperty === 'processing_ms'),
+        });
+      }
+    }
+    const unaccepted = makeTransport({ submitted: false });
+    for (const key of [`recognitionDescribeRuns/${runId}`, `recognitionDescribeRuns/${runId}/items`]) {
+      preflight.checks.push({
+        name: `unaccepted GET ${key} stays unavailable`,
+        pass: (await unaccepted(key, 'GET')).status === 404,
+      });
+    }
+    const transport = makeTransport({ submitted: true });
+    for (const [method, key] of [
+      ['DELETE', `recognitionDescribeRuns/${runId}`],
+      ['GET', `recognitionDescribeRuns/${runId}/cancel`],
+      ['POST', `recognitionDescribeRuns/${runId}/items`],
+      ['GET', 'recognitionDescribeRuns/unknown/items'],
+    ]) {
+      preflight.checks.push({
+        name: `unexpected ${method} ${key} fails closed`,
+        pass: (await transport(key, method)) === null,
+      });
     }
   }
   preflight.pass = preflight.checks.every((check) => check.pass);
+}
+await fs.writeFile(path.join(out, 'preflight.json'), JSON.stringify(preflight, null, 2) + '\n');
+if (!preflight.pass) {
+  await failPreflight();
+}
+if (process.env.WB_CONTROL_PREFLIGHT_ONLY === '1') {
+  await fs.writeFile(
+    path.join(out, 'results.json'),
+    JSON.stringify({ label, source, tuple, status: 'PREFLIGHT_PASS', browser_launched: false, preflight }, null, 2) +
+      '\n',
+  );
+  console.log(JSON.stringify({ status: 'PREFLIGHT_PASS', checks: preflight.checks.length, browser_launched: false }));
+  process.exit(0);
 }
 
 // ---- Bundle actual components and production styles from the tree under test ----
@@ -213,8 +410,9 @@ await build({
 const bundle = await fs.readFile(path.join(bundleDir, 'fixture.js'), 'utf8');
 const css = await fs.readFile(path.join(bundleDir, 'fixture.css'), 'utf8');
 const html =
-  '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
-  '<link rel="stylesheet" href="/fixture.css"><div id="root" class="acx-admin"></div><script type="module" src="/fixture.js"></script></html>';
+  `<!doctype html><html lang="en" class="${host.html_classes}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+  hostAssets.map((asset) => `<link rel="stylesheet" href="${asset.href}">`).join('') +
+  `<link rel="stylesheet" href="/fixture.css"></head><body class="${host.body_classes}">${host.root_html}<script type="module" src="/fixture.js"></script></body></html>`;
 
 const report = {
   label,
@@ -234,7 +432,19 @@ const report = {
 const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ??
   '/home/gate/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/chrome-headless-shell';
-const browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox'] });
+const browser = await chromium
+  .launch({ executablePath, headless: true, chromiumSandbox: true })
+  .catch(async (error) => {
+    await fs.writeFile(
+      path.join(out, 'results.json'),
+      JSON.stringify(
+        { ...report, status: 'BROWSER_UNAVAILABLE', browser_launched: false, error: String(error) },
+        null,
+        2,
+      ) + '\n',
+    );
+    throw error;
+  });
 report.browser = { executablePath, version: browser.version() };
 
 const VIEWPORTS = [
@@ -302,8 +512,16 @@ const newPage = async (viewport, record, transport) => {
     if (url.pathname === '/fixture.css') {
       return route.fulfill({ contentType: 'text/css', body: css });
     }
-    if (!url.pathname.startsWith('/mock/')) {
+    const hostAsset = hostAssets.find((asset) => asset.href === url.pathname);
+    if (hostAsset && request.method() === 'GET') {
+      return route.fulfill({ contentType: 'text/css', body: hostAsset.bytes });
+    }
+    if (request.method() === 'GET' && ['/fixture', '/terminal', '/reopen'].includes(url.pathname)) {
       return route.fulfill({ contentType: 'text/html', body: html });
+    }
+    if (!url.pathname.startsWith('/mock/')) {
+      record.errors.push(`unmocked ${request.method()} ${url.pathname}`);
+      return route.abort();
     }
     const key = url.pathname.slice('/mock/'.length);
     const method = request.method();
@@ -322,136 +540,154 @@ const newPage = async (viewport, record, transport) => {
   return { context, page };
 };
 
-const makeTransport = (run) => async (key, method) => {
-  if (key === 'settings') {
-    if (run.settingsDelayMs > 0) {
-      await sleep(run.settingsDelayMs);
+function makeTransport(run) {
+  return async (key, method) => {
+    if (
+      method !== 'GET' &&
+      !(method === 'POST' && (key === 'recognitionDescribeRuns' || key === `recognitionDescribeRuns/${runId}/cancel`))
+    ) {
+      return null;
     }
-    return { body: settings };
-  }
-  if (key === 'workbenchMedia') {
-    return { body: { items, total: 10, totalPages: 1 } };
-  }
-  if (key === 'workbenchMediaDetail') {
-    return { body: { details_by_media: {}, limit: 100, total: 0, truncated: false } };
-  }
-  if (key === 'recognitionMediaIdentities') {
-    return { body: { identities_by_media: {}, data_source: 'local_projection' } };
-  }
-  if (key === 'recognitionClusters/top-unlabeled') {
-    return {
-      body: {
-        clusters: [],
-        limit: 20,
-        total: 0,
-        truncated: false,
-        repair_pending: false,
-        singleton_count: 0,
-        has_clusters: false,
-        data_source: 'local_projection',
-        projection_status: 'available',
-      },
-    };
-  }
-  if (/^recognition(Suggestions|MergeSuggestions|NameSuggestions)$/.test(key)) {
-    return { body: { suggestions: [], limit: 25, offset: 0, total: 0, data_source: 'local_projection' } };
-  }
-  if (key === 'recognitionBatchRuns') {
-    return { body: { items: [], limit: 5 } };
-  }
-  if (key === 'recognitionDescribeHistory') {
-    return { body: { items: [], total: 0, limit: 50, offset: 0, has_more: false } };
-  }
-  if (key === 'recognitionDescribeRuns' && method === 'POST') {
-    run.submitted = true;
-    return { body: runPayload(run) };
-  }
-  if (key === `recognitionDescribeRuns/${runId}/cancel`) {
-    run.cancelling = true;
-    await new Promise((resolve) => {
-      run.releaseCancel = resolve;
-    });
-    return { body: runPayload(run) };
-  }
-  if (key === `recognitionDescribeRuns/${runId}`) {
-    return run.failPoll
-      ? {
-          status: 400,
-          body: { code: 'fixture_poll_error', message: 'Offline fixture poll failed', data: { status: 400 } },
-        }
-      : { body: runPayload(run) };
-  }
-  if (key === `recognitionDescribeRuns/${runId}/items`) {
-    return {
-      body: {
-        run_id: runId,
-        items: items.map((item) => ({
-          media_id: item.id,
-          status: run.completed ? 'completed' : 'queued',
-          alt_text_draft: run.completed ? `Draft ${item.id}` : null,
-          caption: null,
-          provenance: null,
-          tier: null,
-          result_generation: 1,
-          existing_alt: true,
-        })),
-      },
-    };
-  }
-  if (key === 'recognitionDescribeRuns') {
-    return { body: { items: [], total: 0, next_offset: null } };
-  }
-  if (key === 'recognitionGpuStatus') {
-    return {
-      body: {
-        gpu_state: {
-          state: 'ready',
-          instance_id: null,
-          written_at: 1792872000,
-          reason: null,
-          since: null,
-          intent: 'auto',
-          intent_expires_at: null,
-          intent_status: 'none',
-          honoured_nonce: null,
-          lease_expires_at: null,
-          instance_running_since: null,
-          last_transition_reason: 'unknown',
+    if (key.startsWith(`recognitionDescribeRuns/${runId}`) && !run.submitted) {
+      return {
+        status: 404,
+        body: { code: 'fixture_run_not_accepted', message: 'Run has not been accepted', data: { status: 404 } },
+      };
+    }
+    if (key === 'settings') {
+      if (run.settingsDelayMs > 0) {
+        await sleep(run.settingsDelayMs);
+      }
+      return { body: settings };
+    }
+    if (key === 'workbenchMedia') {
+      return { body: { items, total: 10, totalPages: 1 } };
+    }
+    if (key === 'workbenchMediaDetail') {
+      return { body: { details_by_media: {}, limit: 100, total: 0, truncated: false } };
+    }
+    if (key === 'recognitionMediaIdentities') {
+      return { body: { identities_by_media: {}, data_source: 'local_projection' } };
+    }
+    if (key === 'recognitionClusters/top-unlabeled') {
+      return {
+        body: {
+          clusters: [],
+          limit: 20,
+          total: 0,
+          truncated: false,
+          repair_pending: false,
+          singleton_count: 0,
+          has_clusters: false,
+          data_source: 'local_projection',
+          projection_status: 'available',
         },
-        snapshot_age_seconds: 0,
-        snapshot_fresh: true,
-        intent: null,
-        load: { has_work: run.submitted, written_at: 1792872000, fresh: true },
-        server_time: '2026-10-24T20:00:00Z',
-      },
-    };
-  }
-  if (key === 'recognitionSyncHealth') {
-    return {
-      body: {
-        breaker: { state: 'closed', base_url: origin, opened_at: null },
-        outbox: { state: 'ok', pending: 0, failed: 0, dead_lettered: 0, oldest_age_seconds: 0 },
-        conflicts: { open: 0 },
-        replays: { failed: 0, source: 'fixture' },
-        last_pull: { at: '2026-10-24T20:00:00Z', ok: true },
-        warnings: [],
-      },
-    };
-  }
-  if (key === 'recognitionSyncStatus') {
-    return {
-      body: {
-        last_snapshot_version: 1,
-        last_synced_at: '2026-10-24T20:00:00Z',
-        is_stale: false,
-        sync_health: 'healthy',
-        last_sync_result: 'ok',
-        reclaimer: null,
-      },
-    };
-  }
-  return null;
-};
+      };
+    }
+    if (/^recognition(Suggestions|MergeSuggestions|NameSuggestions)$/.test(key)) {
+      return { body: { suggestions: [], limit: 25, offset: 0, total: 0, data_source: 'local_projection' } };
+    }
+    if (key === 'recognitionBatchRuns') {
+      return { body: { items: [], limit: 5 } };
+    }
+    if (key === 'recognitionDescribeHistory') {
+      return { body: { items: [], total: 0, limit: 50, offset: 0, has_more: false } };
+    }
+    if (key === 'recognitionDescribeRuns' && method === 'POST') {
+      run.submitted = true;
+      return { body: runPayload(run) };
+    }
+    if (key === `recognitionDescribeRuns/${runId}/cancel` && method === 'POST') {
+      run.cancelling = true;
+      await new Promise((resolve) => {
+        run.releaseCancel = resolve;
+      });
+      return { body: runPayload(run) };
+    }
+    if (key === `recognitionDescribeRuns/${runId}`) {
+      return run.failPoll
+        ? {
+            status: 400,
+            body: { code: 'fixture_poll_error', message: 'Offline fixture poll failed', data: { status: 400 } },
+          }
+        : { body: runPayload(run) };
+    }
+    if (key === `recognitionDescribeRuns/${runId}/items`) {
+      return {
+        body: {
+          tenant_id: runPayload(run).tenant_id,
+          run_id: runId,
+          items: items.map((item, index) => ({
+            media_id: item.id,
+            status: index < run.completed ? 'completed' : 'queued',
+            alt_text_draft: index < run.completed ? `Draft ${item.id}` : null,
+            caption: null,
+            provenance: null,
+            tier: null,
+            result_generation: 1,
+            processing_ms: null,
+            existing_alt: true,
+            thumbnail_url: item.thumbnailUrl,
+            thumbnail_srcset: item.thumbnailSrcset,
+          })),
+        },
+      };
+    }
+    if (key === 'recognitionDescribeRuns') {
+      return { body: { items: [], total: 0, next_offset: null } };
+    }
+    if (key === 'recognitionGpuStatus') {
+      return {
+        body: {
+          gpu_state: {
+            state: 'ready',
+            instance_id: null,
+            written_at: 1792872000,
+            reason: null,
+            since: null,
+            intent: 'auto',
+            intent_expires_at: null,
+            intent_status: 'none',
+            honoured_nonce: null,
+            lease_expires_at: null,
+            instance_running_since: null,
+            last_transition_reason: 'unknown',
+          },
+          snapshot_age_seconds: 0,
+          snapshot_fresh: true,
+          intent: null,
+          load: { has_work: run.submitted, written_at: 1792872000, fresh: true },
+          server_time: '2026-10-24T20:00:00Z',
+        },
+      };
+    }
+    if (key === 'recognitionSyncHealth') {
+      return {
+        body: {
+          breaker: { state: 'closed', base_url: origin, opened_at: null },
+          outbox: { state: 'ok', pending: 0, failed: 0, dead_lettered: 0, oldest_age_seconds: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: 0, source: 'fixture' },
+          last_pull: { at: '2026-10-24T20:00:00Z', ok: true },
+          warnings: [],
+        },
+      };
+    }
+    if (key === 'recognitionSyncStatus') {
+      return {
+        body: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-10-24T20:00:00Z',
+          is_stale: false,
+          sync_health: 'healthy',
+          last_sync_result: 'ok',
+          reclaimer: null,
+        },
+      };
+    }
+    return null;
+  };
+}
 
 // Geometry of the outer Library owner and the inner MediaSelection groups it bounds.
 const measureGeometry = (page) =>
@@ -610,6 +846,72 @@ const ctaLocator = (page) => page.getByRole('button', { name: /^Describe (select
 const cancelInLibrary = (page) =>
   page.locator('.acx-workbench__two-pane-library').getByRole('button', { name: 'Cancel run', exact: true });
 
+const qualifyHost = async (page, viewport, record) => {
+  const computed = await page.evaluate(() => {
+    const body = getComputedStyle(document.body);
+    const utility = document.querySelector('#acx-page-title');
+    const hidden = utility && getComputedStyle(utility);
+    const button = document.querySelector('.acx-media-selection button.button');
+    const control = button && getComputedStyle(button);
+    return {
+      htmlClasses: document.documentElement.className,
+      bodyClasses: document.body.className,
+      fontFamily: body.fontFamily,
+      fontSize: body.fontSize,
+      nativeRoot: document.querySelectorAll(
+        '#wpwrap #wpcontent #wpbody #wpbody-content > .wrap.alt-context-admin > #root.alt-context-workbench',
+      ).length,
+      stylesheets: [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) => link.getAttribute('href')),
+      screenReader: hidden && {
+        width: hidden.width,
+        height: hidden.height,
+        position: hidden.position,
+        clip: hidden.clip,
+        clipPath: hidden.clipPath,
+        overflow: hidden.overflow,
+      },
+      button: control && {
+        fontFamily: control.fontFamily,
+        fontSize: control.fontSize,
+        minHeight: control.minHeight,
+        lineHeight: control.lineHeight,
+        padding: control.padding,
+      },
+    };
+  });
+  record.host = computed;
+  check(
+    viewport,
+    'host',
+    'verified WordPress cascade precedes candidate main.scss in native PHP shell',
+    computed.htmlClasses === host.html_classes &&
+      computed.bodyClasses === host.body_classes &&
+      computed.nativeRoot === 1 &&
+      JSON.stringify(computed.stylesheets) ===
+        JSON.stringify([...hostAssets.map((asset) => asset.href), '/fixture.css']),
+    computed,
+  );
+  check(
+    viewport,
+    'host',
+    'actual WordPress body typography is 13px system type',
+    computed.fontSize === '13px' && computed.fontFamily.includes('-apple-system'),
+    computed,
+  );
+  check(
+    viewport,
+    'host',
+    'WordPress screen-reader utility is visually hidden',
+    computed.screenReader?.width === '1px' &&
+      computed.screenReader?.position === 'absolute' &&
+      computed.screenReader?.overflow === 'hidden' &&
+      // Check the actual clipping mechanism: product heading typography can grow
+      // the box while WordPress inset(50%) still clips its entire painted area.
+      (computed.screenReader?.clipPath === 'inset(50%)' || computed.screenReader?.clip === 'rect(1px, 1px, 1px, 1px)'),
+    computed.screenReader,
+  );
+};
+
 const lifecycle = async (viewport, record) => {
   const run = {
     phase: 'queued',
@@ -628,6 +930,7 @@ const lifecycle = async (viewport, record) => {
     const last = page.getByRole('checkbox', { name: 'Select media item Tall media 10', exact: true });
     await last.waitFor({ state: 'attached' });
     await ctaLocator(page).waitFor({ state: 'attached' });
+    await qualifyHost(page, viewport, record);
 
     check(
       viewport,
@@ -701,6 +1004,67 @@ const lifecycle = async (viewport, record) => {
         before: { actions: ten.actions, pagination: ten.pagination },
         after: { actions: focused.actions, pagination: focused.pagination },
       },
+    );
+    await page.keyboard.press('Tab');
+    const preview = await page.evaluate(() => {
+      const active = document.activeElement;
+      const rows = active?.closest('.acx-media-selection__rows');
+      const r = active?.getBoundingClientRect();
+      const rr = rows?.getBoundingClientRect();
+      return {
+        tag: active?.tagName,
+        label: active?.getAttribute('aria-label'),
+        rect: r && { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height, width: r.width },
+        rows: rr && { top: rr.top, bottom: rr.bottom, left: rr.left, right: rr.right },
+      };
+    });
+    check(
+      viewport,
+      'row10-preview-focus',
+      'Tab reaches the whole row 10 preview link inside the rows viewport',
+      preview.tag === 'A' &&
+        preview.label === 'Edit Tall media 10' &&
+        preview.rows &&
+        preview.rect &&
+        preview.rect.height > 0 &&
+        preview.rect.width > 0 &&
+        preview.rect.top >= preview.rows.top - 0.5 &&
+        preview.rect.bottom <= preview.rows.bottom + 0.5 &&
+        preview.rect.left >= preview.rows.left - 0.5 &&
+        preview.rect.right <= preview.rows.right + 0.5 &&
+        preview.rect.top >= 0 &&
+        preview.rect.bottom <= viewport.height,
+      preview,
+    );
+    const previewFocused = await measure(page, viewport, record, 'row10-preview-focus');
+    check(
+      viewport,
+      'row10-preview-focus',
+      'actions and pagination stay fixed through checkbox-to-preview keyboard traversal',
+      ten.actions !== null &&
+        previewFocused.actions !== null &&
+        ten.pagination !== null &&
+        previewFocused.pagination !== null &&
+        Math.abs(ten.actions.top - previewFocused.actions.top) <= 1 &&
+        Math.abs(ten.pagination.top - previewFocused.pagination.top) <= 1,
+      {
+        before: { actions: ten.actions, pagination: ten.pagination },
+        after: { actions: previewFocused.actions, pagination: previewFocused.pagination },
+      },
+    );
+    const previews = await page.locator('.acx-media-selection__rows img').evaluateAll((images) =>
+      images.map((image) => {
+        const rect = image.getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      }),
+    );
+    check(
+      viewport,
+      'row10-preview-focus',
+      'all ten previews remain readable within the 80..300px range',
+      previews.length === 10 &&
+        previews.every((rect) => rect.width >= 80 && rect.height >= 80 && rect.width <= 300 && rect.height <= 300),
+      previews,
     );
 
     await ctaLocator(page).click();
@@ -866,6 +1230,33 @@ const completedRun = async (viewport, record) => {
     );
     await measure(page, viewport, record, 'terminal');
     check(viewport, 'terminal', 'completed run was submitted once', posts() - before === 1, posts() - before);
+    await review().click();
+    await waitUntil(async () => (await page.locator('.acx-media-selection__rows tbody tr').count()) === 10);
+    const draftFilter = {
+      rows: await page.locator('.acx-media-selection__rows tbody tr').count(),
+      posts: posts() - before,
+      url: page.url(),
+      runLabel: await page.locator('.acx-media-selection__run-filter').textContent(),
+      hasDraft: await page.getByRole('checkbox', { name: 'Has draft', exact: true }).getAttribute('aria-checked'),
+      itemRequests: record.requests.filter(
+        (request) => request.method === 'GET' && request.key === `recognitionDescribeRuns/${runId}/items`,
+      ).length,
+    };
+    const filterParams = new URLSearchParams(new URL(draftFilter.url).hash.split('?')[1] ?? '');
+    check(
+      viewport,
+      'terminal-filter',
+      'real terminal draft filter shows all ten accepted items without resubmission',
+      draftFilter.rows === 10 &&
+        draftFilter.posts === 1 &&
+        draftFilter.runLabel.includes(runId) &&
+        draftFilter.hasDraft === 'true' &&
+        draftFilter.itemRequests > 0 &&
+        filterParams.get('run') === runId &&
+        filterParams.get('hasDraft') === '1',
+      draftFilter,
+    );
+    await measure(page, viewport, record, 'terminal-filter');
   } catch (error) {
     check(viewport, 'terminal', 'completed-run flow finished without a runner exception', false, String(error));
     await screenshot(page, viewport, 'terminal-error');

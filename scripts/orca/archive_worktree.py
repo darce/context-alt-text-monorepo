@@ -9,7 +9,9 @@ moves, stashes, or writes anything, and closing the WorkBay task row stays with
 `make task-finish`.
 
 Environment (exported by Orca): ORCA_WORKTREE_PATH (required), ORCA_ROOT_PATH.
-Exit codes: 0 clean, 1 dirty (paths listed on stderr), 2 failed precondition.
+Exit codes: 0 clean, 1 dirty (paths listed on stderr), 2 failed precondition,
+including a `git status` that exits non-zero or writes anything to stderr (git
+could not fully scan the worktree, so it is not proven clean).
 """
 
 from __future__ import annotations
@@ -29,14 +31,13 @@ TASK_REF_PLACEHOLDER = "<TASK-REF>"
 GIT_LOCATION_ENV: tuple[str, ...] = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
 
 
-def _git(worktree: Path, *args: str, capture_stderr: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {key: value for key, value in os.environ.items() if key not in GIT_LOCATION_ENV}
     # Without this, `git status` refreshes stale stat data and rewrites the index.
     env["GIT_OPTIONAL_LOCKS"] = "0"
     return subprocess.run(
         ["git", "-C", str(worktree), *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE if capture_stderr else None,
+        capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -48,6 +49,10 @@ def _git(worktree: Path, *args: str, capture_stderr: bool = True) -> subprocess.
 def _refuse(message: str) -> int:
     print(f"{PROG}: {message}", file=sys.stderr)
     return 2
+
+
+def _refuse_no_git(exc: OSError) -> int:
+    return _refuse(f"cannot run git ({exc}); put git on PATH for the Orca hook environment.")
 
 
 def _current_branch(worktree: Path) -> str | None:
@@ -87,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         located = _git(worktree, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir")
     except OSError as exc:
-        return _refuse(f"cannot run git ({exc}); put git on PATH for the Orca hook environment.")
+        return _refuse_no_git(exc)
     location = located.stdout.splitlines()
     if located.returncode != 0 or len(location) != 2:
         detail = (located.stderr or located.stdout or "no output").strip()
@@ -103,17 +108,27 @@ def main(argv: list[str] | None = None) -> int:
         )
     primary = root if root is not None else Path(location[1]).parent
 
-    # stderr is inherited so git's own warnings (for example an unreadable
-    # directory that hides untracked files) reach the operator.
-    status = _git(worktree, "status", "--porcelain=v1", "--untracked-files=all", capture_stderr=False)
-    if status.returncode != 0:
+    try:
+        status = _git(worktree, "status", "--porcelain=v1", "--untracked-files=all")
+    except OSError as exc:
+        return _refuse_no_git(exc)
+    sys.stderr.write(status.stderr)
+    # git warns and still exits 0 when it cannot open a directory, and the
+    # untracked files inside it are then missing from stdout: any stderr means
+    # the scan was incomplete, so an empty listing does not prove clean.
+    if status.returncode != 0 or status.stderr.strip():
         return _refuse(
-            f"`git status` failed in {toplevel} (exit {status.returncode}); cannot prove the worktree is clean, "
-            "so archive is refused. Repair the checkout (see git's message above) and retry."
+            f"refusing to archive {toplevel}: `git status` could not fully scan it (exit {status.returncode}, "
+            "git's message is above), so the worktree is not proven clean. Fix permissions on each directory "
+            "git named (for example `chmod u+rx <dir>`) or remove the unreadable entry, repair any other "
+            "error git reported, then retry."
         )
     # Porcelain v1 quotes paths containing newlines, so each line is one entry.
     dirty = [line for line in status.stdout.split("\n") if line]
-    branch = _current_branch(worktree)
+    try:
+        branch = _current_branch(worktree)
+    except OSError as exc:
+        return _refuse_no_git(exc)
     finish = f"make task-finish TASK={_task_ref(branch)}"
 
     if dirty:

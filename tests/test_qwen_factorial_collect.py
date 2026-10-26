@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import threading
 import time
@@ -143,6 +144,73 @@ def native(monkeypatch, config):
     return stub
 
 
+BOUNDARY_FILES = ("response.json", "metrics.json", "headers.txt")
+SYNTHETIC_MODEL = {"endpoint": "http://127.0.0.1:19001"}
+SYNTHETIC_HEADER = Path("/synthetic/credential-file-never-opened")
+REOPENED = {"--output": b'{"synthetic":"response"}', "--dump-header": b"HTTP/1.1 200 OK\r\n\r\n"}
+
+
+def boundary_dir(tmp_path):
+    directory = tmp_path / "stage"
+    q.mkdir(directory)
+    return directory
+
+
+def assert_sealed(directory):
+    assert {name: stat.S_IMODE(os.stat(directory / name).st_mode) for name in BOUNDARY_FILES} == dict.fromkeys(
+        BOUNDARY_FILES, 0o400)
+
+
+class ReopenRunner:
+    """Children-compatible boundary that writes the way curl does: reopen by path, not fd."""
+
+    def __init__(self, outcome):
+        self.outcome = outcome
+
+    def run(self, argv, *, timeout, **kwargs):
+        for flag, raw in REOPENED.items():
+            fd = int(argv[argv.index(flag) + 1].rsplit("/", 1)[1])
+            assert fd in kwargs["pass_fds"]
+            assert os.fstat(fd).st_mode & 0o200, "boundary file is not owner-writable"
+            if self.outcome == "raises":
+                continue
+            path = f"/proc/self/fd/{fd}" if sys.platform == "linux" else f"/dev/fd/{fd}"
+            with open(path, "wb") as stream:
+                stream.write(raw)
+        if self.outcome == "raises":
+            raise q.Invalid("supervisor stopped before spawn")
+        kwargs["stdout"].write(q.canonical({"http_code": 200}))
+        return {"ok": PROCESS, "transport": dict(PROCESS, returncode=28),
+                "killed": dict(PROCESS, returncode=-9, interrupted=True)}[self.outcome]
+
+
+# Mirrors curl: a by-path open failure is reported, then exit 23 (write error).
+REOPEN_CHILD = r"""
+import errno, json, sys
+try:
+    for path, raw in zip(sys.argv[1:3], (b'{"synthetic":"response"}', b"HTTP/1.1 200 OK\r\n\r\n")):
+        with open(path, "wb") as stream:
+            stream.write(raw)
+except OSError as exc:
+    sys.stdout.write(json.dumps({"errno": errno.errorcode.get(exc.errno, exc.errno)}))
+    raise SystemExit(23)
+sys.stdout.write(json.dumps({"http_code": 200}))
+"""
+
+
+class RealChildRunner:
+    """Children-compatible runner: a real child opens curl's /proc/self/fd argv paths."""
+
+    def __init__(self):
+        self.children = q.Children(threading.Event())
+
+    def run(self, argv, *, timeout, **kwargs):
+        assert argv[:2] == ["/usr/bin/curl", "-q"]
+        paths = [argv[argv.index(flag) + 1] for flag in REOPENED]
+        assert all(path.startswith("/proc/self/fd/") for path in paths)
+        return self.children.run([sys.executable, "-I", "-c", REOPEN_CHILD, *paths], timeout=timeout, **kwargs)
+
+
 class TestBindingsAcceptance:
     def test_genuine_origin_and_bad_extraction(self, genuine, config):
         assert Path(genuine.b.__file__).resolve() == REFS / "service/scripts/eval_harness/bakeoff.py"
@@ -246,6 +314,42 @@ class TestBoundsNoRetry:
         assert "--location" not in args and "--insecure" not in args
         # The nonexistent locator was never read by the collector.
         assert not Path(config["header_file"]).exists()
+
+    @pytest.mark.parametrize("outcome", ["ok", "transport", "killed", "raises"])
+    def test_boundary_files_writable_by_path_then_sealed(self, outcome, tmp_path):
+        directory = boundary_dir(tmp_path)
+        curl = q.Curl(ReopenRunner(outcome))
+        if outcome == "raises":
+            with pytest.raises(q.Invalid):
+                curl(SYNTHETIC_MODEL, SYNTHETIC_HEADER, directory, timeout=5, cleanup=1)
+        else:
+            process = curl(SYNTHETIC_MODEL, SYNTHETIC_HEADER, directory, timeout=5, cleanup=1)
+            assert process["returncode"] == {"ok": 0, "transport": 28, "killed": -9}[outcome]
+            assert (directory / "response.json").read_bytes() == REOPENED["--output"]
+            assert (directory / "headers.txt").read_bytes() == REOPENED["--dump-header"]
+        assert_sealed(directory)
+        assert not SYNTHETIC_HEADER.exists()
+
+    @pytest.mark.skipif(sys.platform != "linux" or os.geteuid() == 0,
+                        reason="Linux /proc/self/fd reopen permission check; root bypasses it")
+    def test_real_child_reopens_proc_fd_paths(self, tmp_path):
+        directory = boundary_dir(tmp_path)
+        process = q.Curl(RealChildRunner())(SYNTHETIC_MODEL, SYNTHETIC_HEADER, directory, timeout=30, cleanup=1)
+        # A 0400 boundary file shows up here as {"errno": "EACCES"} with exit 23.
+        assert q.strict_json((directory / "metrics.json").read_bytes()) == {"http_code": 200}
+        assert process == PROCESS
+        assert (directory / "response.json").read_bytes() == REOPENED["--output"]
+        assert (directory / "headers.txt").read_bytes() == REOPENED["--dump-header"]
+        assert_sealed(directory)
+        assert not SYNTHETIC_HEADER.exists()
+
+    def test_seal_failure_raises(self, tmp_path, monkeypatch):
+        def refuse(fd, mode):
+            raise PermissionError("synthetic fchmod failure")
+        monkeypatch.setattr(q.os, "fchmod", refuse)
+        with pytest.raises(PermissionError, match="synthetic fchmod"):
+            q.Curl(ReopenRunner("ok"))(SYNTHETIC_MODEL, SYNTHETIC_HEADER, boundary_dir(tmp_path),
+                                       timeout=5, cleanup=1)
 
     def test_unmeasured_response_is_not_inference_receipt(self, config, tmp_path, genuine, monkeypatch):
         stub = NativeStub(config, mutate=lambda p, _: p.pop("usage"))

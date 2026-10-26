@@ -88,7 +88,11 @@ execution is `/usr/bin/curl -q`, header `@FILE`, connect timeout 5 seconds, maxi
 time at most 300 seconds, zero retries, no redirects, no proxy, and only HTTP(S).
 Each native attempt receives exclusive request, intent, response, metrics, header,
 and result files. Curl writes through collector-owned exclusive file descriptors.
-Response reads/downloads are bounded. Failed or interrupted curl processes and
+Curl reopens the response and header descriptors by `/proc/self/fd/N` path, and
+Linux rechecks inode permissions on that open. The three boundary files are
+therefore created `0600` and sealed `0400` (flush, `fchmod`, fsync, close) after
+every outcome, including failed, timed-out or killed curl. A sealing failure
+raises. All other evidence files are created `0400`. Response reads/downloads are bounded. Failed or interrupted curl processes and
 non-200 responses cannot be accepted.
 
 Admission requires more than a full timeout plus cleanup margin before the
@@ -212,17 +216,20 @@ orchestrator owns partition execution):
 | Node ID suffix | Cases | Coverage |
 | --- | --- | --- |
 | `::TestBindingsAcceptance` | 11 | Genuine parsing, strict writer JSON, image/profile/template binding, wrong-model quarantine |
-| `::TestBoundsNoRetry` | 6 | Full deadline admission, curl constraints, terminal failures, distinct receipts |
+| `::TestBoundsNoRetry` | 12 | Full deadline admission, curl constraints, terminal failures, distinct receipts, by-path-writable then sealed boundary files |
 | `::TestCausalFactsLexicon` | 2 | Three actual stub native boundaries, shared verbatim facts, lexicon arms, zero-call resume |
 | `::TestImmutableResumeEvidence` | 7 | Partial extraction reuse, incomplete claims, tampering, no clobber/reset, legacy adoption, symlinks |
 | `::TestConcurrencyHeartbeatCleanup` | 7 | Concurrent streams, serialized model calls, bounded heartbeat failure/success, own-child cleanup, fence |
 
-Final approved whole-file run: **33 passed in 15.00s**. Earlier runs before
-substantive hardening passed 28 and 32 cases respectively. No partitions or
+Final approved whole-file run: **39 passed** (Linux, non-root, no skips). Earlier
+runs passed 28, 32 and 33 cases. The 33-case suite missed QWENFA-G1-F1 because its stub
+wrote through the inherited descriptor and never reopened it by path. No partitions or
 repo-wide discovery were run by this lane.
 
-All HTTP boundaries are stubbed at subprocess.Popen; genuine builders and both
-acceptance parsers execute. Real curl, GPU/native intent, production HTTP, tenant
+All HTTP boundaries are stubbed at subprocess.Popen or at the `Curl` runner; genuine
+builders and both acceptance parsers execute. On Linux as non-root, a real Python child
+reopens curl's `/proc/self/fd/N` argv paths. With the boundary mode reverted to `0400`,
+it fails with `EACCES`. Real curl, GPU/native intent, production HTTP, tenant
 media, credential reads, real legacy acceptance and live deadline cleanup have
 not been exercised. The pinned heuristics authority at
 `/Users/daniel/Development/heuristics-canon-current` is unavailable in this sandbox;

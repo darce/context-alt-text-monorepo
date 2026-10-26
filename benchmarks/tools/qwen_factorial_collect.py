@@ -121,8 +121,8 @@ def mkdir(path):
     sync_dir(path.parent)
 
 
-def new_file(path):
-    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+def new_file(path, mode=0o400):
+    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
 
 
 def write_new(path, raw):
@@ -315,8 +315,10 @@ class Curl:
     def __call__(self, model, header_file, directory, *, timeout, cleanup):
         files = {}
         try:
+            # curl reopens /proc/self/fd/N by path, which rechecks inode permissions,
+            # so these stay owner-writable only until sealed below.
             for name in ("response.json", "metrics.json", "headers.txt"):
-                files[name] = os.fdopen(new_file(directory / name), "wb")
+                files[name] = os.fdopen(new_file(directory / name, 0o600), "wb")
             response_fd = files["response.json"].fileno()
             headers_fd = files["headers.txt"].fileno()
             argv = ["/usr/bin/curl", "-q", "--silent", "--request", "POST",
@@ -335,6 +337,8 @@ class Curl:
         finally:
             for stream in files.values():
                 stream.flush()
+                # Seal on every outcome, including failed, timed-out or killed curl.
+                os.fchmod(stream.fileno(), 0o400)
                 os.fsync(stream.fileno())
                 stream.close()
             sync_dir(directory)

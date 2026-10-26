@@ -5,7 +5,7 @@
  */
 
 import type { QueryClient } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
@@ -13,7 +13,7 @@ import { queryKeys } from '../../../../api/queryKeys';
 import * as recognitionApi from '../../../../api/recognition';
 import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 import { createAppQueryClient } from '../../../../utils/appQueryClient';
-import { HTTPError } from '../../../../utils/http';
+import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import { useSuggestionReviewQueries } from '../useSuggestionReviewQueries';
 import { buildPendingRow } from './suggestionProjection.fixtures';
 
@@ -225,6 +225,131 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
       await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
       expect(recognitionApi.fetchTopUnlabeledClusters).toHaveBeenCalledTimes(2);
       expect(appClient.getQueryState(topUnlabeledKey)?.errorUpdateCount).toBe(0);
+    });
+
+    // TEST-15: removing the outage hold must fail the pending assertions, even
+    // though RQ's raw isError/error have already reset to false/null.
+    it('holds the top-unlabeled outage and error class through refetch failure and clears it on success', async () => {
+      const authError = new AuthExpiredError({
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        status: 403,
+      });
+      const outage = new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      });
+      const topMock = vi.mocked(recognitionApi.fetchTopUnlabeledClusters);
+      topMock.mockRejectedValueOnce(authError);
+
+      const { result } = renderWithAppDefaults();
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isError).toBe(true));
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: true,
+        isRetrying: false,
+        error: authError,
+      });
+
+      let rejectRefetch!: (reason: unknown) => void;
+      topMock.mockImplementationOnce(
+        () => new Promise((_resolve, reject) => { rejectRefetch = reject; }),
+      );
+      act(() => { void result.current.topUnlabeledQuery.refetch(); });
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isFetching).toBe(true));
+      expect(result.current.topUnlabeledQuery.data).toBeUndefined();
+      expect(result.current.topUnlabeledQuery.isError).toBe(false);
+      expect(result.current.topUnlabeledQuery.error).toBeNull();
+      expect(result.current.topUnlabeledQuery.errorUpdateCount).toBe(1);
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: true,
+        isRetrying: true,
+        error: authError,
+      });
+
+      await act(async () => { rejectRefetch(outage); });
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isFetching).toBe(false));
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: true,
+        isRetrying: false,
+        error: outage,
+      });
+
+      type TopUnlabeledPage = Awaited<ReturnType<typeof recognitionApi.fetchTopUnlabeledClusters>>;
+      let resolveRefetch!: (page: TopUnlabeledPage) => void;
+      topMock.mockImplementationOnce(
+        () => new Promise((resolve) => { resolveRefetch = resolve; }),
+      );
+      // Cache-driven/background refetches need the same hold as the Retry control.
+      act(() => { void appClient.refetchQueries({ queryKey: topUnlabeledKey }); });
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isFetching).toBe(true));
+      expect(result.current.topUnlabeledQuery.isError).toBe(false);
+      expect(result.current.topUnlabeledQuery.error).toBeNull();
+      expect(result.current.topUnlabeledQuery.errorUpdateCount).toBe(2);
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: true,
+        isRetrying: true,
+        error: outage,
+      });
+
+      const page: TopUnlabeledPage = {
+        clusters: [],
+        limit: 20,
+        total: 0,
+        truncated: false,
+        singleton_count: 0,
+        data_source: 'local_projection',
+      };
+      await act(async () => { resolveRefetch(page); });
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: false,
+        isRetrying: false,
+        error: null,
+      });
+      expect(topMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps the first automatic retry silent while its response is pending', async () => {
+      type TopUnlabeledPage = Awaited<ReturnType<typeof recognitionApi.fetchTopUnlabeledClusters>>;
+      let resolveRetry!: (page: TopUnlabeledPage) => void;
+      const topMock = vi.mocked(recognitionApi.fetchTopUnlabeledClusters);
+      topMock
+        .mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'))
+        .mockImplementationOnce(
+          () => new Promise((resolve) => { resolveRetry = resolve; }),
+        );
+
+      const { result } = renderWithAppDefaults();
+
+      await waitFor(() => expect(topMock).toHaveBeenCalledTimes(2));
+      expect(result.current.topUnlabeledQuery.isFetching).toBe(true);
+      expect(result.current.topUnlabeledQuery.errorUpdateCount).toBe(0);
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: false,
+        isRetrying: false,
+        error: null,
+      });
+
+      await act(async () => {
+        resolveRetry({
+          clusters: [],
+          limit: 20,
+          total: 0,
+          truncated: false,
+          singleton_count: 0,
+          data_source: 'local_projection',
+        });
+      });
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
+      expect(result.current.topUnlabeledOutage.isError).toBe(false);
     });
   });
 });

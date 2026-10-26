@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getConfig } from '../../../api/config';
@@ -143,6 +143,30 @@ export const useSuggestionReviewQueries = () => {
     refetchOnMount: 'always',
   });
 
+  // RLSE-04 / REF-19: RQ v5 clears error + status on a no-data refetch.
+  // Keep a settled outage through manual and background retries, but leave
+  // the first load's automatic retries silent (errorUpdateCount is still 0).
+  const lastTopUnlabeledError = useRef(topUnlabeledQuery.error);
+  useEffect(() => {
+    if (topUnlabeledQuery.isSuccess) {
+      lastTopUnlabeledError.current = null;
+    } else if (topUnlabeledQuery.isError) {
+      lastTopUnlabeledError.current = topUnlabeledQuery.error;
+    }
+  }, [topUnlabeledQuery.error, topUnlabeledQuery.isError, topUnlabeledQuery.isSuccess]);
+  const isTopUnlabeledRetrying =
+    topUnlabeledQuery.isFetching &&
+    topUnlabeledQuery.data === undefined &&
+    topUnlabeledQuery.errorUpdateCount > 0;
+  const topUnlabeledOutage = {
+    isRetrying: isTopUnlabeledRetrying,
+    isError: topUnlabeledQuery.isError || isTopUnlabeledRetrying,
+    // Preserve the class (especially auth expiry) while RQ temporarily has no error.
+    error:
+      topUnlabeledQuery.error ??
+      (isTopUnlabeledRetrying ? lastTopUnlabeledError.current : null),
+  };
+
   const assignmentSuggestions = assignmentQuery.data?.items;
 
   return {
@@ -150,6 +174,7 @@ export const useSuggestionReviewQueries = () => {
     mergeQuery,
     nameQuery,
     topUnlabeledQuery,
+    topUnlabeledOutage,
     assignmentSuggestions,
     assignmentDataSource: assignmentQuery.data?.dataSource,
     mergeSuggestions: mergeQuery.data?.suggestions ?? [],

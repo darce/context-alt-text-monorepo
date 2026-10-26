@@ -3839,7 +3839,7 @@ describe('ReviewQueue', () => {
   });
 
   // UXREC-1-DEMO-02 (c) / INT-08: wait state on Retry; no double-submit.
-  it('UXREC-1-DEMO-02: top-unlabeled Retry is disabled, aria-busy and reads "Retrying…" while refetching', async () => {
+  it('UXREC-1-DEMO-02: top-unlabeled Retry holds the outage, focus and status through failure and recovery', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -3870,10 +3870,17 @@ describe('ReviewQueue', () => {
 
     await userEvent.click(within(error).getByRole('button', { name: 'Retry' }));
 
-    const busy = await screen.findByRole('button', { name: 'Retrying…' });
-    expect(busy).toBeDisabled();
-    expect(busy).toHaveAttribute('aria-busy', 'true');
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    const retry = within(error).getByRole('button', { name: 'Retry' });
+    await waitFor(() => expect(retry).toHaveAttribute('aria-busy', 'true'));
+    expect(retry).toBeEnabled();
+    expect(retry).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBe(retry);
+    const status = within(error).getByRole('status');
+    expect(status).toHaveTextContent('Retrying unlabeled faces…');
+    expect(status.id).not.toBe(retry.getAttribute('aria-describedby'));
+    expect(document.getElementById(retry.getAttribute('aria-describedby') ?? '')).toHaveTextContent(
+      'Unable to load unlabeled faces.',
+    );
     // Still an outage while in flight: the alert stays, never the drain copy.
     expect(screen.getByTestId('acx-review-queue-top-unlabeled-error')).toHaveAttribute(
       'role',
@@ -3883,17 +3890,48 @@ describe('ReviewQueue', () => {
 
     await waitFor(() => expect(refetchStarted).toBe(true));
     const callsInFlight = topMock.mock.calls.length;
-    fireEvent.click(busy);
+    await userEvent.click(retry);
     expect(topMock).toHaveBeenCalledTimes(callsInFlight);
+    expect(callsInFlight).toBe(2);
+    expect(retry).toHaveFocus();
 
     await act(async () => {
       rejectRefetch(outage);
     });
 
-    const settled = await screen.findByRole('button', { name: 'Retry' });
-    expect(settled).toBeEnabled();
-    expect(settled).not.toHaveAttribute('aria-busy');
-    expect(screen.queryByText('Retrying…')).not.toBeInTheDocument();
+    await waitFor(() => expect(retry).not.toHaveAttribute('aria-busy'));
+    expect(screen.getByTestId('acx-review-queue-top-unlabeled-error')).toBe(error);
+    expect(within(error).getByRole('button', { name: 'Retry' })).toBe(retry);
+    expect(retry).toHaveFocus();
+    expect(within(error).queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+
+    let resolveRefetch!: (page: Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>) => void;
+    topMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRefetch = resolve; }),
+    );
+    await userEvent.click(retry);
+    await waitFor(() => expect(retry).toHaveAttribute('aria-busy', 'true'));
+    expect(topMock).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('acx-review-queue-top-unlabeled-error')).toBe(error);
+    expect(within(error).getByRole('status')).toHaveTextContent('Retrying unlabeled faces…');
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveRefetch({
+        clusters: [unlabeledCluster('cluster-recovered', 'rep-recovered')],
+        limit: 20,
+        total: 1,
+        truncated: false,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+    });
+
+    expect(await screen.findByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
+    expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
+    expect(screen.queryByText('Retrying unlabeled faces…')).not.toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
   });
 
   // E21-20-REV1-02 / TEST-15: S2-gated zeros leave the queue empty while work exists.

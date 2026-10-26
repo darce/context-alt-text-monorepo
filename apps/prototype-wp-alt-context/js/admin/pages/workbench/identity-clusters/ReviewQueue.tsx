@@ -156,6 +156,9 @@ const TopUnlabeledErrorNotice = ({
   isFetching: boolean;
   onRetry: () => void;
 }): React.JSX.Element | null => {
+  const noticeId = React.useId();
+  const headlineId = `${noticeId}-headline`;
+  const statusId = `${noticeId}-retry-status`;
   if (isAuthExpiredError(error)) {
     return null;
   }
@@ -169,17 +172,20 @@ const TopUnlabeledErrorNotice = ({
       role="alert"
       data-testid="acx-review-queue-top-unlabeled-error"
     >
-      <p>{headline}</p>
+      <p id={headlineId}>{headline}</p>
       {cause !== headline ? <p>{cause}</p> : null}
-      <button
-        type="button"
+      <QueryRetryButton
         className="button"
-        onClick={onRetry}
-        disabled={isFetching}
-        aria-busy={isFetching || undefined}
-      >
-        {isFetching ? __('Retrying…', 'alt-context') : __('Retry', 'alt-context')}
-      </button>
+        describedBy={headlineId}
+        statusId={statusId}
+        retrying={isFetching}
+        retryingLabel={__('Retrying unlabeled faces…', 'alt-context')}
+        onClick={() => {
+          if (!isFetching) {
+            onRetry();
+          }
+        }}
+      />
     </div>
   );
 };

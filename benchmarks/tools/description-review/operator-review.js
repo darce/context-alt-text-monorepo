@@ -1,6 +1,19 @@
 /* Offline human annotation layer. No generated judgments or network requests. */
 (function (root) {
 'use strict';
+const TEXT = {
+ crossModel:'Cross-model blind review',
+ exitCrossModel:'Exit cross-model blind review (reveal labels)',
+ crossModelUnavailable:'Cross-model blind review unavailable: decision rule or operator-crossmodel.js missing.',
+ candidates:['Candidate 1','Candidate 2','Candidate 3'],
+ decisionReviewed:'Decision reviewed',
+ progressUnavailable:'Decision progress unavailable',
+ decisionTitle:'Description-model decision',
+ decisionUnavailable:'Decision panel unavailable',
+ assessmentsRequired:'Select severity and OCR assessment before marking Reviewed.',
+ ocrRequired:'select OCR assessment',
+ crossModelHint:'Cross-model blind review: compare the same image and all present surfaces; source remains inspectable.'
+};
 const SCHEMA = 'bakeoff-operator-reviews/v1';
 const clone = x => JSON.parse(JSON.stringify(x));
 const same = (a,b) => stable(a) === stable(b);
@@ -107,10 +120,13 @@ root.OperatorReview=api;
 if(typeof document==='undefined') return;
 const mnode=document.getElementById('operator-review-manifest'); if(!mnode) return;
 const manifest=JSON.parse(mnode.textContent), contract=JSON.parse(document.getElementById('operator-review-contract').textContent);
+function decisionBlock(id) {const node=document.getElementById(id);try{return node?JSON.parse(node.textContent):null;}catch(e){return null;}}
+const rule=decisionBlock('operator-decision-rule'),perf=decisionBlock('operator-decision-performance');
+const decisionKeys=new Set(rule?manifest.cells.filter(c=>Object.entries(rule.filter).every(([k,v])=>c[k]===v)).map(c=>c.key):[]);
 const storageKey='operator-review:'+manifest.dataset_id+':'+manifest.manifest_sha256+':'+manifest.rubric_version+':'+hash(stable(manifest.cells));
 const initialStateNode=document.getElementById('operator-review-initial-state');
 const initialState=initialStateNode?validate(manifest,contract,JSON.parse(initialStateNode.textContent)):empty(manifest,'review-1');
-let state=clone(initialState),blind=false,storageOK=true,storageDisabled=false,startup='';const unmatchedPriorPairs=[];
+let state=clone(initialState),blind=false,crossBlind=false,unsealed=false,storageOK=true,storageDisabled=false,startup='';const unmatchedPriorPairs=[];
 try {
  const saved=root.localStorage.getItem(storageKey);
  if(saved){state=mergeInitialState(manifest,contract,JSON.parse(saved),initialState);startup='Restored local annotations and saved historical reviews';}
@@ -147,19 +163,38 @@ const toolbar=document.getElementById('operator-toolbar'); toolbar.append(el('st
 const reviewer=field(toolbar,'Reviewer name',el('input',undefined,{type:'text',autocomplete:'name'})); reviewer.value=state.reviewer_id;
 const status=el('p',startup,{'aria-live':'polite',role:'status'}), count=el('span');
 const seed=field(toolbar,'Blind order seed',el('input',undefined,{type:'text'}));seed.value=state.blind_seed;
-const blindButton=button('Enter blind A/B',()=>{blind=!blind;applyBlind();});toolbar.append(blindButton);
+const blindButton=button('Enter blind A/B',()=>{blind=!blind;crossBlind=false;applyBlind();});toolbar.append(blindButton);
+const crossButton=button(TEXT.crossModel,()=>{crossBlind=!crossBlind;blind=false;applyBlind();});toolbar.append(crossButton);
+crossButton.disabled=!rule||!root.OperatorCrossModel;
+if(crossButton.disabled)crossButton.title=TEXT.crossModelUnavailable;
 toolbar.append(button('Export JSON',()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const a=el('a',undefined,{download:'operator-reviews.json',href:URL.createObjectURL(blob)});a.click();setTimeout(()=>URL.revokeObjectURL(a.href),0);}));
 if(unmatchedPriorPairs.length)toolbar.append(button('Export unmatched prior preferences ('+unmatchedPriorPairs.length+')',()=>{const blob=new Blob([JSON.stringify({schema:'operator-review-unmatched-prior-preferences/v1',source_custody:'Original browser saves retained unchanged',records:unmatchedPriorPairs},null,2)],{type:'application/json'});const link=el('a',undefined,{download:'unmatched-prior-preferences.json',href:URL.createObjectURL(blob)});link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);}));
 const file=field(toolbar,'Import JSON',el('input',undefined,{type:'file',accept:'.json,application/json'}));
 const metrics=el('details');metrics.append(el('summary','Accuracy and paired lexicon metrics')); const metricBody=el('div');metrics.append(metricBody);toolbar.append(count,status,metrics);
+const decisionPanel=el('details',undefined,{id:'operator-decision'}),decisionHost=el('div');
+decisionPanel.append(el('summary',TEXT.decisionTitle),decisionHost);toolbar.append(decisionPanel);
+function renderDecision() {
+ if(blind||crossBlind)unsealed=false;
+ decisionHost.replaceChildren();
+ if(!rule||!perf||!root.OperatorDecision||typeof root.OperatorDecision.render!=='function') {decisionHost.append(el('p',TEXT.decisionUnavailable));return;}
+ try {root.OperatorDecision.render(decisionHost,{manifest,state:clone(state),perf,rule,contract,unsealed,onUnseal:()=>{if(blind||crossBlind)return;unsealed=true;renderDecision();}});}
+ catch(e) {decisionHost.replaceChildren(el('p',TEXT.decisionUnavailable));}
+}
 const cellNodes=new Map(), cardNodes=new Map(), summaries=new Map(), cellFeedback=new Map();
 function persist(message='') {
  let saved=false;
  try {if(storageDisabled)throw Error('Persistence disabled after invalid or inaccessible stored data');root.localStorage.setItem(storageKey,JSON.stringify(state));saved=true;storageOK=true;} catch(e) {storageOK=false;}
  status.textContent=(message?message+'. ':'')+(saved?'Saved locally. Export JSON for a portable copy.':'In-memory only: local persistence unavailable. Export JSON before closing.');
- updateCounts();renderMetrics();cellFeedback.forEach(update=>update());
+ updateCounts();renderMetrics();cellFeedback.forEach(update=>update());renderDecision();
 }
-function updateCounts() {const rs=Object.values(state.reviews);count.textContent='Reviewed '+rs.filter(r=>r.reviewed).length+' / '+manifest.cells.length+' observed cells; uncertain '+rs.filter(r=>r.reviewed&&(r.severity==='uncertain'||r.ocr==='uncertain')).length;}
+function updateCounts() {
+ if(crossBlind) {
+  try {const progress=root.OperatorCrossModel.progress(manifest,rule,state,contract);count.textContent=TEXT.decisionReviewed+' '+progress.done+' / '+progress.total;}
+  catch(e) {count.textContent=TEXT.progressUnavailable;}
+  return;
+ }
+ const rs=Object.values(state.reviews);count.textContent='Reviewed '+rs.filter(r=>r.reviewed).length+' / '+manifest.cells.length+' observed cells; uncertain '+rs.filter(r=>r.reviewed&&(r.severity==='uncertain'||r.ocr==='uncertain')).length;
+}
 const SCOPES=[["full120", "Latest high-precision round \u00b7 matched A/B groups"], ["reference_pilot", "reference_pilot"], ["generation_failure_pilot", "generation_failure_pilot"], ["historical_full120", "Historical 120-image human assessments (archive)"], ["historical_caption_reference", "Historical caption references (archive)"], ["historical_pilot", "Historical development/pilot (archive)"], ["historical_diagnostic30", "Historical diagnostic subset (archive)"]];
 const scopeNames={full120:'Full 120',diagnostic30:'UD diagnostic',caption_reference:'Caption reference',pilot:'Pilot'},modeNames={off:'Lexicon off',on:'Lexicon on',caption:'Caption only'};
 const ARM_HEAD=['Model','Mode','Scope','Reviewed of N','Confirmed error-free n/N (%)','Major issues n/N','Unsupported n/N','OCR errors n/N','Salient recall (% with gold n)'];
@@ -174,7 +209,8 @@ function pairCells(p) {return [modelNames.get(p.model_key)||p.model_key,...[p.n_
 function metricTable(headers,rows) {const wrap=el('div',undefined,{class:'operator-metrics-scroll'}),table=el('table'),head=el('tr');headers.forEach(h=>head.append(el('th',h,{scope:'col'})));table.append(head);rows.forEach(cells=>{const tr=el('tr');cells.forEach(v=>tr.append(el('td',v)));table.append(tr);});wrap.append(table);return wrap;}
 function machineTable(rows) {const fields=[...new Set(rows.flatMap(Object.keys))];return metricTable(fields,rows.map(row=>fields.map(f=>row[f]==null?'N/A':typeof row[f]==='object'?JSON.stringify(row[f]):String(row[f]))));}
 function renderMetrics() {
- metricBody.replaceChildren();if(blind) {metricBody.append(el('p','Exit blind mode to see model metrics.'));return;}
+ metrics.hidden=blind||crossBlind;
+ metricBody.replaceChildren();if(blind||crossBlind) {metricBody.append(el('p','Exit blind mode to see model metrics.'));return;}
  if(!root.OperatorMetrics || typeof root.OperatorMetrics.summarize!=='function') {metricBody.append(el('p','Metrics unavailable: operator-metrics.js has not been supplied.'));return;}
  try {
  const result=root.OperatorMetrics.summarize(manifest,clone(state));
@@ -210,10 +246,13 @@ function buildCell(c,host) {
  field(completion,'Reviewed: all present surfaces assessed',check);
  function updateFeedback() {
   clean.checked=r.severity==='none';severity.value=r.severity;
+  const incomplete=crossBlind&&decisionKeys.has(c.key)&&(r.severity==='not_assessed'||r.ocr==='not_assessed');
+  check.disabled=!active||incomplete;
   if(!active) {feedback.textContent='Factual scoring disabled.';return;}
   const missing=[];
   if(!state.reviewer_id.trim())missing.push('enter reviewer name in the toolbar');
   if(r.severity==='not_assessed')missing.push('select severity');
+  if(crossBlind&&decisionKeys.has(c.key)&&r.ocr==='not_assessed')missing.push(TEXT.ocrRequired);
   if(r.severity==='none'&&r.issues.length)missing.push('resolve conflict: uncheck issue flags only if incorrect, or change severity from none');
   const recorded=Object.hasOwn(state.reviews,c.key);
   // Severity none covers factual issues only: OCR errors and uncertainty stay visible, reviewed or pending.
@@ -221,7 +260,7 @@ function buildCell(c,host) {
   const unsure=[r.severity==='uncertain'&&'severity',r.ocr==='uncertain'&&'OCR'].filter(Boolean);
   const caveats=(unsure.length?'Needs adjudication: '+unsure.join(' and ')+' uncertain; not confirmed error-free. ':'')+
    (r.ocr==='wrong'?'OCR wrong: OCR error recorded; not error-free. ':r.ocr==='omitted'?'OCR omitted: OCR error recorded; incomplete even if factually accurate. ':
-    r.ocr==='not_assessed'?'OCR not assessed (optional; not required for Reviewed)'+(r.severity==='none'?': text accuracy unknown, so not confirmed error-free. ':'. '):'');
+    r.ocr==='not_assessed'?(crossBlind&&decisionKeys.has(c.key)?TEXT.assessmentsRequired+' ':'OCR not assessed (optional; not required for Reviewed)'+(r.severity==='none'?': text accuracy unknown, so not confirmed error-free. ':'. ')):'');
   const noIssues=r.severity==='none'&&!caveats&&!r.issues.length;
   feedback.textContent=(r.reviewed?(noIssues?'Reviewed — no issues. ':r.severity==='none'?'Reviewed — severity none. ':'Reviewed. '):r.severity==='none'?(caveats?'No issues selected (severity none) — Unreviewed. ':'No issues selected — Unreviewed. '):'Unreviewed. ')+caveats+
    (recorded?(storageOK?'Saved locally. ':'In-memory only; export JSON before closing. '):'')+
@@ -257,6 +296,7 @@ function buildCell(c,host) {
   g.facts.forEach((fact,i)=>{const n=el('input',undefined,{type:'checkbox'});n.checked=r.gold_snapshot===snapshot(g)&&r.covered_fact_ids.includes(i);n.disabled=!active;field(advanced,fact,n);n.addEventListener('change',()=>{if(r.gold_snapshot!==snapshot(g))r.covered_fact_ids=[];r.gold_snapshot=snapshot(g);r.covered_fact_ids=g.facts.map((_,j)=>j).filter(j=>j===i?n.checked:r.covered_fact_ids.includes(j));changed();});});
  }
  check.addEventListener('change',()=>{
+  if(check.checked&&crossBlind&&decisionKeys.has(c.key)&&(r.severity==='not_assessed'||r.ocr==='not_assessed')) {check.checked=false;updateFeedback();status.textContent=TEXT.assessmentsRequired;return;}
   if(check.checked&&!validReview(c,r,state.reviewer_id)) {check.checked=false;updateFeedback();status.textContent='Reviewed refused: enter reviewer name, select severity, and resolve severity none with issue flags.';return;}
   r.reviewed=check.checked;if(r.reviewed&&state.gold[c.image_id])r.gold_snapshot=snapshot(state.gold[c.image_id]);r.updated_at=new Date().toISOString();state.reviews[c.key]=r;updateSummary();persist();
  });
@@ -274,15 +314,38 @@ function buildGold(image,card) {
 function build() {
  manifest.cells.forEach(c=>{const host=document.querySelector('[data-review-key="'+c.key+'"]');if(!host)throw Error('Missing cell '+c.key);cellNodes.set(c.key,host);buildCell(c,host);});
  manifest.images.forEach(i=>{const card=document.querySelector('[data-image-id="'+i.image_id+'"]');cardNodes.set(i.image_id,card);buildGold(i,card);});
+ renderDecision();
 }
 const originals=new Map();
+function restoreAttribute(node,name,value) {if(value===null)node.removeAttribute(name);else node.setAttribute(name,value);}
 function applyBlind() {
- document.body.classList.toggle('operator-blind',blind);blindButton.textContent=blind?'Exit blind A/B (reveal labels)':'Enter blind A/B';
+ if(blind||crossBlind)unsealed=false;
+ document.body.classList.toggle('operator-blind',blind||crossBlind);
+ document.body.classList.toggle('operator-crossmodel',crossBlind);
+ blindButton.textContent=blind?'Exit blind A/B (reveal labels)':'Enter blind A/B';
+ crossButton.textContent=crossBlind?TEXT.exitCrossModel:TEXT.crossModel;
+ const crossOrders=crossBlind?root.OperatorCrossModel.order(manifest,rule,state.blind_seed):{};
  manifest.images.forEach(image=>{
   const card=cardNodes.get(image.image_id),table=card.querySelector('.description-table'),hr=table.tHead.rows[0],tr=table.tBodies[0].rows[0];
-  if(!originals.has(image.image_id))originals.set(image.image_id,{heads:[...hr.children],cells:[...tr.children],contents:[...hr.children].map(n=>[...n.childNodes])});
+  if(!originals.has(image.image_id))originals.set(image.image_id,{heads:[...hr.children],cells:[...tr.children],headNodes:[...hr.childNodes],cellNodes:[...tr.childNodes],contents:[...hr.children].map(n=>[...n.childNodes]),attributes:[card,...hr.children,...tr.children].map(n=>[n,n.getAttribute('hidden'),n.getAttribute('class')])});
   const original=originals.get(image.image_id);for(const added of ['.operator-pairs','.operator-blind-hint'])card.querySelectorAll(added).forEach(n=>n.remove());
-  if(!blind) {original.heads.forEach((h,i)=>{h.replaceChildren(...original.contents[i]);h.hidden=false;hr.append(h);});original.cells.forEach(td=>{td.hidden=false;tr.append(td);});return;}
+  original.heads.forEach((h,i)=>h.replaceChildren(...original.contents[i]));
+  hr.replaceChildren(...original.headNodes);tr.replaceChildren(...original.cellNodes);
+  original.attributes.forEach(([n,hidden,classes])=>{restoreAttribute(n,'hidden',hidden);if(n!==card)restoreAttribute(n,'class',classes);});
+  if(!blind&&!crossBlind)return;
+  if(crossBlind) {
+   const keys=crossOrders[image.image_id]||[];
+   card.hidden=!keys.length;
+   original.heads.forEach(h=>h.hidden=true);original.cells.forEach(td=>td.hidden=true);
+   keys.forEach((key,index)=>{
+    const td=cellNodes.get(key).closest('td'),i=original.cells.indexOf(td),h=original.heads[i];
+    h.textContent=TEXT.candidates[index];h.hidden=false;td.hidden=false;
+    h.classList.add('operator-crossmodel-neutral');td.classList.add('operator-crossmodel-neutral');
+    hr.append(h);tr.append(td);
+   });
+   if(keys.length)(card.querySelector('.comparison-row')||card.querySelector('.description-scroll')).before(el('p',TEXT.crossModelHint,{class:'operator-blind-hint'}));
+   return;
+  }
   const keys=state.blind_orders[image.image_id]||[];const panel=el('div',undefined,{class:'operator-pairs'});
   // Source hints count every observed column; describe only the visible blinded columns and leave source hints untouched.
   const hint=el('p','Blind A/B: image stays at left; scroll across '+keys.length+' blinded full-comparison columns →',{class:'operator-blind-hint'});panel.append(el('p','Blind presentation only; source remains inspectable. Compare the same image and all present surfaces.'));
@@ -297,7 +360,7 @@ function applyBlind() {
    choice.addEventListener('change',()=>{if(choice.value&&!state.reviewer_id.trim()){choice.value=existing?existing.choice:'';status.textContent='Enter reviewer name before recording a pair judgment.';return;}setPair(state,left,right,choice.value);persist();});
   }// Outside the two-column image/description grid, so the panel cannot displace the description strip.
   (card.querySelector('.comparison-row')||card.querySelector('.description-scroll')).before(hint,panel);
- });renderMetrics();
+ });updateCounts();renderMetrics();cellFeedback.forEach(update=>update());renderDecision();
 }
 build();updateCounts();renderMetrics();
 if(!startup)status.textContent='Blank reviews are unscored. Local persistence is best effort; export JSON to keep work.';

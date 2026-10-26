@@ -303,6 +303,24 @@ def test_worktree_outside_git_is_refused(fx: Fixture, tmp_path: Path) -> None:
     assert not fx.record.exists()
 
 
+@pytest.mark.parametrize("git_entry", ["absent", "not-executable"])
+def test_unrunnable_git_is_a_precondition_refusal(fx: Fixture, tmp_path: Path, git_entry: str) -> None:
+    hook_path = tmp_path / "hook-path"
+    hook_path.mkdir()
+    if git_entry == "not-executable":
+        fake_git = hook_path / "git"
+        fake_git.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_git.chmod(0o644)
+    completed = _run(fx, env_overrides={"PATH": str(hook_path)})
+
+    assert completed.returncode == 2, completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert "cannot run git" in completed.stderr
+    assert "put git on PATH for the Orca hook environment" in completed.stderr
+    assert completed.stdout == ""
+    assert not fx.record.exists()
+
+
 def test_missing_workbay_protocol_is_refused(fx: Fixture) -> None:
     completed = _run(fx, stub_protocol=False)
 

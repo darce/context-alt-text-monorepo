@@ -1357,7 +1357,7 @@ def test_active_lane_paths_without_backend_raises_unavailable(
 
 def _install_registry_response(
     monkeypatch: pytest.MonkeyPatch, response: object
-) -> None:
+) -> list[dict[str, Any]]:
     backend = types.ModuleType("workbay_handoff_mcp")
     recording = types.ModuleType("workbay_handoff_mcp.lanes_recording")
 
@@ -1368,9 +1368,16 @@ def _install_registry_response(
 
     backend.RuntimeConfig = RuntimeConfig  # type: ignore[attr-defined]
     backend.configure_runtime = lambda _config: None  # type: ignore[attr-defined]
-    recording.list_lanes = lambda **_kwargs: response  # type: ignore[attr-defined]
+    calls: list[dict[str, Any]] = []
+
+    def list_lanes(**kwargs: Any) -> object:
+        calls.append(kwargs)
+        return response(**kwargs) if callable(response) else response
+
+    recording.list_lanes = list_lanes  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "workbay_handoff_mcp", backend)
     monkeypatch.setitem(sys.modules, "workbay_handoff_mcp.lanes_recording", recording)
+    return calls
 
 
 def test_registry_error_envelope_fails_closed(
@@ -1600,3 +1607,85 @@ def test_env_protect_preserves_a_path_containing_spaces(
     record = next(item for item in reaper.classify(repo) if item.path == spaced.resolve())
     assert record.status == "LIVE"
     assert record.protected is True
+
+
+def test_registry_all_tasks_kwarg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_registry_response(
+        monkeypatch, {"ok": True, "data": {"lanes": []}}
+    )
+    _real_active_lane_paths(tmp_path)
+    assert calls == [{"all_tasks": True, "limit": reaper._LANE_PAGE_LIMIT, "offset": 0}]
+
+
+def test_registry_all_tasks_avoids_ambiguity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def response(**kwargs: Any) -> object:
+        if not kwargs.get("all_tasks"):
+            return {"ok": False, "error": "Ambiguous active task"}
+        return {"ok": True, "data": {"lanes": [
+            {"id": 1, "lane_id": "other-task", "status": "running",
+             "worktree_path": str(tmp_path)}
+        ]}}
+
+    _install_registry_response(monkeypatch, response)
+    assert _real_active_lane_paths(tmp_path) == {tmp_path.resolve(): "other-task"}
+
+
+def test_registry_offset_pages_and_deduplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    duplicate = {"id": 1, "lane_id": "done", "status": "merged"}
+    pages = iter([
+        {"ok": True, "data": {"lanes": [duplicate], "returned": 1, "has_more": True}},
+        {"ok": True, "data": {"lanes": [duplicate,
+            {"id": 2, "lane_id": "live", "status": "running",
+             "worktree_path": str(tmp_path)}], "has_more": False}},
+    ])
+    calls = _install_registry_response(monkeypatch, lambda **kwargs: next(pages))
+    original = reaper._lane_owners_from_rows
+    reduced = []
+
+    def reduce(rows: Any) -> Any:
+        reduced.extend(rows)
+        return original(rows)
+
+    monkeypatch.setattr(reaper, "_lane_owners_from_rows", reduce)
+    assert _real_active_lane_paths(tmp_path) == {tmp_path.resolve(): "live"}
+    assert [call["offset"] for call in calls] == [0, 1]
+    assert all(call["all_tasks"] is True for call in calls)
+    assert all(call["limit"] == reaper._LANE_PAGE_LIMIT for call in calls)
+    assert [row["id"] for row in reduced] == [1, 2]
+
+
+def test_registry_zero_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_registry_response(monkeypatch, {
+        "ok": True, "data": {"lanes": [], "returned": 0, "has_more": True}
+    })
+    with pytest.raises(reaper.LaneStateError, match="no progress"):
+        _real_active_lane_paths(tmp_path)
+
+
+def test_registry_page_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(reaper, "_LANE_PAGE_MAX", 2, raising=False)
+    calls = _install_registry_response(monkeypatch, {
+        "ok": True, "data": {"lanes": [], "returned": 1, "has_more": True}
+    })
+    with pytest.raises(reaper.LaneStateError, match="page limit"):
+        _real_active_lane_paths(tmp_path)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("bad_page", [None, {"ok": False},
+    {"ok": True, "data": []}, {"ok": True, "data": {"lanes": None}}])
+def test_registry_second_page_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_page: object
+) -> None:
+    pages = iter([
+        {"ok": True, "data": {"lanes": [], "returned": 1, "has_more": True}},
+        bad_page,
+    ])
+    calls = _install_registry_response(monkeypatch, lambda **kwargs: next(pages))
+    with pytest.raises(reaper.LaneStateError):
+        _real_active_lane_paths(tmp_path)
+    assert len(calls) == 2

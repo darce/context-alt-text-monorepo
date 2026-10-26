@@ -14,6 +14,7 @@ const TEXT = {
  ocrRequired:'select OCR assessment',
  crossModelHint:'Cross-model blind review: compare the same image and all present surfaces; source remains inspectable.'
 };
+const CROSS_MODEL_IDENTIFIERS='.state,.model-meta,.timing,.run-accounting,.provenance-details,a';
 const SCHEMA = 'bakeoff-operator-reviews/v1';
 const clone = x => JSON.parse(JSON.stringify(x));
 const same = (a,b) => stable(a) === stable(b);
@@ -256,7 +257,7 @@ function buildCell(c,host) {
   if(r.severity==='none'&&r.issues.length)missing.push('resolve conflict: uncheck issue flags only if incorrect, or change severity from none');
   const recorded=Object.hasOwn(state.reviews,c.key);
   // Severity none covers factual issues only: OCR errors and uncertainty stay visible, reviewed or pending.
-  // OCR is optional for Reviewed (few images have text); unknown OCR stays visible and is never confirmed error-free.
+  // Existing A/B reviews permit unknown OCR; cross-model reviews require an explicit assessment.
   const unsure=[r.severity==='uncertain'&&'severity',r.ocr==='uncertain'&&'OCR'].filter(Boolean);
   const caveats=(unsure.length?'Needs adjudication: '+unsure.join(' and ')+' uncertain; not confirmed error-free. ':'')+
    (r.ocr==='wrong'?'OCR wrong: OCR error recorded; not error-free. ':r.ocr==='omitted'?'OCR omitted: OCR error recorded; incomplete even if factually accurate. ':
@@ -327,15 +328,17 @@ function applyBlind() {
  const crossOrders=crossBlind?root.OperatorCrossModel.order(manifest,rule,state.blind_seed):{};
  manifest.images.forEach(image=>{
   const card=cardNodes.get(image.image_id),table=card.querySelector('.description-table'),hr=table.tHead.rows[0],tr=table.tBodies[0].rows[0];
-  if(!originals.has(image.image_id))originals.set(image.image_id,{heads:[...hr.children],cells:[...tr.children],headNodes:[...hr.childNodes],cellNodes:[...tr.childNodes],contents:[...hr.children].map(n=>[...n.childNodes]),attributes:[card,...hr.children,...tr.children].map(n=>[n,n.getAttribute('hidden'),n.getAttribute('class')])});
+  if(!originals.has(image.image_id))originals.set(image.image_id,{heads:[...hr.children],cells:[...tr.children],headNodes:[...hr.childNodes],cellNodes:[...tr.childNodes],contents:[...hr.children].map(n=>[...n.childNodes]),attributes:[card,...hr.children,...tr.children].map(n=>[n,n.getAttribute('hidden'),n.getAttribute('class')]),identifiers:[...table.querySelectorAll(CROSS_MODEL_IDENTIFIERS)].map(n=>[n,n.getAttribute('hidden')])});
   const original=originals.get(image.image_id);for(const added of ['.operator-pairs','.operator-blind-hint'])card.querySelectorAll(added).forEach(n=>n.remove());
   original.heads.forEach((h,i)=>h.replaceChildren(...original.contents[i]));
   hr.replaceChildren(...original.headNodes);tr.replaceChildren(...original.cellNodes);
   original.attributes.forEach(([n,hidden,classes])=>{restoreAttribute(n,'hidden',hidden);if(n!==card)restoreAttribute(n,'class',classes);});
+  original.identifiers.forEach(([n,hidden])=>restoreAttribute(n,'hidden',hidden));
   if(!blind&&!crossBlind)return;
   if(crossBlind) {
    const keys=crossOrders[image.image_id]||[];
    card.hidden=!keys.length;
+   original.identifiers.forEach(([n])=>n.hidden=true);
    original.heads.forEach(h=>h.hidden=true);original.cells.forEach(td=>td.hidden=true);
    keys.forEach((key,index)=>{
     const td=cellNodes.get(key).closest('td'),i=original.cells.indexOf(td),h=original.heads[i];

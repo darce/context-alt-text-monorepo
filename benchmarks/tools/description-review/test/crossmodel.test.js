@@ -92,6 +92,7 @@ test('review source wires blind ordering, progress, assessment gate, and sealed 
   'Decision panel unavailable', 'operator-decision-rule', 'operator-decision-performance',
   'operator-decision', 'onUnseal', 'unsealed', 'clone(state)']) assert.ok(source.includes(text), text);
  for (const selector of ['.state', '.model-meta', '.timing', '.run-accounting', '.provenance-details', '.operator-pairs']) {
+  assert.ok(source.includes(selector), 'review source: '+selector);
   assert.ok(css.includes(selector), selector);
  }
  assert.match(css, /operator-crossmodel[^{}]*\s+a\b[^{}]*\{[^}]*display\s*:\s*none/);

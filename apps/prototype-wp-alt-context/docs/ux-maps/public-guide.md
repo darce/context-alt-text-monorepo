@@ -15,6 +15,14 @@
 - `try-recorded` — Try the recorded review workflow signed-out
 - `leave-safely` — Leave the walkthrough without authenticating
 
+## Code references
+- `screen:entry` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
+- `screen:walkthrough` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx`
+- `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
+- `screen:outcome` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx`
+- `screen:fallback` — `apps/prototype-wp-alt-context/js/guide/main.tsx`
+- `screen:escape` — `apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts`
+
 ## Screens
 | id | kind | route | title |
 | --- | --- | --- | --- |
@@ -38,12 +46,27 @@ Purpose: Signed-out public entrance. Public title and introduction explain the s
 ```
 +------------------------------------------------------------+
 | Review a recorded alt text example  [screen]  /guide/      |
-| Signed-out public entrance. Public title and introduction… |
+| Signed-out public entrance. Public title and introduction\ |
+|    explain the supplied festival example; scope.public: T\ |
+|   his is a supplied example roster with recorded drafts. \ |
+|   Your choices change only the demo copy in this tab; the\ |
+|   y do not update WordPress or a server roster. Two entry\ |
+|    actions (NAV-08): Start the walkthrough and Read the c\ |
+|   ase study. Escape hatch (NAV-07): Home and Case study. \ |
+|   first_time is the first visit with no in-tab state. err\ |
+|   or is domain disabled_404: AltContext\PublicSite\Public\ |
+|   GuideRoute returns the theme 404 when acx_public_guide_\ |
+|   enabled is off — never this guide.                       |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Leave the walkthrough. Home. Case study. (nav) states… |
-|   - Supplied example roster with recorded drafts. Choices… |
-|   - Start the walkthrough (primary). Read the case study.… |
+|   - Leave the walkthrough. Home. Case study. (nav) states\ |
+|   =[default,first_time]                                    |
+|   - Supplied example roster with recorded drafts. Choices\ |
+|    affect only the demo copy in this tab; no WordPress or\ |
+|    server roster update. (content) states=[default,first_\ |
+|   time]                                                    |
+|   - Start the walkthrough (primary). Read the case study.\ |
+|    (nav) states=[default,first_time]                       |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Start the walkthrough -> walkthrough           |
@@ -69,15 +92,72 @@ Purpose: RecordedWalkthrough scope=public: understand the supplied page context,
 ```
 +------------------------------------------------------------+
 | Recorded walkthrough  [screen]  /guide/                    |
-| RecordedWalkthrough scope=public: understand the supplied… |
+| RecordedWalkthrough scope=public: understand the supplied\ |
+|    page context, then review the two bundled press photos\ |
+|    stacked in .acx-guided-page__media-list. Each figure h\ |
+|   as a 1 / 1 image frame, visible Photo credit, one colla\ |
+|   psed AltText.ai comparison disclosure, and its own curr\ |
+|   ent description in the sample image alt. One "People re\ |
+|   cognised in this photo" article sits in the .acx-guided\ |
+|   -page__faces column on the right with both people's nam\ |
+|   e choices; this column moves below the photo below 56.2\ |
+|   5rem. Face outlines pin on click. The three-paragraph p\ |
+|   rovenance footer sits below the figures. After name cho\ |
+|   ices, the public editor shows the current description a\ |
+|   nd one editable draft for each photo; the sample image \ |
+|   is the demo image and there is no second applied-previe\ |
+|   w image. Changes stay in the tab. Recognition and GPU g\ |
+|   eneration are cached and never run per visitor. No impo\ |
+|   rt path from js/guide/** may reach js/admin/api/** or G\ |
+|   uidedLiveDescriptionPanel. edge_input: a name choice is\ |
+|    still undecided. error: a photo's sample draft unavail\ |
+|   able. Keyboard completes choose → edit → use.            |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Public mount. data-scope=public. Supplied roster and … |
-|   - Understand the page and provenance. The context parag… |
-|   - Justin Trudeau roster entry for the Tribeca figure's … |
-|   - Katy Perry roster entry for the Tribeca figure's "Peo… |
-|   - Justin Trudeau roster entry for the Coachella figure'… |
-|   - Katy Perry roster entry for the Coachella figure's "P… |
+|   - Public mount. data-scope=public. Supplied roster and \ |
+|   recorded drafts only; changes stay in this tab. (conten\ |
+|   t) states=[default,edge_input,error]                     |
+|   - Understand the page and provenance. The context parag\ |
+|   raph appears above .acx-guided-page__media-list, where \ |
+|   Tribeca and Coachella are stacked. Each figure has one \ |
+|   1 / 1 sample image whose alt is the current description\ |
+|   , a visible Photo credit, one collapsed AltText.ai comp\ |
+|   arison disclosure, and a right-hand "People recognised \ |
+|   in this photo" article with both name choices. The face\ |
+|   s column moves below the photo below 56.25rem. Face out\ |
+|   lines pin on click. The three-paragraph provenance foot\ |
+|   er follows the figures. Review the current image descri\ |
+|   ptions, comparison captions, credits, and recorded sour\ |
+|   ce details. (content) states=[default]                   |
+|   - Justin Trudeau roster entry for the Tribeca figure's \ |
+|   "People recognised in this photo" article in the right-\ |
+|   hand .acx-guided-page__faces column. Use Justin Trudeau\ |
+|   . Leave this person unnamed. No preselection. edge_inpu\ |
+|   t: Choose an option for this person. One Tribeca 89.4% \ |
+|   strong crop is visible. (form) states=[default,edge_inp\ |
+|   ut]                                                      |
+|   - Katy Perry roster entry for the Tribeca figure's "Peo\ |
+|   ple recognised in this photo" article in the right-hand\ |
+|    .acx-guided-page__faces column. Use Katy Perry. Leave \ |
+|   this person unnamed. No preselection. edge_input: Choos\ |
+|   e an option for this person. One Tribeca 100.0% strong \ |
+|   cluster-anchor crop is visible. (form) states=[default,\ |
+|   edge_input]                                              |
+|   - Justin Trudeau roster entry for the Coachella figure'\ |
+|   s "People recognised in this photo" article in the righ\ |
+|   t-hand .acx-guided-page__faces column. Use Justin Trude\ |
+|   au. Leave this person unnamed. No preselection. edge_in\ |
+|   put: Choose an option for this person. One Coachella 70\ |
+|   .2% strong crop is visible. (form) states=[default,edge\ |
+|   _input]                                                  |
+|   - Katy Perry roster entry for the Coachella figure's "P\ |
+|   eople recognised in this photo" article in the right-ha\ |
+|   nd .acx-guided-page__faces column. Use Katy Perry. Leav\ |
+|   e this person unnamed. No preselection. edge_input: Cho\ |
+|   ose an option for this person. One Coachella 56.7% weak\ |
+|    crop is below the 60.0% displayed threshold and is sti\ |
+|   ll grouped by the production clusterer. (form) states=[\ |
+|   default,edge_input]                                      |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Review name suggestions -> apply               |
@@ -102,12 +182,29 @@ Purpose: For each photo, review the current description beside its editable reco
 ```
 +------------------------------------------------------------+
 | Apply and undo  [screen]  /guide/                          |
-| For each photo, review the current description beside its… |
+| For each photo, review the current description beside its\ |
+|    editable recorded draft. Use this description updates \ |
+|   that sample photo's alt in this tab; Undo this change r\ |
+|   estores its previous description. The public editor has\ |
+|    no separate applied-preview image. empty: there is no \ |
+|   change to undo. error: the draft is empty or unchanged,\ |
+|    or its recorded sample is unavailable.                  |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Review and edit the current description for each phot… |
-|   - Tribeca sample photo. Its alt text is the current Tri… |
-|   - Coachella sample photo. Its alt text is the current C… |
+|   - Review and edit the current description for each phot\ |
+|   o. Use this description changes only that sample photo'\ |
+|   s alt text in this tab. Undo restores that photo's prev\ |
+|   ious description. The full-size sample photo above is t\ |
+|   he demo image; the public editor does not render a seco\ |
+|   nd preview image. (content) states=[default,empty,error] |
+|   - Tribeca sample photo. Its alt text is the current Tri\ |
+|   beca description. This is the public demo image and the\ |
+|    same image changes when the visitor uses or undoes a d\ |
+|   escription. (content) states=[default]                   |
+|   - Coachella sample photo. Its alt text is the current C\ |
+|   oachella description. This is the public demo image and\ |
+|    the same image changes when the visitor uses or undoes\ |
+|    a description. (content) states=[default]               |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply to demo copy -> outcome (preview)        |
@@ -128,10 +225,20 @@ Purpose: Completion summary after Apply to demo copy or Keep current alt text. A
 ```
 +------------------------------------------------------------+
 | Your demo copy is updated  [screen]  /guide/               |
-| Completion summary after Apply to demo copy or Keep curre… |
+| Completion summary after Apply to demo copy or Keep curre\ |
+|   nt alt text. Applied and kept outcomes affect only the \ |
+|   demo copy in this tab; WordPress media, a server roster\ |
+|   , and a saved library are not updated. A next batch wou\ |
+|   ld use another supplied image and page context. Direct \ |
+|   refresh of /guide/ restores first-visit state; in-tab h\ |
+|   istory is not persisted.                                 |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Your demo copy is updated or unchanged after Keep. Re… |
+|   - Your demo copy is updated or unchanged after Keep. Re\ |
+|   sult applies only in this tab; no WordPress media, serv\ |
+|   er roster, or saved library update. A next batch would \ |
+|   use another supplied image and page context. (status) s\ |
+|   tates=[default,empty]                                    |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Return to the draft -> walkthrough             |
@@ -151,10 +258,15 @@ Purpose: Domain bundle_failed maps to error. The mounted guide hides .acx-public
 ```
 +------------------------------------------------------------+
 | The walkthrough could not load  [screen]  /guide/          |
-| Domain bundle_failed maps to error. The mounted guide hid… |
+| Domain bundle_failed maps to error. The mounted guide hid\ |
+|   es .acx-public-guide__fallback; if ViteManifest entry_a\ |
+|   ssets returns null, the template still renders 200 plus\ |
+|    canonical content and PUBLIC_GUIDE_FALLBACK remains vi\ |
+|   sible.                                                   |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - The walkthrough could not load. Reload the page and t… |
+|   - The walkthrough could not load. Reload the page and t\ |
+|   ry again. (status) states=[error]                        |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Reload the page -> entry                       |
@@ -175,7 +287,9 @@ Purpose: NAV-07 escape hatch from public scope: Home is an external link to altc
 ```
 +------------------------------------------------------------+
 | Leave the walkthrough  [exit]  /                           |
-| NAV-07 escape hatch from public scope: Home is an externa… |
+| NAV-07 escape hatch from public scope: Home is an externa\ |
+|   l link to altcontext.com via escapeHref. Case study use\ |
+|   s CASE_STUDY_URL. No authentication required.            |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Home (nav) states=[default]                            |
@@ -209,6 +323,18 @@ Purpose: NAV-07 escape hatch from public scope: Home is an external link to altc
 ## Flows
 ### Signed-out choose → edit → preview → apply → undo (`signed-out-core`)
 
+```
+flow: Signed-out choose → edit → preview → apply → undo (sign\
+  ed-out-core) job=try-recorded
+  1. Review a recorded alt text example [entry]
+     --start-->
+  2. Recorded walkthrough [walkthrough]
+     --choose and edit-->
+  3. Apply and undo [apply]
+     --preview and apply-->
+  4. Your demo copy is updated [outcome]
+```
+
 ```mermaid
 flowchart TD
   %% flow: Signed-out choose → edit → preview → apply → undo job=try-recorded
@@ -224,6 +350,14 @@ flowchart TD
 
 ### Direct reload of /guide/ keeps the page working (`direct-refresh`)
 
+```
+flow: Direct reload of /guide/ keeps the page working (direct\
+  -refresh) job=try-recorded
+  1. Recorded walkthrough [walkthrough]
+     --reload-->
+  2. Review a recorded alt text example [entry]
+```
+
 ```mermaid
 flowchart TD
   %% flow: Direct reload of /guide/ keeps the page working job=try-recorded
@@ -234,6 +368,18 @@ flowchart TD
 ```
 
 ### Pixel 7 keyboard-only completion (`mobile-keyboard`)
+
+```
+flow: Pixel 7 keyboard-only completion (mobile-keyboard) job=\
+  try-recorded
+  1. Review a recorded alt text example [entry]
+     --keyboard-->
+  2. Recorded walkthrough [walkthrough]
+     --keyboard-->
+  3. Apply and undo [apply]
+     --keyboard-->
+  4. Your demo copy is updated [outcome]
+```
 
 ```mermaid
 flowchart TD
@@ -250,6 +396,16 @@ flowchart TD
 
 ### choose → edit → keep with bounded tab-only outcome (`kept-completion`)
 
+```
+flow: choose → edit → keep with bounded tab-only outcome (kep\
+  t-completion) job=try-recorded
+  1. Review a recorded alt text example [entry]
+     --start-->
+  2. Recorded walkthrough [walkthrough]
+     --choose and edit-->
+  3. Your demo copy is updated [outcome]
+```
+
 ```mermaid
 flowchart TD
   %% flow: choose → edit → keep with bounded tab-only outcome job=try-recorded
@@ -263,6 +419,14 @@ flowchart TD
 
 ### reset clears local choices and draft state (`reset-local-state`)
 
+```
+flow: reset clears local choices and draft state (reset-local\
+  -state) job=try-recorded
+  1. Recorded walkthrough [walkthrough]
+     --reset confirmation-->
+  2. Review a recorded alt text example [entry]
+```
+
 ```mermaid
 flowchart TD
   %% flow: reset clears local choices and draft state job=try-recorded
@@ -274,6 +438,12 @@ flowchart TD
 
 ### Guide bundle aborted; fallback paragraph stays visible (`bundle-failure`)
 
+```
+flow: Guide bundle aborted; fallback paragraph stays visible \
+  (bundle-failure) job=leave-safely
+  1. The walkthrough could not load [fallback]
+```
+
 ```mermaid
 flowchart TD
   %% flow: Guide bundle aborted; fallback paragraph stays visible job=leave-safely
@@ -282,6 +452,12 @@ flowchart TD
 ```
 
 ### acx_public_guide_enabled off: theme 404, never the guide (`disabled-route-404`)
+
+```
+flow: acx_public_guide_enabled off: theme 404, never the guid\
+  e (disabled-route-404) job=leave-safely
+  1. Review a recorded alt text example [entry]
+```
 
 ```mermaid
 flowchart TD

@@ -96,6 +96,10 @@ export const queryKeys = {
     all: ['gpu'] as const,
     status: () => [...queryKeys.gpu.all, 'status'] as const,
   },
+  usage: {
+    all: ['usage'] as const,
+    tenant: () => [...queryKeys.usage.all, 'tenant'] as const,
+  },
 } as const;
 
 /**

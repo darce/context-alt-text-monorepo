@@ -75,12 +75,19 @@ def _env_directory(name: str) -> Path:
 
 
 def _git(worktree: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(worktree), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            ["git", "-C", str(worktree), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise RefusalError(
+            2,
+            f"cannot run git ({exc}); put git on PATH for the Orca hook environment "
+            f"(PATH={os.environ.get('PATH', '')}) and recreate the worktree from Orca",
+        ) from exc
 
 
 def _require_linked_worktree_of(root: Path, worktree: Path) -> None:

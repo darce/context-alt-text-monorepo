@@ -41,5 +41,141 @@ const seen=new Set();arr(a.pairs).forEach(j=>{const l=cells.get(j.left_key),r=ce
 for(const p of pairs.values()){p.net_preference=mean(p._prefs);p.net_preference_ci95=ci(p._prefs);p.accuracy_delta=mean(p._accuracy);p.accuracy_delta_ci95=ci(p._accuracy);p.factual_only_accuracy_delta=mean(p._factual);delete p._prefs;delete p._accuracy;delete p._factual;}
 return {arms:Array.from(arms.values()),paired:Array.from(pairs.values()),notes:['Provisional human review; no automatic winner. Uncertain remains in reviewed denominator, never confirmed clean.','OCR errors concern required salient text; not every decorative visible word.','Claims macro averaged by cell; unverifiable is undecidable, not definite false. Gold facts must be fixed by humans before candidate review.','Bootstrap protocol paired-image-xorshift32-v1, seed 0x51f15e, 2000 resamples, percentile 95%; n<2 gives null.','Scopes isolated. Generation errors are pipeline failures and paired accuracy zero, never fabricated hallucination labels.','OCR is optional for Reviewed. OCR not assessed is unknown, not an observed error: it counts in reviewed and the conservative confirmed error-free denominator but never as confirmed error-free, adds nothing to OCR assessed/error/not-applicable counts, and its pair is excluded from accuracy deltas (accuracy_ocr_not_assessed_excluded).']};
 }
-const api={summarize};if(typeof module==='object'&&module.exports)module.exports=api;else root.OperatorMetrics=api;
+function decisionCells(manifest,rule){
+return manifest.cells.filter(cell=>Object.entries(rule.filter).every(([key,value])=>cell[key]===value));
+}
+function decisionAssessment(cell,review,contract){
+return !!(cell&&review&&contract&&!cell.generation_error&&review.reviewed===true&&
+review.output_sha256===cell.output_sha256&&review.image_id===cell.image_id&&review.input_sha256===cell.input_sha256&&
+contract.severity.includes(review.severity)&&contract.ocr.includes(review.ocr)&&
+review.severity!=='not_assessed'&&review.ocr!=='not_assessed'&&Array.isArray(review.issues)&&
+!(review.severity==='none'&&review.issues.length));
+}
+function decisionReviewed(cell,review,contract,reviewerId){
+return str(reviewerId)&&decisionAssessment(cell,review,contract);
+}
+function accepted(cell,review,rule){
+// The three-argument API has no reviewer context; decide gates on the actual reviewer first.
+return decisionAssessment(cell,review,{severity:severities,ocr:ocrs})&&
+rule.accepted.severity_in.includes(review.severity)&&
+!review.issues.some(issue=>rule.accepted.factual_issues.includes(issue))&&
+!rule.accepted.ocr_not_in.includes(review.ocr);
+}
+function median(values){
+const sorted=values.slice().sort((a,b)=>a-b),middle=Math.floor(sorted.length/2);
+return sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2;
+}
+function decide(manifest,state,perf,rule,contract){
+check(manifest&&state&&perf&&rule&&contract,'Missing decision inputs');
+for(const field of ['dataset_id','manifest_sha256','rubric_version']){
+check(str(rule[field])&&manifest[field]===rule[field]&&state[field]===rule[field],'Decision '+field+' mismatch');
+}
+const cells=decisionCells(manifest,rule),images=manifest.images.map(image=>image.image_id),reviews=state.reviews||{};
+const notes=[],byModel=new Map(rule.candidates.map(id=>[id,new Map()]));
+for(const cell of cells)if(byModel.has(cell.physical_model_id))byModel.get(cell.physical_model_id).set(cell.image_id,cell);
+const missing=[];
+for(const id of rule.candidates)for(const image of images){
+if(!byModel.get(id).has(image))missing.push({physical_model_id:id,image_id:image});
+}
+const reviewed=cells.filter(cell=>decisionReviewed(cell,reviews[cell.key],contract,state.reviewer_id)).length;
+const pending=cells.filter(cell=>!cell.generation_error&&!decisionReviewed(cell,reviews[cell.key],contract,state.reviewer_id));
+const coverage={decision_cells:cells.length,reviewed,pending_keys:pending.map(cell=>cell.key),missing,
+generation_errors:cells.filter(cell=>cell.generation_error).length};
+const timingRows=new Map();
+for(const row of perf.rows){
+if(row.E!==rule.filter.extraction_lexicon||row.W!==rule.filter.writing_lexicon)continue;
+const key=JSON.stringify([row.physical_model_id,row.image_id]);
+if(!timingRows.has(key))timingRows.set(key,[]);
+timingRows.get(key).push(row);
+}
+const models=rule.candidates.map(id=>{
+const profiles=new Map(),timing_missing=[],modelCells=cells.filter(cell=>cell.physical_model_id===id);
+for(const cell of modelCells){
+const rows=timingRows.get(JSON.stringify([id,cell.image_id]))||[];
+let reason=rows.length!==1?'expected one timing row, found '+rows.length:null;
+const row=rows[0];
+if(!reason&&cell.response_sha256!==undefined&&cell.response_sha256!==row.response_sha256)reason='response_sha256 mismatch';
+if(!reason&&(!Number.isFinite(row.summed_stage_seconds)||row.summed_stage_seconds<0))reason='invalid timing seconds';
+if(reason){timing_missing.push(cell.image_id);notes.push('Timing missing for '+id+' '+cell.image_id+': '+reason+'.');continue;}
+if(!profiles.has(row.profile_sha256))profiles.set(row.profile_sha256,[]);
+profiles.get(row.profile_sha256).push(row.summed_stage_seconds);
+}
+const ranked=Array.from(profiles,([profile_sha256,values])=>({profile_sha256,n:values.length,p50_seconds:median(values)}));
+ranked.sort((a,b)=>b.n-a.n||b.p50_seconds-a.p50_seconds||
+(a.profile_sha256<b.profile_sha256?-1:a.profile_sha256>b.profile_sha256?1:0));
+return {physical_model_id:id,label:rule.candidate_labels[id],images:rule.images,cells:modelCells.length,
+accepted:null,accepted_rate:null,accepted_rate_bounds:null,major_or_worse:null,major_or_worse_rate:null,
+latency:ranked.length?{...ranked[0],other_profiles:ranked.slice(1)}:null,timing_missing,seconds_per_accepted:null};
+});
+const result={schema:'description-model-decision/v1',status:'insufficient_reviews',coverage,models,
+comparisons:null,quality:null,performance:null,power:null,notes};
+if(pending.length)return result;
+function evaluate(optimistic){
+const scores=new Map();
+for(const id of rule.candidates){
+const acc=[],maj=[];
+for(const image of images){
+const cell=byModel.get(id).get(image);
+if(!cell){acc.push(Number(optimistic));maj.push(Number(!optimistic));}
+else if(cell.generation_error){acc.push(0);maj.push(0);}
+else {acc.push(Number(accepted(cell,reviews[cell.key],rule)));maj.push(Number(rule.major_or_worse.includes(reviews[cell.key].severity)));}
+}
+const acceptedCount=acc.reduce((a,b)=>a+b,0),majorCount=maj.reduce((a,b)=>a+b,0);
+scores.set(id,{acc,maj,accepted:acceptedCount,accepted_rate:acceptedCount/rule.images,
+major_or_worse:majorCount,major_or_worse_rate:majorCount/rule.images});
+}
+const paired=new Map();
+function comparison(a,b){
+const key=JSON.stringify([a,b]);
+if(!paired.has(key)){
+const left=scores.get(a),right=scores.get(b),acc=left.acc.map((x,i)=>x-right.acc[i]),maj=left.maj.map((x,i)=>x-right.maj[i]);
+paired.set(key,{a,b,n_images:images.length,accepted_delta:mean(acc),accepted_delta_ci95:ci(acc),
+major_delta:mean(maj),major_delta_ci95:ci(maj)});
+}
+return paired.get(key);
+}
+let leader=rule.candidates[0];
+for(const id of rule.candidates)if(scores.get(id).accepted_rate>scores.get(leader).accepted_rate)leader=id;
+const winner=rule.candidates.every(id=>{
+if(id===leader)return true;
+const interval=comparison(leader,id).accepted_delta_ci95;
+return interval&&interval[0]>0;
+})?leader:null;
+const quality={winner,verdict:winner?'winner':'undecided',reason:winner?
+'Highest accepted rate with paired CI95 lower bound above zero against every other candidate.':
+'No candidate has a positive paired CI95 lower bound against every other candidate.'};
+const fastest=models.filter(model=>model.latency).slice().sort((a,b)=>a.latency.p50_seconds-b.latency.p50_seconds);
+const performer=fastest.find(model=>{
+if(model.physical_model_id===leader)return true;
+const pair=comparison(model.physical_model_id,leader);
+return pair.accepted_delta_ci95&&pair.major_delta_ci95&&
+pair.accepted_delta_ci95[0]>-rule.delta&&pair.major_delta_ci95[1]<rule.delta;
+});
+const performance={winner:performer?performer.physical_model_id:null,leader,verdict:performer?'winner':'none',
+reason:performer?'Fastest profile p50 passing the paired acceptance margin and major-error guardrail.':
+'No candidate with joined latency passes the paired acceptance margin and major-error guardrail.'};
+const comparisons=[];
+for(let a=0;a<rule.candidates.length;a++)for(let b=a+1;b<rule.candidates.length;b++)comparisons.push(comparison(rule.candidates[a],rule.candidates[b]));
+return {scores,quality,performance,comparisons};
+}
+const pessimistic=evaluate(false),optimistic=evaluate(true);
+for(const model of models){
+const score=pessimistic.scores.get(model.physical_model_id),upper=optimistic.scores.get(model.physical_model_id);
+model.accepted=score.accepted;model.accepted_rate=score.accepted_rate;
+model.accepted_rate_bounds=[score.accepted_rate,upper.accepted_rate];
+model.major_or_worse=score.major_or_worse;model.major_or_worse_rate=score.major_or_worse_rate;
+model.seconds_per_accepted=model.latency&&score.accepted_rate?model.latency.p50_seconds/score.accepted_rate:null;
+}
+result.comparisons=pessimistic.comparisons;result.quality=pessimistic.quality;result.performance=pessimistic.performance;
+result.power=result.comparisons.map(pair=>{
+const width=pair.accepted_delta_ci95?(pair.accepted_delta_ci95[1]-pair.accepted_delta_ci95[0])/2:null;
+return {a:pair.a,b:pair.b,ci_half_width:width,images_needed:width===null?null:Math.ceil(rule.images*(width/rule.delta)**2)};
+});
+const sensitive=pessimistic.quality.winner!==optimistic.quality.winner||pessimistic.performance.winner!==optimistic.performance.winner;
+result.status=sensitive?'coverage_sensitive':result.quality.winner?'decided':'undecided';
+if(missing.length)notes.push('Missing decision cells are bounded by pessimistic and optimistic imputation; reported rates use pessimistic imputation.');
+if(sensitive)notes.push('Quality or performance winner changes under the missing-cell imputations.');
+return result;
+}
+const api={summarize,decisionCells,decisionReviewed,accepted,decide,ci};if(typeof module==='object'&&module.exports)module.exports=api;else root.OperatorMetrics=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

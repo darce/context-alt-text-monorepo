@@ -32,3 +32,5 @@ main>:not(.image-card){max-width:1308px}
 .archive-intro{position:sticky;left:16px;width:min(1180px,calc(100vw - 56px));box-sizing:border-box;margin-top:32px}
 .review-history-status{font-size:13px;padding:6px;border:1px solid #8395a7}
 .operator-blind .historical-review-image,.operator-blind .review-history-status{display:none!important}
+.operator-crossmodel .description-table :is(.state,.model-meta,.timing,.run-accounting,.provenance-details),.operator-crossmodel .description-table a,.operator-crossmodel .operator-pairs{display:none!important}
+.operator-crossmodel .description-table .operator-crossmodel-neutral{--model-hue:0!important;--model-saturation:0%!important;background:#f5f7fa!important;color:#182534!important;border-color:#8395a7!important}

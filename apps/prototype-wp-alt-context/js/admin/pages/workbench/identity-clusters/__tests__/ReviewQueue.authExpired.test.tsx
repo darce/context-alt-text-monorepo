@@ -2,8 +2,8 @@
  * UXPNET2-BR-03 — ReviewQueue auth-expired notice on the head item's existence probe.
  * Reuses the mounting/mocking harness from ReviewQueue.test.tsx.
  */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,6 +19,8 @@ import { queryKeys } from '../../../../api/queryKeys';
 import { listRosterEntries, commitClusterToRosterEntry } from '../../../../api/rosterApi';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { useSuggestionReviewQueries } from '../useSuggestionReviewQueries';
+import { createAppQueryClient } from '../../../../utils/appQueryClient';
 import { AuthExpiredError } from '../../../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/userFacingError';
 
@@ -167,6 +169,7 @@ const renderQueue = (props: HarnessProps = {}) => {
 
 describe('ReviewQueue auth-expired notice (UXPNET2-BR-03)', () => {
   afterEach(() => {
+    onlineManager.setOnline(true);
     vi.clearAllMocks();
   });
 
@@ -305,6 +308,95 @@ describe('ReviewQueue auth-expired notice (UXPNET2-BR-03)', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     // INT-11: the queue stays mounted around the notice.
     expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+  });
+
+  describe('G2-F1 queue remount with a keeper observer', () => {
+    let queryClient: QueryClient;
+
+    beforeEach(() => {
+      queryClient = createAppQueryClient();
+    });
+
+    afterEach(() => {
+      queryClient.clear();
+    });
+
+    // TEST-15: round 4 shows the generic alert + Retry on these fresh mounts.
+    it.each([
+      { state: 'fetching', offline: false },
+      { state: 'paused', offline: true },
+    ])('keeps the single session notice when remounted during a $state refetch', async ({ offline }) => {
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [], limit: 1, total: 0, truncated: false,
+      });
+      const authError = new AuthExpiredError({
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        status: 403,
+      });
+      const topMock = vi.mocked(fetchTopUnlabeledClusters);
+      topMock.mockRejectedValueOnce(authError);
+
+      let keeperQueries!: ReturnType<typeof useSuggestionReviewQueries>;
+      const Keeper = () => {
+        keeperQueries = useSuggestionReviewQueries();
+        return null;
+      };
+      const QueueAndKeeper = ({ showQueue }: { showQueue: boolean }) => (
+        <>
+          <Keeper />
+          {showQueue ? <ReviewQueueHarness /> : null}
+        </>
+      );
+      const { rerender } = render(withQueueProviders(queryClient, <QueueAndKeeper showQueue />));
+      await screen.findByTestId('acx-review-card');
+      await waitFor(() => expect(keeperQueries.topUnlabeledQuery.isError).toBe(true));
+      expect(screen.getAllByTestId('acx-user-facing-error')).toHaveLength(1);
+
+      // The findings panel's observer stays mounted while the queue closes.
+      rerender(withQueueProviders(queryClient, <QueueAndKeeper showQueue={false} />));
+      expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+
+      type TopUnlabeledPage = Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>;
+      let resolveRefetch!: (page: TopUnlabeledPage) => void;
+      const response = new Promise<TopUnlabeledPage>((resolve) => { resolveRefetch = resolve; });
+      topMock.mockReturnValueOnce(response);
+      act(() => {
+        if (offline) onlineManager.setOnline(false);
+        void keeperQueries.topUnlabeledQuery.refetch();
+      });
+      await waitFor(() => {
+        expect(keeperQueries.topUnlabeledQuery.fetchStatus).toBe(offline ? 'paused' : 'fetching');
+      });
+      expect(keeperQueries.topUnlabeledQuery.error).toBeNull();
+      expect(keeperQueries.topUnlabeledQuery.data).toBeUndefined();
+      expect(topMock).toHaveBeenCalledTimes(offline ? 1 : 2);
+
+      rerender(withQueueProviders(queryClient, <QueueAndKeeper showQueue />));
+      const notices = screen.getAllByTestId('acx-user-facing-error');
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toHaveClass('acx-review-queue__auth-expired');
+      expect(notices[0]).toHaveAttribute('data-error-kind', 'auth-expired');
+      expect(notices[0]).toHaveTextContent(SPA_SESSION_EXPIRED_COPY.sessionExpired);
+      expect(screen.getAllByRole('button', { name: SPA_SESSION_EXPIRED_COPY.reloadPage })).toHaveLength(1);
+      expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+      expect(screen.queryByText('Unable to load unlabeled faces.')).not.toBeInTheDocument();
+      expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+
+      await act(async () => {
+        onlineManager.setOnline(true);
+        resolveRefetch({
+          clusters: [], limit: 20, total: 0, truncated: false, singleton_count: 0,
+          data_source: 'local_projection',
+        });
+        await response;
+      });
+      await waitFor(() => {
+        expect(keeperQueries.topUnlabeledOutage.isError).toBe(false);
+        expect(screen.queryByTestId('acx-user-facing-error')).not.toBeInTheDocument();
+      });
+      expect(topMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   // UXREC-1-DEMO-02 / PERC-07: two auth-expired sources still yield one alarm.

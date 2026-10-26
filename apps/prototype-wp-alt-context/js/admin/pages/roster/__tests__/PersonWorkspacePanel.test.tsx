@@ -92,6 +92,43 @@ const baseEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
   ...overrides,
 });
 
+describe('PersonWorkspacePanel Review correction links', () => {
+  it('links each numbered face group to its scoped Review panel', () => {
+    const first = baseEntry().clusters[0];
+    const clusters = [first, { ...first, cluster_id: 'second-cluster' }];
+    renderPanel(<PersonWorkspacePanel entry={baseEntry({ clusters, cluster_count: 2 })} onOpenQueue={vi.fn()} />);
+
+    clusters.forEach((cluster, index) => {
+      const region = screen.getByRole('region', { name: `Face group ${index + 1}` });
+      const link = within(region).getByRole('link', { name: `Fix faces in face group ${index + 1}` });
+      expect(link).toHaveTextContent('Fix faces in Review');
+      const url = new URL(link.getAttribute('href')!, 'https://example.com');
+      expect(url.searchParams.get('panel')).toBe('review');
+      expect(url.searchParams.get('cluster')).toBe(cluster.cluster_id);
+    });
+  });
+
+  it.each(['refreshing', 'stale', 'failed'] as const)('suppresses correction links for a %s projection', (projection_status) => {
+    renderPanel(<PersonWorkspacePanel entry={baseEntry({ projection_status })} onOpenQueue={vi.fn()} />);
+
+    expect(screen.queryByRole('link', { name: /Fix faces in face group/ })).not.toBeInTheDocument();
+    expect(screen.getByText(`Data status: ${projection_status}`)).toBeInTheDocument();
+    const statusCopy = {
+      refreshing: 'Refreshing linked faces…',
+      stale: 'Linked faces may be out of date.',
+      failed: 'Unable to load linked faces.',
+    };
+    expect(screen.getByText(statusCopy[projection_status])).toBeInTheDocument();
+  });
+
+  it.each(['', '   '])('suppresses correction links for an empty cluster id (%j)', (cluster_id) => {
+    const clusters = [{ ...baseEntry().clusters[0], cluster_id }];
+    renderPanel(<PersonWorkspacePanel entry={baseEntry({ clusters })} onOpenQueue={vi.fn()} />);
+
+    expect(screen.queryByRole('link', { name: /Fix faces in face group/ })).not.toBeInTheDocument();
+  });
+});
+
 describe('PersonWorkspacePanel evidence images', () => {
   it('renders FaceThumbnail for croppable instances, not a raw 96px img', () => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);

@@ -727,13 +727,13 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                   <h5>{clusterLabel}</h5>
                   <p>{sprintf(__('%d faces', 'alt-context'), cluster.instances.length)}</p>
                   {entry.projection_status === 'current' && cluster.cluster_id.trim().length > 0 ? (
-                    <Link
+                    <a
                       className="acx-roster__photos-link"
-                      to={reviewPanelUrl(cluster.cluster_id)}
+                      href={reviewPanelUrl(cluster.cluster_id)}
                       aria-label={sprintf(__('Fix faces in face group %d', 'alt-context'), index + 1)}
                     >
                       {__('Fix faces in Review', 'alt-context')}
-                    </Link>
+                    </a>
                   ) : null}
                   {cluster.representative_identity?.media_url ? (
                     renderEvidenceMedia({

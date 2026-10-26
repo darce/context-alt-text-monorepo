@@ -93,6 +93,16 @@ const baseEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
 });
 
 describe('PersonWorkspacePanel Review correction links', () => {
+  // HashRouter app: the href must be the Workbench hash route itself, not a fragment on the roster route.
+  const expectScopedReviewHref = (link: HTMLElement, clusterId: string): void => {
+    const href = link.getAttribute('href') ?? '';
+    expect(href.startsWith('#/workbench?')).toBe(true);
+    const params = new URLSearchParams(href.slice(href.indexOf('?') + 1));
+    expect(params.get('tab')).toBe('scan');
+    expect(params.get('panel')).toBe('review');
+    expect(params.get('cluster')).toBe(clusterId);
+  };
+
   it('links each numbered face group to its scoped Review panel', () => {
     const first = baseEntry().clusters[0];
     const clusters = [first, { ...first, cluster_id: 'second-cluster' }];
@@ -102,10 +112,16 @@ describe('PersonWorkspacePanel Review correction links', () => {
       const region = screen.getByRole('region', { name: `Face group ${index + 1}` });
       const link = within(region).getByRole('link', { name: `Fix faces in face group ${index + 1}` });
       expect(link).toHaveTextContent('Fix faces in Review');
-      const url = new URL(link.getAttribute('href')!, 'https://example.com');
-      expect(url.searchParams.get('panel')).toBe('review');
-      expect(url.searchParams.get('cluster')).toBe(cluster.cluster_id);
+      expectScopedReviewHref(link, cluster.cluster_id);
     });
+  });
+
+  it('round-trips a cluster id that needs encoding through the Review href', () => {
+    const clusters = [{ ...baseEntry().clusters[0], cluster_id: 'a&b c' }];
+    renderPanel(<PersonWorkspacePanel entry={baseEntry({ clusters })} onOpenQueue={vi.fn()} />);
+
+    const link = screen.getByRole('link', { name: 'Fix faces in face group 1' });
+    expectScopedReviewHref(link, 'a&b c');
   });
 
   it.each(['refreshing', 'stale', 'failed'] as const)('suppresses correction links for a %s projection', (projection_status) => {

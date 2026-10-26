@@ -1,0 +1,34 @@
+#operator-toolbar{padding:12px;border:1px solid #8395a7;border-radius:6px;margin-bottom:18px;background:#edf2f7;color:#182534;display:flex;flex-wrap:wrap;gap:12px;align-items:center}#operator-toolbar>p,#operator-toolbar>details{width:100%;margin:0}.operator-details{padding:8px;margin:12px 0 0;font-size:13px;color:#182534;background:#f5f7fa}.operator-details summary,.operator-gold summary{cursor:pointer;font-weight:600}.operator-details label,.operator-gold label,#operator-toolbar label{display:flex;gap:6px;align-items:center;margin:6px 0}.operator-details label:has(textarea),.operator-gold label:has(textarea){display:grid}.operator-details fieldset{border:1px solid #9daebb;margin:8px 0;padding:6px}.operator-details textarea,.operator-gold textarea{width:100%;min-height:52px}.operator-details select,.operator-gold select{max-width:100%}.operator-gold{padding:8px;font-size:13px;background:#edf2f7;color:#182534}.operator-hide-descriptions .description-scroll,.operator-hide-descriptions .operator-pairs{visibility:hidden}.operator-metrics-scroll{overflow:auto;max-width:100%}.operator-metrics-scroll table{font-size:12px;border-collapse:collapse}.operator-metrics-scroll th,.operator-metrics-scroll td{border:1px solid #9aabba;padding:5px;white-space:nowrap}.operator-blind-hint{margin:8px 0;color:#526170;font-size:13px}.operator-metrics-section h3{font-size:15px;margin:14px 0 6px}.operator-metrics-section h4{font-size:13px;margin:10px 0 4px}.operator-pairs{padding:10px;border:1px solid #8395a7;display:flex;gap:12px;flex-wrap:wrap}.operator-pairs p{width:100%;margin:0}.operator-pairs label{display:flex;gap:6px}.operator-blind main> :not(.image-card):not(#operator-toolbar):not(#comparisons){display:none!important}.operator-blind .image-card .image-header .sub,.operator-blind .image-card .badge,.operator-blind .scroll-hint,.operator-blind .description-table td small,.operator-blind .description-table td>a,.operator-blind .description-table td>strong,.operator-blind .description-table td>p{display:none!important}.operator-blind .description-table th{background:#e8eef4}button,input,select,textarea{font:inherit}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #236abc;outline-offset:2px}@media(prefers-color-scheme:dark){.operator-details,.operator-gold,#operator-toolbar,.operator-pairs{background:#202d3b;color:#f2f5f8}.operator-details input,.operator-details select,.operator-details textarea,.operator-gold input,.operator-gold select,.operator-gold textarea,#operator-toolbar input,#operator-toolbar button,.operator-pairs select{background:#101d2a;color:#f2f5f8;border:1px solid #8494a6}.operator-metrics-scroll th,.operator-metrics-scroll td{color:#f2f5f8;background:#202d3b}}
+/* Comparisons use their actual column count; horizontal overflow belongs to the page. */
+main,#top{max-width:none;margin-inline:0}
+main>:not(.image-card){max-width:1308px}
+.image-card{width:max-content;max-width:none}
+.image-card .comparison-row{--reference-width:clamp(480px,37.5vw,600px);grid-template-columns:var(--reference-width) max-content;width:max-content}
+.description-scroll{width:max-content;max-width:none;overflow:visible;overscroll-behavior-x:auto;scrollbar-gutter:auto}
+.description-table{min-width:0}
+.description-table th,.description-table td{width:320px;min-width:320px;max-width:320px}
+/* Stretch the horizontal sticky rail to the row, not the viewport. Only the
+   image link sticks vertically: metadata and gold controls remain in flow. */
+.image-card .comparison-row>.image-pane{position:sticky;left:12px;align-self:stretch;z-index:2;background:#fff}
+.image-card .comparison-row>.image-pane>a{position:sticky;top:12px;z-index:1;background:#f0f3f6;border-radius:5px}
+.image-card .comparison-row>.image-pane>a>.thumbnail{width:100%;height:min(var(--reference-width),calc(100vh - 24px));height:min(var(--reference-width),calc(100dvh - 24px));object-fit:contain}
+/* Open gold editors need clearance above a centered 52px textarea, including
+   the image's sticky top offset. Keep ordinary reference sizing unchanged. */
+.image-card .comparison-row>.image-pane:has(>.operator-gold[open])>a>.thumbnail{height:min(var(--reference-width),calc(40vh - 24px));height:min(var(--reference-width),calc(40dvh - 24px))}
+.image-card .comparison-row>.image-pane>.operator-gold[open] :is(summary,input,select,textarea,button){scroll-margin-top:40vh;scroll-margin-top:40dvh}
+@media(max-width:600px){.image-card .comparison-row{--reference-width:clamp(128px,40vw,240px)}}
+/* A viewport-sized panel can travel within the oversized card on the page. */
+.operator-blind .image-card>.operator-pairs{position:sticky;left:12px;box-sizing:border-box;width:calc(100vw - 90px)}
+.operator-blind .image-card>.operator-pairs label{flex-wrap:wrap;max-width:100%}
+.operator-blind .image-card>.operator-pairs select{max-width:100%;min-width:0}
+@media(max-width:600px){.operator-blind .image-card>.operator-pairs{width:calc(100vw - 54px)}}
+
+/* Keep report context visible above the toolbar while browsing later columns. */
+.report-intro{position:sticky;left:16px;width:min(1180px,calc(100vw - 56px));box-sizing:border-box}
+.report-intro h1{margin-top:0}
+.report-context{margin:12px 0 16px}
+.report-context>summary{cursor:pointer;font-weight:600}
+
+.archive-intro{position:sticky;left:16px;width:min(1180px,calc(100vw - 56px));box-sizing:border-box;margin-top:32px}
+.review-history-status{font-size:13px;padding:6px;border:1px solid #8395a7}
+.operator-blind .historical-review-image,.operator-blind .review-history-status{display:none!important}

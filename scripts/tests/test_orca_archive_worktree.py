@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import errno
+import importlib.util
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -270,3 +274,131 @@ def test_empty_worktree_env_counts_as_missing(repos: Repos) -> None:
 
     assert completed.returncode == 2, completed.stderr
     assert "ORCA_WORKTREE_PATH is not set" in completed.stderr
+
+
+def _assert_never_authorizes(stderr: str) -> None:
+    assert "is clean" not in stderr, stderr
+    assert "may archive" not in stderr, stderr
+
+
+def test_unreadable_untracked_directory_refuses_archive(repos: Repos) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory mode bits, so git can still read the directory")
+    private = repos.worktree / "private"
+    private.mkdir()
+    (private / "unsaved.txt").write_text("work that exists nowhere else\n", encoding="utf-8")
+    private.chmod(0)
+    try:
+        completed = _run_read_only(repos, worktree=repos.worktree, root=repos.primary)
+    finally:
+        private.chmod(0o700)
+
+    assert completed.returncode == 2, completed.stderr
+    assert "could not open directory 'private/'" in completed.stderr
+    assert "could not fully scan" in completed.stderr
+    assert str(repos.worktree) in completed.stderr
+    assert "chmod u+rx" in completed.stderr
+    assert "retry" in completed.stderr
+    _assert_never_authorizes(completed.stderr)
+    assert (private / "unsaved.txt").exists()
+
+
+def _stub_git(repos: Repos) -> Path:
+    """Put a git first on PATH whose `status` is scripted and everything else is real git."""
+    real_git = shutil.which("git", path=repos.env.get("PATH"))
+    assert real_git is not None
+    bin_dir = repos.root / "stub-bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "git"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$3" = status ]; then\n'
+        "  printf '%s' \"$STUB_STATUS_STDOUT\"\n"
+        "  printf '%s' \"$STUB_STATUS_STDERR\" >&2\n"
+        '  exit "$STUB_STATUS_EXIT"\n'
+        "fi\n"
+        f'exec {shlex.quote(real_git)} "$@"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    return bin_dir
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "exit_code", "expected"),
+    [
+        ("", "warning: something\n", 0, 2),
+        ("?? notes/todo.txt\n", "warning: something\n", 0, 2),
+        ("", "fatal: index file corrupt\n", 128, 2),
+        ("?? notes/todo.txt\n", "", 0, 1),
+        ("", "", 0, 0),
+    ],
+    ids=["warning-exit-0", "warning-with-dirty-stdout", "nonzero-exit", "stdout-only-dirty", "clean"],
+)
+def test_git_status_stderr_means_the_scan_is_incomplete(
+    repos: Repos, stdout: str, stderr: str, exit_code: int, expected: int
+) -> None:
+    bin_dir = _stub_git(repos)
+    extra = {
+        "PATH": f"{bin_dir}{os.pathsep}{repos.env.get('PATH', '')}",
+        "STUB_STATUS_STDOUT": stdout,
+        "STUB_STATUS_STDERR": stderr,
+        "STUB_STATUS_EXIT": str(exit_code),
+    }
+
+    completed = _run_archive(repos, worktree=repos.worktree, root=repos.primary, extra_env=extra)
+
+    assert completed.returncode == expected, completed.stderr
+    assert completed.stdout == ""
+    if stderr:
+        assert stderr in completed.stderr, "git's own message must reach the operator verbatim"
+    # A warning is not a dirty path (finding 14108): the channels never mix.
+    assert "  warning: something" not in completed.stderr.splitlines()
+    if expected == 2:
+        assert "could not fully scan" in completed.stderr
+        assert "dirty path" not in completed.stderr
+        _assert_never_authorizes(completed.stderr)
+    elif expected == 1:
+        assert "  ?? notes/todo.txt" in completed.stderr.splitlines()
+        assert "1 dirty path(s)" in completed.stderr
+    else:
+        assert f"{repos.worktree} is clean; Orca may archive it." in completed.stderr
+
+
+def _load_archive_module():
+    spec = importlib.util.spec_from_file_location("orca_archive_worktree_under_test", ARCHIVE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("failing_step", ["status", "symbolic-ref"])
+def test_git_launch_failure_after_rev_parse_refuses_without_traceback(
+    repos: Repos, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failing_step: str
+) -> None:
+    archive = _load_archive_module()
+    for key in [key for key in os.environ if key not in repos.env]:
+        monkeypatch.delenv(key)
+    for key, value in repos.env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("ORCA_WORKTREE_PATH", str(repos.worktree))
+    monkeypatch.setenv("ORCA_ROOT_PATH", str(repos.primary))
+    real_run = subprocess.run
+
+    def run(argv, *args, **kwargs):
+        if argv[3:4] == [failing_step]:
+            raise OSError(errno.ENOENT, os.strerror(errno.ENOENT), "git")
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(archive.subprocess, "run", run)
+
+    returncode = archive.main([])
+
+    captured = capsys.readouterr()
+    assert returncode == 2, captured.err
+    assert captured.out == ""
+    assert captured.err.startswith("archive_worktree: cannot run git ("), captured.err
+    assert "put git on PATH" in captured.err
+    assert "Traceback" not in captured.err
+    _assert_never_authorizes(captured.err)

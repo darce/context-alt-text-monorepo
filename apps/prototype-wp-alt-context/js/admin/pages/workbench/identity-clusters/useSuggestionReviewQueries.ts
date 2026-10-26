@@ -119,6 +119,12 @@ export const useSuggestionReviewQueries = () => {
     retry: false,
   });
 
+  // UXREC-1-DEMO-02: no per-query `retry` override. The app QueryClient default
+  // (appQueryClient.ts) owns it — openCooldownFromError + shouldRetryRequest —
+  // so a plain 500 / 4xx / auth expiry is still never retried (E21-14 intent),
+  // while one timeout or transport blip no longer flips the queue to role=alert
+  // before a bounded, backed-off retry has run (PERC-07, RES-06). REF-19: do
+  // not re-declare a local retry function; it would skip the cooldown seam.
   // eslint-disable-next-line @tanstack/query/exhaustive-deps -- tombstone prune reads QueryClient, not a fetch key
   const topUnlabeledQuery = useQuery({
     queryKey: queryKeys.clusters.topUnlabeled(tenantId),
@@ -135,7 +141,6 @@ export const useSuggestionReviewQueries = () => {
     enabled: tenantId !== '',
     staleTime: 60000,
     refetchOnMount: 'always',
-    retry: false,
   });
 
   const assignmentSuggestions = assignmentQuery.data?.items;

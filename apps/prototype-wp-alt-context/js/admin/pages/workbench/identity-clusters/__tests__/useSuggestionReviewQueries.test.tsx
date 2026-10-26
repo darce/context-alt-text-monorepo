@@ -4,12 +4,16 @@
  * (buildSuggestionReviewItems re-filters) but fails these raw-item assertions.
  */
 
+import type { QueryClient } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
+import { queryKeys } from '../../../../api/queryKeys';
 import * as recognitionApi from '../../../../api/recognition';
 import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
+import { createAppQueryClient } from '../../../../utils/appQueryClient';
+import { HTTPError } from '../../../../utils/http';
 import { useSuggestionReviewQueries } from '../useSuggestionReviewQueries';
 import { buildPendingRow } from './suggestionProjection.fixtures';
 
@@ -139,5 +143,88 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
 
     await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
     expect(result.current.topUnlabeledTruncated).toBe(true);
+  });
+
+  describe('topUnlabeledQuery retry (UXREC-1-DEMO-02)', () => {
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('tenant-1');
+    let appClient: QueryClient;
+
+    // Production QueryClient (App.tsx) with only the delay zeroed: the retry
+    // predicate is the real openCooldownFromError + shouldRetryRequest.
+    beforeEach(() => {
+      appClient = createAppQueryClient();
+      appClient.setDefaultOptions({
+        queries: { ...appClient.getDefaultOptions().queries, retryDelay: 0 },
+      });
+      vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [],
+        limit: 25,
+        offset: 0,
+        data_source: 'local_projection',
+      });
+    });
+
+    afterEach(() => {
+      appClient.clear();
+    });
+
+    const renderWithAppDefaults = () =>
+      renderHook(() => useSuggestionReviewQueries(), { wrapper: createQueryWrapper(appClient) });
+
+    // REF-19: re-adding `retry: false` (or a local predicate) to the query
+    // replaces the shared default and skips the cooldown seam; this pins it out.
+    it('carries no retry override, so the app QueryClient default applies', async () => {
+      const { result } = renderWithAppDefaults();
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
+      const defaultRetry = appClient.getDefaultOptions().queries?.retry;
+      expect(typeof defaultRetry).toBe('function');
+      expect(appClient.getQueryCache().find({ queryKey: topUnlabeledKey })?.options.retry).toBe(
+        defaultRetry,
+      );
+    });
+
+    it('retries a timeout exactly once before surfacing isError', async () => {
+      vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockRejectedValue(
+        new DOMException('The operation timed out.', 'TimeoutError'),
+      );
+
+      const { result } = renderWithAppDefaults();
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isError).toBe(true));
+      expect(recognitionApi.fetchTopUnlabeledClusters).toHaveBeenCalledTimes(2);
+    });
+
+    // E21-14 intent: a plain 500 is never re-fired.
+    it('does not retry a plain 500', async () => {
+      vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockRejectedValue(
+        new HTTPError({
+          status: 500,
+          retryAfterSeconds: undefined,
+          endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+          bodyPreview: 'acx_projection_query_failed',
+          message: 'projection query failed',
+        }),
+      );
+
+      const { result } = renderWithAppDefaults();
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isError).toBe(true));
+      expect(recognitionApi.fetchTopUnlabeledClusters).toHaveBeenCalledTimes(1);
+    });
+
+    // PERC-07: one transient blip recovers silently — the query never enters
+    // the error state, so the queue never raises its role=alert for it.
+    it('recovers from a single timeout without ever entering the error state', async () => {
+      vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockRejectedValueOnce(
+        new DOMException('The operation timed out.', 'TimeoutError'),
+      );
+
+      const { result } = renderWithAppDefaults();
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
+      expect(recognitionApi.fetchTopUnlabeledClusters).toHaveBeenCalledTimes(2);
+      expect(appClient.getQueryState(topUnlabeledKey)?.errorUpdateCount).toBe(0);
+    });
   });
 });

@@ -79,6 +79,11 @@ export const useSuggestionReviewData = () => {
   // Separate flag so CLUSTER cards / unlabeled section can error+retry without
   // folding into isError (which blanks every control via isErrorBranch).
   const isTopUnlabeledError = topUnlabeledQuery.isError;
+  // UXREC-1-DEMO-02: the error object lets the queue classify the outage (auth
+  // expiry routes to the session notice, not a dead Retry); isFetching drives
+  // the Retry wait state so it cannot be double-submitted (INT-08).
+  const topUnlabeledError: unknown = topUnlabeledQuery.error;
+  const isTopUnlabeledFetching = topUnlabeledQuery.isFetching;
   const failureCount = Math.max(
     assignmentQuery.failureCount,
     mergeQuery.failureCount,
@@ -129,6 +134,8 @@ export const useSuggestionReviewData = () => {
     isLoading,
     isError,
     isTopUnlabeledError,
+    topUnlabeledError,
+    isTopUnlabeledFetching,
     failureCount,
     tenantId,
     isAnyMutationPending,

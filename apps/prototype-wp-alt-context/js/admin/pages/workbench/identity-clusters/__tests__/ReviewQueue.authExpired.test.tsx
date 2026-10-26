@@ -15,10 +15,12 @@ import {
   fetchTopUnlabeledClusters,
 } from '../../../../api/recognition';
 import { resetConfigCache } from '../../../../api/config';
+import { queryKeys } from '../../../../api/queryKeys';
 import { listRosterEntries, commitClusterToRosterEntry } from '../../../../api/rosterApi';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
 import { AuthExpiredError } from '../../../../utils/http';
+import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/userFacingError';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -268,5 +270,70 @@ describe('ReviewQueue auth-expired notice (UXPNET2-BR-03)', () => {
     await screen.findByTestId('acx-review-card');
     expect(screen.queryByTestId('acx-user-facing-error')).not.toBeInTheDocument();
     expect(screen.getByText('Review Suggestions')).toBeInTheDocument();
+  });
+
+  // UXREC-1-DEMO-02 / INT-18: a top-unlabeled auth expiry routes into the same
+  // queue-level notice (session copy + Reload), never the outage alert + Retry.
+  it('top-unlabeled AuthExpiredError with a healthy probe renders the single queue notice, no Retry', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue({
+      members: [],
+      limit: 1,
+      total: 0,
+      truncated: false,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new AuthExpiredError({ endpoint: '/acx/v1/recognition/clusters/top-unlabeled', status: 403 }),
+    );
+
+    const { queryClient } = renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    await waitFor(() => {
+      expect(
+        queryClient.getQueryState(queryKeys.clusters.topUnlabeled('test-tenant-id'))?.status,
+      ).toBe('error');
+    });
+
+    const notices = await screen.findAllByTestId('acx-user-facing-error');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toHaveClass('acx-review-queue__auth-expired');
+    expect(notices[0]).toHaveAttribute('data-error-kind', 'auth-expired');
+    expect(notices[0]).toHaveTextContent(SPA_SESSION_EXPIRED_COPY.sessionExpired);
+    expect(screen.getAllByRole('button', { name: SPA_SESSION_EXPIRED_COPY.reloadPage })).toHaveLength(1);
+    expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unable to load unlabeled faces.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    // INT-11: the queue stays mounted around the notice.
+    expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+  });
+
+  // UXREC-1-DEMO-02 / PERC-07: two auth-expired sources still yield one alarm.
+  it('head probe and top-unlabeled both auth-expired: exactly one acx-user-facing-error', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(
+      new AuthExpiredError({ endpoint: '/acx/v1/clusters/cluster-1/members', status: 401 }),
+    );
+    vi.mocked(fetchTopUnlabeledClusters).mockRejectedValue(
+      new AuthExpiredError({ endpoint: '/acx/v1/recognition/clusters/top-unlabeled', status: 403 }),
+    );
+
+    const { queryClient } = renderQueue();
+
+    await screen.findByTestId('acx-review-card');
+    await waitFor(() => {
+      expect(
+        queryClient.getQueryState(queryKeys.clusters.topUnlabeled('test-tenant-id'))?.status,
+      ).toBe('error');
+      expect(document.querySelector('.acx-review-queue')).toHaveAttribute(
+        'data-live-target-status',
+        'auth_expired',
+      );
+    });
+
+    const notices = screen.getAllByTestId('acx-user-facing-error');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toHaveAttribute('data-error-kind', 'auth-expired');
+    expect(screen.getAllByRole('button', { name: SPA_SESSION_EXPIRED_COPY.reloadPage })).toHaveLength(1);
+    expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });

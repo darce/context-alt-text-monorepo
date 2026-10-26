@@ -94,7 +94,7 @@ const typePersonName = async (
   await waitFor(() => expect(input).not.toBeDisabled());
   input.focus();
   fireEvent.keyDown(input, { key: 'ArrowDown' });
-  await within(commit).findByText(name);
+  await within(commit).findByRole('option', { name: `Confirm match with ${name}` });
   await user.type(input, `${name}{Enter}`);
 };
 

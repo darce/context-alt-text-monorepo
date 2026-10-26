@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Admin\Admin;
+use AltContext\Api\SettingsController;
 use AltContext\Tests\TestCase;
 use ReflectionClass;
 
@@ -225,6 +226,111 @@ class AdminTest extends TestCase
 
         $this->assertIsArray($localized);
         $this->assertSame(self::currentTenantId(), $localized['tenant_id'] ?? null);
+    }
+
+    public function testLocalizeSpaConfigPublishesEmptyAccountUsageUrlByDefault(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertArrayHasKey('accountUsageUrl', $localized);
+        $this->assertSame('', $localized['accountUsageUrl']);
+    }
+
+    public function testLocalizeSpaConfigPublishesUsageEndpoint(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('http://example.test/wp-json/acx/v1/usage', $localized['endpoints']['usage'] ?? null);
+    }
+
+    /**
+     * USG1-F1: follow the production bootstrap, not an injected fixture, from the
+     * key usageApi.ts reads to the registered route and its upstream read.
+     */
+    public function testPublishedUsageEndpointReachesTheRegisteredUsageRead(): void
+    {
+        $ts = (string) file_get_contents(ACX_PLUGIN_DIR . 'js/admin/api/usageApi.ts');
+        $this->assertSame(1, preg_match("/export const TENANT_USAGE_ENDPOINT_KEY = '([^']+)';/", $ts, $key));
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+        $endpoints = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin']['endpoints'] ?? [];
+        $published = $endpoints[$key[1]] ?? null;
+        $this->assertIsString($published, sprintf('endpoints.%s is not published', $key[1]));
+
+        $controller = new SettingsController();
+        $controller->register_routes();
+        $routes = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => rest_url($definition['namespace'] . $definition['route']) === $published
+        ));
+        $this->assertCount(1, $routes);
+        $this->assertSame('GET', $routes[0]['args']['methods']);
+
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => (string) file_get_contents(
+                dirname(ACX_PLUGIN_DIR, 2) . '/packages/shared-contracts/recognition/tenant-usage-response.golden.json'
+            ),
+        ]);
+
+        $this->assertTrue(call_user_func($routes[0]['args']['permission_callback']));
+        $response = call_user_func($routes[0]['args']['callback'], new \WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(372, $response->get_data()['remaining'] ?? null);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('https://api.example.com/recognition/tenant/usage', $calls[0]['url']);
+    }
+
+    public function testLocalizeSpaConfigPublishesFilteredAccountUsageUrl(): void
+    {
+        add_filter('acx_account_url', static fn (): string => 'https://account.example.com/usage');
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('https://account.example.com/usage', $localized['accountUsageUrl'] ?? null);
+    }
+
+    public function testLocalizeSpaConfigPublishesEmptyAccountUsageUrlForNonStringFilterValue(): void
+    {
+        add_filter('acx_account_url', static fn (): array => ['https://account.example.com/usage']);
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('', $localized['accountUsageUrl'] ?? null);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testLocalizeSpaConfigPrefersAccountUrlConstantOverFilter(): void
+    {
+        define('ACX_ACCOUNT_URL', 'https://constant.example.com/account');
+        add_filter('acx_account_url', static fn (): string => 'https://filter.example.com/account');
+
+        $this->invokePrivateMethod(new Admin(), 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('https://constant.example.com/account', $localized['accountUsageUrl'] ?? null);
     }
 
     /**

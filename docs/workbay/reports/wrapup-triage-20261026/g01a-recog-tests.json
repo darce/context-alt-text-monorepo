@@ -1,0 +1,734 @@
+{
+  "group": "g01a-recog-tests",
+  "base_sha": "ab3222a88b3ff18db504effc942d3ada2cac225c",
+  "verdicts": [
+    {
+      "db_id": 18251,
+      "finding_id": "GTMC-C78G2T-03",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 122,
+          "excerpt": "result = health.check_model_space(health.ModelSpace.AURAFACE, tmp_path / \"embedder\")"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 222,
+          "excerpt": "# ABI-07 is keyword-only: a no-argument call must fail this double."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 223,
+          "excerpt": "def loaded_runtime_record(self, *, expected_config, active_generation_id, captured_at):"
+        },
+        {
+          "file": "scripts/tests/test_face_build_identity.py",
+          "line": 123,
+          "excerpt": "def test_baked_loader_environment_oracle_discriminates(behavior, monkeypatch, tmp_path):"
+        },
+        {
+          "file": "scripts/tests/test_face_build_identity.py",
+          "line": 326,
+          "excerpt": "def test_dockerfile_identity_oracle_rejects_mentions_and_wrong_destinations(decoy):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "All 4 parts addressed: C-05 probe label now read from executed check_model_space; C-07 double is keyword-only ABI-07; C-10 ENV conflict has a 4-way discriminating oracle; C-11 parses the Dockerfile and rejects decoys."
+    },
+    {
+      "db_id": 18344,
+      "finding_id": "GTMC-C81R-HB-M1",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 246,
+          "excerpt": "worker = object.__new__(worker_module.ScanWorker)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 196,
+          "excerpt": "asyncio.run(worker._heartbeat_embedding_runtime_capability())"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 197,
+          "excerpt": "assert len(observations) == index + 1, \"CAUSAL_RED: one ABI-07 observation per heartbeat required\""
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants of _heartbeat_embedding_runtime_capability: HB3 'if False:' -> 5 failed, 10 passed; HB2 hasattr no-arg call -> 5 failed, 10 passed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Heartbeat oracle now executes the real method via object.__new__ with a recording session and a keyword-only double; HB2/HB3 mutants re-run on a /tmp copy go RED (positive control confirmed copy import)."
+    },
+    {
+      "db_id": 18539,
+      "finding_id": "C82R-HFACEG2R2-F2",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 445,
+          "excerpt": "@pytest.mark.parametrize(\"reused_identity\", [\"generation\", \"session\"])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+          "line": 649,
+          "excerpt": "or not new_sessions or not all(new_sessions) or not new_sessions.isdisjoint(old_sessions)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+          "line": 349,
+          "excerpt": "await self._ensure_embedding_runtime()"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants vs HLT: drop 'not new_sessions'; __aenter__ skips ensure; drop state check; 'replacement is None'->False: each 15 passed"
+        }
+      ],
+      "fix_size": "s",
+      "fix_hint": "In HLT add: drifted retained + replacement with sessions={} (refused); a test driving ScanWorker.__aenter__ that asserts one ABI-07 observation; replacement with state 'unavailable' and an observer-less detector, both refused.",
+      "confidence": "high",
+      "note": "Refusal tests cover only reused generation/session; no empty-session, __aenter__ startup or unavailable/None replacement control. Four worker mutants survive HLT (control mutant on reused generation goes RED)."
+    },
+    {
+      "db_id": 18597,
+      "finding_id": "C82R-FIRCURATIONR2-F1",
+      "verdict": "env_stale",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/conftest.py",
+          "line": 103,
+          "excerpt": "@pytest_asyncio.fixture"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/conftest.py",
+          "line": 107,
+          "excerpt": "\"sqlite+aiosqlite:///:memory:\","
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/conftest.py",
+          "line": null,
+          "excerpt": "grep -rn 'SelectorEventLoop|event_loop_policy|selector' recognition/tests/conftest.py pyproject.toml -> no matches"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Fixture is still the stock aiosqlite StaticPool engine with no loop or selector override; the timeout was observed on one host. Re-measure by running a db_session unit test unmodified on the target host/sandbox."
+    },
+    {
+      "db_id": 18850,
+      "finding_id": "EDGE17-F3-BOOTCHECKER",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py",
+          "line": 375,
+          "excerpt": "body = _fn_body(DEPLOY_SCRIPT.read_text(encoding=\"utf-8\"), \"do_boot_smoke\")"
+        },
+        {
+          "file": "scripts/deploy/recognition-service.sh",
+          "line": 3924,
+          "excerpt": "local smoke_payload=\"${SCRIPT_DIR}/lib/recognition-boot-smoke.sh\""
+        },
+        {
+          "file": "scripts/deploy/lib/recognition-boot-smoke.sh",
+          "line": 181,
+          "excerpt": "--tmpfs /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec )"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py",
+          "line": null,
+          "excerpt": "pytest -k 'test_boot_smoke_mounts_modules_tmpfs_matching_dockerfile or test_boot_smoke_requires_models_path' -> both FAILED (assert []; models_path absent)"
+        }
+      ],
+      "fix_size": "xs",
+      "fix_hint": "Point both tests (lines 375 and 1389) at scripts/deploy/lib/recognition-boot-smoke.sh, or at the wrapper plus the payload it inlines via $(<smoke_payload), and keep the tmpfs/uid and models_path assertions unchanged.",
+      "confidence": "high",
+      "note": "Both checks still slice the do_boot_smoke wrapper; --tmpfs and the ACX_MODELS_PATH refusal moved to the delegated payload, so the two tests fail at HEAD."
+    },
+    {
+      "db_id": 18240,
+      "finding_id": "GTMC-C78G3J-02",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 147,
+          "excerpt": "assert expected in result['gaps']"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 149,
+          "excerpt": "assert result['acquisition_ledger'][0]['reason_code'] == expected"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 296,
+          "excerpt": "if output['dimension'] != 512:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": null,
+          "excerpt": "tmp-copy survey, each _fail() guard deleted singly: killed 83, survivors 1 [297]"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": null,
+          "excerpt": "under :297 mutant, normalized_output dimension=128 -> gaps ['GAP-BRANCH-ARTIFACTS', 'GAP-V1-REPAIR']"
+        }
+      ],
+      "fix_size": "xs",
+      "fix_hint": "Add a join case setting execution_receipt['normalized_output']['dimension']=128 (raw unchanged) and assert 'contradictory_binding' in gaps with ledger row 0 reason_code == 'contradictory_binding'.",
+      "confidence": "high",
+      "note": "Mostly fixed: per-factor oracle replaced the any-gap check and dedicated guard cases exist (83/84 guard deletions RED). One residual survivor remains: no case for a wrong normalized_output width."
+    },
+    {
+      "db_id": 18372,
+      "finding_id": "C82R-G3J3-02",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 757,
+          "excerpt": "@pytest.mark.parametrize('model,tensor_key', [('yunet', 'detector_input'), ('auraface', 'embedder_input')])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 762,
+          "excerpt": "records[1]['adapter_observations'][0]['runtime_record']['execution_receipt'][tensor_key]['shape'] = [1, 3, 224, 224]"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 579,
+          "excerpt": "tensor_contracts[tensor_key] = dict(_canonical_tensor_contract(tensor['shape'], tensor['dtype']),"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants dropping 'shape' from detector (M23) / embedder (M24) contract: each 1 failed, 293 passed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "test_c82_symbolic_metadata_executed_shape is the requested worker-224 vs API-112 case for both tensors; M23/M24 re-run on a /tmp copy go RED."
+    },
+    {
+      "db_id": 18459,
+      "finding_id": "C82R-HFACEG3-F2",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 856,
+          "excerpt": "def test_c82_output_metadata_float16_refuses():"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 863,
+          "excerpt": "def test_c82_output_metadata_second_output_refuses():"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 302,
+          "excerpt": "if (declared['dtype'] != 'float32' or len(declared['shape']) != 2"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants: J28 dtype guard -> 1 failed, 293 passed; J30 len(metadata) != 1 -> 1 failed, 293 passed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "float16 and second-output cases were added; both J28 and J30 deletions re-run on a /tmp copy go RED."
+    },
+    {
+      "db_id": 18303,
+      "finding_id": "GTMC-FG3C80-F6",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 230,
+          "excerpt": "assert timeout is not None and 0 < timeout <= budget - reap_reserve"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": 206,
+          "excerpt": "timeout=max(0, budget - READER_REAP_RESERVE_SECONDS))"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": null,
+          "excerpt": "tmp-copy mutant timeout=max(0, budget) -> 5 failed (post_kill_wait x2, launch_overrun[0.97], reap_uses_only_remaining x2), 51 passed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The fake communicate now pins timeout <= budget - 0.15 directly, so reserve deletion fails by 0.15 s rather than by a float residue. Three other tests also kill it."
+    },
+    {
+      "db_id": 18368,
+      "finding_id": "C82R-G3C2-05",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 446,
+          "excerpt": "# C82R-G3C2-05: equality must launch, independent of float subtraction."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 461,
+          "excerpt": "boundary = module.READER_REAP_RESERVE_SECONDS + module.READER_LAUNCH_MARGIN_SECONDS"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": 196,
+          "excerpt": "if remaining < READER_REAP_RESERVE_SECONDS + READER_LAUNCH_MARGIN_SECONDS:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": null,
+          "excerpt": "tmp-copy mutant R12 '<' -> '<=' -> 1 failed (test_exact_launch_reserve_boundary_is_allowed), 55 passed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The exact reserve+margin allowed-boundary control was added; R12 re-run on a /tmp copy goes RED."
+    },
+    {
+      "db_id": 18369,
+      "finding_id": "C82R-G3C2-06",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 469,
+          "excerpt": "# C82R-G3C2-06: complementary launch-inclusive smoke, not a universal bound."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 485,
+          "excerpt": "assert time.monotonic() - started < 0.5"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": null,
+          "excerpt": "tmp-copy mutant time.sleep(0.6) before Popen -> FAILED test_actual_reader_timeout_is_bounded and test_actual_launch_is_in_total_caller_timing"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "test_actual_launch_is_in_total_caller_timing adds the requested launch-inclusive caller timing; the X05-style +600 ms launch delay now turns it RED."
+    },
+    {
+      "db_id": 18470,
+      "finding_id": "C82R-FACEG3ADJ1-02",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 482,
+          "excerpt": "monkeypatch.setattr(module.time, \"monotonic\", lambda: real_monotonic() if readers else started)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 484,
+          "excerpt": "result = collect([tmp_path / 'unused'], inputs, deadline_monotonic=started + 0.2)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 485,
+          "excerpt": "assert time.monotonic() - started < 0.5"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": null,
+          "excerpt": "tmp-copy stall probe: time.sleep(0.1) before the admission check -> test_actual_launch_is_in_total_caller_timing 1 passed (launch still admitted)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Pre-launch admission reads a frozen clock until the reader launches, so a stall can no longer refuse launch. Contract held: deadline 0.2 s, threshold 0.15+0.01 s, oracle 0.5 s unchanged."
+    },
+    {
+      "db_id": 18472,
+      "finding_id": "C82R-FACEG3ADJ1-04",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 68,
+          "excerpt": "@pytest.mark.timing"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 467,
+          "excerpt": "@pytest.mark.timing"
+        },
+        {
+          "file": "apps/prototype-description-service/pyproject.toml",
+          "line": 317,
+          "excerpt": "\"timing: marks wall-clock-sensitive tests (latency budgets, expiry races); run serial via test-integration"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Both wall-clock controls (actual_reader_timeout_is_bounded, actual_launch_is_in_total_caller_timing) carry the registered timing marker (now pyproject.toml:317)."
+    },
+    {
+      "db_id": 18473,
+      "finding_id": "C82R-FACEG3ADJ1-05",
+      "verdict": "process_not_code",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/pyproject.toml",
+          "line": 317,
+          "excerpt": "\"timing: marks wall-clock-sensitive tests (latency budgets, expiry races); run serial via test-integration"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 485,
+          "excerpt": "assert time.monotonic() - started < 0.5"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Gate-classification ruling (loaded-only wall-clock reds classed LOW, unloaded repros HIGH). It sets no code contract; the serial timing lane is how the tests run."
+    },
+    {
+      "db_id": 18483,
+      "finding_id": "C82R-HFACEG3R2-F2",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_operation_errors.py",
+          "line": 36,
+          "excerpt": "def test_non_timeout_operation_error_kills_and_reaps_reader(tmp_path, monkeypatch, error_type):"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": 207,
+          "excerpt": "except BaseException:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": null,
+          "excerpt": "tmp-copy mutant C05 'except BaseException' -> 'except subprocess.TimeoutExpired' -> FAILED operation_errors[oserror] and [valueerror]"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The planned test_collect_auraface_operation_errors.py exists and covers OSError/ValueError cleanup; C05 re-run on a /tmp copy goes RED."
+    },
+    {
+      "db_id": 18505,
+      "finding_id": "C82R-HFACEG3R4-F2",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 482,
+          "excerpt": "monkeypatch.setattr(module.time, \"monotonic\", lambda: real_monotonic() if readers else started)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 487,
+          "excerpt": "assert len(readers) == 1 and readers[0].returncode == -9"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": null,
+          "excerpt": "tmp-copy stall probe: time.sleep(0.1) before the admission check -> test_actual_launch_is_in_total_caller_timing 1 passed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Same root cause as 18470. The len(readers)==0 path (0.16 s admission refused under CPU stall) is closed because admission reads the frozen started clock. The loaded 500-run soak was not repeated."
+    },
+    {
+      "db_id": 18508,
+      "finding_id": "C82R-FACEG3ADJ2-02",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 640,
+          "excerpt": "assert reader.returncode == (-9 if exits else None)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 642,
+          "excerpt": "status = 'deadline_exceeded' if exits else 'reader_unkillable'"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_collect_auraface_acceptance.py",
+          "line": 654,
+          "excerpt": "assert real_popen.poll(reader) is None"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/collect_auraface_acceptance.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants: reap ceiling 0 -> 4 failed; ceiling=reserve -> 3 failed; drop leaked_child_pid -> 1 failed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The pair now asserts on a real child (-9 + deadline_exceeded; alive at ceiling -> reader_unkillable plus leaked pid) on a virtual clock with no 10 ms separator. Ceiling mutants go RED."
+    },
+    {
+      "db_id": 18245,
+      "finding_id": "GTMC-C77G4T-01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 426,
+          "excerpt": "if sql == \"SELECT current_setting('app.bypass_rls', true)\":"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 520,
+          "excerpt": "return []  # unrecognised read-only probes: zero rows, never tenant data"
+        },
+        {
+          "file": "scripts/collect_gpu_pg_evidence.py",
+          "line": null,
+          "excerpt": "pytest test_gtmc_gpu_pg_findings.py (tmp copy) baseline -> 141 passed, incl. [primary-app-bypass-rls-on]"
+        },
+        {
+          "file": "scripts/collect_gpu_pg_evidence.py",
+          "line": null,
+          "excerpt": "tmp-copy mutant bypass check -> False: FAILED test_d1_unsafe_session_identity_..._read[primary-app-bypass-rls-on]"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The fake now answers the collector's app.bypass_rls probe from the session identity, so bypass is observable. The D1 bypass-on case passes and goes RED when the collector ignores bypass. The catch-all [] remains only for other probes."
+    },
+    {
+      "db_id": 18246,
+      "finding_id": "GTMC-C77G4T-02",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 1328,
+          "excerpt": "assert _facts(result)[f\"pg:connection:{label}\"][\"app_bypass_rls\"] is False"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 921,
+          "excerpt": "any(q[\"query_id\"] == \"run-own\" and q[\"rows\"] == [[RUN_OWN, TENANT_A, OP_OWN]] for q in r[\"queries\"])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": null,
+          "excerpt": "grep APP_BYPASS_UNPROBED in test -> only :1278 (null-value code map) and :1443 (unknown-claim case)"
+        },
+        {
+          "file": "scripts/collect_gpu_pg_evidence.py",
+          "line": null,
+          "excerpt": "tmp-copy inverted run-link mutant -> FAILED test_d3_matching_native_run_link_introduces_no_new_contradiction"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Named example fixed: bypass=false is observed and APP_BYPASS_UNPROBED is no longer pinned in positive facts. The d3 matching control now asserts observed OP_OWN and the receipt. The 4 unnamed over-specified tests were not checked singly."
+    },
+    {
+      "db_id": 18248,
+      "finding_id": "GTMC-C77G4T-04",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 1343,
+          "excerpt": "assert _facts(result)[f\"pg:connection:{PRIMARY}\"][\"tenant_context\"] == TENANT_B"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 898,
+          "excerpt": "i[\"code\"] == \"output_row_not_final\" and re.match(r\"visibility\\..+\\.101\\.\", i[\"field\"]) for i in _issues(result)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 557,
+          "excerpt": "_assert_abi_envelope(result)"
+        },
+        {
+          "file": "scripts/collect_gpu_pg_evidence.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants: claim compare -> False: 1 failed; final-row guard -> False: FAILED test_d3_running_provisional_row"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "All three tightenings landed: tenant_context comes from the observed claim (TENANT_B case), the provisional-row test pins output_row_not_final on the media field, and _run runs the frozen ABI envelope validator."
+    },
+    {
+      "db_id": 18380,
+      "finding_id": "C82R-G4ADJ-F3",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 441,
+          "excerpt": "# Model the selected validity value, so replacing the measured field with true is visible."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_pg_findings.py",
+          "line": 444,
+          "excerpt": "return [(*row[:4], row[4] if \"i.indisvalid\" in projection else True, *row[5:])"
+        },
+        {
+          "file": "scripts/collect_gpu_pg_evidence.py",
+          "line": 184,
+          "excerpt": "\"SELECT c.relname, a.attname, am.amname, op.opcname, i.indisvalid, \""
+        },
+        {
+          "file": "scripts/collect_gpu_pg_evidence.py",
+          "line": null,
+          "excerpt": "tmp-copy mutant i.indisvalid -> true: FAILED test_d5_vector_index_identity_is_observed_by_the_primary_catalog[invalid]"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The pg_index fake now honours the SELECT projection; the constant-true indisvalid mutant goes RED."
+    },
+    {
+      "db_id": 18235,
+      "finding_id": "GTMC-C78G3R-C1",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": 24,
+          "excerpt": "sys.path.insert(0, str(Path(__file__).resolve().parents[5]))"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": 26,
+          "excerpt": "from infra.oci.gpu_lifecycle import reaper"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": null,
+          "excerpt": "cd apps/prototype-description-service && pytest recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py -q -> 10 passed"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The repo root is put on sys.path before the infra imports; collecting from the service directory now passes with no collection error."
+    },
+    {
+      "db_id": 18236,
+      "finding_id": "GTMC-C78G3R-C2",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": 187,
+          "excerpt": "assert receipt[\"command_invoked\"] is None"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": 188,
+          "excerpt": "assert receipt[\"outcome\"] == \"unknown\""
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants None->already_converged/False and None->unknown/False: each FAILED test_red_legacy_none_..."
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The oracle pins command_invoked is None and outcome unknown plus both missing reasons, so both manufactured-negative wrong fixes go RED."
+    },
+    {
+      "db_id": 18237,
+      "finding_id": "GTMC-C78G3R-C3",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": 195,
+          "excerpt": "@pytest.mark.parametrize(\"reader_error\", [OSError, ValueError])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": 207,
+          "excerpt": "assert receipt[\"outcome\"] == \"issued\""
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": 208,
+          "excerpt": "assert receipt[\"final_state\"] == \"STOPPING\""
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_gpu_reaper_findings.py",
+          "line": null,
+          "excerpt": "tmp-copy mutants reader error->failed/True and swapped reason code: each FAILED [OSError] and [ValueError]"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Outcome, final_state and the action_response_reader_failed reason are pinned. The sibling ValueError path is parametrized. Both wrong-fix mutants go RED."
+    }
+  ]
+}

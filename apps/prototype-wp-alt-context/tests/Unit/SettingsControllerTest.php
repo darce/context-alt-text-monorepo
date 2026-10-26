@@ -2222,6 +2222,341 @@ class SettingsControllerTest extends TestCase
         );
     }
 
+    // --- GET /usage ---
+
+    private const USAGE_TENANT_ID = '00000000-0000-4000-8000-000000000001';
+
+    private const GOLDEN_USAGE_BODY = '{"tenant_id":"00000000-0000-4000-8000-000000000001","used":120,"reserved":8,'
+        . '"remaining":372,"allowance":500,"period_start":"2026-10-01T00:00:00Z","period_end":"2026-11-01T00:00:00Z",'
+        . '"period":{"start":"2026-10-01T00:00:00Z","end":"2026-11-01T00:00:00Z"},'
+        . '"as_of":"2026-10-26T09:30:00Z","status":"paid_active","data_source":"authoritative"}';
+
+    public function testRegisterRoutesIncludesAdminOnlyUsageEndpoint(): void
+    {
+        $this->controller->register_routes();
+
+        $usageRoutes = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => 'acx/v1' === $definition['namespace']
+                && '/usage' === $definition['route']
+        ));
+
+        $this->assertCount(1, $usageRoutes);
+        $this->assertSame('GET', $usageRoutes[0]['args']['methods']);
+        $this->assertSame([$this->controller, 'get_usage'], $usageRoutes[0]['args']['callback']);
+        $this->assertSame(
+            [$this->controller, 'can_manage_settings'],
+            $usageRoutes[0]['args']['permission_callback']
+        );
+    }
+
+    public function testUsageRouteDeniesNonAdmin(): void
+    {
+        $this->controller->register_routes();
+        $usageRoute = array_values(array_filter(
+            $GLOBALS['__ac_rest_routes'],
+            static fn (array $definition): bool => '/usage' === $definition['route']
+        ))[0];
+
+        $this->setUserCapability('manage_options', false);
+        $this->assertFalse(call_user_func($usageRoute['args']['permission_callback']));
+
+        $this->setUserCapability('manage_options', true);
+        $this->assertTrue(call_user_func($usageRoute['args']['permission_callback']));
+    }
+
+    public function testGetUsageReturnsGoldenUpstreamBodyVerbatim(): void
+    {
+        $this->configureUsage();
+        $optionsBefore = $GLOBALS['__ac_options'];
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => self::GOLDEN_USAGE_BODY,
+        ]);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(json_decode(self::GOLDEN_USAGE_BODY, true), $response->get_data());
+        $this->assertSame('no-store', $response->get_headers()['Cache-Control'] ?? null);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('https://api.example.com/recognition/tenant/usage', $calls[0]['url']);
+        $this->assertSame('GET', $calls[0]['method']);
+        $this->assertSame(self::USAGE_TENANT_ID, $calls[0]['args']['headers']['X-Tenant-ID']);
+        $this->assertSame('test-key', $calls[0]['args']['headers']['X-API-Key']);
+        $this->assertSame(10, $calls[0]['args']['timeout']);
+
+        // DATA-14: the service is the one accounting authority; no WP-side copy.
+        $this->assertSame($optionsBefore, $GLOBALS['__ac_options']);
+        $this->assertSame([], $GLOBALS['__ac_transients']);
+    }
+
+    public function testGetUsageReadsServiceOnEveryRequest(): void
+    {
+        $this->configureUsage();
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => self::GOLDEN_USAGE_BODY,
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => '',
+        ]);
+
+        $first = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+        $second = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $first);
+        $this->assertInstanceOf(\WP_Error::class, $second);
+        $this->assertCount(2, $this->getHttpCalls());
+    }
+
+    public function testGetUsageKeepsUpstreamNullsWithoutDefaults(): void
+    {
+        $this->configureUsage();
+        $body = json_decode(self::GOLDEN_USAGE_BODY, true);
+        $body['remaining'] = null;
+        $body['allowance'] = null;
+        $body['as_of'] = null;
+        $body['status'] = null;
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode($body),
+        ]);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame($body, $response->get_data());
+    }
+
+    public function testGetUsageAcceptsZeroCountsAndOffsetDateTimesWithFractionalSeconds(): void
+    {
+        $this->configureUsage();
+        $body = json_decode(self::GOLDEN_USAGE_BODY, true);
+        $body['remaining'] = 0;
+        $body['reserved'] = 0;
+        $body['as_of'] = '2026-10-26T09:30:00.123456Z';
+        $body['period_end'] = '2026-11-01T02:00:00+02:00';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode($body),
+        ]);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame($body, $response->get_data());
+    }
+
+    /**
+     * @dataProvider invalidUsageBodyProvider
+     */
+    public function testGetUsageRejectsBodyOutsideFrozenContract(string $body): void
+    {
+        $this->configureUsage();
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => $body,
+        ]);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_usage_invalid_response', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status']);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function invalidUsageBodyProvider(): array
+    {
+        $golden = json_decode(self::GOLDEN_USAGE_BODY, true);
+        $with = static function (callable $mutate) use ($golden): array {
+            $body = $golden;
+            $mutate($body);
+            return [json_encode($body)];
+        };
+
+        return [
+            'missing key' => $with(static function (array &$body): void {
+                unset($body['data_source']);
+            }),
+            'extra key' => $with(static function (array &$body): void {
+                $body['balance'] = 372;
+            }),
+            'string count' => $with(static function (array &$body): void {
+                $body['used'] = '120';
+            }),
+            'float count' => $with(static function (array &$body): void {
+                $body['remaining'] = 372.5;
+            }),
+            'boolean count' => $with(static function (array &$body): void {
+                $body['reserved'] = false;
+            }),
+            'negative remaining' => $with(static function (array &$body): void {
+                $body['remaining'] = -1;
+            }),
+            'negative allowance' => $with(static function (array &$body): void {
+                $body['allowance'] = -500;
+            }),
+            'fractional remaining' => $with(static function (array &$body): void {
+                $body['remaining'] = 1.6;
+            }),
+            'malformed tenant_id' => $with(static function (array &$body): void {
+                $body['tenant_id'] = 'tenant-1';
+            }),
+            'non-uuid tenant_id' => $with(static function (array &$body): void {
+                $body['tenant_id'] = 'not-a-uuid';
+            }),
+            'non-date as_of' => $with(static function (array &$body): void {
+                $body['as_of'] = 'not-a-date';
+            }),
+            'impossible calendar as_of' => $with(static function (array &$body): void {
+                $body['as_of'] = '2026-02-30T00:00:00Z';
+            }),
+            'out-of-range hour as_of' => $with(static function (array &$body): void {
+                $body['as_of'] = '2026-10-26T24:00:00Z';
+            }),
+            'non-date period_start' => $with(static function (array &$body): void {
+                $body['period_start'] = 'not-a-date';
+            }),
+            'date-only period_end' => $with(static function (array &$body): void {
+                $body['period_end'] = '2026-11-01';
+            }),
+            'offset-less period.start' => $with(static function (array &$body): void {
+                $body['period']['start'] = '2026-10-01T00:00:00';
+            }),
+            'null period_start' => $with(static function (array &$body): void {
+                $body['period_start'] = null;
+            }),
+            'period missing end' => $with(static function (array &$body): void {
+                unset($body['period']['end']);
+            }),
+            'period extra key' => $with(static function (array &$body): void {
+                $body['period']['label'] = 'October';
+            }),
+            'period not an object' => $with(static function (array &$body): void {
+                $body['period'] = '2026-10';
+            }),
+            'non-string as_of' => $with(static function (array &$body): void {
+                $body['as_of'] = 1793007000;
+            }),
+            'unknown status' => $with(static function (array &$body): void {
+                $body['status'] = 'trialing';
+            }),
+            'null data_source' => $with(static function (array &$body): void {
+                $body['data_source'] = null;
+            }),
+            'list body' => [json_encode(array_values($golden))],
+            'empty object' => ['{}'],
+            'scalar body' => ['372'],
+            'null body' => ['null'],
+            'non-JSON body' => ['<html>Bad Gateway</html>'],
+            'empty body' => [''],
+        ];
+    }
+
+    /**
+     * @dataProvider upstreamUsageFailureProvider
+     */
+    public function testGetUsageMapsUpstreamFailureStatus(
+        int $upstreamStatus,
+        string $body,
+        int $expectedStatus,
+        string $expectedCode
+    ): void {
+        $this->configureUsage();
+        $this->queueHttpResponse([
+            'response' => ['code' => $upstreamStatus, 'message' => 'Upstream'],
+            'body' => $body,
+        ]);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame($expectedCode, $response->get_error_code());
+        $this->assertSame($expectedStatus, $response->get_error_data()['status']);
+        $this->assertSame($upstreamStatus, $response->get_error_data()['upstream_status']);
+    }
+
+    /**
+     * @return array<string, array{int, string, int, string}>
+     */
+    public static function upstreamUsageFailureProvider(): array
+    {
+        $typed = static fn (string $code): string => (string) json_encode([
+            'detail' => ['code' => $code, 'message' => 'Typed upstream failure.'],
+        ]);
+
+        return [
+            '403 typed' => [403, $typed('tenant_revoked'), 403, 'tenant_revoked'],
+            '403 untyped' => [403, '{"detail":"tenant mismatch"}', 403, 'acx_usage_service_error'],
+            '503 typed' => [503, $typed('description_service_starting'), 503, 'description_service_starting'],
+            '503 empty body' => [503, '', 503, 'acx_usage_service_error'],
+            '500 typed' => [500, $typed('internal_error'), 502, 'acx_usage_service_error'],
+            '401' => [401, '{"detail":"api key revoked"}', 502, 'acx_usage_service_error'],
+            '404' => [404, '{"detail":"Not Found"}', 502, 'acx_usage_service_error'],
+            '429' => [429, $typed('rate_limited'), 502, 'acx_usage_service_error'],
+        ];
+    }
+
+    public function testGetUsageSurfacesTypedDetailMessageForPassthroughStatus(): void
+    {
+        $this->configureUsage();
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'detail' => ['code' => 'usage_unavailable', 'message' => 'Usage ledger is unavailable.'],
+            ]),
+        ]);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('Usage ledger is unavailable.', $response->get_error_message());
+    }
+
+    public function testGetUsageMapsTransportErrorWithoutStatusTo502(): void
+    {
+        $this->configureUsage();
+        $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('http_request_failed', $response->get_error_code());
+        $this->assertSame('Connection refused', $response->get_error_message());
+        $this->assertSame(502, $response->get_error_data()['status']);
+    }
+
+    public function testGetUsageKeepsTransportErrorStatusWhenPresent(): void
+    {
+        $this->configureUsage();
+        $transportError = new \WP_Error('recognition_egress_denied', 'Egress denied.', ['status' => 403]);
+        $this->queueHttpResponse($transportError);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertSame($transportError, $response);
+    }
+
+    public function testGetUsageReturns502WithoutHttpCallWhenServiceUrlMissing(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $response = $this->controller->get_usage(new WP_REST_Request('GET', '/acx/v1/usage'));
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_usage_service_error', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status']);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
     // --- Permission ---
 
     public function testCanManageSettingsRequiresManageOptions(): void
@@ -2234,6 +2569,14 @@ class SettingsControllerTest extends TestCase
     }
 
     // --- Helpers ---
+
+    private function configureUsage(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_recognition_tenant_id', self::USAGE_TENANT_ID);
+    }
 
     private function configureProbe(): void
     {

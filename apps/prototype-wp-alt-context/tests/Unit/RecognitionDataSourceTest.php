@@ -106,6 +106,12 @@ class RecognitionDataSourceTest extends TestCase
             'declaration-pattern self-check: expected exactly the four DATA_SOURCE literals in the canonical file'
         );
 
+        // "unavailable" is also an independent correspondence-status vocabulary.
+        // Exempt only this exact declaration, never its file or other uses.
+        $otherDomainDeclarations = [
+            'sovereign/curation/facecorrespondenceresolver.php' => "public const UNAVAILABLE = 'unavailable';",
+        ];
+        $seenOtherDomainDeclarations = [];
         $violations = [];
         $phpFilesScanned = 0;
         $iterator = new RecursiveIteratorIterator(
@@ -128,7 +134,13 @@ class RecognitionDataSourceTest extends TestCase
 
             ++$phpFilesScanned;
 
+            // Case-insensitive PHP namespaces can have a different on-disk directory case on macOS.
+            $relativePath = strtolower(substr($file->getPathname(), strlen($srcDir) + 1));
             foreach ($lines as $lineNumber => $line) {
+                if (($otherDomainDeclarations[$relativePath] ?? null) === trim($line)) {
+                    $seenOtherDomainDeclarations[$relativePath] = trim($line);
+                    continue;
+                }
                 foreach ($patterns as $pattern) {
                     if (1 === preg_match($pattern, $line, $match)) {
                         $violations[] = sprintf('%s:%d: %s', $file->getPathname(), $lineNumber + 1, trim($line));
@@ -136,6 +148,17 @@ class RecognitionDataSourceTest extends TestCase
                 }
             }
         }
+
+        $this->assertSame(
+            $otherDomainDeclarations,
+            $seenOtherDomainDeclarations,
+            'remove a stale unrelated-vocabulary exception when its exact declaration disappears'
+        );
+        // The same file must still reject a literal used as data_source provenance.
+        $this->assertSame(
+            ['unavailable'],
+            $this->literalsMatchedByPatterns("return ['data_source' => 'unavailable'];", $patterns)
+        );
 
         $this->assertGreaterThanOrEqual(
             self::RUNTIME_PHP_FILE_FLOOR,

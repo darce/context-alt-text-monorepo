@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
@@ -463,6 +463,7 @@ const unlabeledCluster = (id: string, repId: string) => ({
 
 describe('ReviewQueue', () => {
   afterEach(() => {
+    onlineManager.setOnline(true);
     vi.clearAllMocks();
     resetPendingSearchWritesForTests();
   });
@@ -3784,9 +3785,11 @@ describe('ReviewQueue', () => {
     expect(screen.getAllByTestId('acx-user-facing-error')).toHaveLength(1);
   });
 
-  // UXREC-1-DEMO-02 (b): a real outage keeps the designed alert + Retry; a 500
-  // carries no extra cause (the classifier maps it to the headline itself).
-  it('UXREC-1-DEMO-02: top-unlabeled 500 keeps the outage alert with an enabled Retry and never the drain copy', async () => {
+  // Compatibility guard, not UXREC-1-DEMO-02 fix proof (TEST-15): the base
+  // renders this same settled-500 DOM, and renderQueue disables retry. It pins
+  // that a real outage keeps the designed alert + Retry, and that a 500 carries
+  // no extra cause (the classifier maps it to the headline itself).
+  it('guard (E21-14, green at base): settled top-unlabeled 500 keeps the outage alert with an enabled Retry and never the drain copy', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -3932,6 +3935,160 @@ describe('ReviewQueue', () => {
     expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
     expect(screen.queryByText('Retrying unlabeled faces…')).not.toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  // UXREC-1-DEMOQ-G1-F1 / RLSE-04 / INT-08: an offline Retry parks at
+  // fetchStatus 'paused' after RQ has reset the never-loaded query to pending.
+  // With work and repair empty, that must not read as a drained queue — and a
+  // parked request is not in flight, so Retry is not busy.
+  it('UXREC-1-DEMOQ-G1-F1: offline-paused top-unlabeled Retry keeps the outage alert, never the drain copy, and is not busy', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    const topMock = vi.mocked(fetchTopUnlabeledClusters);
+    topMock.mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+    const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+
+    const user = userEvent.setup();
+    const { queryClient } = renderQueue();
+
+    const error = await screen.findByTestId('acx-review-queue-top-unlabeled-error');
+    const retry = within(error).getByRole('button', { name: 'Retry' });
+    expect(topMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      onlineManager.setOnline(false);
+    });
+    await user.click(retry);
+
+    await waitFor(() => expect(queryClient.getQueryState(topKey)?.fetchStatus).toBe('paused'));
+    // RQ has dropped the raw outage; only the hold keeps the surface designed.
+    expect(queryClient.getQueryState(topKey)).toMatchObject({
+      status: 'pending',
+      error: null,
+      errorUpdateCount: 1,
+    });
+    expect(screen.getByTestId('acx-review-queue-top-unlabeled-error')).toBe(error);
+    expect(error).toHaveAttribute('role', 'alert');
+    expect(error).toHaveTextContent('Unable to load unlabeled faces.');
+    expect(screen.queryByText('All caught up — no items need review')).not.toBeInTheDocument();
+    expect(within(error).getByRole('button', { name: 'Retry' })).toBe(retry);
+    expect(retry).not.toHaveAttribute('aria-busy');
+    expect(within(error).queryByRole('status')).not.toBeInTheDocument();
+    expect(retry).toHaveFocus();
+
+    // A second press while parked fires nothing (no request can leave offline).
+    await user.click(retry);
+    expect(topMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('acx-review-queue-top-unlabeled-error')).toBe(error);
+
+    topMock.mockResolvedValueOnce({
+      clusters: [unlabeledCluster('cluster-recovered', 'rep-recovered')],
+      limit: 20,
+      total: 1,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    act(() => {
+      onlineManager.setOnline(true);
+    });
+
+    // Reconnect runs the parked request for real; success alone clears the outage.
+    expect(await screen.findByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
+    expect(topMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
+  });
+
+  // UXREC-1-DEMOQ-G1-F2 / A11Y-21: after the first filtered-empty announcement
+  // the item and repair latches are idle, so a 500 → Retry → auth-expiry class
+  // change must still re-publish: the live-position region says what the
+  // visual notice now says, not the stale outage sentence.
+  it('UXREC-1-DEMOQ-G1-F2: 500 → Retry → auth expiry re-announces the classified sentence with the filtered hint', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const topMock = vi.mocked(fetchTopUnlabeledClusters);
+    topMock.mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      }),
+    );
+    const live = () => document.querySelector('.acx-review-queue__live-position');
+    const filteredHint = 'No items match the current filters.';
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    await screen.findByText(/Is this/);
+    await screen.findByTestId('acx-review-queue-top-unlabeled-error');
+    // Filters hide the one real item → filtered-empty under the outage.
+    await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
+    await waitFor(() => {
+      expect(live()).toHaveTextContent(`Unable to load unlabeled faces. ${filteredHint}`);
+    });
+
+    let rejectRetry: (reason: unknown) => void = () => undefined;
+    topMock.mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectRetry = reject;
+        }),
+    );
+    const error = screen.getByTestId('acx-review-queue-top-unlabeled-error');
+    const retry = within(error).getByRole('button', { name: 'Retry' });
+    const callsBeforeRetry = topMock.mock.calls.length;
+    await user.click(retry);
+    await waitFor(() => expect(retry).toHaveAttribute('aria-busy', 'true'));
+    expect(topMock).toHaveBeenCalledTimes(callsBeforeRetry + 1);
+    // The hold keeps the class, so the in-flight retry re-announces nothing.
+    const seqDuringRetry = live()?.getAttribute('data-announce-seq');
+    expect(live()).toHaveTextContent(`Unable to load unlabeled faces. ${filteredHint}`);
+
+    act(() => {
+      rejectRetry(
+        new AuthExpiredError({ endpoint: '/acx/v1/recognition/clusters/top-unlabeled', status: 403 }),
+      );
+    });
+
+    // Visual: the outage alert gives way to the one session-expired notice.
+    const notice = await screen.findByTestId('acx-user-facing-error');
+    expect(notice).toHaveAttribute('data-error-kind', 'auth-expired');
+    expect(notice).toHaveTextContent(SPA_SESSION_EXPIRED_COPY.sessionExpired);
+    expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument();
+    // Live position: the same classified sentence, still with the filtered hint.
+    await waitFor(() => {
+      expect(live()).toHaveTextContent(`${SPA_SESSION_EXPIRED_COPY.sessionExpired} ${filteredHint}`);
+    });
+    expect(live()).not.toHaveTextContent('Unable to load unlabeled faces.');
+    expect(live()?.getAttribute('data-announce-seq')).not.toBe(seqDuringRetry);
   });
 
   // E21-20-REV1-02 / TEST-15: S2-gated zeros leave the queue empty while work exists.

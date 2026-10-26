@@ -4,7 +4,7 @@
  * (buildSuggestionReviewItems re-filters) but fails these raw-item assertions.
  */
 
-import type { QueryClient } from '@tanstack/react-query';
+import { onlineManager, type QueryClient } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -165,6 +165,7 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
     });
 
     afterEach(() => {
+      onlineManager.setOnline(true);
       appClient.clear();
     });
 
@@ -195,8 +196,10 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
       expect(recognitionApi.fetchTopUnlabeledClusters).toHaveBeenCalledTimes(2);
     });
 
-    // E21-14 intent: a plain 500 is never re-fired.
-    it('does not retry a plain 500', async () => {
+    // Compatibility guard, not UXREC-1-DEMO-02 fix proof (TEST-15): the base's
+    // per-query `retry: false` satisfies it too. The DEMO-02 retry proofs are the
+    // override and timeout cases above, which the base fails (one call only).
+    it('guard (E21-14, green at base): a plain 500 is still never re-fired', async () => {
       vi.mocked(recognitionApi.fetchTopUnlabeledClusters).mockRejectedValue(
         new HTTPError({
           status: 500,
@@ -314,6 +317,66 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
         error: null,
       });
       expect(topMock).toHaveBeenCalledTimes(3);
+    });
+
+    // UXREC-1-DEMOQ-G1-F1 / RLSE-04 / INT-08: offline (networkMode 'online')
+    // parks the refetch at fetchStatus 'paused' after RQ has reset the
+    // never-loaded query to pending/null. The outage and its exact error must
+    // hold through it, but nothing is in flight, so it is not "retrying".
+    it('holds the outage and latched error through an offline-paused refetch, not busy, until reconnect succeeds', async () => {
+      const outage = new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      });
+      const topMock = vi.mocked(recognitionApi.fetchTopUnlabeledClusters);
+      topMock.mockRejectedValueOnce(outage);
+
+      const { result } = renderWithAppDefaults();
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isError).toBe(true));
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: true,
+        isRetrying: false,
+        error: outage,
+      });
+
+      act(() => { onlineManager.setOnline(false); });
+      // The paused promise only settles on reconnect; do not await it.
+      act(() => { void result.current.topUnlabeledQuery.refetch(); });
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isPaused).toBe(true));
+      // RQ's raw state has already dropped the outage — the gap the hold covers.
+      expect(result.current.topUnlabeledQuery.isFetching).toBe(false);
+      expect(result.current.topUnlabeledQuery.isError).toBe(false);
+      expect(result.current.topUnlabeledQuery.error).toBeNull();
+      expect(result.current.topUnlabeledQuery.data).toBeUndefined();
+      expect(result.current.topUnlabeledQuery.errorUpdateCount).toBe(1);
+      expect(result.current.topUnlabeledOutage.isError).toBe(true);
+      expect(result.current.topUnlabeledOutage.isRetrying).toBe(false);
+      expect(result.current.topUnlabeledOutage.error).toBe(outage);
+      expect(topMock).toHaveBeenCalledTimes(1);
+
+      topMock.mockResolvedValueOnce({
+        clusters: [],
+        limit: 20,
+        total: 0,
+        truncated: false,
+        singleton_count: 0,
+        data_source: 'local_projection',
+      });
+      act(() => { onlineManager.setOnline(true); });
+
+      await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));
+      // Reconnect ran the parked request for real; success is the only release.
+      expect(topMock).toHaveBeenCalledTimes(2);
+      expect(result.current.topUnlabeledOutage).toEqual({
+        isError: false,
+        isRetrying: false,
+        error: null,
+      });
     });
 
     it('keeps the first automatic retry silent while its response is pending', async () => {

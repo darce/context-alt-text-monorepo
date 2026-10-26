@@ -438,7 +438,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
     const repairAnnouncedRef = React.useRef(false);
-    const repairAnnouncedMessageRef = React.useRef<string | null>(null);
+    const emptyAnnouncedMessageRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
@@ -800,7 +800,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
         previousItemKeyRef.current = currentKey;
         repairAnnouncedRef.current = false;
-        repairAnnouncedMessageRef.current = null;
+        emptyAnnouncedMessageRef.current = null;
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => focusPrimaryInCard());
@@ -819,48 +819,36 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               topUnlabeledClusters.length,
             )
           : null;
-        const repairCopyChanged =
-          repairCopy !== null &&
-          !data.isTopUnlabeledError &&
-          !filteredEmptyWithWork &&
-          repairAnnouncedMessageRef.current !== null &&
-          repairAnnouncedMessageRef.current !== repairCopy;
+        // UI-04: drain copy is for a successful empty only — projection failure
+        // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+        // [rg-003] the outage must not silence the filtered-empty announcement:
+        // when filters hide real work, AT hears both the failure and the hint
+        // that an escape hatch exists, matching the visual (both are rendered).
+        const filteredEmptyCopy = __('No items match the current filters.', 'alt-context');
+        const nextEmptyMessage = data.isTopUnlabeledError
+          ? filteredEmptyWithWork
+            ? `${topUnlabeledErrorAnnouncement} ${filteredEmptyCopy}`
+            : topUnlabeledErrorAnnouncement
+          : filteredEmptyWithWork
+            ? filteredEmptyCopy
+            : (repairCopy ?? __('All caught up — no items need review', 'alt-context'));
+        // R8-02 / A11Y-21 / UXREC-1-DEMOQ-G1-F2: latch the announced sentence, not
+        // only a boolean, for every empty branch — a count, wording or error-class
+        // change (500 → auth expiry) re-fires; an identical rerender stays quiet.
+        // Null until this effect has announced, so mount stays as quiet as before.
+        const emptyMessageChanged =
+          emptyAnnouncedMessageRef.current !== null &&
+          emptyAnnouncedMessageRef.current !== nextEmptyMessage;
         if (
           previousItemKeyRef.current !== null ||
           (findings.repairPending && !repairAnnouncedRef.current) ||
           (!findings.repairPending && repairAnnouncedRef.current) ||
-          repairCopyChanged
+          emptyMessageChanged
         ) {
           previousItemKeyRef.current = null;
-          // UI-04: drain copy is for a successful empty only — projection failure
-          // must announce the error, not "all caught up" (RLSE-05 / A11Y).
-          // [rg-003] the outage must not silence the filtered-empty announcement:
-          // when filters hide real work, AT hears both the failure and the hint
-          // that an escape hatch exists, matching the visual (both are rendered).
-          // R8-02 / A11Y-21: latch the announced sentence, not only a boolean, so a
-          // count or wording change re-fires and an identical rerender stays quiet.
-          if (data.isTopUnlabeledError) {
-            const errorCopy = topUnlabeledErrorAnnouncement;
-            const nextEmptyMessage = filteredEmptyWithWork
-              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
-              : errorCopy;
-            setLivePositionMessage(nextEmptyMessage);
-            repairAnnouncedRef.current = findings.repairPending;
-            repairAnnouncedMessageRef.current = nextEmptyMessage;
-          } else if (filteredEmptyWithWork) {
-            const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
-            setLivePositionMessage(nextEmptyMessage);
-            repairAnnouncedRef.current = findings.repairPending;
-            repairAnnouncedMessageRef.current = nextEmptyMessage;
-          } else if (findings.repairPending && repairCopy) {
-            setLivePositionMessage(repairCopy);
-            repairAnnouncedRef.current = true;
-            repairAnnouncedMessageRef.current = repairCopy;
-          } else {
-            setLivePositionMessage(__('All caught up — no items need review', 'alt-context'));
-            repairAnnouncedRef.current = false;
-            repairAnnouncedMessageRef.current = null;
-          }
+          setLivePositionMessage(nextEmptyMessage);
+          repairAnnouncedRef.current = findings.repairPending;
+          emptyAnnouncedMessageRef.current = nextEmptyMessage;
           if (pendingFocusAfterRemovalRef.current) {
             pendingFocusAfterRemovalRef.current = false;
             requestAnimationFrame(() => {

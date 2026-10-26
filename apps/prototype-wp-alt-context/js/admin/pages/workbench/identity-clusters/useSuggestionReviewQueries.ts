@@ -154,17 +154,21 @@ export const useSuggestionReviewQueries = () => {
       lastTopUnlabeledError.current = topUnlabeledQuery.error;
     }
   }, [topUnlabeledQuery.error, topUnlabeledQuery.isError, topUnlabeledQuery.isSuccess]);
-  const isTopUnlabeledRetrying =
-    topUnlabeledQuery.isFetching &&
+  // UXREC-1-DEMOQ-G1-F1: offline (networkMode 'online') parks the same reset
+  // refetch at fetchStatus 'paused', so the hold spans paused as well as
+  // fetching — otherwise the queue reads as drained mid-outage.
+  const isTopUnlabeledOutageHeld =
     topUnlabeledQuery.data === undefined &&
-    topUnlabeledQuery.errorUpdateCount > 0;
+    topUnlabeledQuery.errorUpdateCount > 0 &&
+    (topUnlabeledQuery.isFetching || topUnlabeledQuery.isPaused);
   const topUnlabeledOutage = {
-    isRetrying: isTopUnlabeledRetrying,
-    isError: topUnlabeledQuery.isError || isTopUnlabeledRetrying,
+    // INT-08: busy only while a request is in flight; a paused one is not.
+    isRetrying: isTopUnlabeledOutageHeld && topUnlabeledQuery.isFetching,
+    isError: topUnlabeledQuery.isError || isTopUnlabeledOutageHeld,
     // Preserve the class (especially auth expiry) while RQ temporarily has no error.
     error:
       topUnlabeledQuery.error ??
-      (isTopUnlabeledRetrying ? lastTopUnlabeledError.current : null),
+      (isTopUnlabeledOutageHeld ? lastTopUnlabeledError.current : null),
   };
 
   const assignmentSuggestions = assignmentQuery.data?.items;

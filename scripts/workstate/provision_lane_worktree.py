@@ -12,6 +12,10 @@ VMREAP-1-BR-04: linked worktrees do not inherit gitignored overlay surfaces
 scripts/workbay_lifecycle). Rsync only ignored entries from the primary
 checkout with `-a` so tracked files already checked out in the linked tree are
 never overwritten and overlay symlinks stay symlinks.
+
+ORCA-1: --overlay-path PATH (repeatable) appends checkout-relative paths to
+OVERLAY_PATHS under the same ignored-entries-only rule, so a bootstrap can
+carry every overlay prefix its contract names without editing this list.
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from collections.abc import Iterable
+from pathlib import Path, PurePosixPath
 
 OVERLAY_PATHS: tuple[str, ...] = (
     "Makefile.d",
@@ -49,6 +54,15 @@ DEP_SOURCE_SIDECAR = ".acx-dep-source"
 # Keep only live lockfile digests; history of lockfile churn must not accumulate.
 DEP_CACHE_SCAN_LIMIT = 32
 SIDECAR_ENTRY_KEYS = ("lockfile", "sha256", "readonly", "cache")
+
+
+class OverlayPathError(ValueError):
+    """An overlay path that is not a checkout-relative POSIX path."""
+
+    def __init__(self, value: str, reason: str) -> None:
+        super().__init__(f"invalid overlay path {value!r}: {reason}")
+        self.value = value
+        self.reason = reason
 
 
 def primary_checkout(start: Path) -> Path:
@@ -265,9 +279,40 @@ def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -
         shutil.copy2(src, dest, follow_symlinks=False)
 
 
-def provision_overlay(*, primary: Path, worktree: Path, fixture_mode: bool = False) -> list[str]:
+def _normalize_overlay_path(value: str) -> str:
+    if not value:
+        raise OverlayPathError(value, "empty path; pass a path relative to the checkout root")
+    path = PurePosixPath(value)
+    if path.is_absolute():
+        raise OverlayPathError(value, "absolute path; pass a path relative to the checkout root")
+    if ".." in path.parts:
+        raise OverlayPathError(value, "'..' segment; pass a path inside the checkout without '..'")
+    if not path.parts:
+        # "." would hand git the whole checkout and copy every ignored tree,
+        # including the dependency trees this provisioner refuses to copy.
+        raise OverlayPathError(value, "names the checkout root; pass a path below it")
+    # as_posix() also drops "./" and repeated "/"; git ls-files reports
+    # normalized paths, so an unnormalized prefix would silently match nothing.
+    return path.as_posix()
+
+
+def _normalize_overlay_paths(paths: Iterable[str]) -> list[str]:
+    if isinstance(paths, str | bytes):
+        raise TypeError("paths must be an iterable of overlay paths, not a single string")
+    return list(dict.fromkeys(_normalize_overlay_path(value) for value in paths))
+
+
+def provision_overlay(
+    *,
+    primary: Path,
+    worktree: Path,
+    fixture_mode: bool = False,
+    paths: Iterable[str] | None = None,
+) -> list[str]:
+    # Validate the whole list first so one bad path leaves the worktree untouched.
+    overlay_paths = _normalize_overlay_paths(OVERLAY_PATHS if paths is None else paths)
     copied: list[str] = []
-    for rel in OVERLAY_PATHS:
+    for rel in overlay_paths:
         src = primary / rel
         dest = worktree / rel
         # exists() is false for a broken symlink, but the contract is to carry
@@ -540,7 +585,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow a non-Git --primary for hermetic tests only",
     )
+    parser.add_argument(
+        "--overlay-path",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Also copy gitignored entries at or below this checkout-relative PATH (repeatable)",
+    )
     args = parser.parse_args(argv)
+    try:
+        overlay_paths = _normalize_overlay_paths((*OVERLAY_PATHS, *args.overlay_path))
+    except OverlayPathError as exc:
+        print(f"provision_lane_worktree: invalid --overlay-path {exc.value}: {exc.reason}", file=sys.stderr)
+        return 1
     worktree = args.worktree.resolve()
     try:
         if args.primary is not None:
@@ -554,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
             primary = primary_checkout(worktree).resolve()
         if _is_secure_offload_sandbox(worktree, flagged=args.secure_offload):
             _refuse_secure_offload(worktree)
-        provision_overlay(primary=primary, worktree=worktree, fixture_mode=args.fixture_mode)
+        provision_overlay(primary=primary, worktree=worktree, fixture_mode=args.fixture_mode, paths=overlay_paths)
         provision_dependency_trees(primary=primary, worktree=worktree)
     except RuntimeError as exc:
         print(exc, file=sys.stderr)

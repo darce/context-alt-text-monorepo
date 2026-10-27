@@ -18,6 +18,7 @@ const TIMELINE_PAGE_SIZE = 10;
 const BULK_DISCARD_PAGE_SIZE = 50;
 const BULK_RETRY_ARM_TIMEOUT_MS = 8000;
 const FAILED_RETENTION_DAYS = 7;
+const STALE_CHANGE_DAYS = 30;
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
@@ -243,13 +244,20 @@ const formatOperationType = (operationType: string): string =>
 
 const formatStatusLabel = (status: string): string => status.replaceAll('_', ' ');
 
-const formatOperationIdentity = (operation: OutboxOperation): string =>
-  sprintf(
-    __('%1$s for %2$s (operation %3$d)', 'alt-context'),
-    formatOperationType(operation.operation_type),
-    operation.entity_key,
-    operation.id,
-  );
+const formatOperationIdentity = (operation: OutboxOperation): string => {
+  const payload = operation.payload;
+  if (operation.operation_type === 'cluster_label_updated' && payload?.label === null) {
+    return __('Cluster label cleared', 'alt-context');
+  }
+  const type = formatOperationType(operation.operation_type);
+  if (operation.operation_type === 'cluster_label_updated' && typeof payload?.label === 'string') {
+    return sprintf(__('%1$s: “%2$s”', 'alt-context'), type, payload.label);
+  }
+  if (typeof payload?.person_id === 'string') {
+    return sprintf(__('%1$s: Payload person: %2$s', 'alt-context'), type, payload.person_id);
+  }
+  return sprintf(__('%1$s: %2$s', 'alt-context'), type, operation.entity_key.slice(0, 8));
+};
 
 const MYSQL_WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/;
 const HAS_EXPLICIT_TZ = /(?:Z|[+-]\d{2}:?\d{2})$/i;
@@ -360,23 +368,23 @@ const formatAge = (
 ): string => {
   const thenMs = parseWpTimestampMs(value, siteGmtOffsetHours);
   if (thenMs === null) {
-    return __('Age: unknown', 'alt-context');
+    return __('unknown', 'alt-context');
   }
 
   const ageMs = Math.max(0, nowMs - thenMs);
   if (ageMs < MINUTE_MS) {
-    return __('Age: less than a minute', 'alt-context');
+    return __('less than a minute', 'alt-context');
   }
 
   if (ageMs < HOUR_MS) {
-    return sprintf(__('Age: %d minutes', 'alt-context'), Math.floor(ageMs / MINUTE_MS));
+    return sprintf(_n('%1$d minute', '%1$d minutes', Math.floor(ageMs / MINUTE_MS), 'alt-context'), Math.floor(ageMs / MINUTE_MS));
   }
 
-  if (ageMs < 48 * HOUR_MS) {
-    return sprintf(__('Age: %d hours', 'alt-context'), Math.floor(ageMs / HOUR_MS));
+  if (ageMs < DAY_MS) {
+    return sprintf(_n('%1$d hour', '%1$d hours', Math.floor(ageMs / HOUR_MS), 'alt-context'), Math.floor(ageMs / HOUR_MS));
   }
 
-  return sprintf(__('Age: %d days', 'alt-context'), Math.floor(ageMs / DAY_MS));
+  return sprintf(_n('%1$d day', '%1$d days', Math.floor(ageMs / DAY_MS), 'alt-context'), Math.floor(ageMs / DAY_MS));
 };
 
 const readOptionalNonEmptyString = (value: unknown): string | null =>
@@ -501,7 +509,12 @@ const DeadLetterOperationRow = ({
   onRetry,
   onDiscard,
 }: DeadLetterOperationRowProps): React.JSX.Element => {
-  const payloadSummary = formatPayloadSummary(operation.payload);
+  const identity = formatOperationIdentity(operation);
+  const payloadSummary = operation.operation_type === 'cluster_label_updated' &&
+    (typeof operation.payload?.label === 'string' || operation.payload?.label === null)
+    ? null : formatPayloadSummary(operation.payload);
+  const createdMs = parseWpTimestampMs(operation.created_at, getSiteGmtOffsetHours());
+  const waitingDays = createdMs === null ? null : Math.floor(Math.max(0, displayNowMs - createdMs) / DAY_MS);
   const discardPending = pendingDiscardId === operation.id;
   const terminal = isTerminalOperation(operation);
   const showFailedRecovery = variant === 'failed-list' || isFailedOperation(operation);
@@ -510,16 +523,25 @@ const DeadLetterOperationRow = ({
   return (
     <>
       <div>
-        <strong>{formatOperationType(operation.operation_type)}</strong>
+        <strong>{identity}</strong>
+        {waitingDays !== null && waitingDays > STALE_CHANGE_DAYS ? (
+          <p><span aria-hidden="true">⚠ </span>{sprintf(
+            _n('Stale: From %1$s, over %2$d day ago', 'Stale: From %1$s, over %2$d days ago', waitingDays, 'alt-context'),
+            formatTimestamp(operation.created_at), waitingDays,
+          )}</p>
+        ) : null}
         {variant === 'timeline' ? (
           <p>{sprintf(__('Status: %s', 'alt-context'), formatStatusLabel(operation.status))}</p>
         ) : null}
-        <p>{sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}</p>
+        <details>
+          <summary>{__('Details', 'alt-context')}</summary>
+          <p><code>{sprintf(__('%1$s %2$s · change #%3$d', 'alt-context'), operation.entity_type, operation.entity_key, operation.id)}</code></p>
+        </details>
         {showFailedRecovery ? <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p> : null}
         {variant === 'timeline' ? (
           <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
         ) : null}
-        <p>{formatAge(operation.created_at, displayNowMs)}</p>
+        <p>{sprintf(isFailedOperation(operation) ? __('Failed %1$s ago', 'alt-context') : operation.status === 'pending' ? __('Waiting %1$s', 'alt-context') : __('Age: %1$s', 'alt-context'), formatAge(operation.created_at, displayNowMs))}</p>
         {terminal ? <p>{__('Will not retry', 'alt-context')}</p> : null}
         {showLastAttempted ? (
           <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>
@@ -540,6 +562,7 @@ const DeadLetterOperationRow = ({
                 void onRetry(operation);
               }}
               disabled={mutationPending}
+              aria-label={sprintf(__('Retry %1$s', 'alt-context'), identity)}
               aria-disabled={mutationPending ? true : undefined}
               aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
             >
@@ -553,6 +576,7 @@ const DeadLetterOperationRow = ({
               void onDiscard(operation);
             }}
             disabled={mutationPending}
+            aria-label={sprintf(discardPending ? __('Confirm discard %1$s', 'alt-context') : __('Discard %1$s', 'alt-context'), identity)}
             aria-disabled={mutationPending ? true : undefined}
             aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
           >

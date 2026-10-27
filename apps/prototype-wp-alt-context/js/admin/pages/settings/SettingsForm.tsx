@@ -111,12 +111,16 @@ interface SettingsFormProps {
   values: SettingsFormValues;
   status: SettingsFormStatus;
   actions: SettingsFormActions;
+  healthFeedback?: React.ReactNode;
+  onRetryReload?: () => void;
 }
 
 export const SettingsForm = ({
   values,
   status,
   actions,
+  healthFeedback,
+  onRetryReload,
 }: SettingsFormProps): React.JSX.Element => {
   const {
     data,
@@ -279,21 +283,32 @@ export const SettingsForm = ({
           {routingSaveFeedback && saveMessage ? (
             <div
               className={`notice inline ${TONE_CLASS[saveMessageTone]}`}
-              role={saveMessageTone === 'error' ? 'alert' : 'status'}
-              aria-live={saveMessageTone === 'error' ? 'assertive' : 'polite'}
+              role="status"
+              aria-live="polite"
               data-testid="acx-settings-routing-save-message"
             >
-              <p>{saveMessage}</p>
+              <p><span aria-hidden="true">{saveMessageTone === 'error' ? '✕ ' : saveMessageTone === 'warning' ? '⚠ ' : '↻ '}</span>{saveMessage}</p>
+              {saveMessageTone === 'warning' && onRetryReload ? (
+                <button type="button" className="button button-secondary" onClick={onRetryReload}>
+                  {__('Reload settings', 'alt-context')}
+                </button>
+              ) : null}
+              {saveMessageTone === 'error' ? (
+                <button type="button" className="button button-secondary" onClick={onCommitRouting}>
+                  {__('Retry save', 'alt-context')}
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
 
+        {healthFeedback}
         <div className="acx-target-card__actions">
           <button
             type="button"
             className="button button-secondary"
             onClick={onTest}
-            disabled={savePending || testPending || !canCheckHealth}
+            disabled={testPending || !canCheckHealth}
           >
             {testPending ? __('Checking…', 'alt-context') : __('Check health', 'alt-context')}
           </button>
@@ -514,7 +529,6 @@ export const SettingsForm = ({
         <button
           type="submit"
           className="button button-primary"
-          disabled={savePending}
         >
           {savePending ? __('Saving…', 'alt-context') : __('Save Settings', 'alt-context')}
         </button>

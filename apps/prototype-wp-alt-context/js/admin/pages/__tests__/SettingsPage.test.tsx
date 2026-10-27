@@ -2150,7 +2150,7 @@ describe('QCR real React Query credential boundaries', () => {
     type(key, 'draft-A'); fireEvent.blur(key); await flush();
     type(key, 'draft-B'); fireEvent.blur(key);
     expect(h.requests).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
     if (outcome === 'transport') { await act(() => Promise.resolve(h.requests[0].reject(new Error('transport failed')))); await flush(); }
     else { await finish(h.requests[0], outcome === 'ok' ? { saved: ['api_key'], result: 'ok' } : { saved: [], failed: ['api_key'], result: 'error' }); }
     expect(key).toHaveValue('draft-B');
@@ -2293,7 +2293,7 @@ describe('QCR real React Query credential boundaries', () => {
     vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
     await finish(h.requests[0], { saved: ['url'], result: 'ok' });
     expect(h.api.testConnection).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
     await act(() => Promise.resolve(readback.resolve({ ...defaultSettings, url: urlA, effective_target_url: urlA }))); await flush();
     expect(h.api.testConnection).toHaveBeenCalledTimes(1);
   });

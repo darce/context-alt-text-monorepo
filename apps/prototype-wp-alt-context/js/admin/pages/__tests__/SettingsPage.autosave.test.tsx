@@ -23,6 +23,7 @@ const {
   mockInvalidateQueries,
   mockFetchQuery,
   mockGetQueryData,
+  mockGetQueryState,
   mockResetConfigCache,
 } = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => SettingsQueryResult>(),
@@ -30,10 +31,11 @@ const {
   mockInvalidateQueries: vi.fn(),
   mockFetchQuery: vi.fn(),
   mockGetQueryData: vi.fn(),
+  mockGetQueryState: vi.fn(),
   mockResetConfigCache: vi.fn(),
 }));
 
-vi.mock('@wordpress/i18n', () => ({ __: (text: string) => text }));
+vi.mock('@wordpress/i18n', () => ({ __: (text: string) => text, sprintf: (text: string, ...args: string[]) => args.reduce((value, arg) => value.replace('%s', arg), text) }));
 
 vi.mock('@tanstack/react-query', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
@@ -45,6 +47,7 @@ vi.mock('@tanstack/react-query', async () => {
       invalidateQueries: mockInvalidateQueries,
       fetchQuery: mockFetchQuery,
       getQueryData: mockGetQueryData,
+      getQueryState: mockGetQueryState,
     }),
   };
 });
@@ -107,6 +110,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFetchQuery.mockResolvedValue(configuredSettings);
   mockGetQueryData.mockReturnValue(configuredSettings);
+  mockGetQueryState.mockReturnValue(undefined);
   capturedSaveOptions = undefined;
   capturedTestOptions = undefined;
   saveMutationPending = false;
@@ -387,7 +391,7 @@ describe('SettingsPage routing autosave', () => {
     });
 
     expect(testMutate).toHaveBeenCalledTimes(3);
-    expect(screen.getByTestId('acx-settings-save-message')).toHaveTextContent('Settings saved.');
+    expect(screen.getByTestId('acx-settings-routing-save-message')).toHaveTextContent('Saved. Checking health…');
     const currentProbe = testMutate.mock.calls[2]?.[0] as object;
     await act(async () => {
       resolveProbe.get(currentProbe)?.({ outcome: 'network_error' });
@@ -517,7 +521,7 @@ describe('SettingsPage routing autosave', () => {
     const message = screen.getByTestId('acx-settings-routing-save-message');
     expect(message).toHaveTextContent('Could not save settings.');
     expect(message).toHaveTextContent('api_key');
-    expect(message).toHaveAttribute('role', 'alert');
+    expect(message).toHaveAttribute('role', 'status');
     expect(testMutate).not.toHaveBeenCalled();
   });
 
@@ -595,7 +599,7 @@ describe('SettingsPage routing autosave', () => {
 
     expect(mockFetchQuery).toHaveBeenCalled();
     expect(screen.getByTestId('acx-settings-routing-save-message')).toHaveTextContent(
-      'Saved — checking health…',
+      'Saved. Checking health…',
     );
     // fetchQuery has returned the new settings, but the hook remains on the
     // cached snapshot while its refetch is pending.
@@ -663,5 +667,117 @@ describe('SettingsPage routing autosave', () => {
       'data-outcome',
       'network_error',
     );
+  });
+});
+
+describe('Recognition card terminal feedback', () => {
+  const saveUrl = () => {
+    const url = screen.getByLabelText('Service API URL');
+    fireEvent.change(url, { target: { value: 'https://new.example.com' } });
+    fireEvent.blur(url);
+  };
+
+  it.each(['missing target', 'fetching', 'query error', 'cache mismatch', 'unsettled probe'])(
+    'settles checking health after %s',
+    async (cause) => {
+      vi.useFakeTimers();
+      try {
+        const view = renderSettings();
+        saveUrl();
+        if (cause === 'cache mismatch') {
+          mockGetQueryState.mockReturnValue({ status: 'success', fetchStatus: 'idle', data: configuredSettings, dataUpdatedAt: -1 });
+        }
+        if (cause === 'missing target') {
+          mockFetchQuery.mockResolvedValue({ ...configuredSettings, effective_target_url: '' });
+        }
+        await act(async () => {
+          await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+        });
+        if (cause === 'fetching' || cause === 'query error') {
+          mockUseQuery.mockReturnValue(createMockQuery({
+            data: configuredSettings,
+            isFetching: cause === 'fetching',
+            isError: cause === 'query error',
+          }));
+          view.rerender(<SettingsPageWithRouter />);
+        }
+        await act(async () => { vi.advanceTimersByTime(15000); });
+        const card = screen.getByTestId('acx-target-card-service');
+        expect(card).toHaveTextContent('Saved. Health not checked:');
+        expect(card).not.toHaveTextContent('Saved. Checking health…');
+        expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('reports an empty diff after autosave as neutral saved feedback', async () => {
+    const view = renderSettings();
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret' } });
+    fireEvent.blur(screen.getByLabelText('API Key'));
+    saveMutationPending = false;
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['api_key'], result: 'ok' });
+    });
+    view.rerender(<SettingsPageWithRouter />);
+    fireEvent.submit(screen.getByRole('button', { name: 'Save Settings' }).closest('form')!);
+    expect(screen.getByText('All changes are saved.').closest('.notice')).toHaveClass('notice-info');
+    expect(screen.queryByText('No changes to save.')).not.toBeInTheDocument();
+  });
+
+  it('keeps an acknowledged write successful when settings readback rejects', async () => {
+    renderSettings();
+    saveUrl();
+    mockFetchQuery.mockRejectedValue(new Error(JSON.stringify({ message: 'readback unavailable' })));
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+    });
+    expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent(
+      'Saved, but the page could not reload settings: readback unavailable.',
+    );
+    expect(screen.queryByText('Failed to save settings.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reload settings' })).toBeEnabled();
+  });
+
+  it('renders the existing probe banner inside the service card', async () => {
+    renderSettings();
+    const variables = testMutate.mock.calls[0][0];
+    await act(async () => {
+      await capturedTestOptions?.onSuccess?.({ outcome: 'network_error' }, variables);
+    });
+    expect(screen.getByTestId('acx-target-card-service')).toContainElement(
+      screen.getByTestId('acx-test-connection-banner'),
+    );
+  });
+
+  it('keeps Check health enabled and waits for the pending save', async () => {
+    renderSettings();
+    testMutate.mockClear();
+    saveUrl();
+    const button = screen.getByRole('button', { name: 'Check health' });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(testMutate).not.toHaveBeenCalled();
+    saveMutationPending = false;
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+    });
+    expect(testMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('probes routing changes submitted by global Save', async () => {
+    renderSettings();
+    testMutate.mockClear();
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://new.example.com' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: 'Save Settings' }).closest('form')!);
+    expect(testMutate).not.toHaveBeenCalled();
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+    });
+    expect(testMutate).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('acx-target-card-service')).toHaveTextContent('Saved. Checking health…');
   });
 });

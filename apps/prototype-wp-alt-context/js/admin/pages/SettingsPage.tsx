@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 
@@ -70,10 +70,12 @@ export const SettingsPage = (): React.JSX.Element => {
     request: object | null;
   } | null>({ afterRoutingSave: false, request: null });
   const healthProbeGeneration = useRef(0);
+  const healthDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const healthProbeMetadata = useRef(new WeakMap<object, HealthProbeBinding & { afterRoutingSave: boolean }>());
   const currentHealthRequest = useRef<object | null>(null);
   const credentialRevision = useRef(Symbol());
   const routingSavePending = useRef(false);
+  const hasAcknowledgedSave = useRef(false);
   const routingSaveFeedback = useRef(false);
   const routingSaveIncludesOtherSettings = useRef(false);
   const inFlightRoutingSnapshot = useRef<SettingsFormSnapshot | null>(null);
@@ -142,6 +144,7 @@ export const SettingsPage = (): React.JSX.Element => {
   }
 
   useEffect(() => () => {
+    if (healthDeadline.current !== null) clearTimeout(healthDeadline.current);
     healthProbeGeneration.current += 1;
     currentHealthRequest.current = null;
     scheduledHealthCheck.current = { afterRoutingSave: false, request: null };
@@ -305,20 +308,20 @@ export const SettingsPage = (): React.JSX.Element => {
     if (Object.keys(payload).length === 0) {
       dispatch({
         type: 'setSaveMessage',
-        message: __('No changes to save.', 'alt-context'),
-        tone: 'warning',
+        message: hasAcknowledgedSave.current ? __('All changes are saved.', 'alt-context') : __('No changes to save.', 'alt-context'),
+        tone: hasAcknowledgedSave.current ? 'info' : 'warning',
       });
       return;
     }
     invalidateHealthProbe();
-    if (queued) {
+    if (queued || !routingOnly) {
       dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
       const hasRoutingChanges = 'url' in payload || 'api_key' in payload;
       routingSavePending.current = hasRoutingChanges;
       routingSaveIncludesOtherSettings.current = hasRoutingChanges && Object.keys(payload).some(
         (field) => field !== 'url' && field !== 'api_key',
       );
-      routingSaveFeedback.current = hasRoutingChanges && !routingSaveIncludesOtherSettings.current;
+      routingSaveFeedback.current = hasRoutingChanges;
     }
     inFlightRoutingSnapshot.current = values;
     inFlightUrlWrite.current = 'url' in payload;
@@ -368,7 +371,7 @@ export const SettingsPage = (): React.JSX.Element => {
         }
       }
       const isRoutingAutosave = routingSavePending.current;
-      const includesOtherSettings = routingSaveIncludesOtherSettings.current;
+
       if (isRoutingAutosave) {
         routingSavePending.current = false;
         if (data.saved.some((field) => field === 'url' || field === 'api_key')) {
@@ -386,42 +389,63 @@ export const SettingsPage = (): React.JSX.Element => {
           : __('one or more fields', 'alt-context');
         dispatch({
           type: 'setSaveMessage',
-          message: `${__('Could not save settings.', 'alt-context')} (${failedFields})`,
+          message: sprintf(__('Could not save settings. (%s)', 'alt-context'), failedFields),
           tone: 'error',
         });
         // Refresh so the form reflects what actually landed (partial success).
-        await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
-        const refreshedOnFail = await queryClient.fetchQuery({
-          queryKey: queryKeys.settings.all,
-          queryFn: fetchSettings,
-        });
-        syncLocalizedRouting(refreshedOnFail);
-        drainQueuedSave(refreshedOnFail);
+        try {
+          await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
+          const refreshedOnFail = await queryClient.fetchQuery({
+            queryKey: queryKeys.settings.all,
+            queryFn: fetchSettings,
+          });
+          syncLocalizedRouting(refreshedOnFail);
+          drainQueuedSave(refreshedOnFail);
+        } catch { /* Preserve the partial-write feedback if readback fails. */ }
         return;
       }
 
+      hasAcknowledgedSave.current = true;
       dispatch({
         type: 'setSaveMessage',
-        message: isRoutingAutosave && !includesOtherSettings
-          ? __('Saved — checking health…', 'alt-context')
+        message: isRoutingAutosave
+          ? __('Saved. Checking health…', 'alt-context')
           : __('Settings saved.', 'alt-context'),
-        tone: isRoutingAutosave && !includesOtherSettings ? 'info' : 'success',
+        tone: isRoutingAutosave ? 'info' : 'success',
       });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
-      // A saved URL/key may repair the recognition breaker; refetch sync health
-      // so the degraded/offline banner clears without waiting for its 15s poll.
-      await queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
-      const refreshed = await queryClient.fetchQuery({
-        queryKey: queryKeys.settings.all,
-        queryFn: fetchSettings,
-      });
-      syncLocalizedRouting(refreshed);
-      resolvedSettings.current = refreshed;
-      if (isRoutingAutosave) {
-        scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
-        startScheduledHealthCheck();
+      try {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
+        // A saved URL/key may repair the recognition breaker; refetch sync health
+        // so the degraded/offline banner clears without waiting for its 15s poll.
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
+        const refreshed = await queryClient.fetchQuery({
+          queryKey: queryKeys.settings.all,
+          queryFn: fetchSettings,
+        });
+        syncLocalizedRouting(refreshed);
+        resolvedSettings.current = refreshed;
+        if (isRoutingAutosave) {
+          scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
+          startScheduledHealthCheck();
+        }
+        drainQueuedSave(refreshed);
+      } catch (error) {
+        const previous = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
+        if (previous && settled) {
+          queryClient.setQueryData?.(queryKeys.settings.all, {
+            ...previous,
+            ...(data.saved.includes('url') ? { url: settled.url } : {}),
+          });
+        }
+        scheduledHealthCheck.current = null;
+        dispatch({
+          type: 'setSaveMessage',
+          message: sprintf(__('Saved, but the page could not reload settings: %s.', 'alt-context'),
+            resolveWpErrorMessage(error, __('settings unavailable', 'alt-context'))),
+          tone: 'warning',
+        });
+        drainQueuedSave(previous);
       }
-      drainQueuedSave(refreshed);
     },
     onError: (error) => {
       if (inFlightUrlWrite.current) {
@@ -439,7 +463,10 @@ export const SettingsPage = (): React.JSX.Element => {
       routingSaveIncludesOtherSettings.current = false;
       dispatch({
         type: 'setSaveMessage',
-        message: resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
+        message: isRoutingAutosave
+          ? sprintf(__('Not saved: %s. Your edit is kept.', 'alt-context'),
+            resolveWpErrorMessage(error, __('Failed to save settings', 'alt-context')))
+          : resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
         tone: 'error',
       });
       drainQueuedSave();
@@ -569,6 +596,31 @@ export const SettingsPage = (): React.JSX.Element => {
 
   useEffect(() => {
     startScheduledHealthCheck();
+    if (scheduledHealthCheck.current && healthDeadline.current === null) {
+      healthDeadline.current = setTimeout(() => {
+        healthDeadline.current = null;
+        const scheduled = scheduledHealthCheck.current;
+        if (!scheduled) return;
+        scheduledHealthCheck.current = null;
+        currentHealthRequest.current = null;
+        healthProbeGeneration.current += 1;
+        if (scheduled.afterRoutingSave) {
+          routingSaveFeedback.current = true;
+          const reason = !resolvedSettings.current?.effective_target_url.trim()
+            ? __('no service URL', 'alt-context')
+            : observedQuery.current.error
+              ? __('settings could not reload', 'alt-context')
+              : __('health check timed out', 'alt-context');
+          dispatch({ type: 'setSaveMessage',
+            message: sprintf(__('Saved. Health not checked: %s.', 'alt-context'), reason),
+            tone: 'warning' });
+        }
+      }, 15000);
+    }
+    if (!scheduledHealthCheck.current && healthDeadline.current !== null) {
+      clearTimeout(healthDeadline.current);
+      healthDeadline.current = null;
+    }
   }, [
     settingsQuery.data,
     settingsQuery.dataUpdatedAt,
@@ -751,7 +803,7 @@ export const SettingsPage = (): React.JSX.Element => {
         }}
         status={{
           savePending: saveMutation.isPending,
-          testPending: testMutation.isPending,
+          testPending: testMutation.isPending && currentHealthRequest.current !== null,
           hasUnsavedRoutingChanges,
           testResult: state.testResult,
           recognitionEngineVerified,
@@ -780,6 +832,22 @@ export const SettingsPage = (): React.JSX.Element => {
             document.getElementById('acx-settings-url')?.focus();
           },
         }}
+        onRetryReload={() => {
+          void settingsQuery.refetch().then((result) => {
+            if (!result.isError) {
+              scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
+              dispatch({ type: 'setSaveMessage',
+                message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
+            }
+          });
+        }}
+        healthFeedback={state.testResult ? (
+          <TestConnectionBannerView
+            testResult={state.testResult}
+            onConfirmTenantPairing={handleConfirmTenantPairing}
+            confirmPending={testMutation.isPending}
+          />
+        ) : null}
       />
 
       <GpuControlCard />
@@ -793,14 +861,6 @@ export const SettingsPage = (): React.JSX.Element => {
         >
           <p>{state.saveMessage}</p>
         </div>
-      ) : null}
-
-      {state.testResult ? (
-        <TestConnectionBannerView
-          testResult={state.testResult}
-          onConfirmTenantPairing={handleConfirmTenantPairing}
-          confirmPending={testMutation.isPending}
-        />
       ) : null}
 
       <section id={SETTINGS_SECTION_RETENTION_ID} className="acx-settings__retention">

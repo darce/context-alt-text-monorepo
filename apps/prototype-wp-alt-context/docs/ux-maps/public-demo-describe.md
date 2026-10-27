@@ -12,6 +12,11 @@
 - `describe-allowlisted-image` — Choose one operator-curated image and receive a generic alt-text draft
 - `retry-same-trigger` — Retry the same in-page trigger without minting a new idempotency key
 
+## Code references
+- `screen:public-demo-describe` — `apps/prototype-wp-alt-context/js/public/demo-describe.js`
+- `screen:public-demo-unavailable` — `apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php`
+- `screen:refresh-page-drops-retry-key` — `apps/prototype-wp-alt-context/js/public/demo-describe.js`
+
 ## Screens
 | id | kind | route | title |
 | --- | --- | --- | --- |
@@ -35,15 +40,50 @@ Action states: idle, in_flight, completed, failed, limited, timeout
 
 ```
 +------------------------------------------------------------+
-| Public demo › Describe an image  [screen]  [acx_demo_desc… |
-| OBSERVED visitor widget. Domain vocabulary behind canonic… |
+| Public demo › Describe an image  [screen]  [acx_demo_desc\ |
+|   ribe]                                                    |
+| OBSERVED visitor widget. Domain vocabulary behind canonic\ |
+|   al states: idle selection = default; queued, warming an\ |
+|   d describing = loading; no allowlisted images is a diff\ |
+|   erent screen; 429 limited = degraded; failed, invalid r\ |
+|   esponse, incomplete result and 120s poll timeout = erro\ |
+|   r. Complete UI labels come from description_tier. A sta\ |
+|   tic illustrative example sits before Describe; it is no\ |
+|   t the selected image. Production is deployed; these fea\ |
+|   ture changes have not been deployed. Serves job describ\ |
+|   e-allowlisted-image.                                     |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - OBSERVED image picker — idle radios are instance-scop… |
-|   - OBSERVED primary Describe selected image — enabled in… |
-|   - OBSERVED-FEATURE static illustrative example before D… |
-|   - OBSERVED polite status — idle, queued, warming, descr… |
-|   - OBSERVED-FEATURE completed result is alt_text_draft w… |
+|   - OBSERVED image picker — idle radios are instance-scop\ |
+|   ed (acx-demo-media-N) and read from the submitting form\ |
+|    only. Empty-selection submit stays on this screen as e\ |
+|   rror copy. No images is public-demo-unavailable, not th\ |
+|   is zone. (form) states=[default,loading,error]           |
+|   - OBSERVED primary Describe selected image — enabled in\ |
+|    idle, completed, failed, limited and timeout; disabled\ |
+|    in in_flight. Same control retries; key reuse is in-me\ |
+|   mory only. (job) states=[default,loading,error,degraded] |
+|   - OBSERVED-FEATURE static illustrative example before D\ |
+|   escribe, labeled Illustrative example — not a live resu\ |
+|   lt. Fictional sentence is not the selected image, not a\ |
+|    saved result, not a GPU receipt. Separate from data-ac\ |
+|   x-demo-result. Absent when the demo is disabled or the \ |
+|   allowlist is empty. (content) states=[default]           |
+|   - OBSERVED polite status — idle, queued, warming, descr\ |
+|   ibing, completed, limited (HTTP 429), failed, client er\ |
+|   ror, 120s poll timeout. Icon plus token color. Envelope\ |
+|    gpu_state is unused telemetry. Completed labels: GPU d\ |
+|   escription complete. / CPU fallback draft (not GPU fina\ |
+|   l). / Description complete, processing tier unavailable\ |
+|   . (status) states=[default,loading,error,degraded]       |
+|   - OBSERVED-FEATURE completed result is alt_text_draft w\ |
+|   ith focus move. Status labels come from description_tie\ |
+|   r (provisional_cpu | final_gpu | null; missing legacy i\ |
+|   s null) and are never inferred from gpu_state. OBSERVED\ |
+|   -PRODUCTION is deployed; these feature changes have not\ |
+|    been deployed. Prior observation: old Florence recogni\ |
+|   tion image; Qwen-on-GPU entity-description proof is abs\ |
+|   ent. (ai_review) states=[default,empty]                  |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when idle                                                  |
@@ -74,10 +114,16 @@ Purpose: OBSERVED PHP shortcode substitutes when the widget cannot run. Demo fla
 ```
 +------------------------------------------------------------+
 | Public demo › Unavailable  [screen]  [acx_demo_describe]   |
-| OBSERVED PHP shortcode substitutes when the widget cannot… |
+| OBSERVED PHP shortcode substitutes when the widget cannot\ |
+|    run. Demo flag off = degraded limited copy. Allowlist \ |
+|   empty or unreadable = error copy. No form, no client, n\ |
+|   o paid dispatch. Serves neither job until an operator e\ |
+|   nables the demo and curates media.                       |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - OBSERVED substitute status — limited when the demo is… |
+|   - OBSERVED substitute status — limited when the demo is\ |
+|    disabled; error when no demo images are available. Not\ |
+|    a describe-run phase. (status) states=[error,degraded]  |
 +------------------------------------------------------------+
 | states: error | degraded                                   |
 +------------------------------------------------------------+
@@ -93,11 +139,18 @@ Purpose: OBSERVED: a full page load drops the in-memory idempotency key and the 
 
 ```
 +------------------------------------------------------------+
-| Refresh page (drops in-memory retry key)  [exit]  [acx_de… |
-| OBSERVED: a full page load drops the in-memory idempotenc… |
+| Refresh page (drops in-memory retry key)  [exit]  [acx_de\ |
+|   mo_describe] (browser refresh)                           |
+| OBSERVED: a full page load drops the in-memory idempotenc\ |
+|   y key and the in-memory run_id. Timeout copy currently \ |
+|   tells the visitor to refresh. PROPOSED durable resume i\ |
+|   s not this exit and is not implemented.                  |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - OBSERVED refresh consequence — in-memory retry key is… |
+|   - OBSERVED refresh consequence — in-memory retry key is\ |
+|    gone. Same-page retry would have retained it. Do not c\ |
+|   laim a new paid job is proven or disproven after refres\ |
+|   h. (status) states=[default]                             |
 +------------------------------------------------------------+
 | states: default                                            |
 +------------------------------------------------------------+
@@ -112,6 +165,21 @@ Purpose: OBSERVED: a full page load drops the in-memory idempotency key and the 
 ## Flows
 ### OBSERVED: illustrative example, select image, wait, typed complete label (`observed-happy-path`)
 
+```
+flow: OBSERVED: illustrative example, select image, wait, typ\
+  ed complete label (observed-happy-path) job=describe-allowl\
+  isted-image
+  1. Public demo › Describe an image [public-demo-describe]
+     --illustrative example visible; idle selection (instance\
+  -scoped radio in this form) → POST describe-->
+  2. Public demo › Describe an image [public-demo-describe] (\
+  visit 2)
+     --queued → warming → describing (client poll, 120s ceili\
+  ng)-->
+  3. Public demo › Describe an image [public-demo-describe] (\
+  visit 3)
+```
+
 ```mermaid
 flowchart TD
   %% flow: OBSERVED: illustrative example, select image, wait, typed complete label job=describe-allowlisted-image
@@ -123,6 +191,12 @@ flowchart TD
 
 ### OBSERVED: HTTP 429 bulkhead or rate limit (`observed-429-limited`)
 
+```
+flow: OBSERVED: HTTP 429 bulkhead or rate limit (observed-429\
+  -limited) job=describe-allowlisted-image
+  1. Public demo › Describe an image [public-demo-describe]
+```
+
 ```mermaid
 flowchart TD
   %% flow: OBSERVED: HTTP 429 bulkhead or rate limit job=describe-allowlisted-image
@@ -131,6 +205,21 @@ flowchart TD
 ```
 
 ### OBSERVED: failed pipeline, invalid envelope, or 120s poll timeout (`observed-error-or-timeout`)
+
+```
+flow: OBSERVED: failed pipeline, invalid envelope, or 120s po\
+  ll timeout (observed-error-or-timeout) job=describe-allowli\
+  sted-image
+  1. Public demo › Describe an image [public-demo-describe]
+     --failed / invalid / incomplete → data-state=failed; for\
+  m re-enabled; in-memory key kept-->
+  2. Public demo › Describe an image [public-demo-describe] (\
+  visit 2)
+     --120s client ceiling → poll timeout copy; form re-enabl\
+  ed; in-memory key kept-->
+  3. Refresh page (drops in-memory retry key) [refresh-page-d\
+  rops-retry-key]
+```
 
 ```mermaid
 flowchart TD
@@ -143,6 +232,16 @@ flowchart TD
 ```
 
 ### OBSERVED: same-page retry reuses the in-memory key (`observed-same-page-retry`)
+
+```
+flow: OBSERVED: same-page retry reuses the in-memory key (obs\
+  erved-same-page-retry) job=retry-same-trigger
+  1. Public demo › Describe an image [public-demo-describe]
+     --failed, limited, or timeout on the same page with the \
+  same media → same idempotency_key-->
+  2. Public demo › Describe an image [public-demo-describe] (\
+  visit 2)
+```
 
 ```mermaid
 flowchart TD

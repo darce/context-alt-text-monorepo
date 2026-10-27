@@ -159,7 +159,7 @@ export const ActivityStatusStrip = ({ scan }: ActivityStatusStripProps): JSX.Ele
         ) : null}
       </div>
       <div className="acx-activity-status-strip__run-actions">
-        {actions.onCancel !== null ? (
+        {actions.onCancel !== null || (showWaitChrome && isCancelling) ? (
           <button
             type="button"
             className="button button-link"

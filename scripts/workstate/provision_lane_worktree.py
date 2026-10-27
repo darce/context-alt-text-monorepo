@@ -12,6 +12,10 @@ VMREAP-1-BR-04: linked worktrees do not inherit gitignored overlay surfaces
 scripts/workbay_lifecycle). Rsync only ignored entries from the primary
 checkout with `-a` so tracked files already checked out in the linked tree are
 never overwritten and overlay symlinks stay symlinks.
+
+ORCA-1: --overlay-path PATH (repeatable) appends checkout-relative paths to
+OVERLAY_PATHS under the same ignored-entries-only rule, so a bootstrap can
+carry every overlay prefix its contract names without editing this list.
 """
 
 from __future__ import annotations
@@ -21,9 +25,12 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
-from pathlib import Path
+from collections.abc import Iterable
+from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 OVERLAY_PATHS: tuple[str, ...] = (
     "Makefile.d",
@@ -49,6 +56,25 @@ DEP_SOURCE_SIDECAR = ".acx-dep-source"
 # Keep only live lockfile digests; history of lockfile churn must not accumulate.
 DEP_CACHE_SCAN_LIMIT = 32
 SIDECAR_ENTRY_KEYS = ("lockfile", "sha256", "readonly", "cache")
+
+
+class _OverlayOp(NamedTuple):
+    """One planned overlay copy; ``entries`` is ``None`` for a whole-path copy."""
+
+    rel: str
+    src: Path
+    dest: Path
+    kind: str
+    entries: list[str] | None = None
+
+
+class OverlayPathError(ValueError):
+    """An overlay path that is not a checkout-relative POSIX path."""
+
+    def __init__(self, value: str, reason: str) -> None:
+        super().__init__(f"invalid overlay path {value!r}: {reason}")
+        self.value = value
+        self.reason = reason
 
 
 def primary_checkout(start: Path) -> Path:
@@ -154,6 +180,44 @@ def _ignored_overlay_entries(primary: Path, rel: str) -> list[str] | None:
     return entries
 
 
+def _target_tracked_paths(worktree: Path, pathspecs: list[str]) -> set[str] | None:
+    """Return paths the target index tracks at or below ``pathspecs``; ``None`` means no Git metadata."""
+    try:
+        proc = subprocess.run(
+            ["git", "--literal-pathspecs", "-C", str(worktree), "ls-files", "-z", "--cached", "--", *pathspecs],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        if _git_metadata_present(worktree):
+            raise RuntimeError(
+                f"git ls-files could not run for target worktree {worktree}; refusing overlay copy"
+            ) from None
+        return None
+    if proc.returncode != 0:
+        if _git_metadata_present(worktree):
+            detail = os.fsdecode(proc.stderr).strip() or "no output"
+            raise RuntimeError(
+                f"git ls-files failed for target worktree {worktree} (exit {proc.returncode}): {detail}; "
+                "refusing overlay copy"
+            )
+        # No index means no branch-owned file the overlay could clobber.
+        return None
+    return {os.fsdecode(raw_entry) for raw_entry in proc.stdout.split(b"\0") if raw_entry}
+
+
+def _is_within(path: str, root: str) -> bool:
+    return os.path.commonpath([path, root]) == root
+
+
+def _require_inside(root: Path, path: Path) -> None:
+    """Refuse ``path`` when following its existing components leaves ``root``."""
+    real = os.path.realpath(path)
+    root_real = os.path.realpath(root)
+    if not _is_within(real, root_real):
+        raise RuntimeError(f"refusing overlay copy to {path}: it resolves to {real}, outside worktree {root_real}")
+
+
 def _relocated_symlink_target(source: Path, target: Path) -> str:
     """Relocate a link target so it keeps the source link's meaning.
 
@@ -196,12 +260,14 @@ def _require_contained_overlay_entry(src: Path, rel: str) -> None:
     raise RuntimeError(f"ignored overlay entry {rel!r} escapes {src}; refusing overlay copy")
 
 
-def _copy_overlay_entries(src: Path, dest: Path, entries: list[str]) -> None:
+def _copy_overlay_entries(src: Path, dest: Path, entries: list[str], *, root: Path | None = None) -> None:
     """Copy an ignored-entry manifest without dereferencing entry symlinks."""
     for rel in entries:
         _require_contained_overlay_entry(src, rel)
         source = src / rel
         target = dest / rel
+        if root is not None:
+            _require_inside(root, target.parent)
         target.parent.mkdir(parents=True, exist_ok=True)
         _remove_existing_path(target)
         if source.is_symlink():
@@ -212,7 +278,10 @@ def _copy_overlay_entries(src: Path, dest: Path, entries: list[str]) -> None:
             shutil.copy2(source, target, follow_symlinks=False)
 
 
-def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -> None:
+def _rsync_overlay(src: Path, dest: Path, *, root: Path, entries: list[str] | None = None) -> None:
+    # Defence in depth behind _validate_overlay_plan: never create parents
+    # through a symlink that leaves the worktree.
+    _require_inside(root, dest.parent)
     dest.parent.mkdir(parents=True, exist_ok=True)
     # Path.is_dir() follows symlinks.  Test the link first so a plugin-managed
     # overlay such as Makefile.d -> ../workbay-overlay remains a link in the
@@ -249,9 +318,9 @@ def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -
                     check=True,
                 )
             else:
-                _copy_overlay_entries(src, dest, other_entries)
+                _copy_overlay_entries(src, dest, other_entries, root=root)
         if symlink_entries:
-            _copy_overlay_entries(src, dest, symlink_entries)
+            _copy_overlay_entries(src, dest, symlink_entries, root=root)
         return
 
     if shutil.which("rsync"):
@@ -265,9 +334,32 @@ def _rsync_overlay(src: Path, dest: Path, *, entries: list[str] | None = None) -
         shutil.copy2(src, dest, follow_symlinks=False)
 
 
-def provision_overlay(*, primary: Path, worktree: Path, fixture_mode: bool = False) -> list[str]:
-    copied: list[str] = []
-    for rel in OVERLAY_PATHS:
+def _normalize_overlay_path(value: str) -> str:
+    if not value:
+        raise OverlayPathError(value, "empty path; pass a path relative to the checkout root")
+    path = PurePosixPath(value)
+    if path.is_absolute():
+        raise OverlayPathError(value, "absolute path; pass a path relative to the checkout root")
+    if ".." in path.parts:
+        raise OverlayPathError(value, "'..' segment; pass a path inside the checkout without '..'")
+    if not path.parts:
+        # "." would hand git the whole checkout and copy every ignored tree,
+        # including the dependency trees this provisioner refuses to copy.
+        raise OverlayPathError(value, "names the checkout root; pass a path below it")
+    # as_posix() also drops "./" and repeated "/"; git ls-files reports
+    # normalized paths, so an unnormalized prefix would silently match nothing.
+    return path.as_posix()
+
+
+def _normalize_overlay_paths(paths: Iterable[str]) -> list[str]:
+    if isinstance(paths, str | bytes):
+        raise TypeError("paths must be an iterable of overlay paths, not a single string")
+    return list(dict.fromkeys(_normalize_overlay_path(value) for value in paths))
+
+
+def _plan_overlay(primary: Path, worktree: Path, overlay_paths: list[str], *, fixture_mode: bool) -> list[_OverlayOp]:
+    plan: list[_OverlayOp] = []
+    for rel in overlay_paths:
         src = primary / rel
         dest = worktree / rel
         # exists() is false for a broken symlink, but the contract is to carry
@@ -281,8 +373,7 @@ def provision_overlay(*, primary: Path, worktree: Path, fixture_mode: bool = Fal
         # A top-level symlink is the overlay contract itself. Preserve it even
         # when its target is outside this checkout or Git cannot inspect it.
         if src.is_symlink():
-            _rsync_overlay(src, dest)
-            copied.append(rel)
+            plan.append(_OverlayOp(rel, src, dest, "link"))
             continue
 
         ignored_entries = _ignored_overlay_entries(primary, rel)
@@ -293,18 +384,167 @@ def provision_overlay(*, primary: Path, worktree: Path, fixture_mode: bool = Fal
                     "refusing overlay copy (pass --fixture-mode only for hermetic tests)"
                 )
             # Hermetic callers may provide a directory without Git metadata.
-            _rsync_overlay(src, dest)
+            plan.append(_OverlayOp(rel, src, dest, "tree" if src.is_dir() else "file"))
         elif src.is_dir():
             # In a real checkout, only ignored overlay entries are eligible.
             # Tracked files (for example Makefile.d/demo-auth.mk) are omitted,
             # leaving the linked worktree's branch-owned version untouched.
-            _rsync_overlay(src, dest, entries=ignored_entries)
+            for entry in ignored_entries:
+                _require_contained_overlay_entry(src, entry)
+            plan.append(_OverlayOp(rel, src, dest, "entries", ignored_entries))
         elif "" in ignored_entries:
-            _rsync_overlay(src, dest)
-        else:
+            plan.append(_OverlayOp(rel, src, dest, "file"))
+    return plan
+
+
+def _source_tree(src: Path) -> tuple[list[str], list[str]]:
+    """Return (files and symlinks, real directories) below ``src`` without following links."""
+    leaves: list[str] = []
+    dirs: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(src):
+        base = Path(dirpath).relative_to(src)
+        for name in dirnames:
+            (leaves if (Path(dirpath) / name).is_symlink() else dirs).append((base / name).as_posix())
+        leaves.extend((base / name).as_posix() for name in filenames)
+    return leaves, dirs
+
+
+def _contained_dest_rel(worktree: Path, root_real: str, op: _OverlayOp) -> str:
+    """Return ``op.dest`` relative to the resolved worktree, refusing escaping ancestors.
+
+    mkdir, rsync and copy all follow symlinked ancestors of ``op.dest``, so the
+    lexical overlay-path check alone cannot keep writes inside the worktree.
+    ``op.dest`` itself is replaced rather than followed, so it is not walked.
+    """
+    current = worktree
+    for part in PurePosixPath(op.rel).parts[:-1]:
+        current = current / part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            break
+        except OSError as exc:
+            raise RuntimeError(f"refusing overlay copy to {op.dest}: cannot inspect {current}: {exc}") from None
+        if stat.S_ISLNK(mode):
+            real = os.path.realpath(current)
+            if not _is_within(real, root_real):
+                raise RuntimeError(
+                    f"refusing overlay copy to {op.dest}: {current} is a symlink to {real}, outside worktree "
+                    f"{root_real}; replace it with a directory inside the worktree or drop {op.rel!r} "
+                    "from the overlay paths"
+                )
+        if not current.is_dir():
+            raise RuntimeError(
+                f"refusing overlay copy to {op.dest}: {current} is not a directory; "
+                f"move it aside or drop {op.rel!r} from the overlay paths"
+            )
+    real_dest = os.path.join(os.path.realpath(op.dest.parent), op.dest.name)
+    return Path(os.path.relpath(real_dest, root_real)).as_posix()
+
+
+def _require_plain_overlay_dirs(op: _OverlayOp, dirs: Iterable[str], root_real: str) -> None:
+    """Refuse a symlink or non-directory where the copy needs a directory below ``op.dest``.
+
+    rsync replaces such a symlink while the Python fallback writes through it,
+    so neither outcome is safe to pick silently.
+    """
+    for rel_dir in sorted(set(dirs)):
+        path = op.dest / rel_dir
+        try:
+            mode = os.lstat(path).st_mode
+        except FileNotFoundError:
             continue
-        copied.append(rel)
-    return copied
+        except OSError as exc:
+            raise RuntimeError(f"refusing overlay copy into {op.dest}: cannot inspect {path}: {exc}") from None
+        if stat.S_ISLNK(mode):
+            real = os.path.realpath(path)
+            where = f"outside worktree {root_real}" if not _is_within(real, root_real) else "inside the overlay"
+            raise RuntimeError(
+                f"refusing overlay copy into {op.dest}: {path} is a symlink to {real}, {where}; "
+                f"remove the symlink or drop {op.rel!r} from the overlay paths"
+            )
+        if not stat.S_ISDIR(mode):
+            raise RuntimeError(
+                f"refusing overlay copy into {op.dest}: {path} is not a directory; "
+                f"move it aside or drop {op.rel!r} from the overlay paths"
+            )
+
+
+def _require_untracked_leaves(worktree: Path, leaves: list[tuple[_OverlayOp, str]], tracked: set[str]) -> None:
+    """Refuse a planned write onto, over, or below a path the target branch tracks."""
+    tracked_below: dict[str, str] = {}
+    for path in sorted(tracked):
+        parts = PurePosixPath(path).parts
+        for depth in range(1, len(parts)):
+            tracked_below.setdefault(PurePosixPath(*parts[:depth]).as_posix(), path)
+    for op, leaf in leaves:
+        parts = PurePosixPath(leaf).parts
+        ancestors = (PurePosixPath(*parts[:depth]).as_posix() for depth in range(1, len(parts)))
+        collision = leaf if leaf in tracked else tracked_below.get(leaf)
+        if collision is None:
+            collision = next((ancestor for ancestor in ancestors if ancestor in tracked), None)
+        if collision is not None:
+            raise RuntimeError(
+                f"refusing overlay copy onto {worktree / leaf}: the target worktree tracks {collision!r}; "
+                f"untrack it on the target branch or drop {op.rel!r} from the overlay paths"
+            )
+
+
+def _validate_overlay_plan(plan: list[_OverlayOp], worktree: Path) -> None:
+    if not plan:
+        return
+    root_real = os.path.realpath(worktree)
+    roots: set[str] = set()
+    leaves: list[tuple[_OverlayOp, str]] = []
+    below: list[tuple[_OverlayOp, list[str]]] = []
+    for op in plan:
+        dest_rel = _contained_dest_rel(worktree, root_real, op)
+        if op.kind == "file" and op.dest.is_dir() and not op.dest.is_symlink():
+            # rsync and copy2 would write into dest/<name>, past every check above.
+            raise RuntimeError(
+                f"refusing overlay copy to {op.dest}: it is a directory but {op.src} is a file; "
+                f"move it aside or drop {op.rel!r} from the overlay paths"
+            )
+        roots.add(dest_rel)
+        rels: list[str] = [""]
+        dirs: list[str] = []
+        if op.kind == "entries":
+            rels = list(op.entries or [])
+            dirs = [
+                PurePosixPath(*PurePosixPath(entry).parts[:depth]).as_posix()
+                for entry in rels
+                for depth in range(1, len(PurePosixPath(entry).parts))
+            ]
+        elif op.kind == "tree":
+            rels, dirs = _source_tree(op.src)
+        if op.kind in ("entries", "tree") and (op.dest.is_symlink() or op.dest.is_file()):
+            # _rsync_overlay replaces this with a fresh directory before copying.
+            rels, dirs = ["", *rels], []
+        leaves.extend((op, PurePosixPath(dest_rel, rel).as_posix()) for rel in rels)
+        below.append((op, dirs))
+    tracked = _target_tracked_paths(worktree, sorted(roots))
+    if tracked:
+        _require_untracked_leaves(worktree, leaves, tracked)
+    for op, dirs in below:
+        _require_plain_overlay_dirs(op, dirs, root_real)
+
+
+def provision_overlay(
+    *,
+    primary: Path,
+    worktree: Path,
+    fixture_mode: bool = False,
+    paths: Iterable[str] | None = None,
+) -> list[str]:
+    # Validate the whole list first so one bad path leaves the worktree untouched.
+    overlay_paths = _normalize_overlay_paths(OVERLAY_PATHS if paths is None else paths)
+    # FLOW-17: plan and validate every copy before the first write, so a later
+    # colliding or escaping path cannot leave earlier paths already copied.
+    plan = _plan_overlay(primary, worktree, overlay_paths, fixture_mode=fixture_mode)
+    _validate_overlay_plan(plan, worktree)
+    for op in plan:
+        _rsync_overlay(op.src, op.dest, root=worktree, entries=op.entries)
+    return [op.rel for op in plan]
 
 
 def _replace_with_symlink(dest: Path, src: Path) -> None:
@@ -540,7 +780,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow a non-Git --primary for hermetic tests only",
     )
+    parser.add_argument(
+        "--overlay-path",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Also copy gitignored entries at or below this checkout-relative PATH (repeatable)",
+    )
     args = parser.parse_args(argv)
+    try:
+        overlay_paths = _normalize_overlay_paths((*OVERLAY_PATHS, *args.overlay_path))
+    except OverlayPathError as exc:
+        print(f"provision_lane_worktree: invalid --overlay-path {exc.value}: {exc.reason}", file=sys.stderr)
+        return 1
     worktree = args.worktree.resolve()
     try:
         if args.primary is not None:
@@ -554,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
             primary = primary_checkout(worktree).resolve()
         if _is_secure_offload_sandbox(worktree, flagged=args.secure_offload):
             _refuse_secure_offload(worktree)
-        provision_overlay(primary=primary, worktree=worktree, fixture_mode=args.fixture_mode)
+        provision_overlay(primary=primary, worktree=worktree, fixture_mode=args.fixture_mode, paths=overlay_paths)
         provision_dependency_trees(primary=primary, worktree=worktree)
     except RuntimeError as exc:
         print(exc, file=sys.stderr)

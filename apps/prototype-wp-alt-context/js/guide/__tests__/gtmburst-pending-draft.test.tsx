@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -85,7 +85,7 @@ describe('public walkthrough pending draft ownership', () => {
     await confirmReplacement(user);
 
     expect(nameRadio('tribeca', 'right', 'omit')).toBeChecked();
-    expect(nameRadio('tribeca', 'right', 'omit')).toHaveFocus();
+    await waitFor(() => expect(nameRadio('tribeca', 'right', 'omit')).toHaveFocus());
     expect(editor('tribeca')).toHaveValue(replacement);
     choose('coachella', 'left', 'include');
     // TEST-06: the unfixed cross-photo flush replaces this with discardedCaption.
@@ -164,7 +164,7 @@ describe('public walkthrough pending draft ownership', () => {
       );
     }
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(nameRadio('tribeca', 'right', 'omit')).toHaveFocus();
+    await waitFor(() => expect(nameRadio('tribeca', 'right', 'omit')).toHaveFocus());
     expect(nameRadio('tribeca', 'right', 'include')).toBeChecked();
     choose('coachella', 'left', 'include');
     expect(editor('tribeca')).toHaveValue(discardedCaption);

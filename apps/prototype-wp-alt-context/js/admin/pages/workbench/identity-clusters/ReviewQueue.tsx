@@ -26,6 +26,11 @@ import {
 } from '../../../hooks/workbenchQueueUrl';
 import { faceOverlayDomId } from '../../../../components/ui/FaceOverlayLayer';
 import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
+import {
+  formatUserFacingError,
+  isAuthExpiredError,
+  SPA_SESSION_EXPIRED_COPY,
+} from '../../../utils/userFacingError';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
@@ -123,6 +128,67 @@ const isEnabledFocusTarget = (el: HTMLElement | null): el is HTMLElement => {
 };
 
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
+
+/**
+ * UXREC-1-DEMO-02 / RLSE-04: the one classified sentence for a top-unlabeled
+ * outage. The visual notice and the live-position announcement both read it so
+ * the two channels cannot drift apart (E21-14 aria-live finding).
+ */
+const topUnlabeledErrorCopy = (error: unknown): string =>
+  isAuthExpiredError(error)
+    ? SPA_SESSION_EXPIRED_COPY.sessionExpired
+    : __('Unable to load unlabeled faces.', 'alt-context');
+
+/**
+ * UXREC-1-DEMO-02 / INT-14: the single top-unlabeled outage notice (was three
+ * inline copies). Auth expiry renders nothing here — Retry cannot recover a
+ * session, and the queue-level UserFacingErrorNotice owns the one
+ * session-expired alert with Reload (PERC-07, INT-18). Every other class keeps
+ * the RLSE-05 alert; Retry is busy and inert while a refetch is in flight
+ * (INT-08), so it cannot be double-submitted.
+ */
+const TopUnlabeledErrorNotice = ({
+  error,
+  isFetching,
+  onRetry,
+}: {
+  error: unknown;
+  isFetching: boolean;
+  onRetry: () => void;
+}): React.JSX.Element | null => {
+  const noticeId = React.useId();
+  const headlineId = `${noticeId}-headline`;
+  const statusId = `${noticeId}-retry-status`;
+  if (isAuthExpiredError(error)) {
+    return null;
+  }
+  const headline = topUnlabeledErrorCopy(error);
+  // Cause line only when the classifier knows more than the headline
+  // (timeout / nonce refresh); a plain 500 maps to the headline itself.
+  const cause = formatUserFacingError(error, headline);
+  return (
+    <div
+      className="acx-review-queue__error"
+      role="alert"
+      data-testid="acx-review-queue-top-unlabeled-error"
+    >
+      <p id={headlineId}>{headline}</p>
+      {cause !== headline ? <p>{cause}</p> : null}
+      <QueryRetryButton
+        className="button"
+        describedBy={headlineId}
+        statusId={statusId}
+        retrying={isFetching}
+        retryingLabel={__('Retrying unlabeled faces…', 'alt-context')}
+        onClick={() => {
+          if (!isFetching) {
+            onRetry();
+          }
+        }}
+      />
+    </div>
+  );
+};
 
 export interface ReviewQueueHandle {
   focusCurrentCard: () => void;
@@ -372,7 +438,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
     const repairAnnouncedRef = React.useRef(false);
-    const repairAnnouncedMessageRef = React.useRef<string | null>(null);
+    const emptyAnnouncedMessageRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
@@ -713,6 +779,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     React.useImperativeHandle(ref, () => ({ focusCurrentCard }), [focusCurrentCard]);
 
     const prevFilteredEmptyRef = React.useRef(filteredEmptyWithWork);
+    // UXREC-1-DEMO-02: announce the same classified sentence the visual surface
+    // shows — session-expired copy for auth expiry, the outage copy otherwise.
+    const topUnlabeledErrorAnnouncement = topUnlabeledErrorCopy(data.topUnlabeledError);
 
     // Card transition announce + post-removal focus placement.
     React.useEffect(() => {
@@ -731,7 +800,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
         previousItemKeyRef.current = currentKey;
         repairAnnouncedRef.current = false;
-        repairAnnouncedMessageRef.current = null;
+        emptyAnnouncedMessageRef.current = null;
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => focusPrimaryInCard());
@@ -750,48 +819,36 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               topUnlabeledClusters.length,
             )
           : null;
-        const repairCopyChanged =
-          repairCopy !== null &&
-          !data.isTopUnlabeledError &&
-          !filteredEmptyWithWork &&
-          repairAnnouncedMessageRef.current !== null &&
-          repairAnnouncedMessageRef.current !== repairCopy;
+        // UI-04: drain copy is for a successful empty only — projection failure
+        // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+        // [rg-003] the outage must not silence the filtered-empty announcement:
+        // when filters hide real work, AT hears both the failure and the hint
+        // that an escape hatch exists, matching the visual (both are rendered).
+        const filteredEmptyCopy = __('No items match the current filters.', 'alt-context');
+        const nextEmptyMessage = data.isTopUnlabeledError
+          ? filteredEmptyWithWork
+            ? `${topUnlabeledErrorAnnouncement} ${filteredEmptyCopy}`
+            : topUnlabeledErrorAnnouncement
+          : filteredEmptyWithWork
+            ? filteredEmptyCopy
+            : (repairCopy ?? __('All caught up — no items need review', 'alt-context'));
+        // R8-02 / A11Y-21 / UXREC-1-DEMOQ-G1-F2: latch the announced sentence, not
+        // only a boolean, for every empty branch — a count, wording or error-class
+        // change (500 → auth expiry) re-fires; an identical rerender stays quiet.
+        // Null until this effect has announced, so mount stays as quiet as before.
+        const emptyMessageChanged =
+          emptyAnnouncedMessageRef.current !== null &&
+          emptyAnnouncedMessageRef.current !== nextEmptyMessage;
         if (
           previousItemKeyRef.current !== null ||
           (findings.repairPending && !repairAnnouncedRef.current) ||
           (!findings.repairPending && repairAnnouncedRef.current) ||
-          repairCopyChanged
+          emptyMessageChanged
         ) {
           previousItemKeyRef.current = null;
-          // UI-04: drain copy is for a successful empty only — projection failure
-          // must announce the error, not "all caught up" (RLSE-05 / A11Y).
-          // [rg-003] the outage must not silence the filtered-empty announcement:
-          // when filters hide real work, AT hears both the failure and the hint
-          // that an escape hatch exists, matching the visual (both are rendered).
-          // R8-02 / A11Y-21: latch the announced sentence, not only a boolean, so a
-          // count or wording change re-fires and an identical rerender stays quiet.
-          if (data.isTopUnlabeledError) {
-            const errorCopy = __('Unable to load unlabeled faces.', 'alt-context');
-            const nextEmptyMessage = filteredEmptyWithWork
-              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
-              : errorCopy;
-            setLivePositionMessage(nextEmptyMessage);
-            repairAnnouncedRef.current = findings.repairPending;
-            repairAnnouncedMessageRef.current = nextEmptyMessage;
-          } else if (filteredEmptyWithWork) {
-            const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
-            setLivePositionMessage(nextEmptyMessage);
-            repairAnnouncedRef.current = findings.repairPending;
-            repairAnnouncedMessageRef.current = nextEmptyMessage;
-          } else if (findings.repairPending && repairCopy) {
-            setLivePositionMessage(repairCopy);
-            repairAnnouncedRef.current = true;
-            repairAnnouncedMessageRef.current = repairCopy;
-          } else {
-            setLivePositionMessage(__('All caught up — no items need review', 'alt-context'));
-            repairAnnouncedRef.current = false;
-            repairAnnouncedMessageRef.current = null;
-          }
+          setLivePositionMessage(nextEmptyMessage);
+          repairAnnouncedRef.current = findings.repairPending;
+          emptyAnnouncedMessageRef.current = nextEmptyMessage;
           if (pendingFocusAfterRemovalRef.current) {
             pendingFocusAfterRemovalRef.current = false;
             requestAnimationFrame(() => {
@@ -814,6 +871,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       safeIndex,
       setLivePositionMessage,
       topUnlabeledClusters.length,
+      topUnlabeledErrorAnnouncement,
     ]);
 
     const markAdvanceFocus = React.useCallback((): void => {
@@ -1195,6 +1253,21 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       );
     }
 
+    // UXREC-1-DEMO-02 / PERC-07: one session-expired alert per queue. A
+    // top-unlabeled auth expiry routes into the head-probe notice below
+    // (TopUnlabeledErrorNotice renders nothing for it), passing whichever
+    // source's error is the auth one, so the two reads never stack two alerts.
+    const topUnlabeledAuthExpired =
+      data.isTopUnlabeledError && isAuthExpiredError(data.topUnlabeledError);
+    const queueNoticeError =
+      topUnlabeledAuthExpired && !isAuthExpiredError(headLiveError)
+        ? data.topUnlabeledError
+        : headLiveError;
+    const showQueueNotice =
+      headLiveStatus === 'auth_expired' ||
+      (headLiveStatus === 'unverified' && headLiveError !== null) ||
+      topUnlabeledAuthExpired;
+
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
         {liveRegion}
@@ -1205,10 +1278,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           shout at every operator on first paint. The reason channel disambiguates:
           announce only once there is something to announce (RLSE-05 / AGT-10).
         */}
-        {headLiveStatus === 'auth_expired' || (headLiveStatus === 'unverified' && headLiveError !== null) ? (
+        {showQueueNotice ? (
           <UserFacingErrorNotice
             className="acx-review-queue__auth-expired"
-            error={headLiveError}
+            error={queueNoticeError}
             fallback={__('Unable to verify this review target.', 'alt-context')}
           />
         ) : null}
@@ -1551,21 +1624,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             // real pending work. Only the true-drain copy is suppressed by it.
             <>
               {data.isTopUnlabeledError ? (
-                // RLSE-05: top-unlabeled 500 must not read as an empty/caught-up queue.
-                <div
-                  className="acx-review-queue__error"
-                  role="alert"
-                  data-testid="acx-review-queue-top-unlabeled-error"
-                >
-                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => void data.refetchTopUnlabeled()}
-                  >
-                    {__('Retry', 'alt-context')}
-                  </button>
-                </div>
+                // RLSE-05: no top-unlabeled error class — auth expiry included —
+                // reads as an empty/caught-up queue; the drain branch below
+                // stays gated on the flag, not on what the notice renders.
+                <TopUnlabeledErrorNotice
+                  error={data.topUnlabeledError}
+                  isFetching={data.isTopUnlabeledFetching}
+                  onRetry={() => void data.refetchTopUnlabeled()}
+                />
               ) : null}
               {filteredEmptyWithWork ? (
                 // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
@@ -1629,20 +1695,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 currentItem.kind === NEXT_ACTION_KIND.CLUSTER &&
                 !topClustersById.has(currentItem.clusterId)
               ) ? (
-                <div
-                  className="acx-review-queue__error"
-                  role="alert"
-                  data-testid="acx-review-queue-top-unlabeled-error"
-                >
-                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => void data.refetchTopUnlabeled()}
-                  >
-                    {__('Retry', 'alt-context')}
-                  </button>
-                </div>
+                <TopUnlabeledErrorNotice
+                  error={data.topUnlabeledError}
+                  isFetching={data.isTopUnlabeledFetching}
+                  onRetry={() => void data.refetchTopUnlabeled()}
+                />
               ) : null}
             <CurrentCard
               item={currentItem}
@@ -1665,6 +1722,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               nameById={nameById}
               topClustersById={topClustersById}
               isTopUnlabeledError={data.isTopUnlabeledError}
+              topUnlabeledError={data.topUnlabeledError}
+              isTopUnlabeledFetching={data.isTopUnlabeledFetching}
               onRetryTopUnlabeled={() => void data.refetchTopUnlabeled()}
               isCardPending={(suggestionId, kinds) =>
                 // BR-47: selected cards cannot open a single hold (bulk exclusion).
@@ -1890,6 +1949,10 @@ interface CurrentCardProps {
   topClustersById: Map<string, TopUnlabeledCluster>;
   /** Projection outage on top-unlabeled — distinct from retired-cluster empty. */
   isTopUnlabeledError: boolean;
+  /** UXREC-1-DEMO-02: classifies the outage for TopUnlabeledErrorNotice. */
+  topUnlabeledError: unknown;
+  /** UXREC-1-DEMO-02: Retry wait state while the refetch is in flight (INT-08). */
+  isTopUnlabeledFetching: boolean;
   onRetryTopUnlabeled: () => void;
   isCardPending: (suggestionId: string, kinds: readonly SuggestionCommitKind[]) => boolean;
   /** BR-47: title/reason when Accept/Reject disabled due to selection or bulk. */
@@ -2045,6 +2108,8 @@ const CurrentCard = ({
   nameById,
   topClustersById,
   isTopUnlabeledError,
+  topUnlabeledError,
+  isTopUnlabeledFetching,
   onRetryTopUnlabeled,
   isCardPending,
   cardActionsDisabledReason,
@@ -2466,16 +2531,11 @@ const CurrentCard = ({
         // RLSE-05: projection 500 must not read as "cluster retired".
         if (isTopUnlabeledError) {
           return (
-            <div
-              className="acx-review-queue__error"
-              role="alert"
-              data-testid="acx-review-queue-top-unlabeled-error"
-            >
-              <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
-              <button type="button" className="button" onClick={onRetryTopUnlabeled}>
-                {__('Retry', 'alt-context')}
-              </button>
-            </div>
+            <TopUnlabeledErrorNotice
+              error={topUnlabeledError}
+              isFetching={isTopUnlabeledFetching}
+              onRetry={onRetryTopUnlabeled}
+            />
           );
         }
         return (

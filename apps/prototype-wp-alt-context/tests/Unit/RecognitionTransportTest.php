@@ -883,7 +883,6 @@ class RecognitionTransportTest extends TestCase
 
         try {
             $method = new ReflectionMethod(RecognitionTransport::class, 'apply_curl_resolve_option');
-            $method->setAccessible(true);
             $applied = $method->invokeArgs(null, [&$handle, 'api.example.test:443:93.184.216.34']);
 
             $this->assertTrue($applied, 'the real CURLOPT_RESOLVE option must accept the validated pin');
@@ -913,7 +912,6 @@ class RecognitionTransportTest extends TestCase
             $this->assertTrue($configured, 'the loopback-only cURL probe options must be accepted');
 
             $method = new ReflectionMethod(RecognitionTransport::class, 'apply_curl_resolve_option');
-            $method->setAccessible(true);
             $applied = $method->invokeArgs(null, [&$handle, 'acx-pin-probe.invalid:1:127.0.0.1']);
             $this->assertTrue($applied, 'the production pin path must accept the loopback pin');
 
@@ -932,7 +930,6 @@ class RecognitionTransportTest extends TestCase
     {
         RecognitionTransport::set_curl_capability_probe(null);
         $method = new ReflectionMethod(RecognitionTransport::class, 'curl_transport_available');
-        $method->setAccessible(true);
         $expected = function_exists('curl_init') && is_callable('curl_exec');
         if ($expected) {
             $version = function_exists('curl_version') && defined('CURL_VERSION_SSL') ? curl_version() : false;
@@ -955,7 +952,6 @@ $pluginRoot = %s;
 require $pluginRoot . '/vendor/autoload.php';
 require_once $pluginRoot . '/src/support/class-recognition-transport.php';
 $method = new \ReflectionMethod(\AltContext\Support\RecognitionTransport::class, 'curl_transport_available');
-$method->setAccessible(true);
 echo $method->invoke(null, 'https') ? 'true' : 'false';
 PHP,
             var_export($pluginRoot, true)
@@ -1163,7 +1159,6 @@ PHP,
     public function testCurlCapabilityDecision(bool $hasInit, bool $hasExec, ?array $version, string $scheme, bool $expected): void
     {
         $method = new ReflectionMethod(RecognitionTransport::class, 'curl_capability');
-        $method->setAccessible(true);
 
         $this->assertSame($expected, $method->invoke(null, $hasInit, $hasExec, $version, $scheme));
     }

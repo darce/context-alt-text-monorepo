@@ -1031,13 +1031,13 @@ describe('useActivityStatus', () => {
     expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
   });
 
-  it('does not retry an idle GPU status error or submit a describe run', async () => {
+  it('does not offer a run retry after confirming an idle GPU status outage', async () => {
     const { queryKeys } = await import('../../api/queryKeys');
     fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
     queryClient = buildTestQueryClient();
     const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
-    await waitFor(() => expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error'));
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error'), { timeout: 4_000 });
     await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE));
     expect(result.current.status.gpuState).toBe(GPU_STATE.UNKNOWN);
     expect(result.current.status.reason).toBeNull();

@@ -308,14 +308,14 @@ describe('useGpuStateToasts edge policy', () => {
     }
   });
 
-  it('does not toast a GPU status poll failure with no active run', () => {
+  it('does not toast a GPU status poll failure with only a persisted run id', () => {
     observeSequence([
-      hookResult({ status: idleStatus() }),
+      hookResult({ status: idleStatus({ runId: 'persisted-run' }) }),
       hookResult({
         status: idleStatus({
           kind: ACTIVITY_KIND.FAILED,
           reason: ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE,
-          runId: null,
+          runId: 'persisted-run',
           retryable: true,
         }),
       }),
@@ -330,13 +330,14 @@ describe('useGpuStateToasts edge policy', () => {
       hookResult({
         status: runStatus(ACTIVITY_KIND.FAILED, {
           reason: ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE,
+          isLiveRun: true,
           retryable: true,
         }),
       }),
     ]);
 
-    const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.failedToastGpuUnavailable);
-    expect(options.durationMs).toBeNull();
+    const options = expectOnlyErrorToast('Description service status unavailable — this run is waiting on status.');
+    expect(options.durationMs).toBe(5_000);
   });
 
   it('toasts unknown failed reasons with generic copy and no Retry', () => {

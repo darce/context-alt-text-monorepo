@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { __ } from '@wordpress/i18n';
 import { useNavigate } from 'react-router-dom';
 
 import { GPU_STATE, type GpuState } from '../api/describeApi';
@@ -39,7 +40,7 @@ const failedToastMessage = (reason: string | null): string => {
     case ACTIVITY_REASON.DESCRIBE_POLL_ERROR:
       return GPU_STATE_VOCABULARY.failedToastDescribePoll;
     case ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE:
-      return GPU_STATE_VOCABULARY.failedToastGpuUnavailable;
+      return __('Description service status unavailable — this run is waiting on status.', 'alt-context');
     case ACTIVITY_REASON.CANCELLED:
       return GPU_STATE_VOCABULARY.failedToastCancelled;
     case ACTIVITY_REASON.SCAN_FAILED:
@@ -175,7 +176,7 @@ export const useGpuStateToasts = (): void => {
     if (nextKind === ACTIVITY_KIND.FAILED) {
       if (
         status.reason === ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE &&
-        status.runId === null
+        (status.runId === null || status.isLiveRun !== true)
       ) {
         return;
       }
@@ -191,7 +192,7 @@ export const useGpuStateToasts = (): void => {
                   altText: GPU_STATE_VOCABULARY.retryAltText,
                   onClick: onRetry,
                 },
-          durationMs: null,
+          durationMs: status.reason === ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE ? 5_000 : null,
         });
       });
     }

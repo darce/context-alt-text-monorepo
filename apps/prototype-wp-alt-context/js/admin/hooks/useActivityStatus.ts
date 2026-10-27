@@ -92,6 +92,8 @@ const unfinishedMediaIdsFromItems = (items: readonly DescribeRunItem[]): number[
 
 /** Stable authority snapshot consumed by the strip and by spa-activity-toasts (C7). */
 export interface ActivityStatus {
+  /** Current nonterminal run evidence; a persisted id alone is insufficient. */
+  isLiveRun?: boolean;
   kind: ActivityKind;
   progress: number | null;
   etaSeconds: number | null;
@@ -307,6 +309,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
 
   if (describeWarming) {
     return snapshot(ACTIVITY_KIND.WARMING, {
+      isLiveRun: true,
       progress: describe.progress.progressFraction,
       etaSeconds: describe.progress.etaSeconds,
       reason: null,
@@ -321,6 +324,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
 
   if (describeLive) {
     return snapshot(ACTIVITY_KIND.DESCRIBING, {
+      isLiveRun: true,
       progress: describe.progress.progressFraction,
       etaSeconds: describe.progress.etaSeconds,
       reason: null,

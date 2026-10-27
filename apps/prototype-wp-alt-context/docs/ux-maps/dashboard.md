@@ -4,52 +4,30 @@
 **Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx`
 
 ## Goals
-
 - Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
 - One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
 - Give the operator one landing surface for sync health, identity-recognition progress, library coverage, recent jobs, and data retention
 - Keep the first-use orientation before the dashboard grid until the first person is named
 - Make dashboard section order and per-section loading, empty, error, first-use, and degraded behavior reviewable as a text-first SSOT
 
-## Information architecture (D-2)
-
-One user goal per ACX submenu. Frequency-ordered after the required WordPress parent duplicate.
-
-| Order | menu_title | slug | User goal (exactly one home) |
-| --- | --- | --- | --- |
-| 1 | Overview | `alt-context-dashboard` | Orient: health and the next action. Not a work queue, not naming, not history. WP parent click. |
-| 2 | Review Queue | `alt-context-workbench` | Name a person from unnamed face groups; write alt text. Highest-frequency demo task. |
-| 3 | People | `alt-context-roster` | Manage named people. Unnamed faces are not filed here. |
-| 4 | Description Runs | `alt-context-description-history` | See what the describer did. |
-| 5 | Data Retention | `alt-context-retention` | Keep / delete / export policy. Not description-run history. |
-| 6 | Settings | `alt-context-settings` | Configure the recognition service. Rare; last. |
-
 ## Jobs
-
 - `job-start-recognition` — Start identity recognition and move from scan to review
 - `job-triage-dashboard` — Triage dashboard health and choose the next operator action
 - `job-maintain-library` — Improve library coverage and review data retention
 
-## State and placement rules
-
-The screen-level state is the aggregate landing-surface state. Each zone also owns a state matrix; a section can be loading or in error while the hero and other sections remain rendered.
-
-- Base grid order: `Sync Health` → `Identity Recognition` → `Library Coverage` → `Recent Activity` → `Data Retention`.
-- When sync has no attention and actionable review work exists (`pendingClustersCount > 0` or `unassignedPersonsCount > 0`), `Identity Recognition` is promoted ahead of `Sync Health`.
-- The orientation surface is outside the grid and sits immediately after the hero, before whichever grid order applies.
-- Orientation is rendered before the grid for `unscanned`, `scanning`, and `clusters_pending` flow states. It is hidden once `flowState` is `first_named`; dismissal also hides the card for that browser/user.
-- `assigned_clusters_count > 0` sets `flowState` to `first_named`, so a populated Assigned count cannot appear with Getting Started. First-time and default sketches are therefore separate compositions.
-- The hero is always present and has no distinct first_time branch. Dashboard data hooks load independently, so loading/error branches belong to their sections rather than replacing the shell.
-- There is no exclusive page-level `empty` or `offline` shell. Offline copy is a Sync Health summary tag inside the intact (often degraded) grid.
+## Code references
+- `screen:dashboard-shell` — `apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx`
+- `screen:exit-workbench` — `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
+- `screen:exit-retention` — `apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx`
+- `screen:exit-roster` — `apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx`
 
 ## Screens
-
-| id | kind | route | title | wp_page |
-| --- | --- | --- | --- | --- |
-| `dashboard-shell` | screen | `#/dashboard` | Overview | `alt-context-dashboard` |
-| `exit-workbench` | exit | `#/workbench` | Workbench | `alt-context-workbench` |
-| `exit-retention` | exit | `#/retention` | Data Retention | `alt-context-retention` |
-| `exit-roster` | exit | `#/roster` | Roster (person workspace) | `alt-context-roster` |
+| id | kind | route | title |
+| --- | --- | --- | --- |
+| `dashboard-shell` | screen | `#/dashboard` | Overview |
+| `exit-workbench` | exit | `#/workbench` | Workbench |
+| `exit-retention` | exit | `#/retention` | Data Retention |
+| `exit-roster` | exit | `#/roster` | Roster (person workspace) |
 
 ### Overview (`dashboard-shell`)
 
@@ -65,7 +43,265 @@ Purpose: Landing screen with hero, conditional orientation surface, and a priori
 | `z-recent-activity` | Recent Activity section (recognition jobs, provenance, status, duration, results link) | queue | default, empty, degraded, error |
 | `z-retention-posture` | Data Retention section (mode, last export, last purge, Open Data Retention link) | status | default, error |
 
-Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
+```
++------------------------------------------------------------+
+| Overview  [screen]  #/dashboard                            |
+| Landing screen with hero, conditional orientation surface\ |
+|   , and a priority-ordered grid of Sync Health, Identity \ |
+|   Recognition, Library Coverage, Recent Activity, and Dat\ |
+|   a Retention sections.                                    |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Dashboard hero (Alt Context / Overview / contextual s\ |
+|   ubtitle) (content) states=[default]                      |
+|   - Orientation surface (Getting Started with Identity Re\ |
+|   cognition; before grid unless first_named) (content) st\ |
+|   ates=[default,first_time]                                |
+|   - Sync Health section (summary, pending changes, confli\ |
+|   cts, failed sync events, topology work) (status) states\ |
+|   =[default,loading,error]                                 |
+|   - Identity Recognition section (people, assigned, pendi\ |
+|   ng review, media with faces, guidance) (content) states\ |
+|   =[default,loading,error,first_time]                      |
+|   - Library Coverage section (total media, missing alt te\ |
+|   xt, coverage, fix CTA) (content) states=[default,loadin\ |
+|   g]                                                       |
+|   - Recent Activity section (recognition jobs, provenance\ |
+|   , status, duration, results link) (queue) states=[defau\ |
+|   lt,empty,degraded,error]                                 |
+|   - Data Retention section (mode, last export, last purge\ |
+|   , Open Data Retention link) (status) states=[default,er\ |
+|   ror]                                                     |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Start your first scan -> #/workbench?tab=scan  |
+|   [secondary] Fix missing descriptions -> #/workbench?sta\ |
+|   tus=missing                                              |
+|   [secondary] Go to Review Queue -> #/workbench?advanced=\ |
+|   open                                                     |
+|   [secondary] Go to Scan tab -> #/workbench?tab=scan       |
+|   [secondary] Open Conflict Inbox -> #/workbench?tab=scan\ |
+|   &panel=conflicts                                         |
+|   [secondary] Open Failed Sync Queue -> #/workbench?tab=s\ |
+|   can&panel=dead-letter                                    |
+|   [secondary] Open Data Retention -> #/retention           |
+|   [secondary] Open Review Queue -> #/workbench?tab=scan    |
+|   [secondary] Retry -> dashboard-shell                     |
+|   [secondary] Retry identity stats -> dashboard-shell      |
+|   [secondary] Review unassigned persons -> #/workbench?ta\ |
+|   b=scan                                                   |
+|   [secondary] Run a scan -> #/workbench?tab=scan           |
+|   [secondary] View Results -> #/workbench?advanced=open    |
+|   [tertiary] Dismiss getting started -> dashboard-shell    |
+|   [DESTRUCTIVE] Reset mirror -> dashboard sync health (co\ |
+|   stly,preview,irreversible)                               |
++------------------------------------------------------------+
+| states: default | loading | error | first_time | degraded  |
++------------------------------------------------------------+
+```
+
+### Workbench (`exit-workbench`)
+
+Purpose: Scan, review queue, conflict inbox, and failed-sync overlays after a dashboard CTA
+
+url_params: `tab`, `panel`, `advanced`, `status`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-wb-entry` | Workbench entry | nav | default |
+
+```
++------------------------------------------------------------+
+| Workbench  [exit]  #/workbench                             |
+| Scan, review queue, conflict inbox, and failed-sync overl\ |
+|   ays after a dashboard CTA                                |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Workbench entry (nav) states=[default]                 |
++------------------------------------------------------------+
+| states: default | loading | error                          |
++------------------------------------------------------------+
+```
+
+### Data Retention (`exit-retention`)
+
+Purpose: Set keep/delete policy and export or purge this site's derived data. Not the home for description-run history (NAV-05).
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-retention-entry` | Data Retention entry | nav | default |
+
+```
++------------------------------------------------------------+
+| Data Retention  [exit]  #/retention                        |
+| Set keep/delete policy and export or purge this site's de\ |
+|   rived data. Not the home for description-run history (N\ |
+|   AV-05).                                                  |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Data Retention entry (nav) states=[default]            |
++------------------------------------------------------------+
+| states: default | loading | error                          |
++------------------------------------------------------------+
+```
+
+### Roster (person workspace) (`exit-roster`)
+
+Purpose: Manage named people after dashboard identity guidance. Unnamed faces are named in Review Queue, not here (NAV-05).
+
+url_params: `personFilter`, `person`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-roster-entry` | Roster entry | nav | default |
+
+```
++------------------------------------------------------------+
+| Roster (person workspace)  [exit]  #/roster                |
+| Manage named people after dashboard identity guidance. Un\ |
+|   named faces are named in Review Queue, not here (NAV-05\ |
+|   ).                                                       |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Roster entry (nav) states=[default]                    |
++------------------------------------------------------------+
+| states: default | loading | empty | error                  |
++------------------------------------------------------------+
+```
+
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-start-first-scan` | Start your first scan | `#/workbench?tab=scan` | primary | no | no | no | `dashboard-shell` |
+| `act-dismiss-orientation` | Dismiss getting started | `dashboard-shell` | tertiary | no | no | no | `dashboard-shell` |
+| `act-open-review-queue` | Open Review Queue | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-fix-missing-descriptions` | Fix missing descriptions | `#/workbench?status=missing` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-retention` | Open Data Retention | `#/retention` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-conflicts` | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-failed-sync` | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` | secondary | no | no | no | `dashboard-shell` |
+| `act-reset-mirror` | Reset mirror | `dashboard sync health` | destructive | yes | yes | yes | `dashboard-shell` |
+| `act-view-results` | View Results | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
+| `act-run-a-scan` | Run a scan | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-retry-identity-stats` | Retry | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
+| `act-retry-identity-stats-unavailable` | Retry identity stats | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
+| `act-go-to-review-queue` | Go to Review Queue | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
+| `act-review-unassigned` | Review unassigned persons | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-go-to-scan-tab` | Go to Scan tab | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+
+## Flows
+### First-time orientation → start first scan → review queue (`flow-first-recognition`)
+
+```
+flow: First-time orientation → start first scan → review queu\
+  e (flow-first-recognition) job=job-start-recognition
+  1. Overview [dashboard-shell]
+     --fresh tenant; orientation before grid-->
+  2. Workbench [exit-workbench]
+     --Start your first scan-->
+  3. Overview [dashboard-shell] (visit 2)
+```
+
+```mermaid
+flowchart TD
+  %% flow: First-time orientation → start first scan → review queue job=job-start-recognition
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"fresh tenant; orientation before grid"},{"screen_id":"exit-workbench","branch_label":"Start your first scan"},{"screen_id":"dashboard-shell","branch_label":"scan/job appears in Recent Activity"}]
+  n_dashboard_shell["Overview (screen)"]
+  n_exit_workbench["Workbench (exit)"]
+  n_dashboard_shell -->|fresh tenant; orientation before grid| n_exit_workbench
+  n_exit_workbench -->|Start your first scan| n_dashboard_shell
+```
+
+### Read health and identity counts → open review queue or resolve sync debt (`flow-dashboard-review`)
+
+```
+flow: Read health and identity counts → open review queue or \
+  resolve sync debt (flow-dashboard-review) job=job-triage-da\
+  shboard
+  1. Overview [dashboard-shell]
+     --populated dashboard-->
+  2. Overview [dashboard-shell] (visit 2)
+     --Identity Recognition promoted when review work exists \
+  and sync has no attention-->
+  3. Workbench [exit-workbench]
+```
+
+```mermaid
+flowchart TD
+  %% flow: Read health and identity counts → open review queue or resolve sync debt job=job-triage-dashboard
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"populated dashboard"},{"screen_id":"dashboard-shell","branch_label":"Identity Recognition promoted when review work exists and sync has no attention"},{"screen_id":"exit-workbench","branch_label":"Open Review Queue / Conflict Inbox / Failed Sync Queue"}]
+  n_dashboard_shell["Overview (screen)"]
+  n_dashboard_shell -->|populated dashboard| n_dashboard_shell
+  n_exit_workbench["Workbench (exit)"]
+  n_dashboard_shell -->|Identity Recognition promoted when review work exists and sync has no attention| n_exit_workbench
+```
+
+### Check coverage → fix missing descriptions → inspect data retention (`flow-dashboard-maintenance`)
+
+```
+flow: Check coverage → fix missing descriptions → inspect dat\
+  a retention (flow-dashboard-maintenance) job=job-maintain-l\
+  ibrary
+  1. Overview [dashboard-shell]
+     --Library Coverage-->
+  2. Workbench [exit-workbench]
+     --Fix missing descriptions-->
+  3. Data Retention [exit-retention]
+```
+
+```mermaid
+flowchart TD
+  %% flow: Check coverage → fix missing descriptions → inspect data retention job=job-maintain-library
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"Library Coverage"},{"screen_id":"exit-workbench","branch_label":"Fix missing descriptions"},{"screen_id":"exit-retention","branch_label":"Open Data Retention"}]
+  n_dashboard_shell["Overview (screen)"]
+  n_exit_workbench["Workbench (exit)"]
+  n_dashboard_shell -->|Library Coverage| n_exit_workbench
+  n_exit_retention["Data Retention (exit)"]
+  n_exit_workbench -->|Fix missing descriptions| n_exit_retention
+```
+
+## Open questions
+- Should an unavailable retention policy remain absent, or should the dashboard expose a stable empty-state panel?
+- Should Recent Activity expose an explicit loading row while durable history is being fetched?
+- `z-retention-posture` renders nothing while retention status is loading and nothing when `available:false` — should either of those become a distinguishable zone state instead of an absence?
+- GuidanceCard has a reachable caught-up branch (pending 0, unassigned 0, people > 0) with no canonical `MapState` to name it — widen `MapState` upstream, or accept that the branch stays sketch-only?
+- `z-recent-activity` `degraded` (the `browser_local_fallback` banner) is an independent overlay, not exclusive with `default`/`empty`: `historySource` selects the banner and the content branch separately, so `degraded` renders together with either. `error` *is* mutually exclusive with `degraded` (both derive from the same single-valued `historySource`). The flat `states` list cannot express either relation — should the schema gain state composition?
+
+## Parity index
+
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
+
+Zone ids: z-dashboard-hero z-orientation z-sync-health z-identity-recognition z-library-coverage z-recent-activity z-retention-posture z-wb-entry z-retention-entry z-roster-entry
+
+Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-run-a-scan act-retry-identity-stats act-retry-identity-stats-unavailable act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
+
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Dashboard hero (Alt Context / Overview / contextual subtitle)
+- Orientation surface (Getting Started with Identity Recognition; before grid unless first_named)
+- Sync Health section (summary, pending changes, conflicts, failed sync events, topology work)
+- Identity Recognition section (people, assigned, pending review, media with faces, guidance)
+- Library Coverage section (total media, missing alt text, coverage, fix CTA)
+- Recent Activity section (recognition jobs, provenance, status, duration, results link)
+- Data Retention section (mode, last export, last purge, Open Data Retention link)
+- Workbench entry
+- Data Retention entry
+- Roster entry
+
+States (all zones and screens): default loading error first_time degraded empty
+
+## Not doing
+- Changing DashboardPage, the priority model, OrientationCard, or any product behavior
+- Defining pixel, token, responsive, or visual styling details
+- Replacing the independent per-section data loading branches with a page-level suspense boundary
+
+## Operator interaction contract
+
+### Dashboard shell states
 
 #### Default — populated
 
@@ -380,167 +616,3 @@ Interactivity notes:
   "Nothing will be lost." plus confirm label "Reset mirror" when count is 0). Confirm
   is the only path that calls `onResetMirror`, matching
   `act-reset-mirror.preview_required` and `irreversible: true`.
-
-
-### Workbench (`exit-workbench`)
-
-Purpose: Scan, review queue, conflict inbox, and failed-sync overlays after a dashboard CTA
-
-url_params: `tab`, `panel`, `advanced`, `status`
-
-| zone id | label | role | states |
-| --- | --- | --- | --- |
-| `z-wb-entry` | Workbench entry | nav | default |
-
-```
-+------------------------------------------------------------+
-| Workbench  [exit]  #/workbench                             |
-| Scan, review queue, conflict inbox, and failed-sync        |
-| overlays after a dashboard CTA                             |
-+------------------------------------------------------------+
-| ZONES                                                      |
-|   - Workbench entry (nav)                                  |
-+------------------------------------------------------------+
-| states: default | loading | error                          |
-+------------------------------------------------------------+
-```
-
-### Data Retention (`exit-retention`)
-
-Purpose: Set keep/delete policy and export or purge this site's derived data. Not the home for description-run history (NAV-05).
-
-| zone id | label | role | states |
-| --- | --- | --- | --- |
-| `z-retention-entry` | Data Retention entry | nav | default |
-
-```
-+------------------------------------------------------------+
-| Data Retention  [exit]  #/retention                        |
-| Set keep/delete policy and export or purge this site's     |
-| derived data. Not the home for description-run history.    |
-+------------------------------------------------------------+
-| ZONES                                                      |
-|   - Data Retention entry (nav)                             |
-+------------------------------------------------------------+
-| states: default | loading | error                          |
-+------------------------------------------------------------+
-```
-
-### Roster (person workspace) (`exit-roster`)
-
-Purpose: Manage named people after dashboard identity guidance. Unnamed faces are named in Review Queue, not here (NAV-05).
-
-url_params: `personFilter`, `person`
-
-| zone id | label | role | states |
-| --- | --- | --- | --- |
-| `z-roster-entry` | Roster entry | nav | default |
-
-```
-+------------------------------------------------------------+
-| Roster (person workspace)  [exit]  #/roster                |
-| Manage named people after dashboard identity guidance.     |
-| Unnamed faces are named in Review Queue, not here (NAV-05).|
-+------------------------------------------------------------+
-| ZONES                                                      |
-|   - Roster entry (nav)                                     |
-+------------------------------------------------------------+
-| states: default | loading | empty | error                  |
-+------------------------------------------------------------+
-```
-
-## Actions
-
-| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `act-start-first-scan` | Start your first scan | `#/workbench?tab=scan` | primary | no | no | no | `dashboard-shell` |
-| `act-dismiss-orientation` | Dismiss getting started | `dashboard-shell` | tertiary | no | no | no | `dashboard-shell` |
-| `act-open-review-queue` | Open Review Queue | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
-| `act-fix-missing-descriptions` | Fix missing descriptions | `#/workbench?status=missing` | secondary | no | no | no | `dashboard-shell` |
-| `act-open-retention` | Open Data Retention | `#/retention` | secondary | no | no | no | `dashboard-shell` |
-| `act-open-conflicts` | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` | secondary | no | no | no | `dashboard-shell` |
-| `act-open-failed-sync` | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` | secondary | no | no | no | `dashboard-shell` |
-| `act-reset-mirror` | Reset mirror | `dashboard sync health` | destructive | yes | yes | yes | `dashboard-shell` |
-| `act-view-results` | View Results | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
-| `act-run-a-scan` | Run a scan | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
-| `act-retry-identity-stats` | Retry | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
-| `act-retry-identity-stats-unavailable` | Retry identity stats | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
-| `act-go-to-review-queue` | Go to Review Queue | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
-| `act-review-unassigned` | Review unassigned persons | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
-| `act-go-to-scan-tab` | Go to Scan tab | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
-
-## Flows
-
-### First-time orientation → start first scan → review queue (`flow-first-recognition`)
-
-```mermaid
-flowchart TD
-  %% flow: First-time orientation → start first scan → review queue job=job-start-recognition
-  %% steps: [{"screen_id":"dashboard-shell","branch_label":"fresh tenant; orientation before grid"},{"screen_id":"exit-workbench","branch_label":"Start your first scan"},{"screen_id":"dashboard-shell","branch_label":"scan/job appears in Recent Activity"}]
-  n_dashboard_first["Overview (first_time)"]
-  n_exit_workbench["Workbench (exit)"]
-  n_dashboard_first -->|orientation before grid| n_dashboard_first
-  n_dashboard_first -->|Start your first scan| n_exit_workbench
-  n_exit_workbench -->|scan/job appears in Recent Activity| n_dashboard_first
-```
-
-### Read health and identity counts → open review queue or resolve sync debt (`flow-dashboard-review`)
-
-```mermaid
-flowchart TD
-  %% flow: Read health and identity counts → open review queue or resolve sync debt job=job-triage-dashboard
-  %% steps: [{"screen_id":"dashboard-shell","branch_label":"populated dashboard"},{"screen_id":"dashboard-shell","branch_label":"Identity Recognition promoted when review work exists and sync has no attention"},{"screen_id":"exit-workbench","branch_label":"Open Review Queue / Conflict Inbox / Failed Sync Queue"}]
-  n_dashboard_review["Overview (default)"]
-  n_exit_workbench_review["Workbench (exit)"]
-  n_dashboard_review -->|Identity Recognition promoted when review work exists and sync has no attention| n_dashboard_review
-  n_dashboard_review -->|Open Review Queue / Conflict Inbox / Failed Sync Queue| n_exit_workbench_review
-```
-
-### Check coverage → fix missing descriptions → inspect data retention (`flow-dashboard-maintenance`)
-
-```mermaid
-flowchart TD
-  %% flow: Check coverage → fix missing descriptions → inspect data retention job=job-maintain-library
-  %% steps: [{"screen_id":"dashboard-shell","branch_label":"Library Coverage"},{"screen_id":"exit-workbench","branch_label":"Fix missing descriptions"},{"screen_id":"exit-retention","branch_label":"Open Data Retention"}]
-  n_dashboard_maintenance["Overview (default)"]
-  n_exit_workbench_fix["Workbench (exit)"]
-  n_exit_retention["Data Retention (exit)"]
-  n_dashboard_maintenance -->|Library Coverage| n_dashboard_maintenance
-  n_dashboard_maintenance -->|Fix missing descriptions| n_exit_workbench_fix
-  n_exit_workbench_fix -->|Open Data Retention| n_exit_retention
-```
-
-## Open questions
-
-- Should an unavailable retention policy remain absent, or should the dashboard expose a stable empty-state panel?
-- Should Recent Activity expose an explicit loading row while durable history is being fetched?
-- `z-retention-posture` renders nothing while retention status is loading and nothing when `available:false` — should either of those become a distinguishable zone state instead of an absence?
-- GuidanceCard has a reachable caught-up branch (pending 0, unassigned 0, people > 0) with no canonical `MapState` to name it — widen `MapState` upstream, or accept that the branch stays sketch-only?
-- `z-recent-activity` `degraded` (the `browser_local_fallback` banner) is an independent overlay, not exclusive with `default`/`empty`: `historySource` selects the banner and the content branch separately, so `degraded` renders together with either. `error` *is* mutually exclusive with `degraded` (both derive from the same single-valued `historySource`). The flat `states` list cannot express either relation — should the schema gain state composition?
-
-## Parity index
-
-Zone ids: z-dashboard-hero z-orientation z-sync-health z-identity-recognition z-library-coverage z-recent-activity z-retention-posture z-wb-entry z-retention-entry z-roster-entry
-
-Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-run-a-scan act-retry-identity-stats act-retry-identity-stats-unavailable act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
-
-Zone labels (verbatim):
-
-- Dashboard hero (Alt Context / Overview / contextual subtitle)
-- Orientation surface (Getting Started with Identity Recognition; before grid unless first_named)
-- Sync Health section (summary, pending changes, conflicts, failed sync events, topology work)
-- Identity Recognition section (people, assigned, pending review, media with faces, guidance)
-- Library Coverage section (total media, missing alt text, coverage, fix CTA)
-- Recent Activity section (recognition jobs, provenance, status, duration, results link)
-- Data Retention section (mode, last export, last purge, Open Data Retention link)
-- Workbench entry
-- Data Retention entry
-- Roster entry
-
-States (all zones and screens): default loading error first_time degraded empty
-
-## Not doing
-
-- Changing DashboardPage, the priority model, OrientationCard, or any product behavior
-- Defining pixel, token, responsive, or visual styling details
-- Replacing the independent per-section data loading branches with a page-level suspense boundary

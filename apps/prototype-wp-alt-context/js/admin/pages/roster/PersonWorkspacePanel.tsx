@@ -6,6 +6,7 @@ import { getConfig, getEndpoint } from '../../api/config';
 import { listRosterEntries, type RosterEntry } from '../../api/rosterApi';
 import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { queryKeys } from '../../api/queryKeys';
+import { reviewPanelUrl } from '../../navigation/appLinks';
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { formatTimestamp } from '../../utils/formatTimestamp';
 import { Combobox } from '../../../components/ui/combobox';
@@ -725,6 +726,15 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                 <section key={cluster.cluster_id} role="region" aria-label={clusterLabel}>
                   <h5>{clusterLabel}</h5>
                   <p>{sprintf(__('%d faces', 'alt-context'), cluster.instances.length)}</p>
+                  {entry.projection_status === 'current' && cluster.cluster_id.trim().length > 0 ? (
+                    <a
+                      className="acx-roster__photos-link"
+                      href={reviewPanelUrl(cluster.cluster_id)}
+                      aria-label={sprintf(__('Fix faces in face group %d', 'alt-context'), index + 1)}
+                    >
+                      {__('Fix faces in Review', 'alt-context')}
+                    </a>
+                  ) : null}
                   {cluster.representative_identity?.media_url ? (
                     renderEvidenceMedia({
                       mediaUrl: cluster.representative_identity.media_url,

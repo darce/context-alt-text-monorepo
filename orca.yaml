@@ -1,0 +1,5 @@
+# WorkBay owns worktree creation and provisioning: docs/runbooks/orca-worktrees.md
+scripts:
+  setup: '"$ORCA_ROOT_PATH/.venv/bin/python" "$ORCA_ROOT_PATH/scripts/orca/setup_worktree.py"'
+  archive: '"$ORCA_ROOT_PATH/.venv/bin/python" "$ORCA_ROOT_PATH/scripts/orca/archive_worktree.py"'
+setupAgentStartupPolicy: wait-for-setup

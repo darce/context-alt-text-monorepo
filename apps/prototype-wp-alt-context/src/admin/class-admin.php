@@ -18,6 +18,7 @@ use AltContext\Support\ViteManifest;
 
 use function absint;
 use function add_action;
+use function apply_filters;
 use function do_action;
 use function admin_url;
 use function current_user_can;
@@ -458,6 +459,7 @@ class Admin {
 						'canManage' => current_user_can( 'manage_options' ),
 					),
 					'effectiveTargetUrl' => $this->get_effective_target_url(),
+					'accountUsageUrl' => $this->get_account_usage_url(),
 					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
 					'guided_live_media_id' => $this->get_guided_live_media_id(),
 					'adminUrls' => array(
@@ -509,6 +511,7 @@ class Admin {
 					'dashboardStats'                 => rest_url( 'acx/v1/dashboard/stats' ),
 					'settings'                       => rest_url( 'acx/v1/settings' ),
 					'settingsTest'                   => rest_url( 'acx/v1/settings/test' ),
+					'usage'                          => rest_url( 'acx/v1/usage' ),
 				),
 			)
 		);
@@ -557,6 +560,18 @@ class Admin {
 
 	private function get_effective_target_url(): string {
 		return $this->get_endpoint_resolver()->get_effective_base_url();
+	}
+
+	/**
+	 * Hosted "Usage & billing" page for the tenant account (ADR-014). Empty
+	 * when unconfigured, which hides the link in the workbench.
+	 */
+	private function get_account_usage_url(): string {
+		$url = defined( 'ACX_ACCOUNT_URL' )
+			? constant( 'ACX_ACCOUNT_URL' )
+			: apply_filters( 'acx_account_url', '' );
+
+		return is_string( $url ) ? esc_url_raw( $url ) : '';
 	}
 
 	private function get_endpoint_resolver(): RecognitionEndpointResolver {

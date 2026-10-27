@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient } from '@tanstack/react-query';
 import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -2413,7 +2413,8 @@ describe('QCR real React Query credential boundaries', () => {
     vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
     await finish(h.requests[0], { saved: ['url', 'api_key'], result: 'ok' });
     expect(url).toHaveValue(urlC); expect(key).toHaveValue('probe-C');
-    expect(h.requests[1].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    // The queue drains against the acknowledged URL A, so A is not resent (gate1 F1).
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
     expect(h.api.testConnection).not.toHaveBeenCalled();
   });
 
@@ -2576,6 +2577,93 @@ describe('QCR real React Query credential boundaries', () => {
     expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
     expect(url).toHaveValue(satisfied ? external : defaultSettings.url);
     expect(h.requests).toHaveLength(1);
+  });
+
+  // UXREC-1 gate1 timelines: acknowledged writes survive a failed readback.
+  it('G1-F1 drains a queued O revert against acknowledged A when readback fails', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    type(url, defaultSettings.url); fireEvent.blur(url);
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests.map((r) => r.payload)).toEqual([{ url: urlA }, { url: defaultSettings.url }]);
+    expect(screen.queryByText('All changes are saved.')).not.toBeInTheDocument();
+    expect(url).toHaveValue(defaultSettings.url);
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(defaultSettings);
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(url).toHaveValue(defaultSettings.url);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it.each(['partial', 'transport'] as const)('G1-F3 Retry save resends the failed non-routing scope of a mixed save: %s', async (outcome) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    expect(h.requests[0].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    if (outcome === 'partial') {
+      h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+      await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    } else {
+      await act(async () => {
+        h.requests[0].reject(new Error('probe transport failure'));
+        await h.requests[0].promise.catch(() => undefined);
+      }); await flush();
+    }
+    expect(budget).toHaveValue(4);
+    const card = screen.getByTestId('acx-target-card-service');
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1]?.payload).toEqual(outcome === 'partial'
+      ? { description_budget: { max_attempts: 4 } }
+      : { url: urlA, description_budget: { max_attempts: 4 } });
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    await finish(h.requests[1], { saved: Object.keys(h.requests[1].payload), result: 'ok' });
+    expect(budget).toHaveValue(4);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('G1-F3 keeps a routing-only retry for a later failed autosave', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    const reject = async (index: number) => {
+      await act(async () => {
+        h.requests[index].reject(new Error('probe transport failure'));
+        await h.requests[index].promise.catch(() => undefined);
+      }); await flush();
+    };
+    type(url, urlA); type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    await reject(0);
+    type(url, urlB); fireEvent.blur(url); await flush();
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    await reject(1);
+    const card = screen.getByTestId('acx-target-card-service');
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2]?.payload).toEqual({ url: urlB });
+  });
+
+  it('G1-F4 drains queued key B after a failed A readback so a later C is written last', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'probe-A'); fireEvent.blur(key); await flush();
+    type(key, 'probe-B'); fireEvent.blur(key);
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: [], failed: ['api_key'], result: 'error' });
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(defaultSettings);
+    type(key, 'probe-C'); fireEvent.blur(key); await flush();
+    await finish(h.requests[1], { saved: ['api_key'], result: 'ok' });
+    await finish(h.requests[2], { saved: ['api_key'], result: 'ok' });
+    expect(h.requests.map((r) => r.payload)).toEqual([
+      { api_key: 'probe-A' }, { api_key: 'probe-B' }, { api_key: 'probe-C' },
+    ]);
+    expect(key).toHaveValue('');
   });
 });
 

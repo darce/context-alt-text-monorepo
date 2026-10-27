@@ -77,8 +77,12 @@ export const SettingsPage = (): React.JSX.Element => {
   const routingSavePending = useRef(false);
   const hasAcknowledgedSave = useRef(false);
   const routingSaveFeedback = useRef(false);
+  // Survives a failed routing save so Retry resends the whole failed scope.
   const routingSaveIncludesOtherSettings = useRef(false);
   const inFlightRoutingSnapshot = useRef<SettingsFormSnapshot | null>(null);
+  const inFlightPayload = useRef<SaveSettingsPayload | null>(null);
+  // Failed non-routing values, restored over the next readback publication.
+  const keptFailedValues = useRef<Partial<SettingsFormSnapshot> | null>(null);
   const inFlightUrlWrite = useRef(false);
   const urlReadbackAfter = useRef<number | null>(null);
   // A blur queues routing fields only; an explicit submit queues the full form.
@@ -207,6 +211,16 @@ export const SettingsPage = (): React.JSX.Element => {
     }
   };
 
+  const invalidateForRoutingEdit = (): void => {
+    // An edit cancels an unfinished post-save check and its deadline. Settle the
+    // "Checking health…" copy in the same transition; the card returns to draft.
+    const cancelsPostSaveCheck = scheduledHealthCheck.current?.afterRoutingSave === true;
+    invalidateHealthProbe();
+    if (cancelsPostSaveCheck) {
+      clearRoutingCheckFeedback();
+    }
+  };
+
   const captureFormSnapshot = (): SettingsFormSnapshot => ({
     url: state.url,
     urlRevision: state.urlRevision,
@@ -258,6 +272,77 @@ export const SettingsPage = (): React.JSX.Element => {
     }
     return payload;
   };
+
+  // The cached settings plus every field this write acknowledged. A failed
+  // readback must never drain queued intent against values from before the write.
+  const reconcileAcknowledged = (
+    base: SettingsResponse,
+    saved: string[],
+    payload: SaveSettingsPayload | null,
+  ): SettingsResponse => {
+    const next = { ...base };
+    if (!payload) {
+      return next;
+    }
+    if (saved.includes('url') && payload.url !== undefined) {
+      next.url = payload.url;
+    }
+    if (saved.includes('description_budget') && payload.description_budget) {
+      next.description_budget = { ...base.description_budget, max_attempts: payload.description_budget.max_attempts };
+    }
+    if (saved.includes('recognition_enabled') && payload.recognition_enabled !== undefined) {
+      next.recognition_enabled = payload.recognition_enabled;
+    }
+    if (saved.includes('allow_person_names') && payload.allow_person_names !== undefined) {
+      next.allow_person_names = payload.allow_person_names;
+    }
+    if (saved.includes('context_categories') && payload.context_categories) {
+      next.context_categories = payload.context_categories;
+    }
+    return next;
+  };
+
+  const keepFailedValues = (payload: SaveSettingsPayload | null, saved: string[]): void => {
+    // A readback resets non-routing form values; keep the ones that did not persist.
+    const failed = (field: keyof SaveSettingsPayload): boolean =>
+      !!payload && payload[field] !== undefined && !saved.includes(field);
+    const form = captureFormSnapshot();
+    const kept: Partial<SettingsFormSnapshot> = {
+      ...(failed('description_budget') ? { descriptionBudgetMaxAttempts: form.descriptionBudgetMaxAttempts } : {}),
+      ...(failed('recognition_enabled') ? { recognitionEnabled: form.recognitionEnabled } : {}),
+      ...(failed('allow_person_names') ? { allowPersonNames: form.allowPersonNames } : {}),
+      ...(failed('context_categories') ? { contextCategories: form.contextCategories } : {}),
+    };
+    const merged = { ...keptFailedValues.current, ...kept };
+    keptFailedValues.current = Object.keys(merged).length > 0 ? merged : null;
+  };
+
+  const dropKeptValue = (field: keyof SettingsFormSnapshot): void => {
+    if (keptFailedValues.current) {
+      delete keptFailedValues.current[field];
+    }
+  };
+
+  useEffect(() => {
+    // Runs after useSettingsPageState's readback sync in the same commit.
+    const kept = keptFailedValues.current;
+    if (!kept || !settingsQuery.data) {
+      return;
+    }
+    keptFailedValues.current = null;
+    if (kept.descriptionBudgetMaxAttempts !== undefined) {
+      dispatch({ type: 'setDescriptionBudgetMaxAttempts', value: kept.descriptionBudgetMaxAttempts });
+    }
+    if (kept.recognitionEnabled !== undefined) {
+      dispatch({ type: 'setRecognitionEnabled', value: kept.recognitionEnabled });
+    }
+    if (typeof kept.allowPersonNames === 'boolean') {
+      dispatch({ type: 'setAllowPersonNames', value: kept.allowPersonNames });
+    }
+    if (kept.contextCategories) {
+      dispatch({ type: 'setContextCategories', value: kept.contextCategories });
+    }
+  }, [settingsQuery.data, dispatch]);
 
   const acknowledgeSatisfiedUrl = useCallback((data: SettingsResponse): void => {
     const committed = pendingNoopUrl.current;
@@ -323,7 +408,12 @@ export const SettingsPage = (): React.JSX.Element => {
       );
       routingSaveFeedback.current = hasRoutingChanges;
     }
+    if (!routingOnly) {
+      // This submit carries the form's values, including any kept failed ones.
+      keptFailedValues.current = null;
+    }
     inFlightRoutingSnapshot.current = values;
+    inFlightPayload.current = payload;
     inFlightUrlWrite.current = 'url' in payload;
     saveMutation.mutate(payload);
   };
@@ -352,11 +442,29 @@ export const SettingsPage = (): React.JSX.Element => {
     submitSnapshot(snapshot, data, true, routingOnly);
   };
 
+  // Readback failed after the server answered: publish the acknowledged fields
+  // and return the snapshot that queued intent must be diffed against.
+  const publishAcknowledged = (
+    data: SaveSettingsResponse,
+    settled: SettingsFormSnapshot | null,
+    payload: SaveSettingsPayload | null,
+  ): SettingsResponse | undefined => {
+    const previous = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
+    if (!previous || !settled || data.saved.length === 0) {
+      return previous;
+    }
+    const reconciled = reconcileAcknowledged(previous, data.saved, payload);
+    queryClient.setQueryData?.(queryKeys.settings.all, reconciled);
+    return reconciled;
+  };
+
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
       const settled = inFlightRoutingSnapshot.current;
+      const payload = inFlightPayload.current;
       inFlightRoutingSnapshot.current = null;
+      inFlightPayload.current = null;
       inFlightUrlWrite.current = false;
       if (settled && data.saved.includes('url')) {
         dispatch({ type: 'acknowledgeUrl', revision: settled.urlRevision });
@@ -378,7 +486,6 @@ export const SettingsPage = (): React.JSX.Element => {
           invalidateHealthProbe();
         }
       }
-      routingSaveIncludesOtherSettings.current = false;
       // R23-BR-14: backend may return 200 with result partial/error when some
       // options did not persist. Do not render "Settings saved." unless ok —
       // a corrected backend that still paints success on the frontend has
@@ -392,6 +499,7 @@ export const SettingsPage = (): React.JSX.Element => {
           message: sprintf(__('Could not save settings. (%s)', 'alt-context'), failedFields),
           tone: 'error',
         });
+        keepFailedValues(payload, data.saved);
         // Refresh so the form reflects what actually landed (partial success).
         try {
           await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
@@ -401,7 +509,11 @@ export const SettingsPage = (): React.JSX.Element => {
           });
           syncLocalizedRouting(refreshedOnFail);
           drainQueuedSave(refreshedOnFail);
-        } catch { /* Preserve the partial-write feedback if readback fails. */ }
+        } catch {
+          // Keep the partial-write feedback, but never strand queued intent:
+          // a stranded older key would later replay over a newer commit.
+          drainQueuedSave(publishAcknowledged(data, settled, payload));
+        }
         return;
       }
 
@@ -430,13 +542,7 @@ export const SettingsPage = (): React.JSX.Element => {
         }
         drainQueuedSave(refreshed);
       } catch (error) {
-        const previous = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
-        if (previous && settled) {
-          queryClient.setQueryData?.(queryKeys.settings.all, {
-            ...previous,
-            ...(data.saved.includes('url') ? { url: settled.url } : {}),
-          });
-        }
+        const reconciled = publishAcknowledged(data, settled, payload);
         scheduledHealthCheck.current = null;
         dispatch({
           type: 'setSaveMessage',
@@ -444,7 +550,7 @@ export const SettingsPage = (): React.JSX.Element => {
             resolveWpErrorMessage(error, __('settings unavailable', 'alt-context'))),
           tone: 'warning',
         });
-        drainQueuedSave(previous);
+        drainQueuedSave(reconciled);
       }
     },
     onError: (error) => {
@@ -456,11 +562,11 @@ export const SettingsPage = (): React.JSX.Element => {
         inFlightUrlWrite.current = false;
       }
       inFlightRoutingSnapshot.current = null;
+      inFlightPayload.current = null;
       const isRoutingAutosave = routingSavePending.current;
       if (isRoutingAutosave) {
         routingSavePending.current = false;
       }
-      routingSaveIncludesOtherSettings.current = false;
       dispatch({
         type: 'setSaveMessage',
         message: isRoutingAutosave
@@ -631,8 +737,7 @@ export const SettingsPage = (): React.JSX.Element => {
     startScheduledHealthCheck,
   ]);
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitForm = (): void => {
     invalidateHealthProbe();
     if (saveMutation.isPending) {
       queuedRoutingOnly.current = false;
@@ -652,6 +757,11 @@ export const SettingsPage = (): React.JSX.Element => {
       return;
     }
     submitSnapshot(captureFormSnapshot(), data);
+  };
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitForm();
   };
 
   const commitRoutingFields = (checkIfUnchanged = false): void => {
@@ -697,11 +807,23 @@ export const SettingsPage = (): React.JSX.Element => {
 
     routingSavePending.current = true;
     routingSaveFeedback.current = true;
+    routingSaveIncludesOtherSettings.current = false;
     inFlightRoutingSnapshot.current = captureFormSnapshot();
+    inFlightPayload.current = payload;
     inFlightUrlWrite.current = 'url' in payload;
     invalidateHealthProbe();
     dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
     saveMutation.mutate(payload);
+  };
+
+  const retryFailedSave = (): void => {
+    // A failed mixed save is retried as the whole form; the readback reset its
+    // non-routing values, which keepFailedValues restored. Autosave retries routing.
+    if (routingSaveIncludesOtherSettings.current) {
+      submitForm();
+      return;
+    }
+    commitRoutingFields();
   };
 
   const handleTest = () => {
@@ -813,21 +935,33 @@ export const SettingsPage = (): React.JSX.Element => {
         }}
         actions={{
           onUrlChange: (value) => {
-            invalidateHealthProbe();
+            invalidateForRoutingEdit();
             dispatch({ type: 'setUrl', value });
           },
           onApiKeyChange: (value) => {
-            invalidateHealthProbe();
+            invalidateForRoutingEdit();
             dispatch({ type: 'setApiKey', value });
           },
-          onDescriptionBudgetMaxAttemptsChange: (value) =>
-            dispatch({ type: 'setDescriptionBudgetMaxAttempts', value }),
-          onRecognitionEnabledChange: (value) => dispatch({ type: 'setRecognitionEnabled', value }),
-          onAllowPersonNamesChange: (value) => dispatch({ type: 'setAllowPersonNames', value }),
-          onContextCategoriesChange: (value) => dispatch({ type: 'setContextCategories', value }),
+          onDescriptionBudgetMaxAttemptsChange: (value) => {
+            dropKeptValue('descriptionBudgetMaxAttempts');
+            dispatch({ type: 'setDescriptionBudgetMaxAttempts', value });
+          },
+          onRecognitionEnabledChange: (value) => {
+            dropKeptValue('recognitionEnabled');
+            dispatch({ type: 'setRecognitionEnabled', value });
+          },
+          onAllowPersonNamesChange: (value) => {
+            dropKeptValue('allowPersonNames');
+            dispatch({ type: 'setAllowPersonNames', value });
+          },
+          onContextCategoriesChange: (value) => {
+            dropKeptValue('contextCategories');
+            dispatch({ type: 'setContextCategories', value });
+          },
           onSave: handleSave,
           onTest: handleTest,
           onCommitRouting: () => commitRoutingFields(),
+          onRetrySave: retryFailedSave,
           onFocusServiceUrl: () => {
             document.getElementById('acx-settings-url')?.focus();
           },

@@ -104,6 +104,8 @@ interface SettingsFormActions {
   onSave: (e: React.FormEvent) => void;
   onTest: () => void;
   onCommitRouting?: () => void;
+  /** Retries the failed save's scope; falls back to committing URL/key. */
+  onRetrySave?: () => void;
   onFocusServiceUrl?: () => void;
 }
 
@@ -153,6 +155,7 @@ export const SettingsForm = ({
     onSave,
     onTest,
     onCommitRouting,
+    onRetrySave = onCommitRouting,
     onFocusServiceUrl,
   } = actions;
   // R19-BR-04: one derived state drives empty CTA + source chip; do not re-check
@@ -294,7 +297,7 @@ export const SettingsForm = ({
                 </button>
               ) : null}
               {saveMessageTone === 'error' ? (
-                <button type="button" className="button button-secondary" onClick={onCommitRouting}>
+                <button type="button" className="button button-secondary" onClick={onRetrySave}>
                   {__('Retry save', 'alt-context')}
                 </button>
               ) : null}

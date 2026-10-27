@@ -712,6 +712,43 @@ describe('Recognition card terminal feedback', () => {
     },
   );
 
+  it.each(['in-flight', 'armed'])(
+    'G1-F2 settles the post-save check when an unblurred edit cancels its %s probe',
+    async (stage) => {
+      vi.useFakeTimers();
+      try {
+        renderSettings();
+        saveUrl();
+        if (stage === 'armed') {
+          mockGetQueryState.mockReturnValue({ status: 'success', fetchStatus: 'idle', data: configuredSettings, dataUpdatedAt: -1 });
+        }
+        saveMutationPending = false;
+        await act(async () => {
+          await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+        });
+        const card = screen.getByTestId('acx-target-card-service');
+        expect(card).toHaveTextContent('Saved. Checking health…');
+        const probes = testMutate.mock.calls.length;
+        const staleProbe: unknown = testMutate.mock.calls[probes - 1]?.[0];
+        const url = screen.getByLabelText('Service API URL');
+        fireEvent.change(url, { target: { value: 'https://draft.example.com' } });
+        expect(card).not.toHaveTextContent('Saved. Checking health…');
+        act(() => { vi.advanceTimersByTime(15000); });
+        await act(async () => {
+          await capturedTestOptions?.onSuccess?.({ outcome: 'connected' }, staleProbe);
+        });
+        expect(card).not.toHaveTextContent('Saved. Checking health…');
+        expect(screen.queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+        expect(url).toHaveValue('https://draft.example.com');
+        expect(testMutate).toHaveBeenCalledTimes(probes);
+        expect(saveMutate).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('reports an empty diff after autosave as neutral saved feedback', async () => {
     const view = renderSettings();
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret' } });

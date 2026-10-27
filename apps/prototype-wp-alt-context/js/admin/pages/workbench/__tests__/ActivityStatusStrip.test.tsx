@@ -143,7 +143,7 @@ describe('ActivityStatusStrip', () => {
   );
 
   it.each([
-    ['unknown', 'Description service status unavailable'],
+    ['unknown', 'Description service status not confirmed yet'],
     ['overdue', 'Description service is taking longer than expected'],
   ] as const)(
     'explains %s startup evidence and checks status without promising warm-up',
@@ -189,7 +189,7 @@ describe('ActivityStatusStrip', () => {
 
     const region = screen.getByRole('status');
     expect(region).toHaveAttribute('aria-live', 'polite');
-    expect(screen.getByText('Description service status unavailable')).toBeTruthy();
+    expect(screen.getByText('Description service status not confirmed yet')).toBeTruthy();
     expect(screen.getByText('~3m 0s remaining')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Cancel run' })).toBeEnabled();
     expect(screen.getByRole('link', { name: 'Back to run' })).toHaveAttribute('href', '#/workbench');

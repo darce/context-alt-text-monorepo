@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\TenantIdentity;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\ConflictResolutionStatus;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
@@ -15,6 +16,9 @@ use AltContext\Tests\TestCase;
 class OutboxMaintenanceServicePurgeTest extends TestCase
 {
     use FindsSqlQueries;
+
+    private const SITE_TENANT = '5ab37d6d-1111-4111-8111-111111111111';
+    private const SUPERSEDED_TENANT = '4ddf8f36-2222-4222-8222-222222222222';
 
     protected function setUp(): void
     {
@@ -39,37 +43,199 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame($before, $wpdb->queries);
     }
 
-    public function testSupersededTenantBatchDiscardsOnlyOldInactiveRowsAndAuditsWithinCap(): void
+    public function testScheduledSweepDiscardsIdleSupersededRowsWithAuditAndKeepsRecentAndInFlightRows(): void
     {
         global $wpdb;
-        $rows = [];
-        foreach (['pending', 'failed', 'pending', 'in_flight', 'pending'] as $index => $status) {
-            $rows[] = [
-                'id' => 901 + $index, 'tenant_id' => $index === 4 ? 'current-tenant' : 'old-tenant',
-                'status' => $status, 'created_at' => '2026-08-01 00:00:00',
-                'last_attempted_at' => $index === 2 ? '2026-09-16 00:00:00' : null,
-                'attempts' => 0, 'first_failed_at' => null, 'last_error_code' => null,
-                'last_error_retryable' => null,
-            ];
-        }
-        $wpdb->tableRows['wp_acx_sync_outbox'] = $rows;
-        $wpdb->onGetResults = static fn(string $sql): array => str_contains($sql, 'COALESCE(last_attempted_at, created_at)') ? $rows : [];
-        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
-        $method = new \ReflectionMethod($service, 'discard_superseded_tenant_batch');
-        $result = $method->invoke($service, 'old-tenant', 2);
+
+        $this->pinSiteTenant();
+        $siteTenant = self::currentTenantId();
+        $wpdb->defaultQueryResult = 0;
+        $idlePending = $this->buildSupersededRow(901, self::SUPERSEDED_TENANT, OutboxStatus::PENDING, null);
+        $idleExhausted = $this->buildSupersededRow(902, self::SUPERSEDED_TENANT, OutboxStatus::FAILED, '2026-09-01 00:00:00', 'auto_retry_exhausted', 3);
+        $recentPending = $this->buildSupersededRow(903, self::SUPERSEDED_TENANT, OutboxStatus::PENDING, '2026-09-16 00:00:00');
+        $inFlight = $this->buildSupersededRow(904, self::SUPERSEDED_TENANT, 'in_flight', null);
+        $siteIdlePending = $this->buildSupersededRow(905, $siteTenant, OutboxStatus::PENDING, null);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$idlePending, $idleExhausted, $recentPending, $inFlight, $siteIdlePending];
+
+        $service = $this->scheduledSweepService();
+        $result = $service->purge_scheduled_tenant_rows(self::SUPERSEDED_TENANT);
+
         $this->assertSame(2, $result['superseded_tenant_discarded']);
-        $stored = $wpdb->tableRows['wp_acx_sync_outbox'];
-        $this->assertSame('discarded', $stored[0]['status']);
-        $this->assertSame('discarded', $stored[1]['status']);
-        $this->assertSame('tenant_superseded', $stored[0]['last_error_code']);
-        $this->assertSame(array_slice($rows, 2), array_slice($stored, 2, 3));
-        $this->assertCount(2, $result['_orphan_discard_events']);
-        $this->assertSame('tenant_superseded', $result['_orphan_discard_events'][0]['reason']);
-        $this->assertCount(7, $stored);
-        $this->assertSame('tenant_superseded', json_decode($stored[5]['payload'], true)['reason']);
-        $again = $method->invoke($service, 'old-tenant', 5);
-        $this->assertSame(0, $again['superseded_tenant_discarded']);
-        $this->assertSame($stored, $wpdb->tableRows['wp_acx_sync_outbox']);
+        $this->assertSame(0, $result['retried']);
+        $this->assertSame(0, $result['dead_lettered']);
+        $rows = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        foreach ([901, 902] as $discardedId) {
+            $this->assertSame(OutboxStatus::DISCARDED, $rows[$discardedId]['status']);
+            $this->assertSame('tenant_superseded', $rows[$discardedId]['last_error_code']);
+        }
+        // Discarding is not an attempt: the exhausted row keeps its real stamp.
+        $this->assertSame('2026-09-01 00:00:00', $rows[902]['last_attempted_at']);
+        $this->assertSame($recentPending, $rows[903]);
+        $this->assertSame($inFlight, $rows[904]);
+        $this->assertSame($siteIdlePending, $rows[905]);
+
+        $audits = array_values(array_filter(
+            $wpdb->tableRows['wp_acx_sync_outbox'],
+            static fn(array $row): bool => 'orphan_discard_audit' === ($row['operation_type'] ?? null)
+        ));
+        $this->assertCount(2, $audits);
+        foreach ($audits as $audit) {
+            $this->assertSame(self::SUPERSEDED_TENANT, $audit['tenant_id']);
+            $this->assertSame('tenant_superseded', json_decode((string) $audit['payload'], true)['reason']);
+        }
+        $events = $this->actionsNamed('acx_sync_outbox_orphan_discarded');
+        $this->assertSame([901, 902], array_map(static fn(array $event): int => $event['args'][0]['outbox_id'], $events));
+        $this->assertSame(['tenant_superseded', 'tenant_superseded'], array_map(static fn(array $event): string => $event['args'][0]['reason'], $events));
+    }
+
+    /**
+     * DEMO-12 re-stamp repro. Before the superseded-tenant routing, the sweep of an old
+     * tenant reclaimed its failed rows: one with retry budget left went back to pending
+     * for the drain to resend as the current tenant, and one with a spent budget was
+     * dead-lettered with last_attempted_at = now, restarting its exhaustion clock.
+     */
+    public function testScheduledSweepNeverReclaimsOrRestampsSupersededTenantRows(): void
+    {
+        global $wpdb;
+
+        $this->pinSiteTenant();
+        $wpdb->defaultQueryResult = 0;
+        $budgetLeft = $this->buildSupersededRow(911, self::SUPERSEDED_TENANT, OutboxStatus::FAILED, '2026-09-16 00:00:00', 'transport_error', 1);
+        $budgetSpent = $this->buildSupersededRow(912, self::SUPERSEDED_TENANT, OutboxStatus::FAILED, '2026-09-16 00:00:00', 'transport_error', 3);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$budgetLeft, $budgetSpent];
+
+        $service = $this->scheduledSweepService();
+        $inGrace = $service->purge_scheduled_tenant_rows(self::SUPERSEDED_TENANT);
+
+        $this->assertSame(0, $inGrace['retried']);
+        $this->assertSame(0, $inGrace['dead_lettered']);
+        $this->assertSame([$budgetLeft, $budgetSpent], $wpdb->tableRows['wp_acx_sync_outbox']);
+        $this->assertSame([], array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'UPDATE wp_acx_sync_outbox SET')
+        ));
+
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-23 00:00:01 UTC');
+        $pastGrace = $service->purge_scheduled_tenant_rows(self::SUPERSEDED_TENANT);
+
+        $this->assertSame(2, $pastGrace['superseded_tenant_discarded']);
+        $rows = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        foreach ([911, 912] as $outboxId) {
+            $this->assertSame(OutboxStatus::DISCARDED, $rows[$outboxId]['status']);
+            $this->assertSame('2026-09-16 00:00:00', $rows[$outboxId]['last_attempted_at']);
+        }
+    }
+
+    public function testScheduledSweepOfSiteTenantKeepsOrdinaryPurgeAndLeavesOtherTenantsAlone(): void
+    {
+        global $wpdb;
+
+        $this->pinSiteTenant();
+        $siteTenant = self::currentTenantId();
+        $wpdb->defaultQueryResult = 0;
+        $sitePending = $this->buildSupersededRow(921, $siteTenant, OutboxStatus::PENDING, null);
+        $siteRetryable = $this->buildSupersededRow(922, $siteTenant, OutboxStatus::FAILED, '2026-09-16 00:00:00', 'transport_error', 0);
+        $siteExhausted = $this->buildSupersededRow(923, $siteTenant, OutboxStatus::FAILED, '2026-09-16 00:00:00', 'auto_retry_exhausted', 3);
+        $supersededPending = $this->buildSupersededRow(924, self::SUPERSEDED_TENANT, OutboxStatus::PENDING, null);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$sitePending, $siteRetryable, $siteExhausted, $supersededPending];
+        $this->seedLocalCluster($siteExhausted);
+        $service = $this->scheduledSweepService();
+
+        $service->purge_scheduled_tenant_rows(self::SUPERSEDED_TENANT);
+        $rows = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $this->assertSame([$sitePending, $siteRetryable, $siteExhausted], [$rows[921], $rows[922], $rows[923]]);
+
+        $result = $service->purge_scheduled_tenant_rows($siteTenant);
+        $rows = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $this->assertSame(0, $result['superseded_tenant_discarded']);
+        $this->assertSame(1, $result['retried']);
+        $this->assertSame($sitePending, $rows[921]);
+        $this->assertSame(OutboxStatus::PENDING, $rows[922]['status']);
+        $this->assertSame($siteExhausted, $rows[923]);
+    }
+
+    public function testScheduledSweepTreatsCaseOnlyTenantDifferenceAsTheSiteTenant(): void
+    {
+        global $wpdb;
+
+        $this->pinSiteTenant();
+        $storedTenant = strtoupper(self::currentTenantId());
+        $wpdb->defaultQueryResult = 0;
+        $pending = $this->buildSupersededRow(931, $storedTenant, OutboxStatus::PENDING, null);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$pending];
+
+        $service = $this->scheduledSweepService();
+        $result = $service->purge_scheduled_tenant_rows($storedTenant);
+
+        $this->assertSame(0, $result['superseded_tenant_discarded']);
+        $this->assertSame([$pending], $wpdb->tableRows['wp_acx_sync_outbox']);
+    }
+
+    public function testScheduledSweepFailsClosedToOrdinaryPurgeWhenSiteTenantCannotResolve(): void
+    {
+        global $wpdb;
+
+        add_filter('acx_recognition_tenant_id', static function (): string {
+            throw new \RuntimeException('tenant identity unavailable');
+        });
+        $wpdb->defaultQueryResult = 0;
+        $pending = $this->buildSupersededRow(941, self::SUPERSEDED_TENANT, OutboxStatus::PENDING, null);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$pending];
+
+        $service = $this->scheduledSweepService();
+        $result = $service->purge_scheduled_tenant_rows(self::SUPERSEDED_TENANT);
+
+        $this->assertIsArray($result);
+        $this->assertSame(0, $result['superseded_tenant_discarded']);
+        $this->assertSame([$pending], $wpdb->tableRows['wp_acx_sync_outbox']);
+    }
+
+    public function testScheduledSweepKeepsRetentionPurgeOfSupersededTenantTerminalRows(): void
+    {
+        global $wpdb;
+
+        $this->pinSiteTenant();
+        $wpdb->defaultQueryResult = 3;
+        $service = $this->scheduledSweepService();
+
+        $result = $service->purge_scheduled_tenant_rows(self::SUPERSEDED_TENANT);
+
+        $this->assertSame(3, $result['outbox']);
+        $this->assertSame(3, $result['conflicts']);
+        $acknowledgedDelete = $this->findQueryContaining($wpdb->queries, 'DELETE FROM `wp_acx_sync_outbox`');
+        $this->assertStringContainsString("tenant_id = '" . self::SUPERSEDED_TENANT . "'", $acknowledgedDelete);
+        $this->assertStringContainsString("status = '" . OutboxStatus::ACKNOWLEDGED . "'", $acknowledgedDelete);
+        $conflictDelete = $this->findQueryContaining($wpdb->queries, 'DELETE FROM `wp_acx_sync_conflicts`');
+        $this->assertStringContainsString("tenant_id = '" . self::SUPERSEDED_TENANT . "'", $conflictDelete);
+    }
+
+    /**
+     * Contract coverage, not a red-proof: base code already kept this clock. It pins
+     * that the scheduled sweep of the site tenant lets the 7-day window elapse.
+     */
+    public function testExhaustedSiteTenantRowKeepsItsClockAcrossNightlySweepsThenAgesOut(): void
+    {
+        global $wpdb;
+
+        $this->pinSiteTenant();
+        $siteTenant = self::currentTenantId();
+        $wpdb->defaultQueryResult = 0;
+        $exhausted = $this->buildSupersededRow(951, $siteTenant, OutboxStatus::FAILED, '2026-09-16 00:00:00', 'auto_retry_exhausted', 3);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$exhausted];
+        $this->seedLocalCluster($exhausted);
+        $service = $this->scheduledSweepService();
+
+        foreach (['2026-09-17 02:14:00', '2026-09-20 02:14:00', '2026-09-22 23:59:59'] as $night) {
+            $GLOBALS['__ac_current_time'] = strtotime($night . ' UTC');
+            $service->purge_scheduled_tenant_rows($siteTenant);
+            $this->assertSame([$exhausted], $wpdb->tableRows['wp_acx_sync_outbox'], $night);
+        }
+
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-23 00:00:01 UTC');
+        $result = $service->purge_scheduled_tenant_rows($siteTenant);
+
+        $this->assertSame(1, $result['purged_exhausted']);
+        $this->assertSame([], $wpdb->tableRows['wp_acx_sync_outbox']);
     }
 
     public function testListTerminalPurgeTenantIdsUsesDefaultPageSizeWithZeroArgCall(): void
@@ -689,6 +855,33 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertStringNotContainsString('ORDER BY', $healthQuery);
     }
 
+    public function testHealthCountersCountSupersededTenantDiscardsFromOtherTenants(): void
+    {
+        global $wpdb;
+
+        $wpdb->mockResults = [
+            [
+                'pending' => '0',
+                'failed' => '0',
+                'dead_lettered' => '0',
+                'oldest_created_at' => null,
+                'superseded_tenant_discarded' => '133',
+            ],
+        ];
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $counters = $service->get_health_counters('tenant-health-site');
+
+        $this->assertIsArray($counters);
+        $this->assertSame(133, $counters['superseded_tenant_discarded']);
+        // The sweep never discards the site's own tenant, so the count must look past it.
+        $healthQuery = $this->findQueryContaining($wpdb->queries, 'AS superseded_tenant_discarded');
+        $this->assertStringContainsString(
+            "(SELECT COUNT(*) FROM `wp_acx_sync_outbox` WHERE tenant_id <> 'tenant-health-site' AND status = 'discarded' AND last_error_code = 'tenant_superseded')",
+            $healthQuery
+        );
+    }
+
     public function testHealthCountersReturnFalseWhenQueryFails(): void
     {
         global $wpdb;
@@ -1035,6 +1228,80 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         }
 
         return $matches;
+    }
+
+    /**
+     * A service whose reclaimer lease is always granted, so one test can run several
+     * nightly sweeps; lease contention has its own coverage in ReclaimerLivenessTest.
+     */
+    private function scheduledSweepService(): OutboxMaintenanceService
+    {
+        $liveness = new class() extends ReclaimerLiveness {
+            public function claim(string $tenant_id): string|false|null
+            {
+                return 'sweep-lease';
+            }
+
+            public function release(string $tenant_id, string $owner): bool
+            {
+                return true;
+            }
+        };
+
+        return new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts', $liveness);
+    }
+
+    /**
+     * Keep the row's cluster and label locally so the orphan and superseded-label
+     * reconcilers leave an exhausted row to its retention window.
+     *
+     * @param array<string,mixed> $row
+     */
+    private function seedLocalCluster(array $row): void
+    {
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_clusters'][] = [
+            'cluster_uuid' => $row['entity_key'],
+            'tenant_id' => $row['tenant_id'],
+            'label' => json_decode((string) $row['payload'], true)['label'],
+        ];
+    }
+
+    private function pinSiteTenant(): void
+    {
+        // Production stores the paired tenant here; TenantIdentity::resolve() reads it.
+        $this->setOption(TenantIdentity::OPTION_KEY, self::SITE_TENANT);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function buildSupersededRow(
+        int $id,
+        string $tenantId,
+        string $status,
+        ?string $lastAttemptedAt,
+        ?string $errorCode = null,
+        int $autoAttempts = 0
+    ): array {
+        return [
+            'id' => $id,
+            'tenant_id' => $tenantId,
+            'operation_type' => 'cluster_label_updated',
+            'entity_type' => 'cluster',
+            'entity_key' => 'cluster-' . $id,
+            'status' => $status,
+            'attempts' => null === $errorCode ? 0 : 7,
+            'last_error_code' => $errorCode,
+            'last_error_message' => null === $errorCode ? null : 'failed',
+            'last_error_retryable' => null === $errorCode ? null : 1,
+            'first_failed_at' => null === $errorCode ? null : '2026-07-15 00:00:00',
+            'last_attempted_at' => $lastAttemptedAt,
+            'created_at' => '2026-07-15 00:00:00',
+            'payload' => wp_json_encode(['label' => 'Label ' . $id, 'acx_auto_attempts' => $autoAttempts]),
+            'next_attempt_at' => null,
+        ];
     }
 
     private function actionSchedulerPurgeTimestamp(): int|false

@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getConfig } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
@@ -10,6 +10,7 @@ import {
   fetchPendingSuggestions,
 } from '../../../api/recognition';
 import type { DataSource } from '../../../api/recognition/types';
+import { installTopUnlabeledErrorLatch } from '../../../utils/topUnlabeledErrorLatch';
 import { buildSuggestionReviewItems } from './suggestionReviewItems';
 import {
   applyAssignmentTombstones,
@@ -24,37 +25,6 @@ import {
 
 export const SUGGESTION_PAGE_SIZE = 25;
 const TOP_UNLABELED_LIMIT = 20;
-
-const topUnlabeledErrorLatches = new WeakMap<
-  QueryClient,
-  { queryHashes: Set<string>; settledErrors: WeakMap<Query, unknown> }
->();
-
-const getTopUnlabeledErrorLatch = (queryClient: QueryClient, queryHash: string) => {
-  let latch = topUnlabeledErrorLatches.get(queryClient);
-  if (!latch) {
-    const queryHashes = new Set<string>();
-    const settledErrors = new WeakMap<Query, unknown>();
-    latch = { queryHashes, settledErrors };
-    topUnlabeledErrorLatches.set(queryClient, latch);
-    // RLSE-04 / REF-19: one cache owner survives every observer's unmount.
-    // Only final errors are latched; intermediate retry attempts emit `failed`.
-    queryClient.getQueryCache().subscribe((event) => {
-      if (!queryHashes.has(event.query.queryHash)) return;
-      if (event.type === 'removed') {
-        settledErrors.delete(event.query);
-      } else if (event.type === 'updated') {
-        if (event.action.type === 'error') {
-          settledErrors.set(event.query, event.action.error);
-        } else if (event.action.type === 'success') {
-          settledErrors.delete(event.query);
-        }
-      }
-    });
-  }
-  latch.queryHashes.add(queryHash);
-  return latch.settledErrors;
-};
 
 /**
  * Cached review-queue page: adapted ProjectedSuggestion rows + honest envelope dataSource.
@@ -71,11 +41,8 @@ export interface SuggestionReviewPage {
 export const useSuggestionReviewQueries = () => {
   const tenantId = getConfig().tenant_id ?? '';
   const queryClient = useQueryClient();
-  const topUnlabeledQueryHash = queryClient.defaultQueryOptions({
-    queryKey: queryKeys.clusters.topUnlabeled(tenantId),
-  }).queryHash;
-  // Register before useQuery can start the first fetch, including optimistic fetches.
-  const settledTopUnlabeledErrors = getTopUnlabeledErrorLatch(queryClient, topUnlabeledQueryHash);
+  // Idempotent: the app QueryClient installed it at creation; any other client installs here.
+  const settledTopUnlabeledErrors = installTopUnlabeledErrorLatch(queryClient);
 
   const selectAssignment = useCallback(
     (page: SuggestionReviewPage) => applyAssignmentTombstones(queryClient, page),
@@ -182,7 +149,9 @@ export const useSuggestionReviewQueries = () => {
   // RLSE-04 / REF-19: RQ v5 clears error + status on a no-data refetch.
   // Keep a settled outage through manual and background retries, but leave
   // the first load's automatic retries silent (errorUpdateCount is still 0).
-  const cachedTopUnlabeledQuery = queryClient.getQueryCache().get(topUnlabeledQueryHash);
+  const cachedTopUnlabeledQuery = queryClient.getQueryCache().get(
+    queryClient.defaultQueryOptions({ queryKey: queryKeys.clusters.topUnlabeled(tenantId) }).queryHash,
+  );
   // UXREC-1-DEMOQ-G1-F1: offline (networkMode 'online') parks the same reset
   // refetch at fetchStatus 'paused', so the hold spans paused as well as
   // fetching — otherwise the queue reads as drained mid-outage.

@@ -248,6 +248,76 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
       expect(topMock).toHaveBeenCalledTimes(2);
     });
 
+    // G3-F1 / TEST-15: producers with no queue observer (Roster total,
+    // job-effects refetch) settle the key before this hook first renders.
+    // Round 5 latched only after that render, so error is null here. The
+    // latch is per Query, so tenant-2's later auth expiry stays off tenant-1.
+    it('latches errors settled before the hook rendered, isolated per tenant', async () => {
+      const outage = new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        bodyPreview: 'acx_projection_query_failed',
+        message: 'projection query failed',
+      });
+      const authError = new AuthExpiredError({
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        status: 403,
+      });
+      await expect(
+        appClient.fetchQuery({ queryKey: topUnlabeledKey, queryFn: () => Promise.reject(outage), retry: false }),
+      ).rejects.toBe(outage);
+      await expect(
+        appClient.fetchQuery({
+          queryKey: queryKeys.clusters.topUnlabeled('tenant-2'),
+          queryFn: () => Promise.reject(authError),
+          retry: false,
+        }),
+      ).rejects.toBe(authError);
+
+      type TopUnlabeledPage = Awaited<ReturnType<typeof recognitionApi.fetchTopUnlabeledClusters>>;
+      const emptyPage: TopUnlabeledPage = {
+        clusters: [], limit: 20, total: 0, truncated: false, singleton_count: 0,
+        data_source: 'local_projection',
+      };
+      const topMock = vi.mocked(recognitionApi.fetchTopUnlabeledClusters);
+      let resolveTenant1!: (page: TopUnlabeledPage) => void;
+      const tenant1Response = new Promise<TopUnlabeledPage>((resolve) => { resolveTenant1 = resolve; });
+      topMock.mockReturnValueOnce(tenant1Response);
+      const tenant1 = renderWithAppDefaults();
+      expect(tenant1.result.current.topUnlabeledQuery.error).toBeNull();
+      expect(tenant1.result.current.topUnlabeledOutage).toEqual({
+        isError: true,
+        isRetrying: true,
+        error: outage,
+      });
+      await act(async () => {
+        resolveTenant1(emptyPage);
+        await tenant1Response;
+      });
+      await waitFor(() => expect(tenant1.result.current.topUnlabeledOutage.isError).toBe(false));
+      tenant1.unmount();
+
+      window.AltContextAdmin = { ...window.AltContextAdmin!, tenant_id: 'tenant-2' };
+      resetConfigCache();
+      let resolveTenant2!: (page: TopUnlabeledPage) => void;
+      const tenant2Response = new Promise<TopUnlabeledPage>((resolve) => { resolveTenant2 = resolve; });
+      topMock.mockReturnValueOnce(tenant2Response);
+      const tenant2 = renderWithAppDefaults();
+      expect(tenant2.result.current.topUnlabeledQuery.error).toBeNull();
+      expect(tenant2.result.current.topUnlabeledOutage).toEqual({
+        isError: true,
+        isRetrying: true,
+        error: authError,
+      });
+      await act(async () => {
+        resolveTenant2(emptyPage);
+        await tenant2Response;
+      });
+      await waitFor(() => expect(tenant2.result.current.topUnlabeledOutage.isError).toBe(false));
+      expect(topMock).toHaveBeenCalledTimes(2);
+    });
+
     it('keeps the settled auth class through an intermediate timeout attempt on a fresh observer', async () => {
       const authError = new AuthExpiredError({
         endpoint: '/acx/v1/recognition/clusters/top-unlabeled',

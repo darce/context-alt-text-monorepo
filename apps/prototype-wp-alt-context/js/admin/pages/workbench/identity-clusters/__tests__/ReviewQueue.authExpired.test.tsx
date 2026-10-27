@@ -17,9 +17,15 @@ import {
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import { listRosterEntries, commitClusterToRosterEntry } from '../../../../api/rosterApi';
+import { useTopUnlabeledTotal } from '../../../roster/hooks/useTopUnlabeledTotal';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
 import { ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
-import { useSuggestionReviewQueries } from '../useSuggestionReviewQueries';
+import { projectReviewQueue } from '../suggestionProjection';
+import {
+  SUGGESTION_PAGE_SIZE,
+  useSuggestionReviewQueries,
+  type SuggestionReviewPage,
+} from '../useSuggestionReviewQueries';
 import { createAppQueryClient } from '../../../../utils/appQueryClient';
 import { AuthExpiredError } from '../../../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/userFacingError';
@@ -393,6 +399,117 @@ describe('ReviewQueue auth-expired notice (UXPNET2-BR-03)', () => {
       });
       await waitFor(() => {
         expect(keeperQueries.topUnlabeledOutage.isError).toBe(false);
+        expect(screen.queryByTestId('acx-user-facing-error')).not.toBeInTheDocument();
+      });
+      expect(topMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('G3-F1 Roster-first auth expiry', () => {
+    let queryClient: QueryClient;
+
+    beforeEach(() => {
+      queryClient = createAppQueryClient();
+    });
+
+    afterEach(() => {
+      queryClient.clear();
+      // clearAllMocks keeps queued once-values; an unconsumed held refetch
+      // would otherwise leak into the next test.
+      vi.mocked(fetchTopUnlabeledClusters).mockReset();
+    });
+
+    const RosterStandIn = () => {
+      useTopUnlabeledTotal();
+      return null;
+    };
+
+    const expectSingleSessionNotice = () => {
+      const notices = screen.getAllByTestId('acx-user-facing-error');
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toHaveClass('acx-review-queue__auth-expired');
+      expect(notices[0]).toHaveAttribute('data-error-kind', 'auth-expired');
+      expect(notices[0]).toHaveTextContent(SPA_SESSION_EXPIRED_COPY.sessionExpired);
+      expect(screen.getAllByRole('button', { name: SPA_SESSION_EXPIRED_COPY.reloadPage })).toHaveLength(1);
+      expect(screen.queryByTestId('acx-review-queue-top-unlabeled-error')).not.toBeInTheDocument();
+      expect(screen.queryByText('Unable to load unlabeled faces.')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+      expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+    };
+
+    // TEST-15: round 5 latched only once a queue hook had rendered on the
+    // client, so the Roster's settled expiry was lost and these mounts showed
+    // the generic alert + Retry.
+    it.each([
+      { state: 'fetching', offline: false },
+      { state: 'paused', offline: true },
+    ])('keeps the single session notice when the queue opens during a $state refetch', async ({ state, offline }) => {
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [], limit: 1, total: 0, truncated: false,
+      });
+      const authError = new AuthExpiredError({
+        endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+        status: 403,
+      });
+      const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+      const topMock = vi.mocked(fetchTopUnlabeledClusters);
+      topMock.mockRejectedValueOnce(authError);
+
+      // RosterPage's count hook settles the shared key before any queue hook exists.
+      const roster = render(
+        <QueryClientProvider client={queryClient}>
+          <RosterStandIn />
+        </QueryClientProvider>,
+      );
+      await waitFor(() => expect(queryClient.getQueryState(topUnlabeledKey)?.status).toBe('error'));
+      expect(queryClient.getQueryState(topUnlabeledKey)).toMatchObject({
+        data: undefined,
+        error: authError,
+        errorUpdateCount: 1,
+      });
+      roster.unmount();
+
+      // An earlier Workbench visit left the queue's own pages in the shared
+      // client, so the queue's first render is the queue, not the loading branch.
+      queryClient.setQueryData<SuggestionReviewPage>(queryKeys.suggestions.projection.reviewPage(0), {
+        items: projectReviewQueue((await fetchPendingSuggestions(SUGGESTION_PAGE_SIZE, 0)).suggestions),
+        dataSource: undefined,
+      });
+      queryClient.setQueryData(queryKeys.suggestions.mergePending(), { suggestions: [], limit: 10, offset: 0 });
+      queryClient.setQueryData(queryKeys.suggestions.namePending(), { suggestions: [], limit: 25, offset: 0 });
+
+      type TopUnlabeledPage = Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>;
+      let resolveRefetch!: (page: TopUnlabeledPage) => void;
+      const response = new Promise<TopUnlabeledPage>((resolve) => { resolveRefetch = resolve; });
+      topMock.mockReturnValueOnce(response);
+      if (offline) onlineManager.setOnline(false);
+
+      // The "Fix faces in Review" link: refetchOnMount 'always' resets the
+      // no-data query to pending / error null on this very render.
+      render(withQueueProviders(queryClient, <ReviewQueueHarness />));
+      expectSingleSessionNotice();
+
+      await waitFor(() => {
+        expect(queryClient.getQueryState(topUnlabeledKey)?.fetchStatus).toBe(state);
+        expect(document.querySelector('.acx-review-queue')).toHaveAttribute(
+          'data-live-target-status',
+          offline ? 'unverified' : 'live',
+        );
+      });
+      expect(queryClient.getQueryState(topUnlabeledKey)?.error).toBeNull();
+      expect(topMock).toHaveBeenCalledTimes(offline ? 1 : 2);
+      expectSingleSessionNotice();
+
+      await act(async () => {
+        onlineManager.setOnline(true);
+        resolveRefetch({
+          clusters: [], limit: 20, total: 0, truncated: false, singleton_count: 0,
+          data_source: 'local_projection',
+        });
+        await response;
+      });
+      await waitFor(() => {
+        expect(queryClient.getQueryState(topUnlabeledKey)?.status).toBe('success');
         expect(screen.queryByTestId('acx-user-facing-error')).not.toBeInTheDocument();
       });
       expect(topMock).toHaveBeenCalledTimes(2);

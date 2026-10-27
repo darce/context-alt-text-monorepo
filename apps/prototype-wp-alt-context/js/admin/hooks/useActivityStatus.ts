@@ -90,6 +90,15 @@ const unfinishedMediaIdsFromItems = (items: readonly DescribeRunItem[]): number[
     .filter((item) => !FINISHED_DESCRIBE_ITEM_STATUSES.has(item.status))
     .map((item) => item.media_id);
 
+/** Live-warming observation plus the GPU status poller's outage verdict. */
+export interface ActivityWarmingObservation extends WarmingObservation {
+  /**
+   * True only once the GPU status query exhausted its bounded retry budget.
+   * Unobserved, stale or malformed status stays a quiet unknown (RLSE-04).
+   */
+  statusOutage?: boolean;
+}
+
 /** Stable authority snapshot consumed by the strip and by spa-activity-toasts (C7). */
 export interface ActivityStatus {
   /** Current nonterminal run evidence; a persisted id alone is insufficient. */
@@ -104,7 +113,7 @@ export interface ActivityStatus {
   retryable: boolean;
   draftCount: number;
   /** Finite live-warming observation for copy/state integration. */
-  warmingObservation?: WarmingObservation;
+  warmingObservation?: ActivityWarmingObservation;
 }
 
 export const reviewDraftsHrefForStatus = (
@@ -280,6 +289,12 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
     resumedProgress:
       describe.progress.warmingObservation?.evidence === WARMING_OBSERVATION_EVIDENCE.PROGRESS,
   });
+  // The status query errors only after its bounded retries (API-08), so one
+  // failed poll or a dormant, never-observed service is unknown, not an outage.
+  const statusOutage =
+    describeWarming &&
+    gpu.isError &&
+    warmingObservation.status === WARMING_OBSERVATION_STATUS.UNKNOWN;
 
   if (scan.isScanning) {
     return snapshot(ACTIVITY_KIND.SCANNING, {
@@ -318,7 +333,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
       gpuState,
       retryable: warmingObservation.status !== WARMING_OBSERVATION_STATUS.WAITING,
       draftCount: describeDraftCount(run),
-      warmingObservation,
+      warmingObservation: statusOutage ? { ...warmingObservation, statusOutage: true } : warmingObservation,
     });
   }
 
@@ -595,8 +610,14 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         status.warmingObservation !== undefined &&
         status.warmingObservation.status !== WARMING_OBSERVATION_STATUS.WAITING
       ) {
+        // The idle status poll is paused while the run is live, so a confirmed
+        // outage clears only when Check status re-reads it.
+        const recheckGpuStatus = status.warmingObservation.statusOutage === true;
         return () => {
           describeProgress.retry();
+          if (recheckGpuStatus) {
+            gpu.refetch();
+          }
         };
       }
       if (status.kind !== ACTIVITY_KIND.FAILED || !status.retryable) {

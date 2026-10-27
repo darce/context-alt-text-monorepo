@@ -19,7 +19,11 @@ const GPU_TOAST_EDGE = {
   DONE: 'done',
   FAILED: 'failed',
   DEGRADED: 'degraded',
+  STATUS_UNAVAILABLE: 'status_unavailable',
 } as const;
+
+/** A status-outage toast clears itself; the strip keeps the durable copy (PERC-07). */
+export const GPU_STATUS_UNAVAILABLE_TOAST_MS = 5_000;
 
 type GpuToastEdge = (typeof GPU_TOAST_EDGE)[keyof typeof GPU_TOAST_EDGE];
 
@@ -62,6 +66,7 @@ export const useGpuStateToasts = (): void => {
   const rememberedRunIdRef = useRef<string | null>(null);
   const previousKindRef = useRef<ActivityKind | null>(null);
   const previousGpuStateRef = useRef<GpuState | null>(null);
+  const previousStatusOutageRef = useRef<boolean | null>(null);
   const emittedEdgesRef = useRef(new Set<GpuToastEdge>());
 
   useEffect(() => {
@@ -69,6 +74,7 @@ export const useGpuStateToasts = (): void => {
       rememberedRunIdRef.current = status.runId;
       previousKindRef.current = null;
       previousGpuStateRef.current = null;
+      previousStatusOutageRef.current = null;
       emittedEdgesRef.current.clear();
     }
 
@@ -79,6 +85,11 @@ export const useGpuStateToasts = (): void => {
     const nextGpu = status.gpuState ?? GPU_STATE.UNKNOWN;
     const previousGpu = previousGpuStateRef.current;
     previousGpuStateRef.current = nextGpu;
+
+    const nextStatusOutage =
+      nextKind === ACTIVITY_KIND.WARMING && status.warmingObservation?.statusOutage === true;
+    const previousStatusOutage = previousStatusOutageRef.current;
+    previousStatusOutageRef.current = nextStatusOutage;
 
     if (previousKind === null) {
       return;
@@ -120,7 +131,21 @@ export const useGpuStateToasts = (): void => {
       return;
     }
 
-    if (progressMounted || nextKind === previousKind) {
+    if (progressMounted) {
+      return;
+    }
+
+    // A confirmed status outage is an edge inside WARMING, not a kind change.
+    if (nextStatusOutage && previousStatusOutage === false) {
+      emit(GPU_TOAST_EDGE.STATUS_UNAVAILABLE, () => {
+        error(failedToastMessage(ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE), {
+          durationMs: GPU_STATUS_UNAVAILABLE_TOAST_MS,
+        });
+      });
+      return;
+    }
+
+    if (nextKind === previousKind) {
       return;
     }
 
@@ -192,7 +217,8 @@ export const useGpuStateToasts = (): void => {
                   altText: GPU_STATE_VOCABULARY.retryAltText,
                   onClick: onRetry,
                 },
-          durationMs: status.reason === ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE ? 5_000 : null,
+          durationMs:
+            status.reason === ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE ? GPU_STATUS_UNAVAILABLE_TOAST_MS : null,
         });
       });
     }

@@ -250,7 +250,7 @@ describe('DeadLetterPanel', () => {
     ])('names the change from payload %j', (payload, identity) => {
       mockFailedPages(listResponse({ items: [buildOperation({ entity_key: uuid, payload: payload as OutboxOperation['payload'] })] }));
       renderPanel();
-      const heading = screen.getByText(identity as string, { selector: 'strong' });
+      const heading = screen.getByText(identity, { selector: 'strong' });
       expect(heading).not.toHaveTextContent(uuid);
       const row = heading.closest('li')!;
       expect(within(row).getByText('cluster ' + uuid + ' · change #11')).toBeInTheDocument();
@@ -269,7 +269,7 @@ describe('DeadLetterPanel', () => {
         created_at: new Date(Date.now() - minutes * 60000).toISOString(),
       })] }));
       renderPanel();
-      expect(screen.getByText('Failed ' + count + ' ' + unit + ' ago')).toBeInTheDocument();
+      expect(screen.getByText('Unresolved for ' + count + ' ' + unit)).toBeInTheDocument();
       expect(catalog.plural).toHaveBeenCalledWith(
         expect.stringContaining('%1$d'), expect.stringContaining('%1$d'), count, 'alt-context',
       );
@@ -282,7 +282,7 @@ describe('DeadLetterPanel', () => {
         last_attempted_at: new Date(Date.now()).toISOString(),
       })] }));
       renderPanel();
-      expect(screen.getByText('Failed ' + days + ' days ago')).toBeInTheDocument();
+      expect(screen.getByText('Unresolved for ' + days + ' days')).toBeInTheDocument();
       if (days > 30) {
         expect(screen.getByText(/Stale: From/)).toHaveTextContent('over 31 days ago');
       } else {
@@ -305,10 +305,11 @@ describe('DeadLetterPanel', () => {
     it('announces retry using the label identity', async () => {
       mockFailedPages(listResponse({ items: [buildOperation({ payload: { label: 'Jane Doe' } })] }));
       renderPanel();
-      fireEvent.click(screen.getByRole('button', { name: 'Retry Cluster label update: “Jane Doe”' }));
-      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
-        'Cluster label update: “Jane Doe” queued to retry.',
-      ));
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Retry Cluster label update: “Jane Doe”' }));
+        await Promise.resolve();
+      });
+      expect(screen.getByRole('status')).toHaveTextContent('Cluster label update: “Jane Doe” queued to retry.');
     });
   });
 
@@ -1503,9 +1504,10 @@ describe('DeadLetterPanel', () => {
     try {
       renderPanel();
 
-      expect(screen.getAllByText('Failed 8 days ago')).toHaveLength(1);
+      expect(screen.getAllByText('Unresolved for 8 days')).toHaveLength(1);
       fireEvent.click(screen.getByRole('button', { name: 'History' }));
-      expect(screen.getAllByText('Failed 8 days ago')).toHaveLength(1);
+      expect(screen.getAllByText('Age: 8 days')).toHaveLength(1);
+      expect(screen.queryByText('Unresolved for 8 days')).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

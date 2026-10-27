@@ -515,6 +515,12 @@ const DeadLetterOperationRow = ({
     ? null : formatPayloadSummary(operation.payload);
   const createdMs = parseWpTimestampMs(operation.created_at, getSiteGmtOffsetHours());
   const waitingDays = createdMs === null ? null : Math.floor(Math.max(0, displayNowMs - createdMs) / DAY_MS);
+  // The age runs from created_at, not the last attempt, so the copy names what it measures.
+  const ageTemplate = isFailedOperation(operation)
+    ? __('Unresolved for %1$s', 'alt-context')
+    : operation.status === 'pending'
+      ? __('Waiting %1$s', 'alt-context')
+      : __('Age: %1$s', 'alt-context');
   const discardPending = pendingDiscardId === operation.id;
   const terminal = isTerminalOperation(operation);
   const showFailedRecovery = variant === 'failed-list' || isFailedOperation(operation);
@@ -541,7 +547,7 @@ const DeadLetterOperationRow = ({
         {variant === 'timeline' ? (
           <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
         ) : null}
-        <p>{sprintf(isFailedOperation(operation) ? __('Failed %1$s ago', 'alt-context') : operation.status === 'pending' ? __('Waiting %1$s', 'alt-context') : __('Age: %1$s', 'alt-context'), formatAge(operation.created_at, displayNowMs))}</p>
+        <p>{sprintf(ageTemplate, formatAge(operation.created_at, displayNowMs))}</p>
         {terminal ? <p>{__('Will not retry', 'alt-context')}</p> : null}
         {showLastAttempted ? (
           <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>

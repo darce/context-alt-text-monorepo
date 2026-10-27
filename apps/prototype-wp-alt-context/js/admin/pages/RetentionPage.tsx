@@ -11,6 +11,7 @@ import { toUserMessage } from '../utils/appError';
 import { toDescriptionHistory } from '../navigation/appLinks';
 import {
   readUnavailable,
+  unavailableSummary,
   unavailableReasonCopy,
   unavailableServiceLabel,
 } from '../utils/serviceUnavailable';
@@ -76,7 +77,25 @@ export const RetentionSection = (): React.JSX.Element => {
       ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
       : '';
 
-  const unavailable = readUnavailable(status);
+  const [retryOutcome, setRetryOutcome] = React.useState('');
+  const retry = async () => {
+    setRetryOutcome(__('Fetching retention status…', 'alt-context'));
+    try {
+      const result = await retentionQuery.refetch();
+      if (!result) { setRetryOutcome(''); return; }
+      const failure = result.isError ? readUnavailable(result.error) : readUnavailable(result.data);
+      const time = formatLastChecked(new Date().toISOString());
+      const recovered = !result.isError && result.data?.available && result.data.policy;
+      setRetryOutcome(recovered
+        ? sprintf(__('Checked again at %s: retention status is available.', 'alt-context'), time)
+        : sprintf(__('Checked again at %s: still unavailable (%s).', 'alt-context'), time,
+          failure ? unavailableSummary(failure) : untypedQueryErrorCause(result.error)));
+    } catch (error) {
+      setRetryOutcome(sprintf(__('Checked again at %s: still unavailable (%s).', 'alt-context'),
+        formatLastChecked(new Date().toISOString()), untypedQueryErrorCause(error)));
+    }
+  };
+  const unavailable = retentionQuery.isError ? readUnavailable(retentionQuery.error) : readUnavailable(status);
   const unavailableService = unavailable ? unavailableServiceLabel(unavailable.service) : null;
   const unavailableCopy = unavailable ? unavailableReasonCopy(unavailable.reason) : null;
   const lastChecked = unavailable ? formatLastChecked(unavailable.checked_at) : null;
@@ -114,11 +133,7 @@ export const RetentionSection = (): React.JSX.Element => {
             />
             <div>
               <p>
-                {sprintf(
-                  __('%s is unavailable because %s.', 'alt-context'),
-                  unavailableService,
-                  unavailableCopy.why,
-                )}
+                {unavailable.http_status !== null ? unavailableSummary(unavailable) : sprintf(__('%s is unavailable because %s.', 'alt-context'), unavailableService, unavailableCopy.why)}
               </p>
               <p>{unavailableCopy.fix}</p>
               {lastChecked ? (
@@ -162,15 +177,13 @@ export const RetentionSection = (): React.JSX.Element => {
       <button
         type="button"
         className="acx-button acx-button--secondary"
-        onClick={() => void retentionQuery.refetch()}
+        onClick={() => void retry()}
         disabled={retentionQuery.isFetching}
         aria-busy={retentionQuery.isFetching}
       >
         {retentionQuery.isFetching ? __('Fetching…', 'alt-context') : __('Retry', 'alt-context')}
       </button>
-      <p role="status" aria-live="polite">
-        {retentionQuery.isFetching ? __('Fetching retention status…', 'alt-context') : ''}
-      </p>
+
     </section>
   ) : (
     <>
@@ -370,6 +383,11 @@ export const RetentionSection = (): React.JSX.Element => {
       <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
         {__('Data & retention', 'alt-context')}
       </h3>
+      {(!status?.available || retentionQuery.isError || retryOutcome) ? (
+        <p role="status" aria-live="polite">
+          {retentionQuery.isFetching ? __('Fetching retention status…', 'alt-context') : retryOutcome}
+        </p>
+      ) : null}
       {body}
     </section>
   );

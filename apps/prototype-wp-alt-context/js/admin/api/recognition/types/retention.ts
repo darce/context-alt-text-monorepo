@@ -1,3 +1,5 @@
+import type { ServiceUnavailable } from '../../../utils/serviceUnavailable';
+
 export type RetentionMode = 'retain_all' | 'dispose_after_ack' | 'purge_on_demand';
 
 export interface RetentionPolicy {
@@ -18,6 +20,7 @@ export interface AuditEvent {
 }
 
 export interface RetentionStatusResponse {
+  unavailable?: ServiceUnavailable | null;
   available: boolean;
   policy: RetentionPolicy | null;
   recent_audit_events: AuditEvent[];

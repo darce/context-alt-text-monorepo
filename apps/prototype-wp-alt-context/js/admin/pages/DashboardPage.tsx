@@ -1,5 +1,7 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
+import { readUnavailable } from '../utils/serviceUnavailable';
 
 /**
  * Dashboard landing page for the Alt Context admin SPA.
@@ -30,7 +32,7 @@ import {
 import {
   RETENTION_CARD_ACTION_BODY,
   RETENTION_CARD_ACTION_HEADING,
-  RETENTION_CARD_ERROR_BODY,
+  retentionFailureCopy,
   RETENTION_CARD_HEADING,
   RETENTION_CARD_LINK_HREF,
 } from './dashboard/retentionCardCopy';
@@ -61,7 +63,7 @@ export const DashboardPage = (): React.JSX.Element => {
   const effectiveSyncHealth = resolveEffectiveSyncHealth(syncStatus?.sync_health ?? 'stale', syncHealthEnvelope);
   const syncHealthWarningsActive = syncHealthEnvelope ? hasSyncHealthWarnings(syncHealthEnvelope) : false;
   const resetMirror = useResetMirror();
-  const { data: retentionStatus, isError: isRetentionError, isLoading: isRetentionLoading } = useRetentionStatus();
+  const { data: retentionStatus, error: retentionError, isError: isRetentionError, isLoading: isRetentionLoading } = useRetentionStatus();
   const {
     data: identityStats,
     isLoading: isIdentityLoading,
@@ -92,10 +94,10 @@ export const DashboardPage = (): React.JSX.Element => {
       : isRecognitionScanning
         ? DASHBOARD_FLOW_STATE.SCANNING
         : DASHBOARD_FLOW_STATE.UNSCANNED;
-  // State matrix (UXP-4 S3 / A11Y-24): loading or available:false → no panel;
-  // isError → remediation + #/retention; available + policy → summary.
+  // Loading or an unconfigured endpoint hides the panel; failures show recovery guidance.
+  const retentionFailure = isRetentionError ? readUnavailable(retentionError) : readUnavailable(retentionStatus);
   const retentionPolicy = retentionStatus?.available ? retentionStatus.policy : null;
-  const showRetentionPanel = !isRetentionLoading && (isRetentionError || Boolean(retentionPolicy));
+  const showRetentionPanel = !isRetentionLoading && (isRetentionError || Boolean(retentionPolicy) || Boolean(retentionFailure));
   const retentionModeLabel =
     retentionPolicy?.retention_mode === 'dispose_after_ack'
       ? __('Dispose after ack', 'alt-context')
@@ -258,7 +260,10 @@ export const DashboardPage = (): React.JSX.Element => {
         <h2>{RETENTION_CARD_HEADING}</h2>
         {isRetentionError || !retentionPolicy ? (
           <>
-            <p>{RETENTION_CARD_ERROR_BODY}</p>
+            <p className="acx-sync-status acx-sync-status--warning">
+              <AlertTriangle size={16} aria-hidden="true" />
+              {retentionFailureCopy(retentionFailure)}
+            </p>
             <div className="acx-dashboard__actions">
               <a
                 href={RETENTION_CARD_LINK_HREF}

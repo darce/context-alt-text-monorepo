@@ -587,6 +587,34 @@ describe('RetentionSection', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
   });
 
+  it('names the HTTP failure and announces the last retry outcome', async () => {
+    const data = typedUnavailable('2026-10-27T02:58:00Z', {
+      reason: 'upstream_5xx', http_status: 500, retry_after_seconds: null,
+    });
+    refetch.mockResolvedValue({ data, isError: false });
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ data, refetch }));
+    render(<RetentionSection />);
+    expect(screen.getByText('Recognition service: server error (HTTP 500).')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
+      /Checked again at .*still unavailable.*Recognition service: server error \(HTTP 500\)/,
+    ));
+  });
+
+  it('reads the current HTTP error envelope instead of stale query data', () => {
+    const data = typedUnavailable('2026-10-27T02:58:00Z', {
+      reason: 'upstream_5xx', http_status: 500, retry_after_seconds: null,
+    });
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({
+      isError: true,
+      error: new HTTPError({ status: 500, endpoint: '/retention',
+        bodyPreview: JSON.stringify(data), message: 'Service error', retryAfterSeconds: undefined }),
+      refetch,
+    }));
+    render(<RetentionSection />);
+    expect(screen.getByText('Recognition service: server error (HTTP 500).')).toBeInTheDocument();
+  });
+
   it('omits a retry countdown when retry_after_seconds is absent', () => {
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({

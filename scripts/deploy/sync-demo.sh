@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Sync the demo WordPress stack and Caddy edge config to the OCI host.
-#
-# Order matters: bring up acx-demo first so acx-demo-net exists, then recreate
-# Caddy (network join requires container recreate — reload-only is insufficient).
+# Sync the demo WordPress stack after verifying the shared Caddy edge.
+# The recognition deploy owns edge convergence; this deploy only probes it.
 # When PLUGIN_ZIP is unset, freshness-gates the newest dist/alt-context-*.zip and
 # runs bootstrap-wp.sh after the stack is healthy. An explicitly empty PLUGIN_ZIP
 # means no artifact: skip the plugin rsync, skip bootstrap, leave BOOTSTRAP_RAN=0.
@@ -84,7 +82,7 @@ elif [[ -z "${PLUGIN_ZIP}" ]]; then
 fi
 
 # Resolved early and preflighted with the other sources: discovering it missing
-# at the final smoke step would leave the Caddy promote applied but unsmoked.
+# at the final smoke step would leave the demo deployment unsmoked.
 # Remote smoke heredoc concatenation order (later definition wins):
 #   1. describe-gate.sh — ACX_TRUSTED_DESCRIBE_PROFILES + is_trusted_describe_profile
 #      (only definition site). Also carries a VM-self-contained copy of
@@ -135,6 +133,85 @@ else
   exit "$preflight_status"
 fi
 
+
+# Shared-edge ABI is owned by recognition/app-portal. Never stage edge inputs
+# in the live directory: temporary decoded inputs exist only under /tmp.
+probe_shared_edge() {
+  local helper deadline command caddy64 compose64 program
+  helper="$(dirname "${BASH_SOURCE[0]}")/lib/shared-edge.sh"
+  deadline="${ACX_REMOTE_COMMAND_TIMEOUT:-120}"
+  [[ "$deadline" =~ ^[1-9][0-9]{0,2}$ && "$deadline" -le 600 ]] || {
+    echo "ERROR: shared edge deadline must be 1..600 seconds" >&2
+    return 2
+  }
+  [[ -r "$helper" ]] || { echo "ERROR: shared edge helper missing" >&2; return 2; }
+  caddy64="$(base64 < "$CADDYFILE_SRC" | tr -d '\n')" || return 2
+  compose64="$(base64 < "$CADDY_COMPOSE_SRC" | tr -d '\n')" || return 2
+  command="sudo -n timeout -k 5 $deadline bash -s -- $(shell_quote "$caddy64") $(shell_quote "$compose64")"
+  program="$(
+    cat "$helper"
+    cat <<'EDGE_PROBE'
+set -euo pipefail
+refuse() { echo "ERROR: shared edge drift: $1" >&2; exit 1; }
+handle=""
+scratch=""
+cleanup() {
+  local rc=$?
+  if [[ -n "$scratch" ]]; then rm -rf -- "$scratch"; fi
+  edge_compose_cleanup || rc=1
+  if [[ -n "$handle" ]]; then edge_lock_release "$handle" 5 >/dev/null || rc=1; fi
+  exit "$rc"
+}
+trap cleanup EXIT
+if handle="$(edge_lock_acquire /opt/acx-backend/app/activation.journal.lock 0 600 0)"; then
+  :
+else
+  rc=$?
+  if [[ "$rc" == 75 ]]; then echo 'ERROR: shared edge drift: lock_busy' >&2; fi
+  exit "$rc"
+fi
+scratch="$(mktemp -d)"
+printf '%s' "$1" | base64 -d > "$scratch/Caddyfile"
+printf '%s' "$2" | base64 -d > "$scratch/compose"
+cd /opt/acx-backend
+edge_effective_caddyfile "$scratch/Caddyfile" Caddyfile > "$scratch/effective" || refuse caddyfile
+cmp -s "$scratch/effective" Caddyfile || refuse caddyfile
+cmp -s "$scratch/compose" docker-compose.caddy.yml || refuse compose
+overlay=/opt/acx-backend/app/docker-compose.app.yml
+edge_compose_args docker-compose.caddy.yml "$overlay" || refuse compose
+names="$(edge_required_networks docker-compose.caddy.yml "$overlay")" || refuse compose
+cid="$(docker compose "${EDGE_COMPOSE_ARGV[@]}" ps -q caddy)" || refuse network:acx-demo-net
+[[ "$cid" =~ ^[a-f0-9]{12,64}$ ]] || refuse network:acx-demo-net
+networks="$(docker inspect -f '{{json .NetworkSettings.Networks}}' "$cid")" || refuse network:acx-demo-net
+while IFS= read -r name; do
+  python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.loads(sys.argv[1]) else 1)' "$networks" "$name" || refuse "network:$name"
+done <<< "$(printf '%s\nacx-demo-net\n' "$names")"
+EDGE_PROBE
+  )" || return $?
+  $SSH "$command" <<<"$program"
+}
+if probe_shared_edge; then
+  :
+else
+  edge_status=$?
+  echo "ERROR: shared edge probe refused (sudo/transport/deadline or drift); no demo changes made." >&2
+  echo "Converge: OCI_HOST=$(shell_quote "$OCI_HOST") OCI_USER=$(shell_quote "$OCI_USER") ACX_EDGE_APPLY=1 bash scripts/deploy/recognition-service.sh sync-runtime prod" >&2
+  exit "$edge_status"
+fi
+
+# Retain an API baseline before demo mutations to detect collateral regressions.
+echo "==> Capture pre-deploy api vhost baseline"
+PRE_CODES=$($SSH bash -se <<'EOF'
+set -euo pipefail
+for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://${host}/health" || true)
+  [[ -n "$code" && "$code" != "000" ]] || code=000
+  printf '%s=%s ' "$host" "$code"
+done
+EOF
+)
+echo "    baseline: ${PRE_CODES}"
+
 echo "==> Target host: ${OCI_USER}@${OCI_HOST}"
 echo "==> Ensure demo secrets exist at ${REMOTE_DEMO_DIR}/secrets/.env (from ${ENV_EXAMPLE_SRC})"
 
@@ -169,18 +246,6 @@ else
   echo "==> No plugin artifact to rsync; skipping bootstrap-wp.sh"
 fi
 
-echo "==> Rsync Caddy edge config (repo-tracked source of truth)"
-$SCP "$CADDYFILE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_BACKEND_DIR}/Caddyfile.new"
-$SCP "$CADDY_COMPOSE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_BACKEND_DIR}/docker-compose.caddy.yml.new"
-
-echo "==> Stage rollback copies on the VM"
-$SSH bash -se <<'EOF'
-set -euo pipefail
-cd /opt/acx-backend
-if [[ -f Caddyfile ]]; then cp -a Caddyfile "Caddyfile.bak.$(date +%s)"; fi
-if [[ -f docker-compose.caddy.yml ]]; then cp -a docker-compose.caddy.yml "docker-compose.caddy.yml.bak.$(date +%s)"; fi
-EOF
-
 echo "==> Bring up demo stack (acx-demo-net is external — create it out-of-band)"
 $SSH bash -se <<EOF
 set -euo pipefail
@@ -214,105 +279,6 @@ if [[ -n "${PLUGIN_ZIP}" ]]; then
   FIRST_BURST_COUNT=$($SSH "cat '${REMOTE_DEMO_DIR}/.acx-describe-first-burst.count' 2>/dev/null" || true)
 fi
 
-# Baseline BEFORE the Caddy promote: an api.* vhost that was healthy (200) and
-# turns unhealthy after the promote is a deploy-caused edge regression and must
-# FAIL the smoke; one that was already broken stays a WARN (backend outage,
-# out of deploy scope). `caddy validate` below is syntax-only — it cannot catch
-# a typo'd reverse_proxy upstream, which is exactly what this baseline catches.
-echo "==> Capture pre-promote api vhost baseline"
-PRE_CODES=$($SSH bash -se <<'EOF'
-set -euo pipefail
-for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://${host}/health" || true)
-  [[ -n "$code" && "$code" != "000" ]] || code=000
-  printf '%s=%s ' "$host" "$code"
-done
-EOF
-)
-echo "    baseline: ${PRE_CODES}"
-
-echo "==> Validate staged Caddy config, then promote"
-$SSH bash -se <<'EOF'
-set -euo pipefail
-cd /opt/acx-backend
-# Validate the staged .new file BEFORE promoting: a failed validation must
-# leave the live Caddyfile untouched, or the next container restart loads a
-# broken config and takes down every vhost.
-docker run --rm \
-  -v /opt/acx-backend/Caddyfile.new:/etc/caddy/Caddyfile:ro \
-  caddy:2-alpine \
-  caddy validate --config /etc/caddy/Caddyfile
-# `mv` over the live Caddyfile allocates a new inode. docker-compose.caddy.yml
-# bind-mounts this one file, and a single-file bind mount pins the inode at
-# container start, so a mv'd promote never reaches the running proxy: the deploy
-# reports success while Caddy keeps serving the pre-promote config
-# (GUIDEDEPLOY-1-BR-04). Truncate in place so the mounted inode is the one we
-# just wrote. Keep a copy in case the non-atomic write or its validation fails.
-rollback_file=""
-if [[ -e Caddyfile ]]; then
-  rollback_file="$(mktemp)"
-  cp -p Caddyfile "$rollback_file"
-fi
-restore_caddyfile() {
-  if [[ -n "$rollback_file" ]]; then
-    if cat "$rollback_file" > Caddyfile; then
-      rm -f "$rollback_file"
-    else
-      printf 'ERROR: Failed to restore Caddyfile; rollback file retained at %s\n' "$rollback_file" >&2
-      return 1
-    fi
-  else
-    rm -f Caddyfile
-  fi
-}
-if ! cat Caddyfile.new > Caddyfile; then
-  restore_caddyfile
-  echo "ERROR: Failed to promote Caddyfile; prior contents restored" >&2
-  exit 1
-fi
-if ! docker run --rm \
-  -v /opt/acx-backend/Caddyfile:/etc/caddy/Caddyfile:ro \
-  caddy:2-alpine \
-  caddy validate --config /etc/caddy/Caddyfile; then
-  restore_caddyfile
-  echo "ERROR: Promoted Caddyfile failed validation; prior contents restored" >&2
-  exit 1
-fi
-if [[ -n "$rollback_file" ]]; then rm -f "$rollback_file"; fi
-rm -f Caddyfile.new
-mv docker-compose.caddy.yml.new docker-compose.caddy.yml
-EOF
-
-echo "==> Recreate Caddy so it joins acx-demo-net"
-$SSH bash -se <<'EOF'
-set -euo pipefail
-cd /opt/acx-backend
-# acx-dev-fir-net is external:true on docker-compose.caddy.yml; create it if the
-# fir stack has never stood it up. Labels match docker-compose.env.yml's
-# declaring key (backend) + COMPOSE_PROJECT_NAME=acx-dev-fir so fir can adopt.
-docker network inspect acx-dev-fir-net >/dev/null 2>&1 || docker network create \
-  --label com.docker.compose.network=backend \
-  --label com.docker.compose.project=acx-dev-fir \
-  acx-dev-fir-net
-docker compose -f docker-compose.caddy.yml up -d
-
-# The in-place promote above only reaches Caddy when the container's mount
-# already pins the current inode. A container recreated before an earlier
-# mv-style promote is pinned to an orphaned inode that no reload can reach, so
-# compare host and container copies and recreate when they diverge. Reload
-# otherwise: it applies the new config without dropping in-flight TLS sessions.
-want_config="$(sha256sum Caddyfile | cut -d' ' -f1)"
-have_config="$(docker compose -f docker-compose.caddy.yml exec -T caddy sha256sum /etc/caddy/Caddyfile | cut -d' ' -f1)" || have_config=""
-if [ "$want_config" != "$have_config" ]; then
-  echo "    caddy mount diverged from /opt/acx-backend/Caddyfile; recreating"
-  docker compose -f docker-compose.caddy.yml up -d --force-recreate caddy
-else
-  docker compose -f docker-compose.caddy.yml exec -T caddy \
-    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-fi
-docker compose -f docker-compose.caddy.yml ps
-EOF
-
 echo "==> Install/refresh systemd unit (operator enables manually if first install)"
 $SCP "$SYSTEMD_SRC" "${OCI_USER}@${OCI_HOST}:/tmp/acx-demo.service"
 $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo systemctl daemon-reload"
@@ -321,9 +287,9 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # vhost serves the WP front page at /. Gate semantics (pinned by
 # scripts/deploy/tests/test-smoke-gate.sh; classification logic lives in
 # scripts/deploy/lib/smoke-gate.sh and is shipped to the VM inline): the deploy
-# owns the edge and the demo stack, NOT backend health. 000 after retries FAILs
-# (edge/TLS broken; retries absorb the Caddy-recreate/ACME startup window); an
-# api.* HTTP error FAILs only when the pre-promote baseline was healthy
+# owns the demo stack, not backend health. 000 after retries FAILs
+# (edge/TLS unreachable); an
+# api.* HTTP error FAILs only when the pre-deploy baseline was healthy
 # (deploy-caused regression), else WARNs; the demo probe follows redirects and
 # requires a final 2xx that is not the WP installer (a wiped DB 302->install.php
 # answers 200 and is a broken demo, not a healthy one).

@@ -138,6 +138,9 @@ const UngroupedResidueEditor = ({ member, onClose }: UngroupedResidueEditorProps
   const {
     options,
     isLoading: suggestionsLoading,
+    namingReady,
+    rosterError,
+    retryRoster,
     isError: suggestionsError,
     retry: retrySuggestions,
     findClusterByLabel,
@@ -269,7 +272,9 @@ const UngroupedResidueEditor = ({ member, onClose }: UngroupedResidueEditorProps
         labelInput={editState.labelInput}
         onLabelChange={setLabel}
         options={options}
-        isLoading={suggestionsLoading}
+        isLoading={namingReady === undefined ? suggestionsLoading : !namingReady}
+        rosterError={rosterError}
+        onRetryRoster={retryRoster}
         suggestionsError={suggestionsError}
         onRetrySuggestions={retrySuggestions}
         isPending={mutations.isPending || saveStatus !== 'idle'}

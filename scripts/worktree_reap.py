@@ -50,8 +50,12 @@ _HARNESS_SCRATCH_SUFFIXES = (".stamp", ".lock", ".pid")
 _TERMINAL_LANE_STATUSES = frozenset({"closed", "closed_stale", "merged"})
 
 # The registry paginates.  A truncated page would silently under-report
-# ownership, so the reader demands the whole set or fails closed.
+# ownership, so the reader demands the whole set or fails closed.  Pages are
+# read by keyset on the immutable row id: offset paging orders by updated_at,
+# so a heartbeat between two page reads can move a live row into a page
+# already read and drop it from the sweep.
 _LANE_PAGE_LIMIT = 5000
+_LANE_PAGE_MAX = 50
 
 
 class GitError(RuntimeError):
@@ -346,20 +350,40 @@ def active_lane_paths(repo: Path | str) -> dict[Path, str]:
     repo_path = Path(repo).resolve()
     try:
         configure_runtime(RuntimeConfig.for_repo(repo_path))
-        response = list_lanes(limit=_LANE_PAGE_LIMIT)
-        if not isinstance(response, Mapping):
-            raise LaneStateError("lane registry response is not a mapping")
-        if not response.get("ok"):
-            raise LaneStateError("lane registry response was not ok")
-        data = response.get("data")
-        if not isinstance(data, Mapping):
-            raise LaneStateError("lane registry response data is not a mapping")
-        rows = data.get("lanes")
-        if not isinstance(rows, list):
-            raise LaneStateError("lane registry response data.lanes is not a list")
-        if data.get("has_more"):
-            raise LaneStateError("lane registry response was truncated: data.has_more")
-        return _lane_owners_from_rows(rows)
+        rows: list[object] = []
+        seen_ids: set[object] = set()
+        # None asks for the first keyset page; 0 would mean ``id < 0``.
+        after_id: int | None = None
+        for _page in range(_LANE_PAGE_MAX):
+            response = list_lanes(
+                all_tasks=True, limit=_LANE_PAGE_LIMIT, after_id=after_id
+            )
+            if not isinstance(response, Mapping):
+                raise LaneStateError("lane registry response is not a mapping")
+            if not response.get("ok"):
+                raise LaneStateError("lane registry response was not ok")
+            data = response.get("data")
+            if not isinstance(data, Mapping):
+                raise LaneStateError("lane registry response data is not a mapping")
+            page_rows = data.get("lanes")
+            if not isinstance(page_rows, list):
+                raise LaneStateError("lane registry response data.lanes is not a list")
+            for row in page_rows:
+                # Rows without ids still need the reducer's fail-closed validation.
+                row_id = row.get("id") if isinstance(row, dict) else None
+                if row_id is None or row_id not in seen_ids:
+                    rows.append(row)
+                    if row_id is not None:
+                        seen_ids.add(row_id)
+            if not data.get("has_more"):
+                return _lane_owners_from_rows(rows)
+            next_after_id = data.get("next_after_id")
+            if type(next_after_id) is not int or (
+                after_id is not None and next_after_id >= after_id
+            ):
+                raise LaneStateError("lane registry pagination made no progress")
+            after_id = next_after_id
+        raise LaneStateError("lane registry exceeded page limit")
     except LaneStateError:
         raise
     except Exception as exc:  # noqa: BLE001 - any failure must fail closed

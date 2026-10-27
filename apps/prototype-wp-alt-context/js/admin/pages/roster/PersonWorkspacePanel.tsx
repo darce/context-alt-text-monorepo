@@ -730,7 +730,7 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
                     <a
                       className="acx-roster__photos-link"
                       href={reviewPanelUrl(cluster.cluster_id)}
-                      aria-label={sprintf(__('Fix faces in face group %d', 'alt-context'), index + 1)}
+                      aria-label={sprintf(__('Fix faces in Review for face group %d', 'alt-context'), index + 1)}
                     >
                       {__('Fix faces in Review', 'alt-context')}
                     </a>

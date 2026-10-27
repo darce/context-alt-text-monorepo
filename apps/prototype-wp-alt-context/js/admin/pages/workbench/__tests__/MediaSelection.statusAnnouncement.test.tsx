@@ -509,7 +509,7 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
     const { rerender } = render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
 
     const live = screen.getByRole('status');
-    expect(live).toHaveTextContent('Description service status unavailable');
+    expect(live).toHaveTextContent('Description service status not confirmed yet');
     expect(live).not.toHaveTextContent('remaining');
     expect(live).not.toHaveTextContent('calculating');
     expect(live).not.toHaveTextContent('about 2 min');
@@ -518,7 +518,7 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
 
     rerender(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByRole('status')).toHaveTextContent('Description service status unavailable');
+    expect(screen.getByRole('status')).toHaveTextContent('Description service status not confirmed yet');
   });
 
   it('does not render eta_seconds in the warming label', () => {
@@ -532,7 +532,7 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
     render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
 
     const live = screen.getByRole('status');
-    expect(live).toHaveTextContent('Description service status unavailable');
+    expect(live).toHaveTextContent('Description service status not confirmed yet');
     expect(live).not.toHaveTextContent('about 2 min');
     expect(live).not.toHaveTextContent('~12s remaining');
     expect(live).not.toHaveTextContent('remaining');

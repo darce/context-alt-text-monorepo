@@ -29,6 +29,8 @@ const formatLastChecked = (checkedAt: string): string | null => {
   return new Date(milliseconds).toISOString().slice(11, 19);
 };
 
+const checkedAgainAt = (): string => formatLastChecked(new Date().toISOString()) ?? '';
+
 const untypedQueryErrorCause = (error: unknown): string => {
   if (typeof error === 'object' && error !== null) {
     const details = error as { status?: unknown; code?: unknown };
@@ -77,14 +79,15 @@ export const RetentionSection = (): React.JSX.Element => {
       ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
       : '';
 
+  // In-progress copy derives from retentionQuery.isFetching; this holds only the settled outcome.
   const [retryOutcome, setRetryOutcome] = React.useState('');
   const retry = async () => {
-    setRetryOutcome(__('Fetching retention status…', 'alt-context'));
+    setRetryOutcome('');
     try {
       const result = await retentionQuery.refetch();
-      if (!result) { setRetryOutcome(''); return; }
+      if (!result) { return; }
       const failure = result.isError ? readUnavailable(result.error) : readUnavailable(result.data);
-      const time = formatLastChecked(new Date().toISOString());
+      const time = checkedAgainAt();
       const recovered = !result.isError && result.data?.available && result.data.policy;
       setRetryOutcome(recovered
         ? sprintf(__('Checked again at %s: retention status is available.', 'alt-context'), time)
@@ -92,7 +95,7 @@ export const RetentionSection = (): React.JSX.Element => {
           failure ? unavailableSummary(failure) : untypedQueryErrorCause(result.error)));
     } catch (error) {
       setRetryOutcome(sprintf(__('Checked again at %s: still unavailable (%s).', 'alt-context'),
-        formatLastChecked(new Date().toISOString()), untypedQueryErrorCause(error)));
+        checkedAgainAt(), untypedQueryErrorCause(error)));
     }
   };
   const unavailable = retentionQuery.isError ? readUnavailable(retentionQuery.error) : readUnavailable(status);
@@ -109,7 +112,7 @@ export const RetentionSection = (): React.JSX.Element => {
       : null;
   const fallbackCause = retentionQuery.isError
     ? untypedQueryErrorCause(retentionQuery.error)
-    : !status || !status.available
+    : !status?.available
       ? __('The service reported it is unavailable.', 'alt-context')
       : __('The service returned no retention policy.', 'alt-context');
 

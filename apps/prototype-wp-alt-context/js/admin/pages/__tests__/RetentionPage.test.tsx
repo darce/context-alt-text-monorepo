@@ -595,10 +595,15 @@ describe('RetentionSection', () => {
     mockedUseRetentionStatus.mockReturnValue(createMockQuery({ data, refetch }));
     render(<RetentionSection />);
     expect(screen.getByText('Recognition service: server error (HTTP 500).')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
+    // Settle refetch inside async act: the act-wrapped waitFor defers commits until it returns
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await Promise.resolve();
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status')).toHaveTextContent(
       /Checked again at .*still unavailable.*Recognition service: server error \(HTTP 500\)/,
-    ));
+    );
   });
 
   it('reads the current HTTP error envelope instead of stale query data', () => {

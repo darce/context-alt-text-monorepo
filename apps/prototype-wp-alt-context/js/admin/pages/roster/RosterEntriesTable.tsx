@@ -10,6 +10,7 @@ import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
 import { getEntryPersonUuid } from './rosterRoute';
+import { APP_LINK_PARAMS } from '../../navigation/appLinks';
 
 const RESERVED_LABEL_MESSAGE = __(
   'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
@@ -78,9 +79,7 @@ const DirectoryFace = ({ entry }: { entry: RosterEntry }): React.JSX.Element => 
   // IdentityThumbnail renders the sized placeholder when it has no resolvable src.
   // Explicit null guards keep those paths intentional [PERC-02].
   if (rep === null) {
-    return (
-      <IdentityThumbnail identity={{ media_id: 0 }} size={DIRECTORY_THUMB_SIZE} alt={decorativeAlt} />
-    );
+    return <IdentityThumbnail identity={{ media_id: 0 }} size={DIRECTORY_THUMB_SIZE} alt={decorativeAlt} />;
   }
   if (rep.media_url === null) {
     return (
@@ -151,8 +150,10 @@ const PersonStateCell = ({ entry }: { entry: RosterEntry }): React.JSX.Element =
 const PersonPhotosLink = ({ entry }: { entry: RosterEntry }): React.JSX.Element => {
   const [searchParams] = useSearchParams();
   const next = new URLSearchParams(searchParams);
-  for (const key of ['face', 'cluster', 'tab']) next.delete(key);
-  next.set('person', getEntryPersonUuid(entry) ?? '');
+  for (const key of ['face', 'cluster', 'tab']) {
+    next.delete(key);
+  }
+  next.set(APP_LINK_PARAMS.person, getEntryPersonUuid(entry) ?? '');
   next.set('section', 'photos');
   const displayName = entry.name.trim() || __('Unnamed person', 'alt-context');
   return (

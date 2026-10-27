@@ -13,6 +13,11 @@
 - `run-job` — Start a scan/describe job and watch it finish
 - `recover-from-failure` — Understand why a job or request failed and recover
 
+## Code references
+- `screen:workbench-pipeline` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/JobPipelineContext.tsx`
+- `screen:request-error-banner` — `apps/prototype-wp-alt-context/js/admin/utils/userFacingError.ts`
+- `screen:reload-page` — `apps/prototype-wp-alt-context/js/admin/utils/userFacingError.ts`
+
 ## Screens
 | id | kind | route | title |
 | --- | --- | --- | --- |
@@ -32,17 +37,30 @@ Purpose: Shows the active job's phase, progress, ETA and stall state driven by j
 
 ```
 +------------------------------------------------------------+
-| Workbench — job pipeline  [screen]  /admin.php?page=alt-c… |
-| Shows the active job's phase, progress, ETA and stall sta… |
+| Workbench — job pipeline  [screen]  /admin.php?page=alt-c\ |
+|   ontext-workbench                                         |
+| Shows the active job's phase, progress, ETA and stall sta\ |
+|   te driven by jobReducer state.                           |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Pipeline status banner — reducer phase to canonical U… |
-|   - Progress + ETA — running = loading with live progress… |
-|   - Start / cancel / retry — idle and completed = default… |
+|   - Pipeline status banner — reducer phase to canonical U\ |
+|   X state: idle and completed = default; pending and runn\ |
+|   ing = loading; failed = error; offline = offline; stall\ |
+|   ed and completed_with_errors = degraded. Each reducer p\ |
+|   hase keeps its own copy and recovery. (status) states=[\ |
+|   default,loading,error,offline,degraded]                  |
+|   - Progress + ETA — running = loading with live progress\ |
+|   ; stalled = degraded with elapsed no-progress time and \ |
+|   reconnect status. (status) states=[loading,degraded]     |
+|   - Start / cancel / retry — idle and completed = default\ |
+|   ; running = loading; failed = error; completed_with_err\ |
+|   ors = degraded. (form) states=[default,loading,error,de\ |
+|   graded]                                                  |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Start job -> workbench-pipeline (costly)       |
-|   [secondary] Cancel job -> workbench-pipeline (irreversi… |
+|   [secondary] Cancel job -> workbench-pipeline (irreversi\ |
+|   ble)                                                     |
 +------------------------------------------------------------+
 | states: default | loading | error | offline | degraded     |
 +------------------------------------------------------------+
@@ -61,12 +79,32 @@ Action states: http, parse, auth_expired, nonce_refresh, timeout, transport, unk
 
 ```
 +------------------------------------------------------------+
-| Request error banner  [overlay]  /admin.php?page=alt-cont… |
-| One banner per AppError tag with tag-specific copy and re… |
+| Request error banner  [overlay]  /admin.php?page=alt-cont\ |
+|   ext-workbench                                            |
+| One banner per AppError tag with tag-specific copy and re\ |
+|   covery; raw messages never reach the DOM. Canonical UX \ |
+|   state does not erase the tag: http, parse, auth_expired\ |
+|   , nonce_refresh, timeout and unknown are error; transpo\ |
+|   rt is offline; abort is default because its frozen poll\ |
+|    is silent; an http cooldown (429, or 503 with Retry-Af\ |
+|   ter) is degraded while it waits to auto-retry.           |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - User-facing copy by AppError tag — http: status-aware… |
-|   - Recovery by AppError tag — Retry: http, parse, nonce_… |
+|   - User-facing copy by AppError tag — http: status-aware\ |
+|    safe copy; parse: unexpected response; auth_expired: s\ |
+|   ession expired; nonce_refresh and transport: check conn\ |
+|   ection; timeout: server took too long; unknown: caller \ |
+|   fallback; abort: silent frozen poll. Cooldown remains t\ |
+|   he http tag plus isCooldown and Retry-After, never a ni\ |
+|   nth tag. (content) states=[default,error,offline,degrad\ |
+|   ed]                                                      |
+|   - Recovery by AppError tag — Retry: http, parse, nonce_\ |
+|   refresh, transport, timeout and unknown; Reload page: a\ |
+|   uth_expired only; no banner or action: abort; Wait coun\ |
+|   tdown then auto-retry: http cooldown. Retry and Reload \ |
+|   are tag-specific primary actions; Wait is subordinate, \ |
+|   and exactly one tag-appropriate recovery renders. (form\ |
+|   ) states=[error,offline,degraded]                        |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when http                                                  |
@@ -98,8 +136,10 @@ Purpose: Only exit from auth_expired; WordPress login handles the rest.
 
 ```
 +------------------------------------------------------------+
-| Reload page (session expired)  [exit]  /admin.php?page=al… |
-| Only exit from auth_expired; WordPress login handles the … |
+| Reload page (session expired)  [exit]  /admin.php?page=al\ |
+|   t-context-workbench                                      |
+| Only exit from auth_expired; WordPress login handles the \ |
+|   rest.                                                    |
 +------------------------------------------------------------+
 ```
 
@@ -165,6 +205,18 @@ The reconnect counter is internal (`reconnectAttempts`) and never rendered; the 
 ## Flows
 ### idle → pending → running → completed (`job-happy-path`)
 
+```
+flow: idle → pending → running → completed (job-happy-path) j\
+  ob=run-job
+  1. Workbench — job pipeline [workbench-pipeline]
+     --idle-->
+  2. Workbench — job pipeline [workbench-pipeline] (visit 2)
+     --pending-->
+  3. Workbench — job pipeline [workbench-pipeline] (visit 3)
+     --running-->
+  4. Workbench — job pipeline [workbench-pipeline] (visit 4)
+```
+
 ```mermaid
 flowchart TD
   %% flow: idle → pending → running → completed job=run-job
@@ -177,6 +229,16 @@ flowchart TD
 
 ### running → stalled (30 s no event) → running (SSE reconnect) or failed (`job-stall-reconnect`)
 
+```
+flow: running → stalled (30 s no event) → running (SSE reconn\
+  ect) or failed (job-stall-reconnect) job=run-job
+  1. Workbench — job pipeline [workbench-pipeline]
+     --running-->
+  2. Workbench — job pipeline [workbench-pipeline] (visit 2)
+     --stalled-->
+  3. Workbench — job pipeline [workbench-pipeline] (visit 3)
+```
+
 ```mermaid
 flowchart TD
   %% flow: running → stalled (30 s no event) → running (SSE reconnect) or failed job=run-job
@@ -188,6 +250,14 @@ flowchart TD
 
 ### 401/403 → auth_expired banner → reload (`auth-expired-recovery`)
 
+```
+flow: 401/403 → auth_expired banner → reload (auth-expired-re\
+  covery) job=recover-from-failure
+  1. Request error banner [request-error-banner]
+     --auth_expired-->
+  2. Reload page (session expired) [reload-page]
+```
+
 ```mermaid
 flowchart TD
   %% flow: 401/403 → auth_expired banner → reload job=recover-from-failure
@@ -198,6 +268,14 @@ flowchart TD
 ```
 
 ### http 429/503 + Retry-After (isCooldown) → wait banner → auto retry (`cooldown-429`)
+
+```
+flow: http 429/503 + Retry-After (isCooldown) → wait banner →\
+   auto retry (cooldown-429) job=recover-from-failure
+  1. Request error banner [request-error-banner]
+     --http-->
+  2. Workbench — job pipeline [workbench-pipeline]
+```
 
 ```mermaid
 flowchart TD

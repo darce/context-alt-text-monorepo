@@ -134,68 +134,200 @@ else
 fi
 
 
-# Shared-edge ABI is owned by recognition/app-portal. Never stage edge inputs
-# in the live directory: temporary decoded inputs exist only under /tmp.
-probe_shared_edge() {
-  local helper deadline command caddy64 compose64 program
-  helper="$(dirname "${BASH_SOURCE[0]}")/lib/shared-edge.sh"
-  deadline="${ACX_REMOTE_COMMAND_TIMEOUT:-120}"
-  [[ "$deadline" =~ ^[1-9][0-9]{0,2}$ && "$deadline" -le 600 ]] || {
-    echo "ERROR: shared edge deadline must be 1..600 seconds" >&2
-    return 2
-  }
-  [[ -r "$helper" ]] || { echo "ERROR: shared edge helper missing" >&2; return 2; }
-  caddy64="$(base64 < "$CADDYFILE_SRC" | tr -d '\n')" || return 2
-  compose64="$(base64 < "$CADDY_COMPOSE_SRC" | tr -d '\n')" || return 2
-  command="sudo -n timeout -k 5 $deadline bash -s -- $(shell_quote "$caddy64") $(shell_quote "$compose64")"
-  program="$(
-    cat "$helper"
-    cat <<'EDGE_PROBE'
+# Shared-edge ABI is owned by recognition/app-portal; recognition-service.sh is
+# the only edge writer. This deploy streams the frozen helper plus a read-only
+# program and refuses unless the live edge equals what that writer installs.
+# Decoded inputs exist only under the remote /tmp, never in /opt/acx-backend.
+# Any generic env converges the whole edge; the probe selects Aura networks as
+# that env would, so the printed command and the comparison cannot disagree.
+EDGE_CONVERGE_ENV="prod"
+
+# Bound one remote call on the local clock as well: the remote `timeout` cannot
+# help when the transport itself stalls. bash 3.2 has no BASHPID or wait -n.
+run_with_local_deadline() {
+  local limit="$1" pid started state
+  shift
+  # Without job control `cmd &` reads /dev/null; keep the caller's here-string.
+  "$@" <&0 &
+  pid=$!
+  started=$SECONDS
+  while kill -0 "$pid" 2>/dev/null; do
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    [[ "$state" != Z* ]] || break
+    if ((SECONDS - started >= limit)); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "ERROR: shared edge probe exceeded ${limit}s on the local clock; edge state UNKNOWN" >&2
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+}
+
+# Remote program: $1 budget seconds, $2 converge env, $3/$4 base64 Caddyfile and
+# Compose. A function, not "$(cat <<...)", so bash 3.2 parses the heredoc.
+edge_probe_program() {
+  cat -- "$(dirname "${BASH_SOURCE[0]}")/lib/shared-edge.sh" || return 2
+  cat <<'EDGE_PROBE'
 set -euo pipefail
-refuse() { echo "ERROR: shared edge drift: $1" >&2; exit 1; }
+budget="$1"
+converge_env="$2"
+[[ "$budget" =~ ^[1-9][0-9]{0,2}$ && "$budget" -le 600 ]] || { echo 'ERROR: shared edge probe budget must be 1..600 seconds' >&2; exit 2; }
+[[ "$converge_env" =~ ^(dev|staging|prod)$ ]] || { echo 'ERROR: shared edge probe needs a generic converge env' >&2; exit 2; }
+edge_dir=/opt/acx-backend
+live="$edge_dir/Caddyfile"
+base="$edge_dir/docker-compose.caddy.yml"
+overlay="$edge_dir/app/docker-compose.app.yml"
+journal="$edge_dir/app/activation.journal"
 handle=""
 scratch=""
+reaper=""
+refuse() { echo "ERROR: shared edge drift: $1" >&2; exit 1; }
+# Unknown is neither converged nor drift: exit 3, never the drift status 1.
+unknown() { echo "ERROR: shared edge probe could not $1 (rc $2); edge state UNKNOWN" >&2; exit 3; }
+
+# One shared budget. The outer `timeout -k 5` signals only its own process
+# group, but edge_bounded_run starts every Docker read under a nested `timeout`
+# that leads a new group, so a stalled read would outlive the deadline and keep
+# this session open. Each helper operation gets only what is left, and the
+# reaper kills those nested groups 2 s before the outer deadline.
+stop_at=$((SECONDS + budget - 2))
+spend() {
+  EDGE_OP_DEADLINE=$((stop_at - SECONDS))
+  ((EDGE_OP_DEADLINE >= 1)) || {
+    echo "ERROR: shared edge probe ran out of its ${budget}s budget; edge state UNKNOWN" >&2
+    exit 124
+  }
+}
+reap_nested() {
+  local own groups group
+  own="$(ps -o pgid= -p "$$" | tr -d ' ')" || return 0
+  [[ "$own" =~ ^[1-9][0-9]*$ ]] || return 0
+  groups="$(ps -e -o pid= -o ppid= -o pgid= | awk -v root="$$" -v own="$own" '
+    { parent[$1] = $2; group[$1] = $3 }
+    END {
+      for (pid in parent) {
+        up = pid
+        for (hops = 0; hops < 64 && up != root && (up in parent); hops++) up = parent[up]
+        if (up == root && group[pid] != own && group[pid] > 1) print group[pid]
+      }
+    }' | sort -u)" || return 0
+  for group in $groups; do kill -KILL -- "-$group" 2>/dev/null || true; done
+}
+(
+  while ((SECONDS < stop_at)); do sleep 0.2; done
+  reap_nested
+) </dev/null >/dev/null 2>&1 &
+reaper=$!
 cleanup() {
   local rc=$?
+  kill "$reaper" 2>/dev/null || true
   if [[ -n "$scratch" ]]; then rm -rf -- "$scratch"; fi
+  # Cleanup removes at most one private file; keep it inside the kill grace.
+  EDGE_OP_DEADLINE=1
   edge_compose_cleanup || rc=1
   if [[ -n "$handle" ]]; then edge_lock_release "$handle" 5 >/dev/null || rc=1; fi
   exit "$rc"
 }
 trap cleanup EXIT
-if handle="$(edge_lock_acquire /opt/acx-backend/app/activation.journal.lock 0 600 0)"; then
+
+spend
+if handle="$(edge_lock_acquire "$edge_dir/app/activation.journal.lock" 0 "$((budget + 10))" 0)"; then
   :
 else
   rc=$?
+  handle=""
   if [[ "$rc" == 75 ]]; then echo 'ERROR: shared edge drift: lock_busy' >&2; fi
   exit "$rc"
 fi
-scratch="$(mktemp -d)"
-printf '%s' "$1" | base64 -d > "$scratch/Caddyfile"
-printf '%s' "$2" | base64 -d > "$scratch/compose"
-cd /opt/acx-backend
-edge_effective_caddyfile "$scratch/Caddyfile" Caddyfile > "$scratch/effective" || refuse caddyfile
-cmp -s "$scratch/effective" Caddyfile || refuse caddyfile
-cmp -s "$scratch/compose" docker-compose.caddy.yml || refuse compose
-overlay=/opt/acx-backend/app/docker-compose.app.yml
-edge_compose_args docker-compose.caddy.yml "$overlay" || refuse compose
-names="$(edge_required_networks docker-compose.caddy.yml "$overlay")" || refuse compose
-cid="$(docker compose "${EDGE_COMPOSE_ARGV[@]}" ps -q caddy)" || refuse network:acx-demo-net
-[[ "$cid" =~ ^[a-f0-9]{12,64}$ ]] || refuse network:acx-demo-net
-networks="$(docker inspect -f '{{json .NetworkSettings.Networks}}' "$cid")" || refuse network:acx-demo-net
+# Same admission as the writer probe: a pending journal is an unfinished
+# activation or recovery, so the edge is not settled.
+if [[ -e "$journal" || -L "$journal" ]]; then
+  echo 'ERROR: shared edge drift: lock_busy (pending activation journal; recovery required)' >&2
+  exit 75
+fi
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/sync-demo-edge.XXXXXX")"
+printf '%s' "$3" | base64 -d >"$scratch/Caddyfile.repo" || unknown "decode the repository Caddyfile" "$?"
+printf '%s' "$4" | base64 -d >"$scratch/compose.repo.yml" || unknown "decode the repository Compose file" "$?"
+
+edge_effective_caddyfile "$scratch/Caddyfile.repo" "$live" >"$scratch/Caddyfile" || refuse caddyfile
+cmp -s -- "$scratch/Caddyfile" "$live" || refuse caddyfile
+
+# The writer (recognition-service.sh edge_desired) installs the canonical JSON
+# of the resolved Compose model, with only absent unselected Aura networks
+# dropped, and its probe compares models. Compare the same models here.
+[[ -f "$base" && ! -L "$base" ]] || refuse compose
+spend
+model="$(edge_bounded_run docker compose --project-directory "$edge_dir" -f "$scratch/compose.repo.yml" config --format json)" ||
+  unknown "resolve the repository Compose model" "$?"
+spend
+inventory="$(edge_bounded_run docker network ls --format '{{.Name}}')" || unknown "read the Docker network inventory" "$?"
+python3 -c '
+import json,re,sys
+model,inventory,env=sys.argv[1:]
+d=json.loads(model); present=set(inventory.splitlines())
+if not all(re.fullmatch(r"[A-Za-z0-9_.-]+", n) for n in present): raise SystemExit(2)
+nets=d["networks"]; service=d["services"]["caddy"]["networks"]
+selected="acx-"+env+"-net"
+for key in list(service):
+    name=nets[key].get("name",key)
+    if re.fullmatch(r"acx-(dev|staging|prod)-auraface-net",name) and name not in present and name != selected:
+        if isinstance(service,list): service.remove(key)
+        else: del service[key]
+        del nets[key]
+print(json.dumps(d,sort_keys=True,separators=(",",":")))' "$model" "$inventory" "$converge_env" >"$scratch/desired.json" ||
+  unknown "select the desired Compose model" "$?"
+spend
+current="$(edge_bounded_run docker compose --project-directory "$edge_dir" -f "$base" config --format json)" ||
+  unknown "resolve the live Compose model" "$?"
+canonical="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1]),sort_keys=True,separators=(",",":")))' "$current")" ||
+  unknown "normalize the live Compose model" "$?"
+[[ "$canonical" == "$(cat -- "$scratch/desired.json")" ]] || refuse compose
+
+spend
+edge_compose_args "$base" "$overlay" || unknown "select the effective edge generation" "$?"
+spend
+names="$(edge_required_networks "$base" "$overlay")" || unknown "resolve the required caddy networks" "$?"
+spend
+cid="$(edge_bounded_run docker compose "${EDGE_COMPOSE_ARGV[@]}" ps -q caddy)" || unknown "find the caddy container" "$?"
+[[ "$cid" =~ ^[a-f0-9]{12,64}$ ]] || refuse 'network:acx-demo-net (caddy container absent or ambiguous)'
+spend
+networks="$(edge_bounded_run docker inspect -f '{{json .NetworkSettings.Networks}}' "$cid")" ||
+  unknown "inspect the caddy container" "$?"
 while IFS= read -r name; do
-  python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.loads(sys.argv[1]) else 1)' "$networks" "$name" || refuse "network:$name"
-done <<< "$(printf '%s\nacx-demo-net\n' "$names")"
+  python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if isinstance(d,dict) and sys.argv[2] in d else 1)' "$networks" "$name" ||
+    refuse "network:$name"
+done <<<"$(printf '%s\nacx-demo-net\n' "$names" | LC_ALL=C sort -u)"
+# A live hold now proves every read above was serialized with the writers.
+edge_lock_check "$handle" 0 || unknown "prove the shared edge lock was held throughout" "$?"
 EDGE_PROBE
-  )" || return $?
-  $SSH "$command" <<<"$program"
+}
+
+probe_shared_edge() {
+  local deadline command caddy64 compose64 program
+  deadline="${ACX_REMOTE_COMMAND_TIMEOUT:-120}"
+  [[ "$deadline" =~ ^[1-9][0-9]{0,2}$ && "$deadline" -le 600 ]] || {
+    echo "ERROR: shared edge deadline must be 1..600 seconds" >&2
+    return 2
+  }
+  [[ -r "$(dirname "${BASH_SOURCE[0]}")/lib/shared-edge.sh" ]] || { echo "ERROR: shared edge helper missing" >&2; return 2; }
+  caddy64="$(base64 < "$CADDYFILE_SRC" | tr -d '\n')" || return 2
+  compose64="$(base64 < "$CADDY_COMPOSE_SRC" | tr -d '\n')" || return 2
+  command="sudo -n timeout -k 5 $deadline bash -s -- $deadline $EDGE_CONVERGE_ENV $(shell_quote "$caddy64") $(shell_quote "$compose64")"
+  program="$(edge_probe_program)" || return 2
+  # Local bound: 5 s connect + the remote deadline + its 5 s kill grace.
+  run_with_local_deadline "$((deadline + 10))" \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 "${OCI_USER}@${OCI_HOST}" "$command" <<<"$program"
 }
 if probe_shared_edge; then
   :
 else
   edge_status=$?
-  echo "ERROR: shared edge probe refused (sudo/transport/deadline or drift); no demo changes made." >&2
-  echo "Converge: OCI_HOST=$(shell_quote "$OCI_HOST") OCI_USER=$(shell_quote "$OCI_USER") ACX_EDGE_APPLY=1 bash scripts/deploy/recognition-service.sh sync-runtime prod" >&2
+  echo "ERROR: shared edge probe refused (sudo, transport, deadline, unknown state or drift); no demo changes made." >&2
+  echo "Converge: OCI_HOST=$(shell_quote "$OCI_HOST") OCI_USER=$(shell_quote "$OCI_USER") ACX_EDGE_APPLY=1 bash scripts/deploy/recognition-service.sh sync-runtime ${EDGE_CONVERGE_ENV}" >&2
   exit "$edge_status"
 fi
 

@@ -9,7 +9,7 @@ import type {
   PendingSuggestion,
 } from '../../../api/recognition';
 import type { TopUnlabeledClustersResponse } from '../../../api/recognition/types/cluster';
-import type { CanonicalRosterPerson } from './buildNamingOptions';
+import type { CanonicalRosterPerson } from './canonicalRosterPerson';
 
 /** Shared fetch depth for all identity-keyed reads (fetch K, filter client-side). */
 export const PROJECTION_TOP_K = 5;

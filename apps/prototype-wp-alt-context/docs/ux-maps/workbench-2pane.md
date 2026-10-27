@@ -36,6 +36,15 @@ by other lanes and are not yet covered by this list.
 - `job-caption-library` — Caption & describe media (alt-text + long description on library rows)
 - `job-triage-sync` — Triage people conflicts / failed sync (overlays)
 
+## Code references
+- `screen:workbench-2pane-shell` — `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
+- `screen:workbench-control` — `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
+- `screen:workbench-library` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`
+- `screen:workbench-conflicts` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx`
+- `screen:workbench-dead-letter` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx`
+- `screen:exit-roster` — `apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx`
+- `screen:exit-settings` — `apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx`
+
 ## Screens
 | id | kind | route | title |
 | --- | --- | --- | --- |
@@ -64,19 +73,27 @@ url_params: `panes`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`
 ```
 +------------------------------------------------------------+
 | Workbench (2-pane)  [screen]  #/workbench                  |
-| Two-pane operator surface: left control (face-group/recog… |
+| Two-pane operator surface: left control (face-group/recog\ |
+|   nize/name/curate), right media library (alt-text + long\ |
+|   -description). Overlays host conflicts and dead-letter.  |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Workbench header + recognition endpoint (read-only st… |
-|   - Left pane host (control surface) (content) states=[de… |
-|   - Pane divider / collapse-left control (other) states=[… |
-|   - Right pane host (media library) (content) states=[def… |
-|   - Overlay host (conflicts | dead-letter) (other) states… |
+|   - Workbench header + recognition endpoint (read-only st\ |
+|   atus; server-resolved) + sync/projection status strip (\ |
+|   status) states=[default,loading,error,degraded]          |
+|   - Left pane host (control surface) (content) states=[de\ |
+|   fault,loading,empty,error]                               |
+|   - Pane divider / collapse-left control (other) states=[\ |
+|   default]                                                 |
+|   - Right pane host (media library) (content) states=[def\ |
+|   ault,loading,empty,error]                                |
+|   - Overlay host (conflicts | dead-letter) (other) states\ |
+|   =[default,empty]                                         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Describe N selected (footer primary; runs rec… |
 |   [secondary] Open Conflict Inbox -> workbench-conflicts   |
-|   [secondary] Open Failed Sync Queue -> workbench-dead-le… |
+|   [secondary] Open Failed Sync Queue -> workbench-dead-le\ |
+|   tter                                                     |
 +------------------------------------------------------------+
 | states: default | loading | error | degraded | offline     |
 +------------------------------------------------------------+
@@ -99,27 +116,59 @@ url_params: `panes`, `cluster`, `endpoint`
 ```
 +------------------------------------------------------------+
 | Control surface (left pane)  [screen]  #/workbench         |
-| Recognize, name, and curate: recognition endpoint + healt… |
+| Recognize, name, and curate: recognition endpoint + healt\ |
+|   h, face-group status region, face-group list, run/refre\ |
+|   sh controls, and the name/curate forced-choice form.     |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Recognition endpoint + health (read-only: InsightFace… |
-|   - Face-group/recognition controls (run, refresh, thresh… |
-|   - Face-group status (scan/sync health; not a 2D scatter… |
-|   - Face-group list / selection (size, confidence, unname… |
-|   - Name this person (NameFaceControl; confirm / correct … |
+|   - Recognition endpoint + health (read-only: InsightFace\ |
+|    :10010 interim; FIR when stable; target is server-reso\ |
+|   lved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)\ |
+|    (status) states=[default,loading,error,degraded]        |
+|   - Face-group/recognition controls (run, refresh, thresh\ |
+|   old) (job) states=[default,loading,error]                |
+|   - Face-group status (scan/sync health; not a 2D scatter\ |
+|   ) (status) states=[default,loading,empty,error,first_ti\ |
+|   me,degraded]                                             |
+|   - Face-group list / selection (size, confidence, unname\ |
+|   d-first) + NameFaceControl (loading = in-flight name wr\ |
+|   ite; the suggestions disclosure being open or closed is\ |
+|    part of default). Twin-pending (an edge_input of defau\ |
+|   lt) copy: Same person as <survivor label>? — Merge into\ |
+|    <survivor label> / Not the same (chip on the unlabeled\ |
+|    twin; decision persists on the labeled survivor; COG-0\ |
+|   3 one decision per pair; DATA-14 single authority is th\ |
+|   e survivor resolver). Actions merge_twin / keep_separat\ |
+|   e are implemented in the list item — see code_ref. (que\ |
+|   ue) states=[default,loading,empty,error,first_time,degr\ |
+|   aded,edge_input]                                         |
+|   - Name this person (NameFaceControl; confirm / correct \ |
+|   / merge / split; forced-choice; loading = pending roste\ |
+|   r write; error = roster write failed; edge_input = ambi\ |
+|   guous candidate set or duplicate-name guard; default = \ |
+|   overlay closed or suggestions open) (forced_choice) sta\ |
+|   tes=[default,loading,error,edge_input]                   |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
+|   [PRIMARY] Run / refresh recognition + grouping -> job-p\ |
+|   ipeline (costly,preview)                                 |
 |   [secondary] Go to Roster -> exit-roster                  |
-|   [secondary] Save name (NameFaceControl) -> identity-sto… |
-|   [secondary] Select face group (list) -> workbench-libra… |
-|   [secondary] View / change recognition endpoint + recogn… |
+|   [secondary] Save name (NameFaceControl) -> identity-sto\ |
+|   re (costly,preview)                                      |
+|   [secondary] Select face group (list) -> workbench-libra\ |
+|   ry                                                       |
+|   [secondary] View / change recognition endpoint + recogn\ |
+|   ition ON/OFF toggle (Settings; server-resolved endpoint\ |
+|   ) -> exit-settings                                       |
 |   [secondary] Keep twin separate -> identity-store         |
-|   [DESTRUCTIVE] Merge / split / correct group -> identity… |
-|   [DESTRUCTIVE] Merge twin into labeled survivor -> ident… |
+|   [DESTRUCTIVE] Merge / split / correct group -> identity\ |
+|   -store (costly,preview)                                  |
+|   [DESTRUCTIVE] Merge twin into labeled survivor -> ident\ |
+|   ity-store                                                |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time     |
 | states+: degraded                                          |
+|   degraded                                                 |
 +------------------------------------------------------------+
 ```
 
@@ -141,24 +190,96 @@ url_params: `panes`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 ```
 +------------------------------------------------------------+
 | Media library (right pane)  [screen]  #/workbench          |
-| Media library table with alt-text caption and long-descri… |
+| Media library table with alt-text caption and long-descri\ |
+|   ption columns; inline editing, AI-suggested captions/de\ |
+|   scriptions (editable before accept), and bulk describe/\ |
+|   scan.                                                    |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Library filters (status, has-alt, has-description, fa… |
-|   - Media library table (thumb | title | status | alt-tex… |
-|   - Inline person naming (NameFaceControl) + alt-text / l… |
-|   - AI name / caption suggestions (evidence-linked; edita… |
-|   - Footer job zone (the media-selection footer): ONE job… |
-|   - Alt text per image: latest generated draft on the nor… |
+|   - Library filters (status, has-alt, has-description, fa\ |
+|   ce group, search) (form) states=[default,loading,error]  |
+|   - Media library table (thumb | title | status | alt-tex\ |
+|   t | long description | people) (queue) states=[default,\ |
+|   loading,empty,error,first_time,edge_input]               |
+|   - Inline person naming (NameFaceControl) + alt-text / l\ |
+|   ong-description editor (loading = pending save; the sug\ |
+|   gestions disclosure being open or closed is part of def\ |
+|   ault) (form) states=[default,loading,error,edge_input]   |
+|   - AI name / caption suggestions (evidence-linked; edita\ |
+|   ble before accept; loading = suggestion request in flig\ |
+|   ht; the suggestions disclosure being open or closed is \ |
+|   part of default) (ai_review) states=[default,loading,em\ |
+|   pty,error]                                               |
+|   - Footer job zone (the media-selection footer): ONE job\ |
+|    CTA — 'Describe N selected' (plain count, no plural sw\ |
+|   itch; primary accent in select state; zero-state label \ |
+|   'Describe selected', rg-003) with a recognition disclos\ |
+|   ure directly under it (aria-describedby): ON = names pe\ |
+|   ople it knows while describing; OFF = descriptions only\ |
+|   , change in Settings; unknown = settings not loaded. Me\ |
+|   diaAnalyzeCta / 'Analyze selected' is deleted (L2c, WBU\ |
+|   X-6) — Describe owns the scan trigger, so recognition i\ |
+|   s never a separate operator step (INT-05 one job entry;\ |
+|    COG-03 one decision: the global toggle). Four hold rea\ |
+|   sons keep the primary focusable with aria-disabled="tru\ |
+|   e" plus an onClick no-op — never the HTML disabled attr\ |
+|   ibute — and each contributes a reason id joined into ar\ |
+|   ia-describedby: offline (empty/offline state), zero-sel\ |
+|   ection (empty state), identifying (loading state, label\ |
+|    'Identifying people…'), settings-pending (loading stat\ |
+|   e, label 'Loading settings…'). settings-unavailable is \ |
+|   a fifth, hold-adjacent state and NOT a hold: when the r\ |
+|   ecognition-settings query errors the hold is RELEASED, \ |
+|   Describe proceeds with recognition treated as off, and \ |
+|   the disclosure reads 'Recognition settings unavailable \ |
+|   — describing without identifying people · ~N credits' p\ |
+|   aired with an AlertTriangle icon so the degradation is \ |
+|   never colour-alone (sr-004; degraded state; RLSE-05 the\ |
+|    failure is visible, never silent). A11Y contract for t\ |
+|   hat notice (WBUX6-W4-B-02): the disclosure text node st\ |
+|   ays the aria-describedby target and is therefore only r\ |
+|   eachable on focus, so the degraded copy is ALSO mirrore\ |
+|   d into a separate polite live region (role="status" ari\ |
+|   a-live="polite") that is not the describedby target — o\ |
+|   ne surface to describe, one surface to announce, never \ |
+|   the same node doing both (A11Y-21). A single Cancel con\ |
+|   trol spans the identifying and describing phases; its v\ |
+|   isible label is state-dependent, not a fixed string — i\ |
+|   dentifying = 'Cancel people identification', describing\ |
+|    = 'Cancel describe run', in-flight cancel = 'Cancellin\ |
+|   g…' — and exactly one control matching /^Cancel / is re\ |
+|   ndered at a time. Run progress phases queued -> warming\ |
+|    -> describing -> complete | failed | cancelled come fr\ |
+|   om describeApi DESCRIBE_RUN_PHASE (single authority, sr\ |
+|   -007) and render as loading (queued/warming/describing)\ |
+|    or default (terminal). Done copy: ✔ N drafts ready to \ |
+|   review[ · M failed]; Review drafts links to #/workbench\ |
+|   ?hasDraft=1&run=<id>. Credit estimates describe selecte\ |
+|   d images; zero selection prompts choosing images and do\ |
+|   es not imply a zero account balance. (job) states=[defa\ |
+|   ult,loading,empty,error,offline,degraded]                |
+|   - Alt text per image: latest generated draft on the nor\ |
+|   mal media view, visible previous-description chooser wi\ |
+|   th run/time provenance, edit and explicit approval usin\ |
+|   g the existing correction contract. Older versions load\ |
+|    in bounded pages; unavailable history is visible and r\ |
+|   etryable. Choosing a version only previews it and never\ |
+|    saves or starts inference. (ai_review) states=[default\ |
+|   ,loading,empty,error]                                    |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Describe N selected (footer primary; runs rec… |
-|   [secondary] Accept AI caption/description (editable) ->… |
+|   [PRIMARY] Describe N selected (footer primary; runs rec\ |
+|   ognition first when the Settings toggle is ON, then des\ |
+|   cription; disclosure states ON/OFF/unknown) -> job-pipe\ |
+|   line (costly,preview)                                    |
+|   [secondary] Accept AI caption/description (editable) ->\ |
+|    media-store (preview)                                   |
 |   [secondary] Edit alt-text inline -> media-store          |
 |   [secondary] Edit long description inline -> media-store  |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time     |
 | states+: edge_input                                        |
+|   edge_input                                               |
 +------------------------------------------------------------+
 ```
 
@@ -177,15 +298,20 @@ url_params: `panel`
 ```
 +------------------------------------------------------------+
 | Conflict Inbox  [overlay]  #/workbench?panel=conflicts     |
-| Review people conflicts; commit human judgment with evide… |
+| Review people conflicts; commit human judgment with evide\ |
+|   nce                                                      |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Conflict list (queue) states=[default,loading,empty,e… |
-|   - Conflict detail / candidates (forced_choice) states=[… |
-|   - Resolve / defer actions (form) states=[default,loadin… |
+|   - Conflict list (queue) states=[default,loading,empty,e\ |
+|   rror]                                                    |
+|   - Conflict detail / candidates (forced_choice) states=[\ |
+|   default,loading,empty,error]                             |
+|   - Resolve / defer actions (form) states=[default,loadin\ |
+|   g,empty,error]                                           |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Resolve conflict -> identity-store (costly,pr… |
+|   [PRIMARY] Resolve conflict -> identity-store (costly,pr\ |
+|   eview)                                                   |
 +------------------------------------------------------------+
 | states: default | loading | empty | error                  |
 +------------------------------------------------------------+
@@ -204,16 +330,20 @@ url_params: `panel`
 
 ```
 +------------------------------------------------------------+
-| Failed Sync Queue (Dead Letter)  [overlay]  #/workbench?p… |
+| Failed Sync Queue (Dead Letter)  [overlay]  #/workbench?p\ |
+|   anel=dead-letter                                         |
 | Inspect failed sync ops; retry or discard                  |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Dead-letter items (queue) states=[default,loading,emp… |
-|   - Retry / discard (form) states=[default,loading,empty,… |
+|   - Dead-letter items (queue) states=[default,loading,emp\ |
+|   ty,error]                                                |
+|   - Retry / discard (form) states=[default,loading,empty,\ |
+|   error]                                                   |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Retry failed op -> sync (costly,preview)       |
-|   [DESTRUCTIVE] Discard failed op -> sync (costly,preview… |
+|   [DESTRUCTIVE] Discard failed op -> sync (costly,preview\ |
+|   ,irreversible)                                           |
 +------------------------------------------------------------+
 | states: default | loading | empty | error                  |
 +------------------------------------------------------------+
@@ -232,7 +362,8 @@ url_params: `personFilter`, `person`
 ```
 +------------------------------------------------------------+
 | Roster (person workspace)  [exit]  #/roster                |
-| Manage identified persons after naming/curating in Workbe… |
+| Manage identified persons after naming/curating in Workbe\ |
+|   nch                                                      |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Roster entry (nav) states=[default]                    |
@@ -256,12 +387,25 @@ url_params: `section`
 ```
 +------------------------------------------------------------+
 | Settings / service health  [exit]  #/settings              |
-| Configure the service: recognition endpoint + connection … |
+| Configure the service: recognition endpoint + connection \ |
+|   health, the global recognition ON/OFF toggle, and Data \ |
+|   & retention (consolidated from the retired alt-context-\ |
+|   retention submenu, E1)                                   |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Settings form + test connection (form) states=[defaul… |
-|   - Recognition toggle (acx_recognition_enabled; default … |
-|   - Data & retention section (RetentionSection on the ret… |
+|   - Settings form + test connection (form) states=[defaul\ |
+|   t,loading,error]                                         |
+|   - Recognition toggle (acx_recognition_enabled; default \ |
+|   ON; global, not per-image — OFF makes Describe produce \ |
+|   descriptions only and the Workbench footer disclosure s\ |
+|   ays so; analyze endpoint answers 409 recognition_disabl\ |
+|   ed) (form) states=[default,loading,error]                |
+|   - Data & retention section (RetentionSection on the ret\ |
+|   ention screen; one stable h3#acx-retention-title across\ |
+|    loading/error/loaded so the ?section=retention deep-li\ |
+|   nk focus survives pending -> loaded; retention mode, ex\ |
+|   port, import, audit events) (form) states=[default,load\ |
+|   ing,error,degraded]                                      |
 +------------------------------------------------------------+
 | states: default | loading | error                          |
 +------------------------------------------------------------+
@@ -292,6 +436,21 @@ url_params: `section`
 ## Flows
 ### Run recognition -> select face group -> name/curate -> library people column updates (`flow-recognize-name-curate`)
 
+```
+flow: Run recognition -> select face group -> name/curate -> \
+  library people column updates (flow-recognize-name-curate) \
+  job=job-name-curate
+  1. Workbench (2-pane) [workbench-2pane-shell]
+     --enter-->
+  2. Control surface (left pane) [workbench-control]
+     --run recognition (preview cost)-->
+  3. Control surface (left pane) [workbench-control] (visit 2)
+     --select face group (umap/list)-->
+  4. Control surface (left pane) [workbench-control] (visit 3)
+     --name / curate-->
+  5. Media library (right pane) [workbench-library]
+```
+
 ```mermaid
 flowchart TD
   %% flow: Run recognition -> select face group -> name/curate -> library people column updates job=job-name-curate
@@ -307,6 +466,16 @@ flowchart TD
 
 ### Filter needs-alt -> accept/edit AI caption -> edit long description (`flow-caption-library`)
 
+```
+flow: Filter needs-alt -> accept/edit AI caption -> edit long\
+   description (flow-caption-library) job=job-caption-library
+  1. Media library (right pane) [workbench-library]
+     --filter has-alt=false-->
+  2. Media library (right pane) [workbench-library] (visit 2)
+     --accept/edit AI caption-->
+  3. Media library (right pane) [workbench-library] (visit 3)
+```
+
 ```mermaid
 flowchart TD
   %% flow: Filter needs-alt -> accept/edit AI caption -> edit long description job=job-caption-library
@@ -317,6 +486,17 @@ flowchart TD
 ```
 
 ### UMAP scatter -> select face group -> right library filters to face-group media (`flow-umap-select-to-library`)
+
+```
+flow: UMAP scatter -> select face group -> right library filt\
+  ers to face-group media (flow-umap-select-to-library) job=j\
+  ob-cluster-recognize
+  1. Control surface (left pane) [workbench-control]
+     --umap scatter-->
+  2. Control surface (left pane) [workbench-control] (visit 2)
+     --select face-group point/region-->
+  3. Media library (right pane) [workbench-library]
+```
 
 ```mermaid
 flowchart TD
@@ -329,6 +509,19 @@ flowchart TD
 ```
 
 ### Recognition produces conflicts -> conflict overlay -> resolve -> roster if needed (`flow-scan-to-conflict`)
+
+```
+flow: Recognition produces conflicts -> conflict overlay -> r\
+  esolve -> roster if needed (flow-scan-to-conflict) job=job-\
+  triage-sync
+  1. Control surface (left pane) [workbench-control]
+     --recognition produces conflicts-->
+  2. Conflict Inbox [workbench-conflicts]
+     --open panel=conflicts-->
+  3. Conflict Inbox [workbench-conflicts] (visit 2)
+     --resolve-->
+  4. Roster (person workspace) [exit-roster]
+```
 
 ```mermaid
 flowchart TD
@@ -343,6 +536,16 @@ flowchart TD
 ```
 
 ### Sync failure -> dead letter -> retry/discard (`flow-dead-letter-recover`)
+
+```
+flow: Sync failure -> dead letter -> retry/discard (flow-dead\
+  -letter-recover) job=job-triage-sync
+  1. Workbench (2-pane) [workbench-2pane-shell]
+     --degraded sync strip-->
+  2. Failed Sync Queue (Dead Letter) [workbench-dead-letter]
+     --panel=dead-letter-->
+  3. Workbench (2-pane) [workbench-2pane-shell] (visit 2)
+```
 
 ```mermaid
 flowchart TD

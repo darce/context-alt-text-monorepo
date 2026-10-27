@@ -1,8 +1,11 @@
+import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../api/queryKeys';
 import { createAppQueryClient } from '../appQueryClient';
-import { HTTPError } from '../http';
+import { AuthExpiredError, HTTPError } from '../http';
 import { _resetCooldownForTests, cooldownRemainingMs, isCoolingDown } from '../recognitionCooldown';
+import { installTopUnlabeledErrorLatch } from '../topUnlabeledErrorLatch';
 
 const httpError = (status: number, retryAfterSeconds?: number): HTTPError =>
   new HTTPError({
@@ -101,6 +104,83 @@ describe('createAppQueryClient cooldown arming', () => {
     ).rejects.toBeInstanceOf(HTTPError);
 
     expect(isCoolingDown()).toBe(false);
+    client.clear();
+  });
+});
+
+describe('createAppQueryClient top-unlabeled error latch (UXREC-1-DEMOQ-G3-F1)', () => {
+  const authExpired = (): AuthExpiredError =>
+    new AuthExpiredError({ endpoint: '/acx/v1/recognition/clusters/top-unlabeled', status: 403 });
+
+  // TEST-15: a client that installs lazily (round 5) cannot recover the class
+  // here — by install time the no-data refetch has already reset the query.
+  it('latches a top-unlabeled error settled before any hook renders', async () => {
+    const client = createAppQueryClient();
+    const error = authExpired();
+    const key = queryKeys.clusters.topUnlabeled('tenant-a');
+    await expect(
+      client.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(error), retry: false }),
+    ).rejects.toBe(error);
+    const otherKey = queryKeys.clusters.list();
+    const otherError = authExpired();
+    await expect(
+      client.fetchQuery({ queryKey: otherKey, queryFn: () => Promise.reject(otherError), retry: false }),
+    ).rejects.toBe(otherError);
+
+    let release!: () => void;
+    const refetch = client.fetchQuery({
+      queryKey: key,
+      queryFn: () =>
+        new Promise((resolve) => {
+          release = () => resolve({ clusters: [] });
+        }),
+    });
+    expect(client.getQueryState(key)).toMatchObject({ status: 'pending', fetchStatus: 'fetching', error: null });
+
+    const queryCache = client.getQueryCache();
+    const query = queryCache.find({ queryKey: key, exact: true });
+    expect(query).toBeDefined();
+    const settledErrors = installTopUnlabeledErrorLatch(client);
+    expect(settledErrors.get(query!)).toBe(error);
+    expect(settledErrors.get(queryCache.find({ queryKey: otherKey, exact: true })!)).toBeUndefined();
+    expect(installTopUnlabeledErrorLatch(client)).toBe(settledErrors);
+
+    release();
+    await refetch;
+    expect(settledErrors.get(query!)).toBeUndefined();
+    client.clear();
+  });
+
+  it('adds no second cache subscription on a repeat install', () => {
+    const appClient = createAppQueryClient();
+    const appSubscribe = vi.spyOn(appClient.getQueryCache(), 'subscribe');
+    installTopUnlabeledErrorLatch(appClient);
+    expect(appSubscribe).not.toHaveBeenCalled();
+
+    const plainClient = new QueryClient();
+    const plainSubscribe = vi.spyOn(plainClient.getQueryCache(), 'subscribe');
+    const settledErrors = installTopUnlabeledErrorLatch(plainClient);
+    expect(installTopUnlabeledErrorLatch(plainClient)).toBe(settledErrors);
+    expect(plainSubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('seeds a lazily installed client from top-unlabeled errors already settled in its cache', async () => {
+    const client = new QueryClient();
+    const error = authExpired();
+    const key = queryKeys.clusters.topUnlabeled('tenant-b');
+    await expect(
+      client.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(error), retry: false }),
+    ).rejects.toBe(error);
+    const otherKey = queryKeys.clusters.list();
+    const otherError = authExpired();
+    await expect(
+      client.fetchQuery({ queryKey: otherKey, queryFn: () => Promise.reject(otherError), retry: false }),
+    ).rejects.toBe(otherError);
+
+    const queryCache = client.getQueryCache();
+    const settledErrors = installTopUnlabeledErrorLatch(client);
+    expect(settledErrors.get(queryCache.find({ queryKey: key, exact: true })!)).toBe(error);
+    expect(settledErrors.get(queryCache.find({ queryKey: otherKey, exact: true })!)).toBeUndefined();
     client.clear();
   });
 });

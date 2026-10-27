@@ -146,6 +146,10 @@
     },
     {
       "method": "GET",
+      "path": "/recognition/tenant/usage"
+    },
+    {
+      "method": "GET",
       "path": "/recognition/tenant/whoami"
     },
     {

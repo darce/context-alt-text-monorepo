@@ -2212,6 +2212,8 @@ requires-dist = [
     { name = "timm", marker = "extra == 'vlm'", specifier = ">=1.0.27,<2.0.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'vlm'", specifier = ">=2.12.0,<3.0.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'vlm'", specifier = ">=2.12.0,<3.0.0" },
+    { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'vlm'", specifier = ">=0.27.0,<0.29.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torchvision", marker = "sys_platform != 'linux' and extra == 'vlm'", specifier = ">=0.27.0,<0.29.0" },
     { name = "transformers", marker = "extra == 'vlm'", specifier = ">=4.44.0,<4.49.0" },
     { name = "types-networkx", marker = "extra == 'dev'" },
     { name = "types-pillow", marker = "extra == 'dev'" },

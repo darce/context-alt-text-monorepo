@@ -40,7 +40,7 @@ url_params: `run_id`
 | --- | --- | --- | --- |
 | `z-bulk-cta` | Describe selected; selection and service readiness are separate. Unknown GPU copy makes no CPU or configuration claim and does not disable an otherwise legal submission; no new readiness API. | job | default, loading, empty |
 | `z-bulk-progress` | Accepted run only: starting, warming or running with observed state, actual startup bound, Cancel and return-to-run. Terminal captions stay distinct: GPU success; CPU completion after warm-up timeout (reported fallback reason, provisional CPU items); typed warm-up failure with no drafts and Retry only when retryable. Cancelled and other failures keep their existing outcomes. | status | default, loading, error, degraded |
-| `z-gpu-tier-chip` | GPU observation is not description readiness: unknown stays quiet with neutral copy; starting, warming, ready and degraded never certify results or CPU capability; canonical state labels are unchanged. | status | default, loading, empty, degraded |
+| `z-gpu-tier-chip` | State vocabulary: hidden-no-run = empty; unknown = default. GPU observation is not description readiness: unknown stays quiet with neutral copy; starting, warming, ready and degraded never certify results or CPU capability; canonical state labels are unchanged. | status | default, loading, empty, degraded |
 | `z-review-link` | Review & apply drafts link — only for a terminal run that reports completed items, linking #/workbench?hasDraft=1&run=<id>; absent after a failure that returned no drafts; shows the reported item tier and never promises an upgrade. | nav | default, empty, degraded |
 | `z-recovery-envelope` | Recovery contract: read-only status retry does not restart inference; remount resumes stored tenant run_id; cancellation acknowledgement ends pending state; rejected persistence remains visible. | status | default, loading, empty, error, degraded |
 
@@ -68,11 +68,12 @@ url_params: `run_id`
 |   with no drafts and Retry only when retryable. Cancelled\ |
 |    and other failures keep their existing outcomes. (stat\ |
 |   us) states=[default,loading,error,degraded]              |
-|   - GPU observation is not description readiness: unknown\ |
-|    stays quiet with neutral copy; starting, warming, read\ |
-|   y and degraded never certify results or CPU capability;\ |
-|    canonical state labels are unchanged. (status) states=\ |
-|   [default,loading,empty,degraded]                         |
+|   - State vocabulary: hidden-no-run = empty; unknown = de\ |
+|   fault. GPU observation is not description readiness: un\ |
+|   known stays quiet with neutral copy; starting, warming,\ |
+|    ready and degraded never certify results or CPU capabi\ |
+|   lity; canonical state labels are unchanged. (status) st\ |
+|   ates=[default,loading,empty,degraded]                    |
 |   - Review & apply drafts link — only for a terminal run \ |
 |   that reports completed items, linking #/workbench?hasDr\ |
 |   aft=1&run=<id>; absent after a failure that returned no\ |
@@ -384,7 +385,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 
 - Describe selected; selection and service readiness are separate. Unknown GPU copy makes no CPU or configuration claim and does not disable an otherwise legal submission; no new readiness API.
 - Accepted run only: starting, warming or running with observed state, actual startup bound, Cancel and return-to-run. Terminal captions stay distinct: GPU success; CPU completion after warm-up timeout (reported fallback reason, provisional CPU items); typed warm-up failure with no drafts and Retry only when retryable. Cancelled and other failures keep their existing outcomes.
-- GPU observation is not description readiness: unknown stays quiet with neutral copy; starting, warming, ready and degraded never certify results or CPU capability; canonical state labels are unchanged.
+- State vocabulary: hidden-no-run = empty; unknown = default. GPU observation is not description readiness: unknown stays quiet with neutral copy; starting, warming, ready and degraded never certify results or CPU capability; canonical state labels are unchanged.
 - Review & apply drafts link — only for a terminal run that reports completed items, linking #/workbench?hasDraft=1&run=<id>; absent after a failure that returned no drafts; shows the reported item tier and never promises an upgrade.
 - Recovery contract: read-only status retry does not restart inference; remount resumes stored tenant run_id; cancellation acknowledgement ends pending state; rejected persistence remains visible.
 - Per-image draft and saved-alt distinction, with version run/time provenance. Shows the reported item tier (final GPU or provisional CPU) and naming provenance from the existing result API; never infers a tier from run failure or GPU state.

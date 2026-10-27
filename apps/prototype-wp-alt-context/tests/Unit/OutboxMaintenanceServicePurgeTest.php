@@ -23,6 +23,55 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $GLOBALS['__ac_current_time'] = strtotime('2026-09-17 00:00:00 UTC');
     }
 
+    public function testRepeatedExhaustionDoesNotWriteRetentionClock(): void
+    {
+        global $wpdb;
+        $service = new OutboxMaintenanceService();
+        $method = new \ReflectionMethod($service, 'dead_letter_failed_row');
+        $before = $wpdb->queries;
+        $result = $method->invoke($service, 901, 'old-tenant', [
+            'last_error_code' => 'auto_retry_exhausted',
+            'last_attempted_at' => '2026-09-01 00:00:00',
+            'created_at' => '2026-08-01 00:00:00',
+            'attempts' => 7,
+        ], 7);
+        $this->assertSame(0, $result);
+        $this->assertSame($before, $wpdb->queries);
+    }
+
+    public function testSupersededTenantBatchDiscardsOnlyOldInactiveRowsAndAuditsWithinCap(): void
+    {
+        global $wpdb;
+        $rows = [];
+        foreach (['pending', 'failed', 'pending', 'in_flight', 'pending'] as $index => $status) {
+            $rows[] = [
+                'id' => 901 + $index, 'tenant_id' => $index === 4 ? 'current-tenant' : 'old-tenant',
+                'status' => $status, 'created_at' => '2026-08-01 00:00:00',
+                'last_attempted_at' => $index === 2 ? '2026-09-16 00:00:00' : null,
+                'attempts' => 0, 'first_failed_at' => null, 'last_error_code' => null,
+                'last_error_retryable' => null,
+            ];
+        }
+        $wpdb->tableRows['wp_acx_sync_outbox'] = $rows;
+        $wpdb->onGetResults = static fn(string $sql): array => str_contains($sql, 'COALESCE(last_attempted_at, created_at)') ? $rows : [];
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $method = new \ReflectionMethod($service, 'discard_superseded_tenant_batch');
+        $result = $method->invoke($service, 'old-tenant', 2);
+        $this->assertSame(2, $result['superseded_tenant_discarded']);
+        $stored = $wpdb->tableRows['wp_acx_sync_outbox'];
+        $this->assertSame('discarded', $stored[0]['status']);
+        $this->assertSame('discarded', $stored[1]['status']);
+        $this->assertSame('tenant_superseded', $stored[0]['last_error_code']);
+        $this->assertSame(array_slice($rows, 2), array_slice($stored, 2, 3));
+        $this->assertCount(2, $result['_orphan_discard_events']);
+        $this->assertSame('tenant_superseded', $result['_orphan_discard_events'][0]['reason']);
+        $this->assertCount(7, $stored);
+        $this->assertSame('tenant_superseded', json_decode($stored[5]['payload'], true)['reason']);
+        $again = $method->invoke($service, 'old-tenant', 5);
+        $this->assertSame(0, $again['superseded_tenant_discarded']);
+        $this->assertSame($stored, $wpdb->tableRows['wp_acx_sync_outbox']);
+    }
+
     public function testListTerminalPurgeTenantIdsUsesDefaultPageSizeWithZeroArgCall(): void
     {
         global $wpdb;

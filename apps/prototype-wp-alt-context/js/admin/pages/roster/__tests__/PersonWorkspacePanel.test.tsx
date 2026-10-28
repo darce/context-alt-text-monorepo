@@ -110,8 +110,9 @@ describe('PersonWorkspacePanel Review correction links', () => {
 
     clusters.forEach((cluster, index) => {
       const region = screen.getByRole('region', { name: `Face group ${index + 1}` });
-      const link = within(region).getByRole('link', { name: `Fix faces in face group ${index + 1}` });
+      const link = within(region).getByRole('link', { name: `Fix faces in Review for face group ${index + 1}` });
       expect(link).toHaveTextContent('Fix faces in Review');
+      expect(link).toHaveAccessibleName(expect.stringContaining(link.textContent!.trim()));
       expectScopedReviewHref(link, cluster.cluster_id);
     });
   });
@@ -120,14 +121,14 @@ describe('PersonWorkspacePanel Review correction links', () => {
     const clusters = [{ ...baseEntry().clusters[0], cluster_id: 'a&b c' }];
     renderPanel(<PersonWorkspacePanel entry={baseEntry({ clusters })} onOpenQueue={vi.fn()} />);
 
-    const link = screen.getByRole('link', { name: 'Fix faces in face group 1' });
+    const link = screen.getByRole('link', { name: 'Fix faces in Review for face group 1' });
     expectScopedReviewHref(link, 'a&b c');
   });
 
   it.each(['refreshing', 'stale', 'failed'] as const)('suppresses correction links for a %s projection', (projection_status) => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry({ projection_status })} onOpenQueue={vi.fn()} />);
 
-    expect(screen.queryByRole('link', { name: /Fix faces in face group/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Fix faces in/ })).not.toBeInTheDocument();
     expect(screen.getByText(`Data status: ${projection_status}`)).toBeInTheDocument();
     const statusCopy = {
       refreshing: 'Refreshing linked faces…',
@@ -141,7 +142,7 @@ describe('PersonWorkspacePanel Review correction links', () => {
     const clusters = [{ ...baseEntry().clusters[0], cluster_id }];
     renderPanel(<PersonWorkspacePanel entry={baseEntry({ clusters })} onOpenQueue={vi.fn()} />);
 
-    expect(screen.queryByRole('link', { name: /Fix faces in face group/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Fix faces in/ })).not.toBeInTheDocument();
   });
 });
 

@@ -91,7 +91,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
       />,
     );
 
-    expect(screen.getByText('Description service status unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Description service status not confirmed yet')).toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).toBeNull();
     const cancel = screen.getByRole('button', { name: /Cancel/ });
     expect(cancel).toBeEnabled();

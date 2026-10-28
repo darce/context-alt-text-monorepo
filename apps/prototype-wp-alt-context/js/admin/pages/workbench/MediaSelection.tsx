@@ -13,6 +13,7 @@ import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { DevelopmentFaceScan } from './DevelopmentFaceScan';
 import { useJobPipeline } from './JobPipelineContext';
 import { descriptionWaitPresentation } from './gpuStatePresentation';
+import { UsageBalanceChip } from './UsageBalanceChip';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
@@ -1030,6 +1031,7 @@ export const BulkDescribeCta = ({
           }
         })()}
       </p>
+      <UsageBalanceChip />
       <p className="acx-media-selection__bulk-describe-disclosure" data-testid="acx-bulk-describe-gpu-cost">
         {__(
           'Describe may start the GPU and require warm-up. GPU infrastructure charges are separate from description credits. Review lease limits in',

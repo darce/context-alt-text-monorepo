@@ -163,6 +163,7 @@ const OWNED_MAPS = [
   'public-guide',
   'public-demo-describe',
   'workbench-identity-chips',
+  'dev-face-recognition',
 ] as const;
 
 /**
@@ -865,7 +866,7 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     ).toEqual([]);
   });
 
-  it('keeps every renderer-generated map owned and the renderer\'s coverage ratcheting up', () => {
+  it("keeps every renderer-generated map owned and the renderer's coverage ratcheting up", () => {
     for (const mapRef of GENERATED_MAPS) {
       expect(
         OWNED_MAPS as readonly string[],
@@ -950,20 +951,24 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     expect(new Set(ZONE_ROLES)).toEqual(new Set(snapshot.zoneRoles));
   });
 
-  it('verifies the enum snapshot against the canonical Python models when importable', () => {
-    const importProbe = spawnSync(uxMapPython, ['-c', 'import workbay_canvas_mcp.ux_map.models'], {
-      encoding: 'utf8',
-    });
-    const result = spawnSync(uxMapPython, [enumVerifierPath, '--check'], { encoding: 'utf8' });
+  it(
+    'verifies the enum snapshot against the canonical Python models when importable',
+    () => {
+      const importProbe = spawnSync(uxMapPython, ['-c', 'import workbay_canvas_mcp.ux_map.models'], {
+        encoding: 'utf8',
+      });
+      const result = spawnSync(uxMapPython, [enumVerifierPath, '--check'], { encoding: 'utf8' });
 
-    if (importProbe.status === 0) {
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toMatch(/enum snapshot matches/);
-    } else {
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
-      expect(result.stderr).toContain('canonical workbay_canvas_mcp.ux_map.models is unimportable');
-    }
-  });
+      if (importProbe.status === 0) {
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.stdout).toMatch(/enum snapshot matches/);
+      } else {
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+        expect(result.stderr).toContain('canonical workbay_canvas_mcp.ux_map.models is unimportable');
+      }
+    },
+    vitestBudget(SHORT_COMMAND_DEADLINE_MS * 2),
+  );
 
   it('fails closed when the canonical Python enum module is unavailable', () => {
     const result = spawnSync(uxMapPython, ['-S', enumVerifierPath, '--check'], { encoding: 'utf8' });

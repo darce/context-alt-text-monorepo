@@ -8,8 +8,10 @@ require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/class-conflict-resolution-status.php';
 require_once __DIR__ . '/class-outbox-status.php';
 require_once __DIR__ . '/class-reclaimer-liveness.php';
+require_once __DIR__ . '/../../api/class-tenant-identity.php';
 require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 
+use AltContext\Api\TenantIdentity;
 use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use DateTimeImmutable;
@@ -45,6 +47,7 @@ use function sprintf;
 use function str_contains;
 use function str_ends_with;
 use function str_starts_with;
+use function strcasecmp;
 use function strtolower;
 use function time;
 use function trim;
@@ -71,6 +74,10 @@ class OutboxMaintenanceService {
 	private const DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED = 'auto_retry_exhausted';
 	private const ORPHAN_REASON = 'orphaned';
 	private const ORPHAN_AUDIT_OPERATION_TYPE = 'orphan_discard_audit';
+	// DEMO-12: a superseded tenant's pending/failed rows are discarded once they
+	// have been idle this long; the drain must never resend them as the new tenant.
+	private const SUPERSEDED_TENANT_REASON = 'tenant_superseded';
+	private const DEFAULT_SUPERSEDED_TENANT_GRACE_DAYS = 7;
 	private const PURGE_HOOK = 'acx_sync_purge_terminal_rows';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	// E15-35 Slice 2 bulk-requeue tunables (filterable, fail-safe floored at 1).
@@ -85,6 +92,11 @@ class OutboxMaintenanceService {
 	private bool $purge_batch_cap_reached = false;
 	/** @var list<array{tenant_id:string,outbox_id:int,last_error_code:?string,reason:string}> */
 	private array $pending_orphan_discard_events = array();
+	/**
+	 * The site's tenant while a scheduled sweep runs; null otherwise, so direct and
+	 * inline purges keep treating the requested tenant as live.
+	 */
+	private ?string $current_site_tenant_id = null;
 
 	public function __construct(
 		?OutboxQueryRepository $query_repository = null,
@@ -113,7 +125,31 @@ class OutboxMaintenanceService {
 	}
 
 	/**
-	 * @return array{outbox?:int,conflicts?:int,retried?:int,dead_lettered?:int,purged_failed?:int,skipped_concurrent?:int,orphaned?:int,superseded?:int,purged_exhausted?:int,outcome?:string}|false
+	 * Scheduled sweep of one listed tenant, judged against the site's current tenant.
+	 * A different tenant is superseded (DEMO-12): its rows are never reclaimed into the
+	 * drain, which would resend them as the current tenant. Instead its idle pending and
+	 * failed rows are discarded after the grace period. If the site tenant cannot be
+	 * resolved, the sweep fails closed to the ordinary purge.
+	 *
+	 * @return array{outbox?:int,conflicts?:int,retried?:int,dead_lettered?:int,purged_failed?:int,skipped_concurrent?:int,orphaned?:int,superseded?:int,purged_exhausted?:int,superseded_tenant_discarded?:int,outcome?:string}|false
+	 */
+	public function purge_scheduled_tenant_rows( string $tenant_id ): array|false {
+		$previous = $this->current_site_tenant_id;
+		try {
+			try {
+				$identity = TenantIdentity::resolve();
+				$this->current_site_tenant_id = trim( (string) ( $identity['value'] ?? '' ) );
+			} catch ( Throwable $exception ) {
+				$this->current_site_tenant_id = null;
+			}
+			return $this->purge_terminal_rows( $tenant_id );
+		} finally {
+			$this->current_site_tenant_id = $previous;
+		}
+	}
+
+	/**
+	 * @return array{outbox?:int,conflicts?:int,retried?:int,dead_lettered?:int,purged_failed?:int,skipped_concurrent?:int,orphaned?:int,superseded?:int,purged_exhausted?:int,superseded_tenant_discarded?:int,outcome?:string}|false
 	 */
 	public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
 		$normalized_tenant_id = trim( $tenant_id );
@@ -179,6 +215,27 @@ class OutboxMaintenanceService {
 				function () use ( $normalized_tenant_id, $batch_size ): array|WP_Error {
 					try {
 						$single_batch = null !== $batch_size;
+						if ( $this->is_superseded_tenant( $normalized_tenant_id ) ) {
+							// Reclaim would re-pend these rows for the drain to resend as the
+							// current tenant, so the audited superseded discard is the only
+							// disposition for pending and failed rows. Retention of rows that
+							// are already terminal keeps its E15-35 windows.
+							$superseded_tenant_discarded = $this->discard_superseded_tenant_batch( $normalized_tenant_id, $batch_size );
+
+							return array(
+								'outbox' => $this->purge_acknowledged_outbox_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null ),
+								'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null ),
+								'retried' => 0,
+								'dead_lettered' => 0,
+								'purged_failed' => 0,
+								'skipped_concurrent' => 0,
+								'orphaned' => 0,
+								'superseded' => 0,
+								'purged_exhausted' => 0,
+								'superseded_tenant_discarded' => $superseded_tenant_discarded,
+								'_orphan_discard_events' => $this->pending_orphan_discard_events,
+							);
+						}
 						$orphans = $this->discard_orphaned_failed_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null );
 						$reclaim = $this->reclaim_retryable_failed_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null );
 						$failed_purge = $this->purge_failed_non_retryable_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null );
@@ -197,6 +254,7 @@ class OutboxMaintenanceService {
 							'orphaned' => $orphans['orphaned'] + $reclaim['orphaned'],
 							'superseded' => $orphans['superseded'],
 							'purged_exhausted' => $failed_purge['exhausted'],
+							'superseded_tenant_discarded' => 0,
 							'_orphan_discard_events' => $this->pending_orphan_discard_events,
 						);
 					} catch ( RuntimeException $exception ) {
@@ -355,9 +413,12 @@ class OutboxMaintenanceService {
 	 * (auto_retry_exhausted, missing error code, or an explicitly false retryable flag).
 	 * Both remain operator-visible/retryable.
 	 * Age is created_at of the oldest pending or failed row; 0 when the tenant has none.
+	 * `superseded_tenant_discarded` is rows of every other tenant that the scheduled
+	 * sweep discarded as superseded (DEMO-12). The sweep only discards tenants other
+	 * than the site's current one, so a count scoped to this tenant would always be 0.
 	 * Returns false when the adapter is unavailable so callers do not fabricate zeros.
 	 *
-	 * @return array{pending:int,failed:int,dead_lettered:int,oldest_age_seconds:int}|false
+	 * @return array{pending:int,failed:int,dead_lettered:int,oldest_age_seconds:int,superseded_tenant_discarded:int}|false
 	 */
 	public function get_health_counters( string $tenant_id ): array|false {
 		$empty = array(
@@ -365,6 +426,7 @@ class OutboxMaintenanceService {
 			'failed' => 0,
 			'dead_lettered' => 0,
 			'oldest_age_seconds' => 0,
+			'superseded_tenant_discarded' => 0,
 		);
 		$normalized_tenant_id = trim( $tenant_id );
 		if ( '' === $normalized_tenant_id ) {
@@ -387,7 +449,8 @@ class OutboxMaintenanceService {
 				SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS pending,
 				SUM(CASE WHEN status = %s AND (last_error_retryable IS NULL OR last_error_retryable = 1) AND last_error_code <> %s THEN 1 ELSE 0 END) AS failed,
 				SUM(CASE WHEN status = %s AND ((last_error_retryable IS NOT NULL AND last_error_retryable <> 1) OR last_error_code IS NULL OR last_error_code = %s) THEN 1 ELSE 0 END) AS dead_lettered,
-				MIN(created_at) AS oldest_created_at
+				MIN(created_at) AS oldest_created_at,
+				(SELECT COUNT(*) FROM %i WHERE tenant_id <> %s AND status = %s AND last_error_code = %s) AS superseded_tenant_discarded
 			FROM %i
 			WHERE tenant_id = %s AND status IN (%s, %s)';
 		$health_args = array(
@@ -396,6 +459,10 @@ class OutboxMaintenanceService {
 			self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
 			OutboxStatus::FAILED,
 			self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
+			$this->table_name,
+			$normalized_tenant_id,
+			OutboxStatus::DISCARDED,
+			self::SUPERSEDED_TENANT_REASON,
 			$this->table_name,
 			$normalized_tenant_id,
 			OutboxStatus::PENDING,
@@ -419,6 +486,7 @@ class OutboxMaintenanceService {
 			'oldest_age_seconds' => '' === $oldest_created_at
 				? 0
 				: $this->row_age_seconds( array( 'created_at' => $oldest_created_at ) ),
+			'superseded_tenant_discarded' => max( 0, (int) ( $aggregate['superseded_tenant_discarded'] ?? 0 ) ),
 		);
 	}
 
@@ -731,6 +799,115 @@ class OutboxMaintenanceService {
 			'skipped_concurrent' => $skipped_concurrent,
 			'orphaned' => $orphaned,
 		);
+	}
+
+	/**
+	 * Discard one bounded batch of a superseded tenant's idle pending and failed rows
+	 * through the orphan-discard audit (DEMO-12, RES-31). In-flight rows and rows with
+	 * activity inside the grace period are left alone. Discarding never writes
+	 * last_attempted_at, so an exhausted row keeps its real retention stamp.
+	 *
+	 * @return int Rows discarded.
+	 * @throws RuntimeException When the lookup, a discard write, or its audit row fails.
+	 */
+	private function discard_superseded_tenant_batch( string $tenant_id, ?int $batch_size ): int {
+		global $wpdb;
+
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			throw new RuntimeException( 'Superseded tenant discard is unavailable.' );
+		}
+
+		$limit = null === $batch_size
+			? $this->resolve_positive_int_tunable( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE )
+			: max( 1, $batch_size );
+		$grace_days = $this->resolve_positive_int_tunable( 'acx_sync_superseded_tenant_grace_days', self::DEFAULT_SUPERSEDED_TENANT_GRACE_DAYS );
+		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
+		$cutoff = gmdate( 'Y-m-d H:i:s', (int) current_time( 'timestamp' ) - ( $grace_days * $day_seconds ) );
+
+		// Filter on age before LIMIT so fresh rows cannot starve eligible idle rows.
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, tenant_id, status, attempts, last_error_code, last_error_retryable, first_failed_at, last_attempted_at, created_at, entity_type, entity_key FROM %i WHERE tenant_id = %s AND status IN (%s, %s) AND COALESCE(last_attempted_at, created_at) < %s ORDER BY id ASC LIMIT %d FOR UPDATE',
+				$this->table_name,
+				$tenant_id,
+				OutboxStatus::PENDING,
+				OutboxStatus::FAILED,
+				$cutoff,
+				$limit
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			throw new RuntimeException( 'Superseded tenant lookup failed.' );
+		}
+		if ( count( $rows ) >= $limit ) {
+			$this->purge_batch_cap_reached = true;
+		}
+
+		$discarded = 0;
+		foreach ( array_slice( $rows, 0, $limit ) as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$status = (string) ( $row['status'] ?? '' );
+			if (
+				$tenant_id !== (string) ( $row['tenant_id'] ?? '' )
+				|| ( OutboxStatus::PENDING !== $status && OutboxStatus::FAILED !== $status )
+			) {
+				continue;
+			}
+			$stamp = trim( (string) ( $row['last_attempted_at'] ?? $row['created_at'] ?? '' ) );
+			if ( '' === $stamp || $stamp >= $cutoff ) {
+				continue;
+			}
+
+			$outbox_id = (int) ( $row['id'] ?? 0 );
+			$updated = $this->update_operation_status(
+				$outbox_id,
+				$tenant_id,
+				$status,
+				array(
+					'status' => OutboxStatus::DISCARDED,
+					'last_error_code' => self::SUPERSEDED_TENANT_REASON,
+					'next_attempt_at' => null,
+				),
+				array( '%s', '%s', '%s' ),
+				$this->failed_row_fingerprint( $row )
+			);
+			if ( false === $updated ) {
+				throw new RuntimeException( 'Superseded tenant discard failed.' );
+			}
+			if ( $updated <= 0 ) {
+				continue;
+			}
+
+			$this->write_orphan_discard_audit_row( $tenant_id, $outbox_id, $row, self::SUPERSEDED_TENANT_REASON );
+			$this->pending_orphan_discard_events[] = array(
+				'tenant_id' => $tenant_id,
+				'outbox_id' => $outbox_id,
+				'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
+				'reason' => self::SUPERSEDED_TENANT_REASON,
+			);
+			++$discarded;
+		}
+
+		return $discarded;
+	}
+
+	/**
+	 * Whether a scheduled sweep is visiting a tenant other than the site's current one.
+	 * Compared case-insensitively, as MySQL compares tenant_id, so a case-only
+	 * difference can never classify the live tenant's rows as superseded.
+	 */
+	private function is_superseded_tenant( string $tenant_id ): bool {
+		$current_tenant_id = trim( (string) $this->current_site_tenant_id );
+
+		return '' !== $current_tenant_id && 0 !== strcasecmp( trim( $tenant_id ), $current_tenant_id );
 	}
 
 	/**
@@ -1393,7 +1570,7 @@ class OutboxMaintenanceService {
 	/**
 	 * @param array<string,mixed> $row
 	 */
-	private function write_orphan_discard_audit_row( string $tenant_id, int $outbox_id, array $row ): void {
+	private function write_orphan_discard_audit_row( string $tenant_id, int $outbox_id, array $row, string $reason = self::ORPHAN_REASON ): void {
 		global $wpdb;
 
 		if (
@@ -1410,7 +1587,7 @@ class OutboxMaintenanceService {
 			array(
 				'outbox_id' => $outbox_id,
 				'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
-				'reason' => self::ORPHAN_REASON,
+				'reason' => $reason,
 				'entity_type' => '' !== $entity_type ? $entity_type : null,
 				'entity_key' => '' !== $entity_key ? $entity_key : null,
 			)
@@ -1515,6 +1692,12 @@ class OutboxMaintenanceService {
 	 * @return int|false Affected rows, or false on SQL failure.
 	 */
 	private function dead_letter_failed_row( int $outbox_id, string $tenant_id, array $row, int $auto_attempts ): int|false {
+		// Defense in depth: the reclaim query and is_terminal_failed_row already keep
+		// exhausted rows away from here, and a second exhaustion write would restart
+		// the retention clock that exhausted_row_is_past_retention reads.
+		if ( $this->is_auto_retry_exhausted_error_code( $row['last_error_code'] ?? null ) ) {
+			return 0;
+		}
 		$age_seconds = $this->row_age_seconds( $row );
 		$max_auto_attempts = $this->resolve_positive_int_tunable( 'acx_sync_max_auto_attempts', self::DEFAULT_MAX_AUTO_ATTEMPTS );
 		$message = sprintf(

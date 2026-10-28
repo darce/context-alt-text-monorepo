@@ -39,7 +39,7 @@
       "deep_link": true,
       "url_params": ["panes", "cluster", "media", "panel", "status", "endpoint", "s", "p", "perPage"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
-      "primary_action_id": "act-bulk-describe",
+      "primary_action_id": null,
       "states": ["default", "loading", "error", "degraded", "offline"],
       "zones": [
         {

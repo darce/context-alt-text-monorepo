@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import { __ } from '@wordpress/i18n';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { __, sprintf } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 
@@ -28,7 +28,11 @@ import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
 import { GpuControlCard } from './settings/GpuControlCard';
 import { isReadOnly } from './settings/settingsConstants';
 import { TONE_CLASS } from './settings/testConnectionBanner';
-import { useSettingsPageState } from './settings/useSettingsPageState';
+import {
+  useSettingsPageState,
+  type NonRoutingField,
+  type NonRoutingRevisions,
+} from './settings/useSettingsPageState';
 import {
   hasInsightFaceProof,
   matchesHealthProbeTarget,
@@ -43,11 +47,22 @@ interface SettingsFormSnapshot {
   urlRevision: number;
   apiKey: string;
   apiKeyRevision: number;
+  nonRoutingRevisions: NonRoutingRevisions;
   descriptionBudgetMaxAttempts: string;
   recognitionEnabled: boolean;
   allowPersonNames: boolean | null;
   contextCategories: ContextCategory[];
 }
+
+type NonRoutingPayloadField = 'description_budget' | 'recognition_enabled' | 'allow_person_names' | 'context_categories';
+// Each non-routing payload field and the form field whose edit revision it carries.
+const NON_ROUTING_FIELDS: Record<NonRoutingPayloadField, NonRoutingField> = {
+  description_budget: 'descriptionBudgetMaxAttempts',
+  recognition_enabled: 'recognitionEnabled',
+  allow_person_names: 'allowPersonNames',
+  context_categories: 'contextCategories',
+};
+const NON_ROUTING_PAYLOAD_FIELDS = Object.keys(NON_ROUTING_FIELDS) as NonRoutingPayloadField[];
 
 const sectionFromLocation = (search: string, hash: string): string | null => {
   const fromSearch = new URLSearchParams(search).get('section');
@@ -70,18 +85,35 @@ export const SettingsPage = (): React.JSX.Element => {
     request: object | null;
   } | null>({ afterRoutingSave: false, request: null });
   const healthProbeGeneration = useRef(0);
+  const healthDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const healthProbeMetadata = useRef(new WeakMap<object, HealthProbeBinding & { afterRoutingSave: boolean }>());
   const currentHealthRequest = useRef<object | null>(null);
   const credentialRevision = useRef(Symbol());
+  // Query refreshes change probe credentials, but only routing edits revoke
+  // the user's intent to resume a check after Reload settings.
+  const routingIntentRevision = useRef(0);
   const routingSavePending = useRef(false);
+  const hasAcknowledgedSave = useRef(false);
   const routingSaveFeedback = useRef(false);
+  // Survives a failed routing save so Retry resends the whole failed scope.
   const routingSaveIncludesOtherSettings = useRef(false);
   const inFlightRoutingSnapshot = useRef<SettingsFormSnapshot | null>(null);
+  const inFlightPayload = useRef<SaveSettingsPayload | null>(null);
+  // Non-routing fields whose write failed and that no later write acknowledged.
+  // Their failure and whole-form Retry outlive every unrelated routing save.
+  const unsavedFields = useRef<NonRoutingPayloadField[]>([]);
+  // Readback recovery is independent of an outstanding failed-field retry.
+  const [settingsReloadWarning, setSettingsReloadWarning] = useState('');
+  // Health completion must neither erase a settings warning nor overwrite a
+  // failed save. Keep its terminal explanation separate from both.
+  const [healthCheckWarning, setHealthCheckWarning] = useState('');
   const inFlightUrlWrite = useRef(false);
   const urlReadbackAfter = useRef<number | null>(null);
   // A blur queues routing fields only; an explicit submit queues the full form.
   const queuedRoutingOnly = useRef(false);
   const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
+  // An explicit check is intent even when the queued routing diff is empty.
+  const queuedHealthCheck = useRef(false);
   const pendingNoopUrl = useRef<Pick<SettingsFormSnapshot, 'url' | 'urlRevision'> | null>(null);
 
   const settingsQuery = useQuery<SettingsResponse>({
@@ -142,6 +174,8 @@ export const SettingsPage = (): React.JSX.Element => {
   }
 
   useEffect(() => () => {
+    if (healthDeadline.current !== null) clearTimeout(healthDeadline.current);
+    routingIntentRevision.current += 1;
     healthProbeGeneration.current += 1;
     currentHealthRequest.current = null;
     scheduledHealthCheck.current = { afterRoutingSave: false, request: null };
@@ -197,10 +231,39 @@ export const SettingsPage = (): React.JSX.Element => {
     });
   };
 
+  // An unacknowledged failure outranks routing feedback: it stays beside the
+  // service card, and Retry resends the whole form with the kept values.
+  const showUnsavedFields = (): boolean => {
+    if (unsavedFields.current.length === 0) {
+      return false;
+    }
+    routingSaveFeedback.current = true;
+    routingSaveIncludesOtherSettings.current = true;
+    dispatch({
+      type: 'setSaveMessage',
+      message: sprintf(__('Could not save settings. (%s)', 'alt-context'), unsavedFields.current.join(', ')),
+      tone: 'error',
+    });
+    return true;
+  };
+
   const clearRoutingCheckFeedback = (): void => {
-    if (routingSaveFeedback.current) {
+    if (routingSaveFeedback.current && !showUnsavedFields()) {
       routingSaveFeedback.current = false;
       dispatch({ type: 'clearSaveMessage' });
+    }
+  };
+
+  const invalidateForRoutingEdit = (): void => {
+    // An edit cancels an unfinished post-save check and its deadline. Settle the
+    // "Checking health…" copy in the same transition; the card returns to draft.
+    const cancelsPostSaveCheck = scheduledHealthCheck.current?.afterRoutingSave === true;
+    routingIntentRevision.current += 1;
+    setHealthCheckWarning('');
+    queuedHealthCheck.current = false;
+    invalidateHealthProbe();
+    if (cancelsPostSaveCheck) {
+      clearRoutingCheckFeedback();
     }
   };
 
@@ -209,6 +272,7 @@ export const SettingsPage = (): React.JSX.Element => {
     urlRevision: state.urlRevision,
     apiKey: state.apiKey,
     apiKeyRevision: state.apiKeyRevision,
+    nonRoutingRevisions: state.nonRoutingRevisions,
     descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
     recognitionEnabled: state.recognitionEnabled,
     allowPersonNames: state.allowPersonNames,
@@ -256,6 +320,56 @@ export const SettingsPage = (): React.JSX.Element => {
     return payload;
   };
 
+  // The cached settings plus every field this write acknowledged. A failed
+  // readback must never drain queued intent against values from before the write.
+  const reconcileAcknowledged = (
+    base: SettingsResponse,
+    saved: string[],
+    payload: SaveSettingsPayload | null,
+  ): SettingsResponse => {
+    const next = { ...base };
+    if (!payload) {
+      return next;
+    }
+    if (saved.includes('url') && payload.url !== undefined) {
+      next.url = payload.url;
+    }
+    if (saved.includes('description_budget') && payload.description_budget) {
+      next.description_budget = { ...base.description_budget, max_attempts: payload.description_budget.max_attempts };
+    }
+    if (saved.includes('recognition_enabled') && payload.recognition_enabled !== undefined) {
+      next.recognition_enabled = payload.recognition_enabled;
+    }
+    if (saved.includes('allow_person_names') && payload.allow_person_names !== undefined) {
+      next.allow_person_names = payload.allow_person_names;
+    }
+    if (saved.includes('context_categories') && payload.context_categories) {
+      next.context_categories = payload.context_categories;
+    }
+    return next;
+  };
+
+  // Readbacks keep every unacknowledged non-routing edit (useSettingsPageState).
+  // Only the revision a write carried becomes clean; a newer edit stays intent.
+  const acknowledgeNonRouting = (values: SettingsFormSnapshot, fields: NonRoutingPayloadField[]): void => {
+    if (fields.length === 0) {
+      return;
+    }
+    const revisions: Partial<NonRoutingRevisions> = {};
+    for (const field of fields) {
+      revisions[NON_ROUTING_FIELDS[field]] = values.nonRoutingRevisions[NON_ROUTING_FIELDS[field]];
+    }
+    dispatch({ type: 'acknowledgeNonRouting', revisions });
+    unsavedFields.current = unsavedFields.current.filter((field) => !fields.includes(field));
+  };
+
+  const recordUnsavedFields = (payload: SaveSettingsPayload | null, saved: string[]): void => {
+    const failed = NON_ROUTING_PAYLOAD_FIELDS.filter((field) => payload?.[field] !== undefined && !saved.includes(field));
+    unsavedFields.current = NON_ROUTING_PAYLOAD_FIELDS.filter(
+      (field) => failed.includes(field) || unsavedFields.current.includes(field),
+    );
+  };
+
   const acknowledgeSatisfiedUrl = useCallback((data: SettingsResponse): void => {
     const committed = pendingNoopUrl.current;
     if (!committed || inFlightRoutingSnapshot.current || routingSavePending.current
@@ -296,67 +410,122 @@ export const SettingsPage = (): React.JSX.Element => {
     routingOnly = false,
   ): void => {
     commitUrlNoop(values, data);
-    const payload = routingOnly
+    const payload: SaveSettingsPayload = routingOnly
       ? {
         ...(values.url !== data.url ? { url: values.url } : {}),
         ...(values.apiKey ? { api_key: values.apiKey } : {}),
       }
       : buildSavePayload(values, data);
+    if (!routingOnly) {
+      // A full-form write settles each non-routing field it omits: that value
+      // already matches the settings it was diffed against.
+      acknowledgeNonRouting(values, NON_ROUTING_PAYLOAD_FIELDS.filter((field) => payload[field] === undefined));
+    }
     if (Object.keys(payload).length === 0) {
+      // Draining satisfied intent is not a new save result. Keep the settled
+      // feedback and retry scope, including a mixed save's partial failure.
+      if (queued) return;
       dispatch({
         type: 'setSaveMessage',
-        message: __('No changes to save.', 'alt-context'),
-        tone: 'warning',
+        message: hasAcknowledgedSave.current ? __('All changes are saved.', 'alt-context') : __('No changes to save.', 'alt-context'),
+        tone: hasAcknowledgedSave.current ? 'info' : 'warning',
       });
       return;
     }
     invalidateHealthProbe();
-    if (queued) {
+    if (queued || !routingOnly) {
       dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
       const hasRoutingChanges = 'url' in payload || 'api_key' in payload;
       routingSavePending.current = hasRoutingChanges;
       routingSaveIncludesOtherSettings.current = hasRoutingChanges && Object.keys(payload).some(
         (field) => field !== 'url' && field !== 'api_key',
       );
-      routingSaveFeedback.current = hasRoutingChanges && !routingSaveIncludesOtherSettings.current;
+      routingSaveFeedback.current = hasRoutingChanges;
     }
     inFlightRoutingSnapshot.current = values;
+    inFlightPayload.current = payload;
     inFlightUrlWrite.current = 'url' in payload;
     saveMutation.mutate(payload);
   };
 
+  // What an accepted Check health can probe once its write settles: the
+  // 'settled' routing readback, nothing ('unreadable' settings), or an
+  // 'unsaved' routing write whose own error and Retry carry the check.
   const drainQueuedSave = (
     refreshedSettings?: SettingsResponse,
+    healthTarget: 'settled' | 'unreadable' | 'unsaved' = 'unreadable',
   ): void => {
     const snapshot = queuedSaveSnapshot.current;
-    if (!snapshot) {
+    if (snapshot) {
+      queuedSaveSnapshot.current = null;
+      const routingOnly = queuedRoutingOnly.current;
+      queuedRoutingOnly.current = false;
+      const data = refreshedSettings
+        ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
+        ?? settingsQuery.data;
+      if (!data) {
+        return;
+      }
+      submitSnapshot(snapshot, data, true, routingOnly);
+    }
+    // Keep the request through further writes, then settle it exactly once,
+    // even after an empty drain or a failed write.
+    if (inFlightRoutingSnapshot.current || !queuedHealthCheck.current) {
       return;
     }
-    queuedSaveSnapshot.current = null;
-    const routingOnly = queuedRoutingOnly.current;
-    queuedRoutingOnly.current = false;
-    const data = refreshedSettings
-      ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
-      ?? settingsQuery.data;
-    if (!data) {
+    queuedHealthCheck.current = false;
+    if (healthTarget === 'unsaved') {
       return;
     }
-    routingSaveFeedback.current = false;
-    routingSavePending.current = false;
-    routingSaveIncludesOtherSettings.current = false;
-    dispatch({ type: 'clearSaveMessage' });
-    dispatch({ type: 'clearTestResult' });
-    submitSnapshot(snapshot, data, true, routingOnly);
+    const showsUnsaved = showUnsavedFields();
+    if (healthTarget === 'unreadable'
+      || queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all)?.status === 'error') {
+      // No trustworthy settings to bind a probe to. Say so beside the card;
+      // Reload settings runs the check once the settings load.
+      const notChecked = sprintf(__('Health not checked: %s.', 'alt-context'),
+        __('settings could not reload', 'alt-context'));
+      setHealthCheckWarning(notChecked);
+      return;
+    }
+    scheduledHealthCheck.current ??= { afterRoutingSave: !showsUnsaved, request: null };
+    if (!showsUnsaved) {
+      routingSaveFeedback.current = true;
+      dispatch({ type: 'setSaveMessage', message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
+    }
+    startScheduledHealthCheck();
+  };
+
+  // Readback failed after the server answered: publish the acknowledged fields
+  // and return the snapshot that queued intent must be diffed against.
+  const publishAcknowledged = (
+    data: SaveSettingsResponse,
+    settled: SettingsFormSnapshot | null,
+    payload: SaveSettingsPayload | null,
+  ): SettingsResponse | undefined => {
+    const previous = queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all);
+    if (!previous || !settled || data.saved.length === 0) {
+      return previous;
+    }
+    const reconciled = reconcileAcknowledged(previous, data.saved, payload);
+    queryClient.setQueryData?.(queryKeys.settings.all, reconciled);
+    return reconciled;
   };
 
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
       const settled = inFlightRoutingSnapshot.current;
+      const payload = inFlightPayload.current;
       inFlightRoutingSnapshot.current = null;
+      inFlightPayload.current = null;
       inFlightUrlWrite.current = false;
       if (settled && data.saved.includes('url')) {
         dispatch({ type: 'acknowledgeUrl', revision: settled.urlRevision });
+      }
+      if (settled && payload) {
+        acknowledgeNonRouting(settled, NON_ROUTING_PAYLOAD_FIELDS.filter(
+          (field) => payload[field] !== undefined && data.saved.includes(field),
+        ));
       }
       if (settled?.apiKey && data.saved.includes('api_key')) {
         dispatch({ type: 'acknowledgeApiKey', value: settled.apiKey, revision: settled.apiKeyRevision });
@@ -368,14 +537,13 @@ export const SettingsPage = (): React.JSX.Element => {
         }
       }
       const isRoutingAutosave = routingSavePending.current;
-      const includesOtherSettings = routingSaveIncludesOtherSettings.current;
+
       if (isRoutingAutosave) {
         routingSavePending.current = false;
         if (data.saved.some((field) => field === 'url' || field === 'api_key')) {
           invalidateHealthProbe();
         }
       }
-      routingSaveIncludesOtherSettings.current = false;
       // R23-BR-14: backend may return 200 with result partial/error when some
       // options did not persist. Do not render "Settings saved." unless ok —
       // a corrected backend that still paints success on the frontend has
@@ -386,42 +554,72 @@ export const SettingsPage = (): React.JSX.Element => {
           : __('one or more fields', 'alt-context');
         dispatch({
           type: 'setSaveMessage',
-          message: `${__('Could not save settings.', 'alt-context')} (${failedFields})`,
+          message: sprintf(__('Could not save settings. (%s)', 'alt-context'), failedFields),
           tone: 'error',
         });
+        recordUnsavedFields(payload, data.saved);
         // Refresh so the form reflects what actually landed (partial success).
-        await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
-        const refreshedOnFail = await queryClient.fetchQuery({
-          queryKey: queryKeys.settings.all,
-          queryFn: fetchSettings,
-        });
-        syncLocalizedRouting(refreshedOnFail);
-        drainQueuedSave(refreshedOnFail);
+        try {
+          await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
+          const refreshedOnFail = await queryClient.fetchQuery({
+            queryKey: queryKeys.settings.all,
+            queryFn: fetchSettings,
+          });
+          setSettingsReloadWarning('');
+          setHealthCheckWarning('');
+          syncLocalizedRouting(refreshedOnFail);
+          drainQueuedSave(refreshedOnFail, 'settled');
+        } catch {
+          // Keep the partial-write feedback, but never strand queued intent:
+          // a stranded older key would later replay over a newer commit.
+          drainQueuedSave(publishAcknowledged(data, settled, payload));
+        }
         return;
       }
 
-      dispatch({
-        type: 'setSaveMessage',
-        message: isRoutingAutosave && !includesOtherSettings
-          ? __('Saved — checking health…', 'alt-context')
-          : __('Settings saved.', 'alt-context'),
-        tone: isRoutingAutosave && !includesOtherSettings ? 'info' : 'success',
-      });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
-      // A saved URL/key may repair the recognition breaker; refetch sync health
-      // so the degraded/offline banner clears without waiting for its 15s poll.
-      await queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
-      const refreshed = await queryClient.fetchQuery({
-        queryKey: queryKeys.settings.all,
-        queryFn: fetchSettings,
-      });
-      syncLocalizedRouting(refreshed);
-      resolvedSettings.current = refreshed;
-      if (isRoutingAutosave) {
-        scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
-        startScheduledHealthCheck();
+      hasAcknowledgedSave.current = true;
+      // This write succeeded, but it did not acknowledge an earlier failed field.
+      const showsUnsaved = showUnsavedFields();
+      if (!showsUnsaved) {
+        dispatch({
+          type: 'setSaveMessage',
+          message: isRoutingAutosave
+            ? __('Saved. Checking health…', 'alt-context')
+            : __('Settings saved.', 'alt-context'),
+          tone: isRoutingAutosave ? 'info' : 'success',
+        });
       }
-      drainQueuedSave(refreshed);
+      try {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
+        // A saved URL/key may repair the recognition breaker; refetch sync health
+        // so the degraded/offline banner clears without waiting for its 15s poll.
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
+        const refreshed = await queryClient.fetchQuery({
+          queryKey: queryKeys.settings.all,
+          queryFn: fetchSettings,
+        });
+        setSettingsReloadWarning('');
+        setHealthCheckWarning('');
+        syncLocalizedRouting(refreshed);
+        resolvedSettings.current = refreshed;
+        if (isRoutingAutosave) {
+          // The new target is still checked; with a failure kept in the card,
+          // the result reports through the health banner instead.
+          scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };
+          startScheduledHealthCheck();
+        }
+        drainQueuedSave(refreshed, 'settled');
+      } catch (error) {
+        const reconciled = publishAcknowledged(data, settled, payload);
+        scheduledHealthCheck.current = null;
+        const warning = sprintf(__('Saved, but the page could not reload settings: %s.', 'alt-context'),
+          resolveWpErrorMessage(error, __('settings unavailable', 'alt-context')));
+        setSettingsReloadWarning(warning);
+        if (!showUnsavedFields()) {
+          dispatch({ type: 'setSaveMessage', message: warning, tone: 'warning' });
+        }
+        drainQueuedSave(reconciled);
+      }
     },
     onError: (error) => {
       if (inFlightUrlWrite.current) {
@@ -431,18 +629,24 @@ export const SettingsPage = (): React.JSX.Element => {
           ?? Infinity;
         inFlightUrlWrite.current = false;
       }
+      recordUnsavedFields(inFlightPayload.current, []);
       inFlightRoutingSnapshot.current = null;
+      inFlightPayload.current = null;
       const isRoutingAutosave = routingSavePending.current;
       if (isRoutingAutosave) {
         routingSavePending.current = false;
       }
-      routingSaveIncludesOtherSettings.current = false;
       dispatch({
         type: 'setSaveMessage',
-        message: resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
+        message: isRoutingAutosave
+          ? sprintf(__('Not saved: %s. Your edit is kept.', 'alt-context'),
+            resolveWpErrorMessage(error, __('Failed to save settings', 'alt-context')))
+          : resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
         tone: 'error',
       });
-      drainQueuedSave();
+      // A rejected write that carried no routing leaves the settled routing
+      // readback as the probe target. A routing write may have landed.
+      drainQueuedSave(undefined, isRoutingAutosave ? 'unsaved' : 'settled');
     },
   });
 
@@ -512,6 +716,7 @@ export const SettingsPage = (): React.JSX.Element => {
     afterRoutingSave = false,
     scheduled = false,
   ): void => {
+    setHealthCheckWarning('');
     dispatch({ type: 'clearTestResult' });
     const generation = ++healthProbeGeneration.current;
     const probeVariables = { ...variables };
@@ -534,6 +739,7 @@ export const SettingsPage = (): React.JSX.Element => {
   };
 
   const startHealthCheck = (): void => {
+    queuedHealthCheck.current = false;
     runHealthCheck({});
   };
 
@@ -569,6 +775,31 @@ export const SettingsPage = (): React.JSX.Element => {
 
   useEffect(() => {
     startScheduledHealthCheck();
+    if (scheduledHealthCheck.current && healthDeadline.current === null) {
+      healthDeadline.current = setTimeout(() => {
+        healthDeadline.current = null;
+        const scheduled = scheduledHealthCheck.current;
+        if (!scheduled) return;
+        scheduledHealthCheck.current = null;
+        currentHealthRequest.current = null;
+        healthProbeGeneration.current += 1;
+        const reason = !resolvedSettings.current?.effective_target_url.trim()
+          ? __('no service URL', 'alt-context')
+          : observedQuery.current.error
+            ? __('settings could not reload', 'alt-context')
+            : __('health check timed out', 'alt-context');
+        // Every accepted scheduled check settles visibly, including checks
+        // whose settings write failed and still owns the save error and Retry.
+        setHealthCheckWarning(sprintf(scheduled.afterRoutingSave
+          ? __('Saved. Health not checked: %s.', 'alt-context')
+          : __('Health not checked: %s.', 'alt-context'), reason));
+        if (scheduled.afterRoutingSave) clearRoutingCheckFeedback();
+      }, 15000);
+    }
+    if (!scheduledHealthCheck.current && healthDeadline.current !== null) {
+      clearTimeout(healthDeadline.current);
+      healthDeadline.current = null;
+    }
   }, [
     settingsQuery.data,
     settingsQuery.dataUpdatedAt,
@@ -579,8 +810,7 @@ export const SettingsPage = (): React.JSX.Element => {
     startScheduledHealthCheck,
   ]);
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitForm = (): void => {
     invalidateHealthProbe();
     if (saveMutation.isPending) {
       queuedRoutingOnly.current = false;
@@ -602,12 +832,18 @@ export const SettingsPage = (): React.JSX.Element => {
     submitSnapshot(captureFormSnapshot(), data);
   };
 
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitForm();
+  };
+
   const commitRoutingFields = (checkIfUnchanged = false): void => {
     const data = settingsQuery.data;
     if (!data) {
       return;
     }
     if (saveMutation.isPending || routingSavePending.current) {
+      queuedHealthCheck.current ||= checkIfUnchanged;
       const committed = captureFormSnapshot();
       if (!queuedSaveSnapshot.current) {
         queuedRoutingOnly.current = true;
@@ -636,8 +872,10 @@ export const SettingsPage = (): React.JSX.Element => {
 
     if (Object.keys(payload).length === 0) {
       if (checkIfUnchanged) {
-        routingSaveFeedback.current = false;
-        dispatch({ type: 'clearSaveMessage' });
+        if (!showUnsavedFields()) {
+          routingSaveFeedback.current = false;
+          dispatch({ type: 'clearSaveMessage' });
+        }
         startHealthCheck();
       }
       return;
@@ -645,11 +883,23 @@ export const SettingsPage = (): React.JSX.Element => {
 
     routingSavePending.current = true;
     routingSaveFeedback.current = true;
+    routingSaveIncludesOtherSettings.current = false;
     inFlightRoutingSnapshot.current = captureFormSnapshot();
+    inFlightPayload.current = payload;
     inFlightUrlWrite.current = 'url' in payload;
     invalidateHealthProbe();
     dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
     saveMutation.mutate(payload);
+  };
+
+  const retryFailedSave = (): void => {
+    // A failed mixed save is retried as the whole form, whose unacknowledged
+    // non-routing values survived every readback. Autosave retries routing.
+    if (routingSaveIncludesOtherSettings.current) {
+      submitForm();
+      return;
+    }
+    commitRoutingFields();
   };
 
   const handleTest = () => {
@@ -751,35 +1001,76 @@ export const SettingsPage = (): React.JSX.Element => {
         }}
         status={{
           savePending: saveMutation.isPending,
-          testPending: testMutation.isPending,
+          testPending: testMutation.isPending && currentHealthRequest.current !== null,
           hasUnsavedRoutingChanges,
           testResult: state.testResult,
           recognitionEngineVerified,
           saveMessage: state.saveMessage,
           saveMessageTone: state.saveMessageTone,
           routingSaveFeedback: routingSaveFeedback.current,
+          // A readback warning may already be shown as the save result. Retain
+          // it independently so a manual health check can clear save feedback
+          // without losing the still-valid settings warning.
+          settingsReloadWarning: [
+            settingsReloadWarning === state.saveMessage ? '' : settingsReloadWarning,
+            healthCheckWarning,
+          ].filter(Boolean).join(' '),
         }}
         actions={{
           onUrlChange: (value) => {
-            invalidateHealthProbe();
+            invalidateForRoutingEdit();
             dispatch({ type: 'setUrl', value });
           },
           onApiKeyChange: (value) => {
-            invalidateHealthProbe();
+            invalidateForRoutingEdit();
             dispatch({ type: 'setApiKey', value });
           },
-          onDescriptionBudgetMaxAttemptsChange: (value) =>
-            dispatch({ type: 'setDescriptionBudgetMaxAttempts', value }),
-          onRecognitionEnabledChange: (value) => dispatch({ type: 'setRecognitionEnabled', value }),
-          onAllowPersonNamesChange: (value) => dispatch({ type: 'setAllowPersonNames', value }),
-          onContextCategoriesChange: (value) => dispatch({ type: 'setContextCategories', value }),
+          onDescriptionBudgetMaxAttemptsChange: (value) => {
+            dispatch({ type: 'setDescriptionBudgetMaxAttempts', value });
+          },
+          onRecognitionEnabledChange: (value) => {
+            dispatch({ type: 'setRecognitionEnabled', value });
+          },
+          onAllowPersonNamesChange: (value) => {
+            dispatch({ type: 'setAllowPersonNames', value });
+          },
+          onContextCategoriesChange: (value) => {
+            dispatch({ type: 'setContextCategories', value });
+          },
           onSave: handleSave,
           onTest: handleTest,
           onCommitRouting: () => commitRoutingFields(),
+          onRetrySave: retryFailedSave,
           onFocusServiceUrl: () => {
             document.getElementById('acx-settings-url')?.focus();
           },
         }}
+        onRetryReload={() => {
+          const routingOwner = routingIntentRevision.current;
+          void settingsQuery.refetch().then((result) => {
+            if (!result.isError) {
+              setSettingsReloadWarning('');
+              setHealthCheckWarning('');
+              // Refresh remains useful, but it cannot recreate health intent
+              // revoked by an intervening URL/key edit (even an edit/revert).
+              if (routingOwner !== routingIntentRevision.current) return;
+              queuedHealthCheck.current = false;
+              const showsUnsaved = showUnsavedFields();
+              scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };
+              if (!showsUnsaved) {
+                dispatch({ type: 'setSaveMessage',
+                  message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
+              }
+            }
+          });
+        }}
+        healthFeedback={state.testResult ? (
+          <TestConnectionBannerView
+            testResult={state.testResult}
+            onConfirmTenantPairing={handleConfirmTenantPairing}
+            confirmPending={testMutation.isPending}
+          />
+        ) : null}
       />
 
       <GpuControlCard />
@@ -793,14 +1084,6 @@ export const SettingsPage = (): React.JSX.Element => {
         >
           <p>{state.saveMessage}</p>
         </div>
-      ) : null}
-
-      {state.testResult ? (
-        <TestConnectionBannerView
-          testResult={state.testResult}
-          onConfirmTenantPairing={handleConfirmTenantPairing}
-          confirmPending={testMutation.isPending}
-        />
       ) : null}
 
       <section id={SETTINGS_SECTION_RETENTION_ID} className="acx-settings__retention">

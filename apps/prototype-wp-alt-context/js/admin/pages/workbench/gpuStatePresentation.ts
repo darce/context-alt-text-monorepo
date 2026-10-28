@@ -8,10 +8,17 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { GPU_STATE, type GpuState } from '../../api/describeApi';
-import { WARMING_OBSERVATION_STATUS, type WarmingObservation } from '../../utils/warmingDeadline';
+import type { ActivityWarmingObservation } from '../../hooks/useActivityStatus';
+import { WARMING_OBSERVATION_STATUS } from '../../utils/warmingDeadline';
 
-/** Run-scoped wait copy: an unavailable observation is not proof of warm-up. */
-export const descriptionWaitPresentation = (observation?: WarmingObservation): { headline: string; detail: string } => {
+/**
+ * Run-scoped wait copy: an unavailable observation is not proof of warm-up.
+ * Unknown, stale or not-yet-observed status is a designed quiet state; only a
+ * status poll that exhausted its bounded retries reads as unavailable (RLSE-04).
+ */
+export const descriptionWaitPresentation = (
+  observation?: ActivityWarmingObservation,
+): { headline: string; detail: string } => {
   if (observation?.status === WARMING_OBSERVATION_STATUS.OVERDUE) {
     return {
       headline: __('Description service is taking longer than expected', 'alt-context'),
@@ -27,9 +34,18 @@ export const descriptionWaitPresentation = (observation?: WarmingObservation): {
       ),
     };
   }
+  if (observation?.statusOutage === true) {
+    return {
+      headline: __('Description service status unavailable', 'alt-context'),
+      detail: __('Startup could not be confirmed. Check the run status or cancel this description run.', 'alt-context'),
+    };
+  }
   return {
-    headline: __('Description service status unavailable', 'alt-context'),
-    detail: __('Startup could not be confirmed. Check the run status or cancel this description run.', 'alt-context'),
+    headline: __('Description service status not confirmed yet', 'alt-context'),
+    detail: __(
+      'This description run keeps waiting until the service reports its status. Check status or cancel the run.',
+      'alt-context',
+    ),
   };
 };
 

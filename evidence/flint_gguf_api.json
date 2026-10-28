@@ -1,0 +1,250 @@
+{
+  "url": "https://huggingface.co/api/models/unsloth/flint-GGUF?blobs=true",
+  "resolved_url": "https://huggingface.co/api/models/unsloth/flint-GGUF?blobs=true",
+  "fetched_at": "2026-10-26T17:30:14.027100+00:00",
+  "http_status": 200,
+  "data": {
+    "_id": "6ad6df5660db6df26340ae27",
+    "id": "unsloth/flint-GGUF",
+    "private": false,
+    "pipeline_tag": "text-generation",
+    "tags": [
+      "gguf",
+      "flint",
+      "unsloth",
+      "text-generation",
+      "base_model:RecursiveSI/flint",
+      "base_model:quantized:RecursiveSI/flint",
+      "license:apache-2.0",
+      "endpoints_compatible",
+      "region:us",
+      "imatrix",
+      "conversational"
+    ],
+    "downloads": 125188,
+    "likes": 262,
+    "modelId": "unsloth/flint-GGUF",
+    "author": "unsloth",
+    "sha": "20468edfc38ab43d6914cc88b08cbecb05d0fc62",
+    "lastModified": "2026-10-21T23:54:26.000Z",
+    "gated": false,
+    "disabled": false,
+    "widgetData": [
+      {
+        "text": "Hi, what can you help me with?"
+      },
+      {
+        "text": "What is 84 * 3 / 2?"
+      },
+      {
+        "text": "Tell me an interesting fact about the universe!"
+      },
+      {
+        "text": "Explain quantum computing in simple terms."
+      }
+    ],
+    "model-index": null,
+    "config": {},
+    "cardData": {
+      "license": "apache-2.0",
+      "pipeline_tag": "text-generation",
+      "base_model": [
+        "RecursiveSI/flint"
+      ],
+      "tags": [
+        "flint",
+        "unsloth"
+      ]
+    },
+    "gguf": {
+      "total": 39785287456,
+      "architecture": "flint",
+      "context_length": 262144,
+      "quantize_imatrix_file": "flint-preview-GGUF/imatrix_unsloth.gguf_file",
+      "chat_template": "{%- macro flint_text(t) -%}\n{%- if t is string -%}\n{{- t | replace(\"\\x00\", \"\") | replace(\"<think>\", \"\") | replace(\"</think>\", \"\") | replace(\"<|begin_of_text|>\", \"&lt;|begin_of_text|&gt;\") | replace(\"<|end_of_text|>\", \"&lt;|end_of_text|&gt;\") | replace(\"<|system|>\", \"&lt;|system|&gt;\") | replace(\"<|developer|>\", \"&lt;|developer|&gt;\") | replace(\"<|user|>\", \"&lt;|user|&gt;\") | replace(\"<|assistant|>\", \"&lt;|assistant|&gt;\") | replace(\"<|observation|>\", \"&lt;|observation|&gt;\") -}}\n{%- else -%}\n{{- t -}}\n{%- endif -%}\n{%- endmacro -%}\n{%- set tool_preamble -%}\n{%- if tools %}<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{%- for tool in tools %}\n{%- set fn = tool.function if tool.function is defined else tool %}\n{{ fn | tojson(ensure_ascii=False) }}\n{%- endfor %}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>\n{% endif -%}\n{%- endset -%}\n{%- set ns = namespace(tools_pending=true) -%}\n{%- for m in messages -%}\n{%- if ns.tools_pending and m.role != 'system' -%}\n{{ tool_preamble }}\n{%- set ns.tools_pending = false -%}\n{%- endif -%}\n{%- if m.role == 'system' -%}\n<|system|>{{ flint_text(m.content) }}\n{%- elif m.role == 'developer' -%}\n<|developer|>{{ flint_text(m.content) }}\n{%- elif m.role == 'user' -%}\n<|user|>{{ flint_text(m.content) }}\n{%- elif m.role == 'assistant' -%}\n<|assistant|>\n{%- if m.reasoning_content %}<think>{{ m.reasoning_content }}</think>{% endif -%}\n{%- if m.content %}{{ m.content }}{% endif -%}\n{%- if m.tool_calls -%}\n{%- for tc in m.tool_calls -%}\n{%- set fn = tc.function if tc.function is defined else tc -%}\n<tool_call>{{ fn.name }}\n{%- for k, v in fn.arguments.items() -%}\n<arg_key>{{ k }}</arg_key><arg_value>{{ v | tojson(ensure_ascii=False) if v is not string else v }}</arg_value>\n{%- endfor -%}\n</tool_call>\n{%- endfor -%}\n{%- endif -%}\n{%- elif m.role == 'tool' -%}\n<|observation|><tool_response>{{ flint_text(m.content) }}</tool_response>\n{%- endif -%}\n{%- endfor -%}\n{%- if ns.tools_pending -%}\n{{ tool_preamble }}\n{%- endif -%}\n{%- if add_generation_prompt -%}\n<|assistant|>\n{%- endif -%}\n",
+      "bos_token": "<|begin_of_text|>",
+      "eos_token": "<|end_of_text|>",
+      "totalFileSize": 42301076928
+    },
+    "siblings": [
+      {
+        "rfilename": ".gitattributes",
+        "blobId": "a37a3d2718a8d258ecec4f0bbce069370259dd8c",
+        "size": 3314
+      },
+      {
+        "rfilename": "BF16/flint-BF16-00001-of-00003.gguf",
+        "blobId": "8e37405c75e2f92c294a81c1b25106e5bf9a9516",
+        "size": 5421216,
+        "lfs": {
+          "sha256": "90aca0887277821348d4e9ab5a3fedb15229a9dc2357c76c0ca653ced7d2cfbe",
+          "size": 5421216,
+          "pointerSize": 132
+        }
+      },
+      {
+        "rfilename": "BF16/flint-BF16-00002-of-00003.gguf",
+        "blobId": "f5af5bf5620d3659db6dea9edb6cfd7728b6bff1",
+        "size": 49945779296,
+        "lfs": {
+          "sha256": "7d306a4ab1d333c87b378cbe9cf77866ca7c63a5516099d551c917cdc1c88d61",
+          "size": 49945779296,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "BF16/flint-BF16-00003-of-00003.gguf",
+        "blobId": "2e656fcfa6a9ecdaceca914503d952f808149afa",
+        "size": 29625278688,
+        "lfs": {
+          "sha256": "af963bc87679b6796092d8cc31dc5bfec910daea60df640efd8052f84b15b6ef",
+          "size": 29625278688,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "LICENSE",
+        "blobId": "f49a4e16e68b128803cc2dcea614603632b04eac",
+        "size": 11356
+      },
+      {
+        "rfilename": "README.md",
+        "blobId": "9fdb30acdd3fb165f8aa19e13635c7481873edd7",
+        "size": 6942
+      },
+      {
+        "rfilename": "assets/flint-logo.png",
+        "blobId": "277944eddceffd95aa7c4a27ab8bd7172eff0b32",
+        "size": 410238,
+        "lfs": {
+          "sha256": "b95290bec100def989fd410999f8129d43068900705a0609a78cdbafa930ad61",
+          "size": 410238,
+          "pointerSize": 131
+        }
+      },
+      {
+        "rfilename": "assets/size_vs_kld.png",
+        "blobId": "94352ef091edb2731c51dda2ed69368d2cc22218",
+        "size": 354524,
+        "lfs": {
+          "sha256": "14fc8cdccc3d8576dd368f3de62a5b58ce57affa9d6f6c538b904bbe8f3b82f4",
+          "size": 354524,
+          "pointerSize": 131
+        }
+      },
+      {
+        "rfilename": "assets/size_vs_top1.png",
+        "blobId": "e16a7882b2f2ff521ea53c4b8fe50a5351114859",
+        "size": 329878,
+        "lfs": {
+          "sha256": "63bf68250924cafb53d9f41aff9bb735b605b416fdfab889b87443e7af85df5d",
+          "size": 329878,
+          "pointerSize": 131
+        }
+      },
+      {
+        "rfilename": "flint-Q8_0.gguf",
+        "blobId": "db040a4ab29ca713a09e15ff24b713150015e82f",
+        "size": 42301076928,
+        "lfs": {
+          "sha256": "5df42b56859c7b5142228005d7d63c327ec9e34c99c72548016d805309a0d284",
+          "size": 42301076928,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-IQ1_M.gguf",
+        "blobId": "d266423e8abf72b6c0ca1eb56624e6d4fdc86282",
+        "size": 11352241600,
+        "lfs": {
+          "sha256": "dd45136a8b26e02efa13e8d6020518f3121c213e1865cd8c3f85de8d26fd5149",
+          "size": 11352241600,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-IQ2_XXS.gguf",
+        "blobId": "fcad70a1664efb9a3bf2668606fc10a1c55a901d",
+        "size": 11855541696,
+        "lfs": {
+          "sha256": "c1fa4a6d5ec67fbeff460c68829984e4aa3eea95dc9d2067691f19e5406deeee",
+          "size": 11855541696,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-IQ3_XXS.gguf",
+        "blobId": "2caa2816188531611e3321c7163e50b077c4a359",
+        "size": 14535427520,
+        "lfs": {
+          "sha256": "7a0a095dde1d931063a5d571e19497d997edbc783eb1ed6b86529bfab9d94804",
+          "size": 14535427520,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-Q2_K_XL.gguf",
+        "blobId": "ab513752c549b162c8a938ab928a1c539bb7b4ba",
+        "size": 13562207680,
+        "lfs": {
+          "sha256": "7f43dd99e7d574c43c3f1b24e0e8269cf1ec92ba6c25f11b3ff126cde4c7a0cb",
+          "size": 13562207680,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-Q3_K_XL.gguf",
+        "blobId": "c8cd8e5b086bdc4961e13a0cbf6d2aacc2abc94a",
+        "size": 18494977472,
+        "lfs": {
+          "sha256": "91b8d85ab6ff7fb095d9a972f9afa6f3fa2b9acb642867a079f3e013ea3c350c",
+          "size": 18494977472,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-Q4_K_XL.gguf",
+        "blobId": "59505711b703447ff1a2b27dc6607fd521e0f7a8",
+        "size": 25054688704,
+        "lfs": {
+          "sha256": "63c2ecc461ca545134b670c660e76fa20f47240f8d39b6510bfd21c4dd6e072f",
+          "size": 25054688704,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-Q5_K_XL.gguf",
+        "blobId": "4fc60cfbd8817b8c83e97c348b32bdcb9e77805e",
+        "size": 29919491520,
+        "lfs": {
+          "sha256": "f68df7b5b16db7456fbf487a27069c064e43ec09d897f1cd3a062db88ce42781",
+          "size": 29919491520,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "flint-UD-Q6_K_XL.gguf",
+        "blobId": "20c9cc2bc071c06c8ace11bea815ee4702cb303d",
+        "size": 36319999424,
+        "lfs": {
+          "sha256": "086231093581c67f8bf2964f8b49198889c4f0775b39857ba63b4c37041279c2",
+          "size": 36319999424,
+          "pointerSize": 136
+        }
+      },
+      {
+        "rfilename": "imatrix_unsloth.gguf_file",
+        "blobId": "59e99fd1dd463495a615babdece285483162c5d2",
+        "size": 225437664,
+        "lfs": {
+          "sha256": "f7c7c260fcce4a6dae1d2dd62ecfcd6588532ed17f8df01125b9b33f30dd8b01",
+          "size": 225437664,
+          "pointerSize": 134
+        }
+      }
+    ],
+    "spaces": [],
+    "createdAt": "2026-10-20T03:26:14.000Z",
+    "usedStorage": 283199359958
+  }
+}

@@ -293,7 +293,7 @@ export const SettingsForm = ({
               data-testid="acx-settings-routing-save-message"
             >
               <p><span aria-hidden="true">{saveMessageTone === 'error' ? '✕ ' : saveMessageTone === 'warning' ? '⚠ ' : '↻ '}</span>{saveMessage}</p>
-              {saveMessageTone === 'warning' && onRetryReload ? (
+              {saveMessageTone === 'warning' && onRetryReload && !settingsReloadWarning ? (
                 <button type="button" className="button button-secondary" onClick={onRetryReload}>
                   {__('Reload settings', 'alt-context')}
                 </button>

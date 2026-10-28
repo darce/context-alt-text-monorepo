@@ -439,9 +439,12 @@ export const SettingsPage = (): React.JSX.Element => {
     saveMutation.mutate(payload);
   };
 
+  // What an accepted Check health can probe once its write settles: the
+  // 'settled' routing readback, nothing ('unreadable' settings), or an
+  // 'unsaved' routing write whose own error and Retry carry the check.
   const drainQueuedSave = (
     refreshedSettings?: SettingsResponse,
-    readbackSucceeded = false,
+    healthTarget: 'settled' | 'unreadable' | 'unsaved' = 'unreadable',
   ): void => {
     const snapshot = queuedSaveSnapshot.current;
     if (snapshot) {
@@ -456,18 +459,31 @@ export const SettingsPage = (): React.JSX.Element => {
       }
       submitSnapshot(snapshot, data, true, routingOnly);
     }
-    // Keep the request through further writes; an empty drain still completes
-    // accepted health intent. Failed readback leaves it for Retry/Reload.
-    if (readbackSucceeded && !inFlightRoutingSnapshot.current && queuedHealthCheck.current) {
-      queuedHealthCheck.current = false;
-      const showsUnsaved = showUnsavedFields();
-      scheduledHealthCheck.current ??= { afterRoutingSave: !showsUnsaved, request: null };
-      if (!showsUnsaved) {
-        routingSaveFeedback.current = true;
-        dispatch({ type: 'setSaveMessage', message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
-      }
-      startScheduledHealthCheck();
+    // Keep the request through further writes, then settle it exactly once,
+    // even after an empty drain or a failed write.
+    if (inFlightRoutingSnapshot.current || !queuedHealthCheck.current) {
+      return;
     }
+    queuedHealthCheck.current = false;
+    if (healthTarget === 'unsaved') {
+      return;
+    }
+    const showsUnsaved = showUnsavedFields();
+    if (healthTarget === 'unreadable'
+      || queryClient.getQueryState?.<SettingsResponse>(queryKeys.settings.all)?.status === 'error') {
+      // No trustworthy settings to bind a probe to. Say so beside the card;
+      // Reload settings runs the check once the settings load.
+      const notChecked = sprintf(__('Health not checked: %s.', 'alt-context'),
+        __('settings could not reload', 'alt-context'));
+      setSettingsReloadWarning((warning) => (warning.includes(notChecked) ? warning : `${warning} ${notChecked}`.trim()));
+      return;
+    }
+    scheduledHealthCheck.current ??= { afterRoutingSave: !showsUnsaved, request: null };
+    if (!showsUnsaved) {
+      routingSaveFeedback.current = true;
+      dispatch({ type: 'setSaveMessage', message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
+    }
+    startScheduledHealthCheck();
   };
 
   // Readback failed after the server answered: publish the acknowledged fields
@@ -542,7 +558,7 @@ export const SettingsPage = (): React.JSX.Element => {
           });
           setSettingsReloadWarning('');
           syncLocalizedRouting(refreshedOnFail);
-          drainQueuedSave(refreshedOnFail, true);
+          drainQueuedSave(refreshedOnFail, 'settled');
         } catch {
           // Keep the partial-write feedback, but never strand queued intent:
           // a stranded older key would later replay over a newer commit.
@@ -581,7 +597,7 @@ export const SettingsPage = (): React.JSX.Element => {
           scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };
           startScheduledHealthCheck();
         }
-        drainQueuedSave(refreshed, true);
+        drainQueuedSave(refreshed, 'settled');
       } catch (error) {
         const reconciled = publishAcknowledged(data, settled, payload);
         scheduledHealthCheck.current = null;
@@ -619,7 +635,9 @@ export const SettingsPage = (): React.JSX.Element => {
           : resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
         tone: 'error',
       });
-      drainQueuedSave();
+      // A rejected write that carried no routing leaves the settled routing
+      // readback as the probe target. A routing write may have landed.
+      drainQueuedSave(undefined, isRoutingAutosave ? 'unsaved' : 'settled');
     },
   });
 

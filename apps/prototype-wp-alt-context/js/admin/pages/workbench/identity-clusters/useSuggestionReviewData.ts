@@ -21,6 +21,7 @@ export const useSuggestionReviewData = () => {
     mergeQuery,
     nameQuery,
     topUnlabeledQuery,
+    topUnlabeledOutage,
     assignmentSuggestions,
     assignmentDataSource,
     mergeSuggestions,
@@ -78,7 +79,11 @@ export const useSuggestionReviewData = () => {
   const isError = assignmentQuery.isError && mergeQuery.isError && hasNoSuggestionData;
   // Separate flag so CLUSTER cards / unlabeled section can error+retry without
   // folding into isError (which blanks every control via isErrorBranch).
-  const isTopUnlabeledError = topUnlabeledQuery.isError;
+  const isTopUnlabeledError = topUnlabeledOutage.isError;
+  // The queries hook owns outage persistence and classification through RQ v5's
+  // pending reset. Auth expiry must keep the session notice during that reset.
+  const topUnlabeledError: unknown = topUnlabeledOutage.error;
+  const isTopUnlabeledFetching = topUnlabeledQuery.isFetching;
   const failureCount = Math.max(
     assignmentQuery.failureCount,
     mergeQuery.failureCount,
@@ -129,6 +134,8 @@ export const useSuggestionReviewData = () => {
     isLoading,
     isError,
     isTopUnlabeledError,
+    topUnlabeledError,
+    isTopUnlabeledFetching,
     failureCount,
     tenantId,
     isAnyMutationPending,

@@ -7,7 +7,6 @@ import {
   _resetActiveDescribeRunForTests,
   setActiveDescribeRunId,
   setDescribeProgressMounted,
-  useActiveDescribeRun,
 } from '../activeDescribeRun';
 import {
   _resetDescribeOperationStoreForTests,
@@ -489,38 +488,37 @@ describe('describeOperationStore', () => {
     expect(getDescribeRunContext()?.id).toBe('run-live');
   });
 
-  it('persists progress_mounted on the run record across remount', () => {
-    const context = runContext({ id: 'run-progress', progress_mounted: true });
-    putDescribeOperationContext(context);
-    const stored = sessionStorage.getItem(describeOperationRunStorageKey(TENANT));
-    expect(JSON.parse(stored ?? 'null')).toEqual(context);
-
+  it.each([true, 'legacy-invalid'])('ignores legacy progress_mounted %s and settles a rehydrated pending run', (progressMounted) => {
+    const key = describeOperationRunStorageKey(TENANT);
+    sessionStorage.setItem(key, JSON.stringify({
+      ...runContext({ id: 'run-progress', startup_budget_seconds: 30 }),
+      progress_mounted: progressMounted,
+    }));
     _resetDescribeOperationStoreForTests();
-    expect(getDescribeRunContext()).toEqual(durableContext(context));
+    const live = getDescribeRunContext();
+    expect(live?.id).toBe('run-progress');
+    expect(live).not.toHaveProperty('progress_mounted');
+    putDescribeOperationContext(live!);
+    expect(JSON.parse(sessionStorage.getItem(key) ?? '{}')).not.toHaveProperty('progress_mounted');
 
-    const { result } = renderHook(() => useActiveDescribeRun());
-    expect(result.current).toEqual({ runId: 'run-progress', progressMounted: true });
+    vi.setSystemTime(1_700_000_000_000 + 30_000);
+    _resetDescribeOperationStoreForTests();
+    expect(pendingTerminalRuns()[0]?.id).toBe('run-progress');
+    expect(pendingTerminalRuns()[0]?.status).toBe(DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK);
+    settleRun('run-progress', DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED);
+    expect(pendingTerminalRuns()).toEqual([]);
+    expect(getLastSettledRun()).toEqual({
+      id: 'run-progress', outcome: DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED,
+    });
   });
 
-  it('setDescribeProgressMounted writes progress_mounted into sessionStorage', () => {
+  it('mounting progress never writes run storage', () => {
     setActiveDescribeRunId('run-mounted');
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
-
-    act(() => {
-      setDescribeProgressMounted(true);
-    });
-
-    expect(setItem).toHaveBeenCalled();
-    const persisted = sessionStorage.getItem(describeOperationRunStorageKey(TENANT));
-    expect(persisted).not.toBeNull();
-    expect(JSON.parse(persisted ?? '{}').progress_mounted).toBe(true);
-    expect(JSON.parse(persisted ?? '{}').id).toBe('run-mounted');
-
-    _resetDescribeOperationStoreForTests();
-    expect(getDescribeRunContext()?.progress_mounted).toBe(true);
-
-    const { result } = renderHook(() => useActiveDescribeRun());
-    expect(result.current).toEqual({ runId: 'run-mounted', progressMounted: true });
+    act(() => setDescribeProgressMounted(true));
+    expect(setItem).not.toHaveBeenCalled();
+    expect(JSON.parse(sessionStorage.getItem(describeOperationRunStorageKey(TENANT)) ?? '{}'))
+      .not.toHaveProperty('progress_mounted');
     setItem.mockRestore();
   });
 });

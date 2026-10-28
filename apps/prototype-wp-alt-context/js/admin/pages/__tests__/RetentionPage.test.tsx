@@ -190,10 +190,7 @@ describe('RetentionSection', () => {
     expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
     expect(screen.queryByText('Showing the five most recent audit events.')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'See description run history' })).toHaveAttribute(
-      'href',
-      '#/description-history',
-    );
+    expect(screen.getByRole('link', { name: 'See description run history' })).toHaveAttribute('href', '#/workbench');
   });
 
   it('updates the retention policy', async () => {

@@ -16,6 +16,15 @@
 - `job-cluster-review` — Review face-group deep-link (shim)
 - `job-merge-people` — Preview, confirm, and undo a person merge
 
+## Code references
+- `screen:roster-shell` — `apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx`
+- `screen:roster-person-workspace` — `apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx`
+- `screen:roster-cluster-drawer` — `apps/prototype-wp-alt-context/js/admin/pages/roster/ClusterDrawerPanel.tsx`
+- `screen:roster-face-lightbox` — `apps/prototype-wp-alt-context/js/components/ui/FaceLightbox.tsx`
+- `screen:exit-workbench` — `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
+- `screen:roster-person-merge-dialog` — `apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx`
+- `screen:roster-person-merge-success` — `apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesTable.tsx`
+
 ## Vocabulary (say / don't say)
 
 Controlled vocabulary for all Roster surfaces (NAV-13), enforced by `js/admin/__tests__/banned-vocabulary.test.tsx`:
@@ -57,28 +66,42 @@ url_params: `person`, `personFilter`, `queue`, `face`, `cluster`
 ```
 +------------------------------------------------------------+
 | Roster (People)  [screen]  #/roster                        |
-| People-first roster: entries table, Workbench review CTA,… |
+| People-first roster: entries table, Workbench review CTA,\ |
+|    person workspace host, face-group drawer shim           |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Roster entries table (name, avatar, and face-group-co… |
-|   - Unnamed faces CTA → Workbench review queue (content) … |
-|   - Projection status gate notices (status) states=[defau… |
+|   - Roster entries table (name, avatar, and face-group-co\ |
+|   unt buttons open person workspace; rename is pencil-onl\ |
+|   y; Merge into... is a row action) (content) states=[def\ |
+|   ault,loading,empty,error]                                |
+|   - Unnamed faces CTA → Workbench review queue (content) \ |
+|   states=[default,loading,empty]                           |
+|   - Projection status gate notices (status) states=[defau\ |
+|   lt,loading,error,degraded]                               |
 |   - Person workspace host (other) states=[default,empty]   |
-|   - Face-group drawer host (cluster= shim) (other) states… |
+|   - Face-group drawer host (cluster= shim) (other) states\ |
+|   =[default,empty,loading,error]                           |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Add Person -> roster-shell                     |
 |   [secondary] Go to Workbench -> exit-workbench            |
-|   [secondary] Open face-group drawer -> roster-cluster-dr… |
-|   [secondary] Open person workspace -> roster-person-work… |
-|   [secondary] Open person workspace from avatar button ->… |
-|   [secondary] Open person workspace from face-group-count… |
-|   [secondary] Open person workspace from name button -> r… |
+|   [secondary] Open face-group drawer -> roster-cluster-dr\ |
+|   awer                                                     |
+|   [secondary] Open person workspace -> roster-person-work\ |
+|   space                                                    |
+|   [secondary] Open person workspace from avatar button ->\ |
+|    roster-person-workspace                                 |
+|   [secondary] Open person workspace from face-group-count\ |
+|    button -> roster-person-workspace                       |
+|   [secondary] Open person workspace from name button -> r\ |
+|   oster-person-workspace                                   |
 |   [secondary] Merge into... -> roster-person-merge-dialog  |
-|   [secondary] Rename person via pencil -> roster-person-w… |
+|   [secondary] Rename person via pencil -> roster-person-w\ |
+|   orkspace (costly,preview)                                |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | degraded       |
 | states+: first_time                                        |
+|   rst_time                                                 |
 +------------------------------------------------------------+
 ```
 
@@ -98,17 +121,25 @@ url_params: `person`, `queue`, `face`
 ```
 +------------------------------------------------------------+
 | Person workspace  [screen]  #/roster?person=               |
-| Deep-linked person panel: faces, media, gated when data s… |
+| Deep-linked person panel: faces, media, gated when data s\ |
+|   tatus is not current                                     |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Person header (content) states=[default,loading]       |
-|   - Linked faces (ai_review) states=[default,loading,empt… |
-|   - Cluster evidence thumbnails (cropped face crop; raw m… |
-|   - Save / assign / open queue (form) states=[default,loa… |
+|   - Linked faces (ai_review) states=[default,loading,empt\ |
+|   y,error,degraded]                                        |
+|   - Cluster evidence thumbnails (cropped face crop; raw m\ |
+|   edia fallback for uncroppable bbox; labelled visible no\ |
+|   -image state) (ai_review) states=[default,loading,empty\ |
+|   ,error,degraded]                                         |
+|   - Save / assign / open queue (form) states=[default,loa\ |
+|   ding,empty,error,degraded]                               |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Save person changes -> roster-person-workspac… |
-|   [secondary] Open evidence lightbox -> roster-face-light… |
+|   [PRIMARY] Save person changes -> roster-person-workspac\ |
+|   e (costly,preview)                                       |
+|   [secondary] Open evidence lightbox -> roster-face-light\ |
+|   box                                                      |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | degraded       |
 +------------------------------------------------------------+
@@ -127,15 +158,20 @@ url_params: `cluster`
 
 ```
 +------------------------------------------------------------+
-| Face-group drawer (deep-link shim)  [overlay]  #/roster?c… |
-| Person-first face-group sample drawer (clusters tab retir… |
+| Face-group drawer (deep-link shim)  [overlay]  #/roster?c\ |
+|   luster=                                                  |
+| Person-first face-group sample drawer (clusters tab retir\ |
+|   ed; cluster= shim opens drawer)                          |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Sample faces (forced_choice) states=[default,loading,… |
-|   - Assign / dismiss drawer (form) states=[default,loadin… |
+|   - Sample faces (forced_choice) states=[default,loading,\ |
+|   empty,error]                                             |
+|   - Assign / dismiss drawer (form) states=[default,loadin\ |
+|   g,empty,error]                                           |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Assign face group to person -> person (costly… |
+|   [PRIMARY] Assign face group to person -> person (costly\ |
+|   ,preview)                                                |
 +------------------------------------------------------------+
 | states: default | loading | empty | error                  |
 +------------------------------------------------------------+
@@ -152,11 +188,15 @@ Purpose: Full-size face/media evidence dialog opened from workspace evidence thu
 
 ```
 +------------------------------------------------------------+
-| Face evidence lightbox  [overlay]  #/roster?person= (in-p… |
-| Full-size face/media evidence dialog opened from workspac… |
+| Face evidence lightbox  [overlay]  #/roster?person= (in-p\ |
+|   anel dialog; no dedicated route)                         |
+| Full-size face/media evidence dialog opened from workspac\ |
+|   e evidence thumbnails; closes via dialog affordance and\ |
+|    resets when the selected person identity changes        |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Enlarged evidence media with accessible ordinal name … |
+|   - Enlarged evidence media with accessible ordinal name \ |
+|   (ai_review) states=[default,error]                       |
 |   - Close affordance (form) states=[default,error]         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
@@ -204,13 +244,22 @@ Action states: ready, preview_ready, conflict, committing
 
 ```
 +------------------------------------------------------------+
-| Merge people dialog  [overlay]  #/roster?person=&mergeInt… |
-| PersonMergeDialog previews the survivor, loser, tag union… |
+| Merge people dialog  [overlay]  #/roster?person=&mergeInt\ |
+|   o=                                                       |
+| PersonMergeDialog previews the survivor, loser, tag union\ |
+|   , face-group counts, and conflicts before the operator \ |
+|   confirms a reversible merge.                             |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Merge preview (survivor, loser, tag union, face-group… |
-|   - Confirm merge only after the preview is current; canc… |
-|   - Conflict details (tag or face-group conflict blocks a… |
+|   - Merge preview (survivor, loser, tag union, face-group\ |
+|    counts, and conflicts) (forced_choice) states=[default\ |
+|   ,loading,error,degraded]                                 |
+|   - Confirm merge only after the preview is current; canc\ |
+|   el leaves both people unchanged (form) states=[default,\ |
+|   loading,error]                                           |
+|   - Conflict details (tag or face-group conflict blocks a\ |
+|   n unreviewed commit) (status) states=[default,error,deg\ |
+|   raded]                                                   |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when ready                                                 |
@@ -245,13 +294,20 @@ Action states: success, undoing, undone, error
 
 ```
 +------------------------------------------------------------+
-| Person merge result  [overlay]  #/roster?person=&mergeRes… |
-| Success banner confirms the person merge and offers Undo;… |
+| Person merge result  [overlay]  #/roster?person=&mergeRes\ |
+|   ult=                                                     |
+| Success banner confirms the person merge and offers Undo;\ |
+|    the undone state restores the prior survivor, loser, t\ |
+|   ags, and face-group bindings.                            |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Success banner (people merged) with Undo (status) sta… |
-|   - Undo merge restores the prior person and face-group b… |
-|   - Undone state (original people, tags, and face-group c… |
+|   - Success banner (people merged) with Undo (status) sta\ |
+|   tes=[default,loading,error]                              |
+|   - Undo merge restores the prior person and face-group b\ |
+|   indings (form) states=[default,loading,error]            |
+|   - Undone state (original people, tags, and face-group c\ |
+|   ounts are visible again) (content) states=[default,erro\ |
+|   r,degraded]                                              |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when success                                               |
@@ -295,6 +351,17 @@ Action states: success, undoing, undone, error
 ## Flows
 ### Open face-group drawer → assign → person workspace (`flow-cluster-to-person`)
 
+```
+flow: Open face-group drawer → assign → person workspace (flo\
+  w-cluster-to-person) job=job-cluster-review
+  1. Roster (People) [roster-shell]
+     --from entries/clusters-->
+  2. Face-group drawer (deep-link shim) [roster-cluster-drawe\
+  r]
+     --cluster= drawer-->
+  3. Person workspace [roster-person-workspace]
+```
+
 ```mermaid
 flowchart TD
   %% flow: Open face-group drawer → assign → person workspace job=job-cluster-review
@@ -308,6 +375,14 @@ flowchart TD
 
 ### Roster → Workbench continue scan (`flow-return-workbench`)
 
+```
+flow: Roster → Workbench continue scan (flow-return-workbench\
+  ) job=job-manage-person
+  1. Person workspace [roster-person-workspace]
+     --done assigning-->
+  2. Workbench [exit-workbench]
+```
+
 ```mermaid
 flowchart TD
   %% flow: Roster → Workbench continue scan job=job-manage-person
@@ -318,6 +393,22 @@ flowchart TD
 ```
 
 ### Roster row → preview person merge → confirm → Undo (`flow-person-merge-undo`)
+
+```
+flow: Roster row → preview person merge → confirm → Undo (flo\
+  w-person-merge-undo) job=job-merge-people
+  1. Roster (People) [roster-shell]
+     --name, avatar, and face-group-count buttons open worksp\
+  ace; pencil is rename-only; choose Merge into... for a merg\
+  e-->
+  2. Merge people dialog [roster-person-merge-dialog]
+     --preview survivor, loser, tag union, face-group counts,\
+   and conflicts before commit-->
+  3. Person merge result [roster-person-merge-success]
+     --confirm shows a success banner with Undo-->
+  4. Person merge result [roster-person-merge-success] (visit\
+   2)
+```
 
 ```mermaid
 flowchart TD

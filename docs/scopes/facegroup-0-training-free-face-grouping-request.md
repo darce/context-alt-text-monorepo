@@ -2,10 +2,12 @@
 
 **Requested by:** operator, via the semantic-image-search session · **Date:** 2026-10-27
 **Status:** proposed; awaiting `/scope` intake
-**Task:** FACEGROUP-0 · branch `feature/facegroup-0` · intake only, no code on this branch yet
+**Task:** FACEGROUP-0 · branch `feature/facegroup-0` · documentation only; runtime work remains proposed and awaits intake
 **Blocks:** nothing today. FIR-6 S4 calibration and the FIRBENCH-1 model pick each gain a consumer that turns their numbers into grouping decisions.
 **Canon:** heuristics canon v0.26.2. Rows are cited by id; the table in [Canon rows](#canon-rows) gives each rule name.
 **Evidence rule:** this request cites code, plans and corpus sizes. It cites no accuracy number as evidence; open question 7 quotes one historical rate only to show that it cannot support an FPIR claim. Any number a later slice needs comes from a fresh run on the current stack (the FIR-13 plan line 48 discipline).
+
+**Documentation landing boundary:** this request and the FIR report preserve the authored proposal and dated research only. They authorize no FG-1–FG-8 implementation, inference, data acquisition, tenant/API/settings write or activation. Open questions remain recommendations for `/scope`, the operator and counsel; no answer is adopted here. The prospective scope, eval-case file, calibration outputs and runtime slices below remain future work, not delivered evidence.
 
 ## The ask
 
@@ -90,7 +92,7 @@ The pipeline runs in this order:
 8. Suggestion bands.
 9. `Person N` auto-label.
 
-Paths below are under `apps/prototype-description-service/` at `b43e4d5d1e9c5bf5fdaa1da644d267b277149497`.
+Paths below are under `apps/prototype-description-service/` at `b43e4d5d1e9c5bf5fdaa1da644d267b277149497`. This is the original source snapshot; the supplied canonical commit map identifies `7dd4bff877ea746d04c9952f8d6b88656d725363` as its identical full tree after the user-authorized author-email correction. The anchors describe that dated snapshot, not a newer code revision.
 
 | Area | Anchor | Behaviour today |
 | --- | --- | --- |

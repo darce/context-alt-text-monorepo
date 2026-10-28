@@ -115,7 +115,12 @@ function migrateState(manifest,contract,previousManifest,saved,onUnmatchedPair=n
  return validate(manifest,contract,migrated);
 }
 
-const api={orders,empty,fresh,snapshot,validate,setPair,importState,validReview,invalidateGold,invalidateReview,stable,mergeInitialState,migrateState};
+function exportFileName(base,date) {
+ const pad=n=>String(n).padStart(2,'0'),m=-date.getTimezoneOffset(),offset=Math.abs(m);
+ return base+'-'+String(date.getFullYear()).padStart(4,'0')+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+'T'+pad(date.getHours())+'-'+pad(date.getMinutes())+'-'+pad(date.getSeconds())+(m>=0?'+':'-')+pad(Math.floor(offset/60))+pad(offset%60)+'.json';
+}
+
+const api={orders,empty,fresh,snapshot,validate,setPair,importState,validReview,invalidateGold,invalidateReview,stable,mergeInitialState,migrateState,exportFileName};
 if(typeof module!=='undefined'&&module.exports) module.exports=api;
 root.OperatorReview=api;
 if(typeof document==='undefined') return;
@@ -168,8 +173,8 @@ const blindButton=button('Enter blind A/B',()=>{blind=!blind;crossBlind=false;ap
 const crossButton=button(TEXT.crossModel,()=>{crossBlind=!crossBlind;blind=false;applyBlind();});toolbar.append(crossButton);
 crossButton.disabled=!rule||!root.OperatorCrossModel;
 if(crossButton.disabled)crossButton.title=TEXT.crossModelUnavailable;
-toolbar.append(button('Export JSON',()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const a=el('a',undefined,{download:'operator-reviews.json',href:URL.createObjectURL(blob)});a.click();setTimeout(()=>URL.revokeObjectURL(a.href),0);}));
-if(unmatchedPriorPairs.length)toolbar.append(button('Export unmatched prior preferences ('+unmatchedPriorPairs.length+')',()=>{const blob=new Blob([JSON.stringify({schema:'operator-review-unmatched-prior-preferences/v1',source_custody:'Original browser saves retained unchanged',records:unmatchedPriorPairs},null,2)],{type:'application/json'});const link=el('a',undefined,{download:'unmatched-prior-preferences.json',href:URL.createObjectURL(blob)});link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);}));
+toolbar.append(button('Export JSON',()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const a=el('a',undefined,{download:exportFileName('operator-reviews',new Date()),href:URL.createObjectURL(blob)});a.click();setTimeout(()=>URL.revokeObjectURL(a.href),0);}));
+if(unmatchedPriorPairs.length)toolbar.append(button('Export unmatched prior preferences ('+unmatchedPriorPairs.length+')',()=>{const blob=new Blob([JSON.stringify({schema:'operator-review-unmatched-prior-preferences/v1',source_custody:'Original browser saves retained unchanged',records:unmatchedPriorPairs},null,2)],{type:'application/json'});const link=el('a',undefined,{download:exportFileName('unmatched-prior-preferences',new Date()),href:URL.createObjectURL(blob)});link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);}));
 const file=field(toolbar,'Import JSON',el('input',undefined,{type:'file',accept:'.json,application/json'}));
 const metrics=el('details');metrics.append(el('summary','Accuracy and paired lexicon metrics')); const metricBody=el('div');metrics.append(metricBody);toolbar.append(count,status,metrics);
 const decisionPanel=el('details',undefined,{id:'operator-decision'}),decisionHost=el('div');

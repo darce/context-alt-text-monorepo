@@ -28,7 +28,11 @@ import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
 import { GpuControlCard } from './settings/GpuControlCard';
 import { isReadOnly } from './settings/settingsConstants';
 import { TONE_CLASS } from './settings/testConnectionBanner';
-import { useSettingsPageState } from './settings/useSettingsPageState';
+import {
+  useSettingsPageState,
+  type NonRoutingField,
+  type NonRoutingRevisions,
+} from './settings/useSettingsPageState';
 import {
   hasInsightFaceProof,
   matchesHealthProbeTarget,
@@ -43,18 +47,22 @@ interface SettingsFormSnapshot {
   urlRevision: number;
   apiKey: string;
   apiKeyRevision: number;
-  nonRoutingRevision: number;
+  nonRoutingRevisions: NonRoutingRevisions;
   descriptionBudgetMaxAttempts: string;
   recognitionEnabled: boolean;
   allowPersonNames: boolean | null;
   contextCategories: ContextCategory[];
 }
 
-type NonRoutingFormValues = Pick<SettingsFormSnapshot,
-  'descriptionBudgetMaxAttempts' | 'recognitionEnabled' | 'allowPersonNames' | 'contextCategories'>;
-type NonRoutingEdits = {
-  [Field in keyof NonRoutingFormValues]?: { revision: number; value: NonRoutingFormValues[Field] };
+type NonRoutingPayloadField = 'description_budget' | 'recognition_enabled' | 'allow_person_names' | 'context_categories';
+// Each non-routing payload field and the form field whose edit revision it carries.
+const NON_ROUTING_FIELDS: Record<NonRoutingPayloadField, NonRoutingField> = {
+  description_budget: 'descriptionBudgetMaxAttempts',
+  recognition_enabled: 'recognitionEnabled',
+  allow_person_names: 'allowPersonNames',
+  context_categories: 'contextCategories',
 };
+const NON_ROUTING_PAYLOAD_FIELDS = Object.keys(NON_ROUTING_FIELDS) as NonRoutingPayloadField[];
 
 const sectionFromLocation = (search: string, hash: string): string | null => {
   const fromSearch = new URLSearchParams(search).get('section');
@@ -88,10 +96,9 @@ export const SettingsPage = (): React.JSX.Element => {
   const routingSaveIncludesOtherSettings = useRef(false);
   const inFlightRoutingSnapshot = useRef<SettingsFormSnapshot | null>(null);
   const inFlightPayload = useRef<SaveSettingsPayload | null>(null);
-  // Failed non-routing values, restored over the next readback publication.
-  const keptFailedValues = useRef<Partial<SettingsFormSnapshot> | null>(null);
-  const nonRoutingRevision = useRef(0);
-  const nonRoutingEdits = useRef<NonRoutingEdits>({});
+  // Non-routing fields whose write failed and that no later write acknowledged.
+  // Their failure and whole-form Retry outlive every unrelated routing save.
+  const unsavedFields = useRef<NonRoutingPayloadField[]>([]);
   const inFlightUrlWrite = useRef(false);
   const urlReadbackAfter = useRef<number | null>(null);
   // A blur queues routing fields only; an explicit submit queues the full form.
@@ -213,8 +220,24 @@ export const SettingsPage = (): React.JSX.Element => {
     });
   };
 
+  // An unacknowledged failure outranks routing feedback: it stays beside the
+  // service card, and Retry resends the whole form with the kept values.
+  const showUnsavedFields = (): boolean => {
+    if (unsavedFields.current.length === 0) {
+      return false;
+    }
+    routingSaveFeedback.current = true;
+    routingSaveIncludesOtherSettings.current = true;
+    dispatch({
+      type: 'setSaveMessage',
+      message: sprintf(__('Could not save settings. (%s)', 'alt-context'), unsavedFields.current.join(', ')),
+      tone: 'error',
+    });
+    return true;
+  };
+
   const clearRoutingCheckFeedback = (): void => {
-    if (routingSaveFeedback.current) {
+    if (routingSaveFeedback.current && !showUnsavedFields()) {
       routingSaveFeedback.current = false;
       dispatch({ type: 'clearSaveMessage' });
     }
@@ -235,7 +258,7 @@ export const SettingsPage = (): React.JSX.Element => {
     urlRevision: state.urlRevision,
     apiKey: state.apiKey,
     apiKeyRevision: state.apiKeyRevision,
-    nonRoutingRevision: nonRoutingRevision.current,
+    nonRoutingRevisions: state.nonRoutingRevisions,
     descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
     recognitionEnabled: state.recognitionEnabled,
     allowPersonNames: state.allowPersonNames,
@@ -312,73 +335,26 @@ export const SettingsPage = (): React.JSX.Element => {
     return next;
   };
 
-  const restoreNonRoutingValues = useCallback((kept: Partial<NonRoutingFormValues>): void => {
-    if (kept.descriptionBudgetMaxAttempts !== undefined) {
-      dispatch({ type: 'setDescriptionBudgetMaxAttempts', value: kept.descriptionBudgetMaxAttempts });
-    }
-    if (kept.recognitionEnabled !== undefined) {
-      dispatch({ type: 'setRecognitionEnabled', value: kept.recognitionEnabled });
-    }
-    if (typeof kept.allowPersonNames === 'boolean') {
-      dispatch({ type: 'setAllowPersonNames', value: kept.allowPersonNames });
-    }
-    if (kept.contextCategories) {
-      dispatch({ type: 'setContextCategories', value: kept.contextCategories });
-    }
-  }, [dispatch]);
-
-  const keepFailedValues = (
-    payload: SaveSettingsPayload | null,
-    saved: string[],
-    submitted: SettingsFormSnapshot | null,
-  ): void => {
-    // A readback resets non-routing form values; keep the ones that did not persist.
-    const failed = (field: keyof SaveSettingsPayload): boolean =>
-      !!payload && payload[field] !== undefined && !saved.includes(field);
-    const form = submitted ?? captureFormSnapshot();
-    const value = <Field extends keyof NonRoutingFormValues>(field: Field): NonRoutingFormValues[Field] => {
-      const edit = nonRoutingEdits.current[field];
-      // Readback resets are not user edits. Only a later edit supersedes the
-      // submitted value, even when an earlier queued save reset the live form.
-      return edit && edit.revision > form.nonRoutingRevision ? edit.value : form[field];
-    };
-    const kept: Partial<SettingsFormSnapshot> = {
-      ...(failed('description_budget') ? { descriptionBudgetMaxAttempts: value('descriptionBudgetMaxAttempts') } : {}),
-      ...(failed('recognition_enabled') ? { recognitionEnabled: value('recognitionEnabled') } : {}),
-      ...(failed('allow_person_names') ? { allowPersonNames: value('allowPersonNames') } : {}),
-      ...(failed('context_categories') ? { contextCategories: value('contextCategories') } : {}),
-    };
-    const merged = { ...keptFailedValues.current, ...kept };
-    keptFailedValues.current = Object.keys(merged).length > 0 ? merged : null;
-    // A rejected write/readback may publish no settings at all. Restore now as
-    // well as after any later readback so Retry always sees the failed values.
-    restoreNonRoutingValues(merged);
-  };
-
-  const recordNonRoutingEdit = <Field extends keyof NonRoutingFormValues>(
-    field: Field,
-    value: NonRoutingFormValues[Field],
-  ): void => {
-    nonRoutingRevision.current += 1;
-    nonRoutingEdits.current = {
-      ...nonRoutingEdits.current,
-      [field]: { revision: nonRoutingRevision.current, value },
-    };
-    if (keptFailedValues.current && field in keptFailedValues.current) {
-      // An edit during a deferred failed readback must survive its publication.
-      keptFailedValues.current = { ...keptFailedValues.current, [field]: value };
-    }
-  };
-
-  useEffect(() => {
-    // Runs after useSettingsPageState's readback sync in the same commit.
-    const kept = keptFailedValues.current;
-    if (!kept || !settingsQuery.data) {
+  // Readbacks keep every unacknowledged non-routing edit (useSettingsPageState).
+  // Only the revision a write carried becomes clean; a newer edit stays intent.
+  const acknowledgeNonRouting = (values: SettingsFormSnapshot, fields: NonRoutingPayloadField[]): void => {
+    if (fields.length === 0) {
       return;
     }
-    keptFailedValues.current = null;
-    restoreNonRoutingValues(kept);
-  }, [settingsQuery.data, restoreNonRoutingValues]);
+    const revisions: Partial<NonRoutingRevisions> = {};
+    for (const field of fields) {
+      revisions[NON_ROUTING_FIELDS[field]] = values.nonRoutingRevisions[NON_ROUTING_FIELDS[field]];
+    }
+    dispatch({ type: 'acknowledgeNonRouting', revisions });
+    unsavedFields.current = unsavedFields.current.filter((field) => !fields.includes(field));
+  };
+
+  const recordUnsavedFields = (payload: SaveSettingsPayload | null, saved: string[]): void => {
+    const failed = NON_ROUTING_PAYLOAD_FIELDS.filter((field) => payload?.[field] !== undefined && !saved.includes(field));
+    unsavedFields.current = NON_ROUTING_PAYLOAD_FIELDS.filter(
+      (field) => failed.includes(field) || unsavedFields.current.includes(field),
+    );
+  };
 
   const acknowledgeSatisfiedUrl = useCallback((data: SettingsResponse): void => {
     const committed = pendingNoopUrl.current;
@@ -420,12 +396,17 @@ export const SettingsPage = (): React.JSX.Element => {
     routingOnly = false,
   ): void => {
     commitUrlNoop(values, data);
-    const payload = routingOnly
+    const payload: SaveSettingsPayload = routingOnly
       ? {
         ...(values.url !== data.url ? { url: values.url } : {}),
         ...(values.apiKey ? { api_key: values.apiKey } : {}),
       }
       : buildSavePayload(values, data);
+    if (!routingOnly) {
+      // A full-form write settles each non-routing field it omits: that value
+      // already matches the settings it was diffed against.
+      acknowledgeNonRouting(values, NON_ROUTING_PAYLOAD_FIELDS.filter((field) => payload[field] === undefined));
+    }
     if (Object.keys(payload).length === 0) {
       // Draining satisfied intent is not a new save result. Keep the settled
       // feedback and retry scope, including a mixed save's partial failure.
@@ -446,10 +427,6 @@ export const SettingsPage = (): React.JSX.Element => {
         (field) => field !== 'url' && field !== 'api_key',
       );
       routingSaveFeedback.current = hasRoutingChanges;
-    }
-    if (!routingOnly) {
-      // This submit carries the form's values, including any kept failed ones.
-      keptFailedValues.current = null;
     }
     inFlightRoutingSnapshot.current = values;
     inFlightPayload.current = payload;
@@ -503,6 +480,11 @@ export const SettingsPage = (): React.JSX.Element => {
       if (settled && data.saved.includes('url')) {
         dispatch({ type: 'acknowledgeUrl', revision: settled.urlRevision });
       }
+      if (settled && payload) {
+        acknowledgeNonRouting(settled, NON_ROUTING_PAYLOAD_FIELDS.filter(
+          (field) => payload[field] !== undefined && data.saved.includes(field),
+        ));
+      }
       if (settled?.apiKey && data.saved.includes('api_key')) {
         dispatch({ type: 'acknowledgeApiKey', value: settled.apiKey, revision: settled.apiKeyRevision });
         // Retire the acknowledged intent before readback can reject onSuccess
@@ -533,7 +515,7 @@ export const SettingsPage = (): React.JSX.Element => {
           message: sprintf(__('Could not save settings. (%s)', 'alt-context'), failedFields),
           tone: 'error',
         });
-        keepFailedValues(payload, data.saved, settled);
+        recordUnsavedFields(payload, data.saved);
         // Refresh so the form reflects what actually landed (partial success).
         try {
           await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
@@ -552,13 +534,17 @@ export const SettingsPage = (): React.JSX.Element => {
       }
 
       hasAcknowledgedSave.current = true;
-      dispatch({
-        type: 'setSaveMessage',
-        message: isRoutingAutosave
-          ? __('Saved. Checking health…', 'alt-context')
-          : __('Settings saved.', 'alt-context'),
-        tone: isRoutingAutosave ? 'info' : 'success',
-      });
+      // This write succeeded, but it did not acknowledge an earlier failed field.
+      const showsUnsaved = showUnsavedFields();
+      if (!showsUnsaved) {
+        dispatch({
+          type: 'setSaveMessage',
+          message: isRoutingAutosave
+            ? __('Saved. Checking health…', 'alt-context')
+            : __('Settings saved.', 'alt-context'),
+          tone: isRoutingAutosave ? 'info' : 'success',
+        });
+      }
       try {
         await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
         // A saved URL/key may repair the recognition breaker; refetch sync health
@@ -571,7 +557,9 @@ export const SettingsPage = (): React.JSX.Element => {
         syncLocalizedRouting(refreshed);
         resolvedSettings.current = refreshed;
         if (isRoutingAutosave) {
-          scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
+          // The new target is still checked; with a failure kept in the card,
+          // the result reports through the health banner instead.
+          scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };
           startScheduledHealthCheck();
         }
         drainQueuedSave(refreshed);
@@ -595,7 +583,7 @@ export const SettingsPage = (): React.JSX.Element => {
           ?? Infinity;
         inFlightUrlWrite.current = false;
       }
-      keepFailedValues(inFlightPayload.current, [], inFlightRoutingSnapshot.current);
+      recordUnsavedFields(inFlightPayload.current, []);
       inFlightRoutingSnapshot.current = null;
       inFlightPayload.current = null;
       const isRoutingAutosave = routingSavePending.current;
@@ -833,8 +821,10 @@ export const SettingsPage = (): React.JSX.Element => {
 
     if (Object.keys(payload).length === 0) {
       if (checkIfUnchanged) {
-        routingSaveFeedback.current = false;
-        dispatch({ type: 'clearSaveMessage' });
+        if (!showUnsavedFields()) {
+          routingSaveFeedback.current = false;
+          dispatch({ type: 'clearSaveMessage' });
+        }
         startHealthCheck();
       }
       return;
@@ -852,8 +842,8 @@ export const SettingsPage = (): React.JSX.Element => {
   };
 
   const retryFailedSave = (): void => {
-    // A failed mixed save is retried as the whole form; the readback reset its
-    // non-routing values, which keepFailedValues restored. Autosave retries routing.
+    // A failed mixed save is retried as the whole form, whose unacknowledged
+    // non-routing values survived every readback. Autosave retries routing.
     if (routingSaveIncludesOtherSettings.current) {
       submitForm();
       return;
@@ -978,19 +968,15 @@ export const SettingsPage = (): React.JSX.Element => {
             dispatch({ type: 'setApiKey', value });
           },
           onDescriptionBudgetMaxAttemptsChange: (value) => {
-            recordNonRoutingEdit('descriptionBudgetMaxAttempts', value);
             dispatch({ type: 'setDescriptionBudgetMaxAttempts', value });
           },
           onRecognitionEnabledChange: (value) => {
-            recordNonRoutingEdit('recognitionEnabled', value);
             dispatch({ type: 'setRecognitionEnabled', value });
           },
           onAllowPersonNamesChange: (value) => {
-            recordNonRoutingEdit('allowPersonNames', value);
             dispatch({ type: 'setAllowPersonNames', value });
           },
           onContextCategoriesChange: (value) => {
-            recordNonRoutingEdit('contextCategories', value);
             dispatch({ type: 'setContextCategories', value });
           },
           onSave: handleSave,
@@ -1004,9 +990,12 @@ export const SettingsPage = (): React.JSX.Element => {
         onRetryReload={() => {
           void settingsQuery.refetch().then((result) => {
             if (!result.isError) {
-              scheduledHealthCheck.current = { afterRoutingSave: true, request: null };
-              dispatch({ type: 'setSaveMessage',
-                message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
+              const showsUnsaved = showUnsavedFields();
+              scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };
+              if (!showsUnsaved) {
+                dispatch({ type: 'setSaveMessage',
+                  message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
+              }
             }
           });
         }}

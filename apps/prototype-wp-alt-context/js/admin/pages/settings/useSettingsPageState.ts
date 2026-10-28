@@ -137,7 +137,7 @@ const reducer = (state: SettingsPageState, action: SettingsPageAction): Settings
       // An older write's acknowledgement never cleans a newer edit of the same field.
       const acknowledged = { ...state.acknowledgedNonRoutingRevisions };
       for (const field of Object.keys(action.revisions) as NonRoutingField[]) {
-        acknowledged[field] = state.nonRoutingRevisions[field];
+        acknowledged[field] = Math.max(acknowledged[field], action.revisions[field] ?? 0);
       }
       return { ...state, acknowledgedNonRoutingRevisions: acknowledged };
     }

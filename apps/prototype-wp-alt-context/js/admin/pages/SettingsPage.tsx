@@ -89,6 +89,9 @@ export const SettingsPage = (): React.JSX.Element => {
   const healthProbeMetadata = useRef(new WeakMap<object, HealthProbeBinding & { afterRoutingSave: boolean }>());
   const currentHealthRequest = useRef<object | null>(null);
   const credentialRevision = useRef(Symbol());
+  // Query refreshes change probe credentials, but only routing edits revoke
+  // the user's intent to resume a check after Reload settings.
+  const routingIntentRevision = useRef(0);
   const routingSavePending = useRef(false);
   const hasAcknowledgedSave = useRef(false);
   const routingSaveFeedback = useRef(false);
@@ -101,6 +104,9 @@ export const SettingsPage = (): React.JSX.Element => {
   const unsavedFields = useRef<NonRoutingPayloadField[]>([]);
   // Readback recovery is independent of an outstanding failed-field retry.
   const [settingsReloadWarning, setSettingsReloadWarning] = useState('');
+  // Health completion must neither erase a settings warning nor overwrite a
+  // failed save. Keep its terminal explanation separate from both.
+  const [healthCheckWarning, setHealthCheckWarning] = useState('');
   const inFlightUrlWrite = useRef(false);
   const urlReadbackAfter = useRef<number | null>(null);
   // A blur queues routing fields only; an explicit submit queues the full form.
@@ -169,6 +175,7 @@ export const SettingsPage = (): React.JSX.Element => {
 
   useEffect(() => () => {
     if (healthDeadline.current !== null) clearTimeout(healthDeadline.current);
+    routingIntentRevision.current += 1;
     healthProbeGeneration.current += 1;
     currentHealthRequest.current = null;
     scheduledHealthCheck.current = { afterRoutingSave: false, request: null };
@@ -251,6 +258,8 @@ export const SettingsPage = (): React.JSX.Element => {
     // An edit cancels an unfinished post-save check and its deadline. Settle the
     // "Checking health…" copy in the same transition; the card returns to draft.
     const cancelsPostSaveCheck = scheduledHealthCheck.current?.afterRoutingSave === true;
+    routingIntentRevision.current += 1;
+    setHealthCheckWarning('');
     queuedHealthCheck.current = false;
     invalidateHealthProbe();
     if (cancelsPostSaveCheck) {
@@ -475,7 +484,7 @@ export const SettingsPage = (): React.JSX.Element => {
       // Reload settings runs the check once the settings load.
       const notChecked = sprintf(__('Health not checked: %s.', 'alt-context'),
         __('settings could not reload', 'alt-context'));
-      setSettingsReloadWarning((warning) => (warning.includes(notChecked) ? warning : `${warning} ${notChecked}`.trim()));
+      setHealthCheckWarning(notChecked);
       return;
     }
     scheduledHealthCheck.current ??= { afterRoutingSave: !showsUnsaved, request: null };
@@ -557,6 +566,7 @@ export const SettingsPage = (): React.JSX.Element => {
             queryFn: fetchSettings,
           });
           setSettingsReloadWarning('');
+          setHealthCheckWarning('');
           syncLocalizedRouting(refreshedOnFail);
           drainQueuedSave(refreshedOnFail, 'settled');
         } catch {
@@ -589,6 +599,7 @@ export const SettingsPage = (): React.JSX.Element => {
           queryFn: fetchSettings,
         });
         setSettingsReloadWarning('');
+        setHealthCheckWarning('');
         syncLocalizedRouting(refreshed);
         resolvedSettings.current = refreshed;
         if (isRoutingAutosave) {
@@ -603,10 +614,8 @@ export const SettingsPage = (): React.JSX.Element => {
         scheduledHealthCheck.current = null;
         const warning = sprintf(__('Saved, but the page could not reload settings: %s.', 'alt-context'),
           resolveWpErrorMessage(error, __('settings unavailable', 'alt-context')));
-        if (showUnsavedFields()) {
-          setSettingsReloadWarning(warning);
-        } else {
-          setSettingsReloadWarning('');
+        setSettingsReloadWarning(warning);
+        if (!showUnsavedFields()) {
           dispatch({ type: 'setSaveMessage', message: warning, tone: 'warning' });
         }
         drainQueuedSave(reconciled);
@@ -707,6 +716,7 @@ export const SettingsPage = (): React.JSX.Element => {
     afterRoutingSave = false,
     scheduled = false,
   ): void => {
+    setHealthCheckWarning('');
     dispatch({ type: 'clearTestResult' });
     const generation = ++healthProbeGeneration.current;
     const probeVariables = { ...variables };
@@ -773,17 +783,17 @@ export const SettingsPage = (): React.JSX.Element => {
         scheduledHealthCheck.current = null;
         currentHealthRequest.current = null;
         healthProbeGeneration.current += 1;
-        if (scheduled.afterRoutingSave) {
-          routingSaveFeedback.current = true;
-          const reason = !resolvedSettings.current?.effective_target_url.trim()
-            ? __('no service URL', 'alt-context')
-            : observedQuery.current.error
-              ? __('settings could not reload', 'alt-context')
-              : __('health check timed out', 'alt-context');
-          dispatch({ type: 'setSaveMessage',
-            message: sprintf(__('Saved. Health not checked: %s.', 'alt-context'), reason),
-            tone: 'warning' });
-        }
+        const reason = !resolvedSettings.current?.effective_target_url.trim()
+          ? __('no service URL', 'alt-context')
+          : observedQuery.current.error
+            ? __('settings could not reload', 'alt-context')
+            : __('health check timed out', 'alt-context');
+        // Every accepted scheduled check settles visibly, including checks
+        // whose settings write failed and still owns the save error and Retry.
+        setHealthCheckWarning(sprintf(scheduled.afterRoutingSave
+          ? __('Saved. Health not checked: %s.', 'alt-context')
+          : __('Health not checked: %s.', 'alt-context'), reason));
+        if (scheduled.afterRoutingSave) clearRoutingCheckFeedback();
       }, 15000);
     }
     if (!scheduledHealthCheck.current && healthDeadline.current !== null) {
@@ -998,7 +1008,13 @@ export const SettingsPage = (): React.JSX.Element => {
           saveMessage: state.saveMessage,
           saveMessageTone: state.saveMessageTone,
           routingSaveFeedback: routingSaveFeedback.current,
-          settingsReloadWarning,
+          // A readback warning may already be shown as the save result. Retain
+          // it independently so a manual health check can clear save feedback
+          // without losing the still-valid settings warning.
+          settingsReloadWarning: [
+            settingsReloadWarning === state.saveMessage ? '' : settingsReloadWarning,
+            healthCheckWarning,
+          ].filter(Boolean).join(' '),
         }}
         actions={{
           onUrlChange: (value) => {
@@ -1030,9 +1046,14 @@ export const SettingsPage = (): React.JSX.Element => {
           },
         }}
         onRetryReload={() => {
+          const routingOwner = routingIntentRevision.current;
           void settingsQuery.refetch().then((result) => {
             if (!result.isError) {
               setSettingsReloadWarning('');
+              setHealthCheckWarning('');
+              // Refresh remains useful, but it cannot recreate health intent
+              // revoked by an intervening URL/key edit (even an edit/revert).
+              if (routingOwner !== routingIntentRevision.current) return;
               queuedHealthCheck.current = false;
               const showsUnsaved = showUnsavedFields();
               scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };

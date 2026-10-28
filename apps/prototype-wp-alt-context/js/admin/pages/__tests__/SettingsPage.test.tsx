@@ -3266,6 +3266,196 @@ describe('QCR real React Query credential boundaries', () => {
     }
   });
 
+  // R6 continuations exercise the real QueryClient and deferred API producers.
+  it.each(['transport', 'partial'] as const)('R6-F1 a failed budget write still gives accepted health a terminal deadline: %s', async (mode) => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      await acceptCheckDuringBudgetSave(h);
+      const budget = screen.getByLabelText('Maximum description attempts');
+      type(budget, '7');
+      await settleBudgetWrite(h, h.requests[0], mode);
+      expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(h.api.testConnection).mock.calls[0][0]).toEqual({});
+      expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+      const deadline = timers.mock.calls.filter((args) => args[1] === 15000).at(-1);
+      expect(deadline).toBeDefined();
+      await act(async () => { (deadline![0] as () => void)(); }); await flush();
+      const card = screen.getByTestId('acx-target-card-service');
+      expect(card).toHaveTextContent(/Health not checked|health check timed out|Could not check/);
+      expect(within(card).getByRole('button', { name: 'Check health' })).toBeEnabled();
+      expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+      expect(budget).toHaveValue(7);
+      expect(screen.queryByText('Saved. Checking health…')).not.toBeInTheDocument();
+      await act(async () => {
+        probe.resolve({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+        await probe.promise;
+      }); await flush();
+      expect(within(card).queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+      vi.mocked(h.api.testConnection).mockResolvedValue({ outcome: 'network_error' });
+      fireEvent.click(within(card).getByRole('button', { name: 'Check health' })); await flush();
+      expect(h.api.testConnection).toHaveBeenCalledTimes(2);
+      expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Could not reach the recognition service.');
+      fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+      expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 7 } });
+    } finally { timers.mockRestore(); }
+  });
+
+  it('R6-F1 real 15.1 second deadline settles health independently of the failed budget Save', async () => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'transport');
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15100)); }); await flush();
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent(/Health not checked|health check timed out|Could not check/);
+    expect(within(card).getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+  }, 22000);
+
+  it.each(['url', 'key', 'url-roundtrip', 'key-roundtrip'] as const)('R6-F2 a routing edit revokes deferred Reload health ownership: %s', async (edit) => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'partial-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent('Health not checked: settings could not reload.');
+    const reload = deferred<SettingsResponse>();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(reload.promise);
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    expect(h.client.getQueryState(queryKeys.settings.all)?.fetchStatus).toBe('fetching');
+    const field = screen.getByLabelText(edit.startsWith('url') ? 'Service API URL' : 'API Key');
+    const original = (field as HTMLInputElement).value;
+    const newer = edit.startsWith('url') ? 'https://newer-uncommitted.example.com' : 'newer-uncommitted-key';
+    type(field, newer);
+    if (edit.endsWith('roundtrip')) type(field, original);
+    await act(async () => { reload.resolve(defaultSettings); await reload.promise; }); await flush();
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(field).toHaveValue(edit.endsWith('roundtrip') ? original : newer);
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+    expect(h.client.getQueryState(queryKeys.settings.all)?.status).toBe('success');
+    expect(within(card).queryByTestId('acx-settings-reload-warning')).not.toBeInTheDocument();
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R6-F2 old-key health cannot publish after a newer key revoked Reload recovery', async () => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'partial-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    const reload = deferred<SettingsResponse>();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(reload.promise);
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    type(screen.getByLabelText('API Key'), 'newer-uncommitted-key');
+    await act(async () => { reload.resolve(defaultSettings); await reload.promise; }); await flush();
+    await act(async () => {
+      probe.resolve({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+      await probe.promise;
+    }); await flush();
+    expect(within(card).queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('API Key')).toHaveValue('newer-uncommitted-key');
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R6-F3 current manual health success retires only the stale health clause after a successful write and failed readback', async () => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'ok-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent('Health not checked: settings could not reload.');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    vi.mocked(h.api.testConnection).mockResolvedValue({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+    fireEvent.click(within(card).getByRole('button', { name: 'Check health' })); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Connection successful.');
+    expect(card).not.toHaveTextContent('Health not checked: settings could not reload.');
+    expect(screen.getByText('Saved, but the page could not reload settings: settings unavailable.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R6-control unrelated budget edits preserve Reload health ownership and real whole-form Retry', async () => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'partial-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    const reload = deferred<SettingsResponse>();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(reload.promise);
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    type(screen.getByLabelText('Maximum description attempts'), '7');
+    await act(async () => { reload.resolve(defaultSettings); await reload.promise; }); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.api.testConnection).mock.calls[0][0]).toEqual({});
+    await act(async () => {
+      probe.resolve({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+      await probe.promise;
+    }); await flush();
+    expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Connection successful.');
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(7);
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 7 } });
+  });
+
+  it('R6-control an immediate health error leaves a usable Check health and failed-budget Retry', async () => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'transport');
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    await act(async () => { probe.reject(new Error('private health failure')); await probe.promise.catch(() => undefined); }); await flush();
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Could not reach the recognition service.');
+    expect(within(card).getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(screen.queryByText('private health failure')).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it.each(['transport', 'partial-readback-error', 'ok-readback-error'] as const)('R6-control budget settlement never probes without explicit intent: %s', async (mode) => {
+    const h = await harness();
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    await settleBudgetWrite(h, h.requests[0], mode);
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(1);
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+  });
+
+  it.each(['unknown', 'stopped'] as const)('R6-control dormant health never promotes prior GPU state: %s', async (prior) => {
+    const previous = gpuStatusQueryResult.data.gpu_state.state;
+    gpuStatusQueryResult.data.gpu_state.state = prior;
+    try {
+      const h = await harness();
+      vi.mocked(h.api.testConnection).mockResolvedValue({ outcome: 'starting', probe_mode: 'service_auth', health: { status: 'dormant' } } as TestConnectionResponse);
+      await acceptCheckDuringBudgetSave(h);
+      await settleBudgetWrite(h, h.requests[0], 'transport');
+      expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(prior === 'unknown' ? 'Service: not reported' : 'Service: stopped')).toBeInTheDocument();
+      expect(screen.queryByText('Service: ready')).not.toBeInTheDocument();
+      expect(screen.queryByText(/pool is healthy|GPU online/i)).not.toBeInTheDocument();
+      expect(screen.getByTestId('acx-test-connection-banner')).toHaveTextContent('Description service is starting.');
+      expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+      expect(screen.getByRole('button', { name: 'Retry save' })).toBeEnabled();
+    } finally { gpuStatusQueryResult.data.gpu_state.state = previous; }
+  });
+
   // R5-F1: an accepted Check health settles once the write that carried it settles.
   const PRIVATE_DETAIL = /private (budget write|readback) unavailable/;
   type Harness = Awaited<ReturnType<typeof harness>>;

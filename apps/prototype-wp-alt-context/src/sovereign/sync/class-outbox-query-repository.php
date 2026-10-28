@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/class-outbox-status.php';
+require_once __DIR__ . '/../../api/class-tenant-identity.php';
 
+use AltContext\Api\TenantIdentity;
 use RuntimeException;
 
 use function current_time;
@@ -17,6 +19,7 @@ use function json_decode;
 use function max;
 use function method_exists;
 use function trim;
+use function wp_is_uuid;
 
 class OutboxQueryRepository {
 	private string $table_name;
@@ -273,7 +276,8 @@ class OutboxQueryRepository {
 	public function load_pending_operations( int $batch_size ): array {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+		$tenant_id = $this->active_dispatch_tenant_id();
+		if ( null === $tenant_id || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
 			return array();
 		}
 
@@ -285,11 +289,12 @@ class OutboxQueryRepository {
 				'SELECT id, tenant_id, operation_type, entity_type, entity_key, idempotency_key, expected_base_version, local_revision, payload, attempts
 				, first_failed_at, next_attempt_at, created_at
 				FROM %i
-				WHERE status = %s AND ( next_attempt_at IS NULL OR next_attempt_at <= %s )
+				WHERE status = %s AND tenant_id = %s AND ( next_attempt_at IS NULL OR next_attempt_at <= %s )
 				ORDER BY created_at ASC, id ASC
 				LIMIT %d',
 				$this->table_name,
 				OutboxStatus::PENDING,
+				$tenant_id,
 				current_time( 'mysql' ),
 				max( 1, $batch_size )
 			),
@@ -331,7 +336,8 @@ class OutboxQueryRepository {
 	public function claim_operation( int $outbox_id ): array|false {
 		global $wpdb;
 
-		if ( $outbox_id <= 0 ) {
+		$tenant_id = $this->active_dispatch_tenant_id();
+		if ( $outbox_id <= 0 || null === $tenant_id ) {
 			return false;
 		}
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
@@ -349,11 +355,12 @@ class OutboxQueryRepository {
 				'claim_token' => $claim_token,
 			),
 			array(
-				'id'     => $outbox_id,
-				'status' => OutboxStatus::PENDING,
+				'id'        => $outbox_id,
+				'status'    => OutboxStatus::PENDING,
+				'tenant_id' => $tenant_id,
 			),
 			array( '%s', '%s', '%s' ),
-			array( '%d', '%s' )
+			array( '%d', '%s', '%s' )
 		);
 
 		if ( false === $updated ) {
@@ -367,11 +374,12 @@ class OutboxQueryRepository {
 		// accounting/payload belonging to THIS claim; never dispatch an unfenced fallback.
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT * FROM %i WHERE id = %d AND status = %s AND claim_token = %s',
+				'SELECT * FROM %i WHERE id = %d AND status = %s AND claim_token = %s AND tenant_id = %s',
 				$this->table_name,
 				$outbox_id,
 				OutboxStatus::IN_FLIGHT,
-				$claim_token
+				$claim_token,
+				$tenant_id
 			),
 			ARRAY_A
 		);
@@ -386,7 +394,7 @@ class OutboxQueryRepository {
 	}
 
 	/**
-	 * Reclaim operations stuck in `in_flight` past the claim lease back to `pending` (CON-3-FU-1).
+	 * Reclaim current-tenant operations stuck in `in_flight` past the claim lease (CON-3-FU-1).
 	 *
 	 * A drain that dies between {@see self::claim_operation()} (pending -> in_flight) and the
 	 * terminal apply_result write orphans the row: load_pending_operations() and
@@ -407,15 +415,17 @@ class OutboxQueryRepository {
 	public function reclaim_stale_in_flight_operations( int $lease_seconds ): int {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+		$tenant_id = $this->active_dispatch_tenant_id();
+		if ( null === $tenant_id || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
 			return 0;
 		}
 
 		$query = $wpdb->prepare(
-			'UPDATE %i SET status = %s, claimed_at = NULL, claim_token = NULL WHERE status = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( %s, INTERVAL %d SECOND ) )',
+			'UPDATE %i SET status = %s, claimed_at = NULL, claim_token = NULL WHERE status = %s AND tenant_id = %s AND ( claimed_at IS NULL OR claimed_at <= DATE_SUB( %s, INTERVAL %d SECOND ) )',
 			$this->table_name,
 			OutboxStatus::PENDING,
 			OutboxStatus::IN_FLIGHT,
+			$tenant_id,
 			current_time( 'mysql' ),
 			max( 1, $lease_seconds )
 		);
@@ -433,7 +443,7 @@ class OutboxQueryRepository {
 	}
 
 	/**
-	 * Earliest moment any pending row becomes claimable, on the WP clock (E15-35).
+	 * Earliest moment a current-tenant pending row becomes claimable, on the WP clock (E15-35).
 	 *
 	 * Rows with NULL next_attempt_at are due immediately, so they coalesce to created_at
 	 * (always in the past for an existing row). Returns null when nothing is pending or
@@ -442,15 +452,17 @@ class OutboxQueryRepository {
 	public function earliest_pending_attempt_time(): ?string {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+		$tenant_id = $this->active_dispatch_tenant_id();
+		if ( null === $tenant_id || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
 			return null;
 		}
 
 		$value = $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+				'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s AND tenant_id = %s',
 				$this->table_name,
-				OutboxStatus::PENDING
+				OutboxStatus::PENDING,
+				$tenant_id
 			)
 		);
 
@@ -459,18 +471,22 @@ class OutboxQueryRepository {
 	}
 
 	/**
-	 * Earliest lease expiry on the same WP clock as claim/reclaim, including NULL legacy claims.
+	 * Earliest current-tenant lease expiry on the WP clock, including NULL legacy claims.
 	 *
 	 * @throws RuntimeException When recovery scheduling cannot read lease expiries.
 	 */
 	public function earliest_in_flight_recovery_time( int $lease_seconds ): ?string {
 		global $wpdb;
+		$tenant_id = $this->active_dispatch_tenant_id();
+		if ( null === $tenant_id ) {
+			return null;
+		}
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
 			throw new RuntimeException( 'Outbox recovery database adapter is unavailable.' );
 		}
 		$query = $wpdb->prepare(
-			'SELECT MIN(CASE WHEN claimed_at IS NULL THEN %s ELSE DATE_ADD(claimed_at, INTERVAL %d SECOND) END) FROM %i WHERE status = %s',
-			current_time( 'mysql' ), max( 1, $lease_seconds ), $this->table_name, OutboxStatus::IN_FLIGHT
+			'SELECT MIN(CASE WHEN claimed_at IS NULL THEN %s ELSE DATE_ADD(claimed_at, INTERVAL %d SECOND) END) FROM %i WHERE status = %s AND tenant_id = %s',
+			current_time( 'mysql' ), max( 1, $lease_seconds ), $this->table_name, OutboxStatus::IN_FLIGHT, $tenant_id
 		);
 		if ( ! is_string( $query ) || '' === $query ) {
 			throw new RuntimeException( 'Could not prepare outbox recovery query.' );
@@ -487,19 +503,32 @@ class OutboxQueryRepository {
 	public function has_pending_operations(): bool {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+		$tenant_id = $this->active_dispatch_tenant_id();
+		if ( null === $tenant_id || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
 			return false;
 		}
 
 		$value = $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
+				'SELECT id FROM %i WHERE status = %s AND tenant_id = %s ORDER BY created_at ASC LIMIT 1',
 				$this->table_name,
-				OutboxStatus::PENDING
+				OutboxStatus::PENDING,
+				$tenant_id
 			)
 		);
 
 		return (int) $value > 0;
+	}
+
+	/**
+	 * Dispatch uses the current site's identity, including its canonical bootstrap
+	 * identity. Never turn an unresolved identity into an unscoped queue query.
+	 * Explicit-tenant reporting and maintenance use their caller's scope instead.
+	 */
+	private function active_dispatch_tenant_id(): ?string {
+		$identity = TenantIdentity::resolve();
+		$tenant_id = $identity['value'] ?? null;
+		return is_string( $tenant_id ) && wp_is_uuid( $tenant_id ) ? $tenant_id : null;
 	}
 
 	/**

@@ -1844,14 +1844,16 @@ class OutboxDrainTest extends TestCase
 		$wpdb->mockResults = [];
 
 		$wpdb->queryResults[$wpdb->prepare(
-			'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
+			'SELECT id FROM %i WHERE status = %s AND tenant_id = %s ORDER BY created_at ASC LIMIT 1',
 			'wp_acx_sync_outbox',
-			'pending'
+			'pending',
+			self::currentTenantId()
 		)] = '5';
 		$wpdb->queryResults[$wpdb->prepare(
-			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s AND tenant_id = %s',
 			'wp_acx_sync_outbox',
-			'pending'
+			'pending',
+			self::currentTenantId()
 		)] = gmdate('Y-m-d H:i:s', $earliestTimestamp);
 	}
 

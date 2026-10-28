@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
@@ -99,11 +99,15 @@ export const SettingsPage = (): React.JSX.Element => {
   // Non-routing fields whose write failed and that no later write acknowledged.
   // Their failure and whole-form Retry outlive every unrelated routing save.
   const unsavedFields = useRef<NonRoutingPayloadField[]>([]);
+  // Readback recovery is independent of an outstanding failed-field retry.
+  const [settingsReloadWarning, setSettingsReloadWarning] = useState('');
   const inFlightUrlWrite = useRef(false);
   const urlReadbackAfter = useRef<number | null>(null);
   // A blur queues routing fields only; an explicit submit queues the full form.
   const queuedRoutingOnly = useRef(false);
   const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
+  // An explicit check is intent even when the queued routing diff is empty.
+  const queuedHealthCheck = useRef(false);
   const pendingNoopUrl = useRef<Pick<SettingsFormSnapshot, 'url' | 'urlRevision'> | null>(null);
 
   const settingsQuery = useQuery<SettingsResponse>({
@@ -247,6 +251,7 @@ export const SettingsPage = (): React.JSX.Element => {
     // An edit cancels an unfinished post-save check and its deadline. Settle the
     // "Checking health…" copy in the same transition; the card returns to draft.
     const cancelsPostSaveCheck = scheduledHealthCheck.current?.afterRoutingSave === true;
+    queuedHealthCheck.current = false;
     invalidateHealthProbe();
     if (cancelsPostSaveCheck) {
       clearRoutingCheckFeedback();
@@ -436,21 +441,33 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const drainQueuedSave = (
     refreshedSettings?: SettingsResponse,
+    readbackSucceeded = false,
   ): void => {
     const snapshot = queuedSaveSnapshot.current;
-    if (!snapshot) {
-      return;
+    if (snapshot) {
+      queuedSaveSnapshot.current = null;
+      const routingOnly = queuedRoutingOnly.current;
+      queuedRoutingOnly.current = false;
+      const data = refreshedSettings
+        ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
+        ?? settingsQuery.data;
+      if (!data) {
+        return;
+      }
+      submitSnapshot(snapshot, data, true, routingOnly);
     }
-    queuedSaveSnapshot.current = null;
-    const routingOnly = queuedRoutingOnly.current;
-    queuedRoutingOnly.current = false;
-    const data = refreshedSettings
-      ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
-      ?? settingsQuery.data;
-    if (!data) {
-      return;
+    // Keep the request through further writes; an empty drain still completes
+    // accepted health intent. Failed readback leaves it for Retry/Reload.
+    if (readbackSucceeded && !inFlightRoutingSnapshot.current && queuedHealthCheck.current) {
+      queuedHealthCheck.current = false;
+      const showsUnsaved = showUnsavedFields();
+      scheduledHealthCheck.current ??= { afterRoutingSave: !showsUnsaved, request: null };
+      if (!showsUnsaved) {
+        routingSaveFeedback.current = true;
+        dispatch({ type: 'setSaveMessage', message: __('Saved. Checking health…', 'alt-context'), tone: 'info' });
+      }
+      startScheduledHealthCheck();
     }
-    submitSnapshot(snapshot, data, true, routingOnly);
   };
 
   // Readback failed after the server answered: publish the acknowledged fields
@@ -523,8 +540,9 @@ export const SettingsPage = (): React.JSX.Element => {
             queryKey: queryKeys.settings.all,
             queryFn: fetchSettings,
           });
+          setSettingsReloadWarning('');
           syncLocalizedRouting(refreshedOnFail);
-          drainQueuedSave(refreshedOnFail);
+          drainQueuedSave(refreshedOnFail, true);
         } catch {
           // Keep the partial-write feedback, but never strand queued intent:
           // a stranded older key would later replay over a newer commit.
@@ -554,6 +572,7 @@ export const SettingsPage = (): React.JSX.Element => {
           queryKey: queryKeys.settings.all,
           queryFn: fetchSettings,
         });
+        setSettingsReloadWarning('');
         syncLocalizedRouting(refreshed);
         resolvedSettings.current = refreshed;
         if (isRoutingAutosave) {
@@ -562,16 +581,18 @@ export const SettingsPage = (): React.JSX.Element => {
           scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };
           startScheduledHealthCheck();
         }
-        drainQueuedSave(refreshed);
+        drainQueuedSave(refreshed, true);
       } catch (error) {
         const reconciled = publishAcknowledged(data, settled, payload);
         scheduledHealthCheck.current = null;
-        dispatch({
-          type: 'setSaveMessage',
-          message: sprintf(__('Saved, but the page could not reload settings: %s.', 'alt-context'),
-            resolveWpErrorMessage(error, __('settings unavailable', 'alt-context'))),
-          tone: 'warning',
-        });
+        const warning = sprintf(__('Saved, but the page could not reload settings: %s.', 'alt-context'),
+          resolveWpErrorMessage(error, __('settings unavailable', 'alt-context')));
+        if (showUnsavedFields()) {
+          setSettingsReloadWarning(warning);
+        } else {
+          setSettingsReloadWarning('');
+          dispatch({ type: 'setSaveMessage', message: warning, tone: 'warning' });
+        }
         drainQueuedSave(reconciled);
       }
     },
@@ -690,6 +711,7 @@ export const SettingsPage = (): React.JSX.Element => {
   };
 
   const startHealthCheck = (): void => {
+    queuedHealthCheck.current = false;
     runHealthCheck({});
   };
 
@@ -793,6 +815,7 @@ export const SettingsPage = (): React.JSX.Element => {
       return;
     }
     if (saveMutation.isPending || routingSavePending.current) {
+      queuedHealthCheck.current ||= checkIfUnchanged;
       const committed = captureFormSnapshot();
       if (!queuedSaveSnapshot.current) {
         queuedRoutingOnly.current = true;
@@ -957,6 +980,7 @@ export const SettingsPage = (): React.JSX.Element => {
           saveMessage: state.saveMessage,
           saveMessageTone: state.saveMessageTone,
           routingSaveFeedback: routingSaveFeedback.current,
+          settingsReloadWarning,
         }}
         actions={{
           onUrlChange: (value) => {
@@ -990,6 +1014,8 @@ export const SettingsPage = (): React.JSX.Element => {
         onRetryReload={() => {
           void settingsQuery.refetch().then((result) => {
             if (!result.isError) {
+              setSettingsReloadWarning('');
+              queuedHealthCheck.current = false;
               const showsUnsaved = showUnsavedFields();
               scheduledHealthCheck.current = { afterRoutingSave: !showsUnsaved, request: null };
               if (!showsUnsaved) {

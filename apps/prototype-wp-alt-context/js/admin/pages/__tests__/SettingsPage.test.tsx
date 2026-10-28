@@ -2144,6 +2144,137 @@ describe('QCR real React Query credential boundaries', () => {
     await flush();
   };
 
+  it.each(['independent', 'queued'] as const)('R4-F1 retains whole-form Retry alongside a later routing readback warning: %s', async (mode) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://review-a.example.com';
+    const urlB = 'https://review-b.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    expect(h.requests[0].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    if (mode === 'queued') { type(url, urlB); fireEvent.blur(url); await flush(); }
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    if (mode === 'independent') {
+      expect(screen.getByRole('button', { name: 'Retry save' })).toBeEnabled();
+      type(url, urlB); fireEvent.blur(url); await flush();
+    }
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('review readback unavailable'));
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(budget).toHaveValue(4);
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    expect(card).toHaveTextContent('Saved, but the page could not reload settings: settings unavailable.');
+    expect(within(card).getByRole('button', { name: 'Reload settings' })).toBeEnabled();
+    if (mode === 'queued') {
+      vi.mocked(h.api.fetchSettings).mockResolvedValue({ ...defaultSettings, url: urlB, effective_target_url: urlB });
+      fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+      expect(h.requests).toHaveLength(2);
+      expect(budget).toHaveValue(4);
+      expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+      expect(within(card).queryByRole('button', { name: 'Reload settings' })).not.toBeInTheDocument();
+    }
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({ description_budget: { max_attempts: 4 } });
+    vi.mocked(h.api.fetchSettings).mockResolvedValue({
+      ...defaultSettings, url: urlB, effective_target_url: urlB,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 },
+    });
+    await finish(h.requests[2], { saved: ['description_budget'], result: 'ok' });
+    expect(screen.queryByText(/Could not save settings/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reload settings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry save' })).not.toBeInTheDocument();
+  });
+
+  it('R4-F2 Check health during a budget-only Save survives an empty routing drain exactly once', async () => {
+    const h = await harness();
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    const check = screen.getByRole('button', { name: 'Check health' });
+    expect(check).toBeEnabled();
+    fireEvent.click(check); fireEvent.click(check); await flush();
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    const readback = deferred<SettingsResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
+    await finish(h.requests[0], { saved: ['description_budget'], result: 'ok' });
+    expect(h.api.fetchSettings).toHaveBeenCalled();
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    await act(async () => { readback.resolve({
+      ...defaultSettings,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 },
+    }); });
+    await flush();
+    expect(h.requests).toHaveLength(1);
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.api.testConnection).mock.calls[0][0]).toEqual({});
+    await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+  });
+
+  it('R4-control a partial subset acknowledgement preserves newer non-routing edits through routing', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const recognition = screen.getByLabelText('Identify people in photos');
+    const names = screen.getByLabelText('Include named people in descriptions');
+    const context = document.getElementById(`acx-settings-context-category-${CONTEXT_CATEGORIES[0]}`)!;
+    const urlA = 'https://review-a.example.com';
+    const urlB = 'https://review-b.example.com';
+    type(url, urlA); type(budget, '4'); fireEvent.click(recognition); fireEvent.click(context);
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    fireEvent.click(recognition); fireEvent.click(names); type(budget, '7');
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA, recognition_enabled: false });
+    await finish(h.requests[0], { saved: ['url', 'recognition_enabled'], failed: ['description_budget', 'context_categories'], result: 'partial' });
+    expect(recognition).toBeChecked(); expect(names).not.toBeChecked();
+    expect(budget).toHaveValue(7); expect(context).not.toBeChecked();
+    type(url, urlB); fireEvent.blur(url); await flush();
+    h.persist({ ...defaultSettings, url: urlB, effective_target_url: urlB, recognition_enabled: false });
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(recognition).toBeChecked(); expect(names).not.toBeChecked();
+    expect(budget).toHaveValue(7); expect(context).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({
+      description_budget: { max_attempts: 7 }, recognition_enabled: true,
+      allow_person_names: false, context_categories: CONTEXT_CATEGORIES.slice(1),
+    });
+    h.persist({
+      ...defaultSettings, url: urlB, effective_target_url: urlB,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 7 },
+      recognition_enabled: true, allow_person_names: false, context_categories: CONTEXT_CATEGORIES.slice(1),
+    });
+    await finish(h.requests[2], { saved: Object.keys(h.requests[2].payload), result: 'ok' });
+    expect(screen.queryByText(/Could not save settings/)).not.toBeInTheDocument();
+  });
+
+  it('R4-control an unblurred edit cancels a real post-save probe and rejects its stale response', async () => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://review-a.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent('Saved. Checking health…');
+    type(url, 'https://review-uncommitted.example.com');
+    expect(card).not.toHaveTextContent('Saved. Checking health…');
+    await act(async () => { probe.resolve({
+      outcome: 'connected', probe_mode: 'service_auth', status_code: 200,
+      probed_url: urlA + '/health/detailed',
+      body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+    }); });
+    await flush();
+    expect(screen.queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(url).toHaveValue('https://review-uncommitted.example.com');
+    expect(h.requests).toHaveLength(1);
+  });
+
   it.each(['ok', 'transport', 'partial'] as const)('QCR retains and sends committed B after pending A: %s', async (outcome) => {
     const h = await harness();
     const key = screen.getByLabelText('API Key');

@@ -92,6 +92,7 @@ interface SettingsFormStatus {
   saveMessage?: string;
   saveMessageTone?: BannerTone;
   routingSaveFeedback?: boolean;
+  settingsReloadWarning?: string;
 }
 
 interface SettingsFormActions {
@@ -144,6 +145,7 @@ export const SettingsForm = ({
     saveMessage = '',
     saveMessageTone = 'info',
     routingSaveFeedback = false,
+    settingsReloadWarning = '',
   } = status;
   const {
     onUrlChange,
@@ -299,6 +301,21 @@ export const SettingsForm = ({
               {saveMessageTone === 'error' ? (
                 <button type="button" className="button button-secondary" onClick={onRetrySave}>
                   {__('Retry save', 'alt-context')}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {settingsReloadWarning ? (
+            <div
+              className={`notice inline ${TONE_CLASS.warning}`}
+              role="status"
+              aria-live="polite"
+              data-testid="acx-settings-reload-warning"
+            >
+              <p><span aria-hidden="true">⚠ </span>{settingsReloadWarning}</p>
+              {onRetryReload ? (
+                <button type="button" className="button button-secondary" onClick={onRetryReload}>
+                  {__('Reload settings', 'alt-context')}
                 </button>
               ) : null}
             </div>

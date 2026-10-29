@@ -120,7 +120,7 @@
       "id": "GTM-SC-12",
       "plan": "E15-40",
       "group": "operator",
-      "criterion": "ADR-017 and the DESCAUTH-1 plan carry the outcome-telemetry amendment (presented and reported events, report_reason, edit_ratio, request_key unique with event_type), and the operator accepts ADR-017.",
+      "criterion": "ADR-017 and the DESCAUTH-1 plan carry the outcome-telemetry amendment (presented and reported events, report_reason, edit_ratio, request_key unique with event_type), the server-owned selected-generation/media/actual-text supplier and Slice 1c acceptance producer contract, and the operator accepts ADR-017. This is future operator acceptance, not supplied by the planning patch.",
       "status": "planned",
       "artifact": "docs/adrs/ADR-017-description-authority-wordpress-curation-service-generation.md",
       "additional_evidence_required": true
@@ -129,10 +129,18 @@
       "id": "GTM-SC-13",
       "plan": "E15-40",
       "group": "blocked",
-      "blocked_by": "DESCAUTH-1 S3, S7",
-      "criterion": "Each generation with a presented event is classified into exactly one outcome class: applied_unchanged, applied_light_edit, applied_heavy_edit, discarded, superseded_by_regeneration or no_outcome; supersession needs another generation for the same attachment first presented later within the window.",
+      "blocked_by": "Operator ADR-017 acceptance; amended DESCAUTH-1 S3, S7, S8, S11 supplier proof; E15-40 Slice 1c and Slice 2 producer-to-export qualification",
+      "criterion": "Each generation with a presented event is classified into exactly one outcome class: applied_unchanged, applied_light_edit, applied_heavy_edit, discarded, superseded_by_regeneration or no_outcome; supersession needs another generation for the same attachment first presented later within the window. The real correction request must carry selected G through both UI Accept/Save paths to a validated WordPress applied(G): first unchanged Accept exports applied_unchanged(G), first edited Save uses the ratio against G's actual displayed text, and selecting G while saved provenance is H never attributes acceptance to H. Manual corrected events cannot create first acceptance. Measurement dispatch stays held until this producer-to-export path is qualified.",
       "status": "planned",
-      "test": "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeClassifierTest.php::testClassifiesEveryOutcomeClass"
+      "test": "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeClassifierTest.php::testClassifiesEveryOutcomeClass",
+      "additional_tests": [
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testAcceptUnchangedThroughCorrectionRouteExportsAppliedUnchanged",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testFirstEditedAcceptanceThroughCorrectionRouteExportsEditClass",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testSelectedGenerationOverridesOlderSavedProvenance",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionAcceptanceControllerTest.php::testSelectedGenerationReachesCurationWriter",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/QueueDraftCell.test.tsx"
+      ]
     },
     {
       "id": "GTM-SC-14",
@@ -156,8 +164,8 @@
       "id": "GTM-SC-16",
       "plan": "E15-40",
       "group": "operator",
-      "blocked_by": "DESCAUTH-1 S8",
-      "criterion": "The acceptance analysis plan (estimand, window, floor, sample, interval basis, cohort period, GPU resource ids) is sealed by sha256 in a handoff decision before the first counted draft.",
+      "blocked_by": "Operator ADR-017 acceptance; DESCAUTH-1 S8; E15-40 Slice 1c and Slice 2 producer-to-export qualification",
+      "criterion": "The acceptance analysis plan (estimand, window, floor, sample, interval basis, cohort period, GPU resource ids) is sealed by sha256 in a handoff decision before the first counted draft. Presentation and selected-generation acceptance producers are live and qualified on every counted site before cohort_start; planning validation does not open measurement dispatch or replace the human audit and live gates.",
       "status": "planned",
       "artifact": "handoff decision on E15-40 carrying the analysis-plan sha256",
       "additional_evidence_required": true
@@ -206,13 +214,20 @@
       "id": "GTM-SC-21",
       "plan": "E15-40",
       "group": "blocked",
-      "blocked_by": "DESCAUTH-1 S3, S7, S11",
-      "criterion": "WordPress records one presented event per generation_id at the server time of the first display, repeat displays insert nothing, and the outcome export counts only generations with a presented event: a displayed untouched draft is no_outcome and a never-displayed draft is absent.",
+      "blocked_by": "Operator ADR-017 acceptance; amended DESCAUTH-1 S3, S7, S8, S11 supplier proof; E15-40 Slice 1c and Slice 2 producer-to-export qualification",
+      "criterion": "WordPress records one presented event per generation_id at the server time of the first display, repeat displays insert nothing, and the outcome export counts only generations with a presented event: a displayed untouched draft is no_outcome and a never-displayed draft is absent. From presented G, the real correction request through both UI Accept/Save producers must export applied_unchanged(G) for first unchanged Accept, the declared edit class for first edited Save against G's actual text, and G's acceptance when saved provenance references H. Capability/media/generation validation and idempotent acceptance retries are required. Measurement dispatch stays held until this producer-to-export path is qualified.",
       "status": "planned",
       "test": "apps/prototype-wp-alt-context/tests/Unit/DescriptionPresentationControllerTest.php::testFirstPresentationIsRecordedOnce",
       "additional_tests": [
         "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testCohortIsFirstPresentation",
-        "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useRecordDraftPresentation.test.tsx"
+        "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useRecordDraftPresentation.test.tsx",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testAcceptUnchangedThroughCorrectionRouteExportsAppliedUnchanged",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testFirstEditedAcceptanceThroughCorrectionRouteExportsEditClass",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testSelectedGenerationOverridesOlderSavedProvenance",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionAcceptanceControllerTest.php::testInvalidGenerationMediaOrCapabilityWritesNothing",
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionAcceptanceControllerTest.php::testAcceptanceReplayIsIdempotentAndConflictingReuseIsRejected",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/QueueDraftCell.test.tsx"
       ]
     }
   ],

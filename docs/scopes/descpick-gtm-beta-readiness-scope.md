@@ -15,7 +15,7 @@ The assessment keeps the served incumbent (Qwen3-VL-30B-A3B Q4_K_M) for beta and
 |---|---|---|
 | [E15-38](../tasks/15.0/E15-38-public-demo-honest-wait-and-beta-copy-task-plan.md) | Rec 2 beta expectations copy; Rec 5 honest wait plus demo **Stop waiting**; demo i18n | ready |
 | [E15-39](../tasks/15.0/E15-39-description-default-trusted-set-and-serve-pin-task-plan.md) | Rec 6 adapter default `seeded`; `florence_small` out of the trusted set; SERVE-07 digest pin; Rec 5 operator cold start | ready; S0 and S4 operator |
-| [E15-40](../tasks/15.0/E15-40-description-outcome-telemetry-and-cost-per-accepted-task-plan.md) | Rec 3 outcome telemetry and cost per accepted | S0 ready; rest blocked on DESCAUTH-1 |
+| [E15-40](../tasks/15.0/E15-40-description-outcome-telemetry-and-cost-per-accepted-task-plan.md) | Rec 3 outcome telemetry and cost per accepted | S0 amendment ready for future work; implementation blocked on amended DESCAUTH-1; measurement held for acceptance-producer qualification |
 | [DESCPICK-5](../tasks/vlm/DESCPICK-5-served-q4-candidate-and-four-candidate-panel-task-plan.md) | #20420 Q4 as fourth candidate in the review panel | ready; S2 GPU owner |
 
 The export filename already shipped in DESCPICK-4 (`43366e5d25`); no plan. No separate spec: the plans carry the copy and contracts, and the E15-40 S0 ADR-017 amendment carries the schema.
@@ -31,13 +31,15 @@ The export filename already shipped in DESCPICK-4 (`43366e5d25`); no plan. No se
 
 Planning review E15-38-G1-001 extended the #20467 amendment after intake. It adds a `presented` event kind: one WordPress row per `generation_id` at the server time of first display, unique by `(event_type, request_key)`, with no text and no user id. Generation, projection and curation history cannot say a person saw a draft, so the denominator and the window start come only from this event (E15-40 Slice 0 and Slice 1b; MEAS-09).
 
+Independent review E15-38-R2-R2-001 identified a distinct acceptance-producer gap after that denominator fix. Ordinary Accept/Save uses `MediaAltSuggest`/`QueueDraftCell` → `useCorrectMediaAlt` → `correctDescriptionHistoryItem` → WordPress correction service without the selected generation. Existing provenance can be null or older H. E15-40 Slice 0 must require a selected-G producer contract; owned Slice 1c implements the real request/writer path after the amended DESCAUTH-1 supplier proof. First unchanged Accept writes `applied(G)` → export `applied_unchanged(G)`; first edited Save writes an apply with ratio against G's actual displayed text. Later manual correction remains distinct. Slice 2 qualifies this through the real correction request and export, also covering selected G while saved provenance is H [MEAS-09, GRPH-32, GRPH-33]. Measurement dispatch stays held until this producer-to-export evidence exists; no implementation or ADR acceptance is delivered by this planning correction.
+
 ## MVP scope and completion signals
 
 | Plan | MVP | Completion signal |
 |---|---|---|
 | E15-38 | Translatable demo (PHP and JS); Stop waiting; truthful timeout copy; retry-key lifecycle; C1 shared by demo and admin; beta notice under the Review Queue heading; ux-maps in sync | GTM-SC-01 … GTM-SC-07 green |
 | E15-39 | Default `seeded` from one constant; `florence_small` untrusted at the gate; quota refusal and cancel pinned; runtime image pinned by digest with explicit flags; one measured cold start | GTM-SC-08 … GTM-SC-11, GTM-SC-20 |
-| E15-40 | ADR-017 and DESCAUTH-1 amended now; first-presentation record, outcome classes, Report a problem, billed cost per accepted and sealed plan after DESCAUTH-1 S3, S5–S8 (S11 for the presentation hook) | GTM-SC-12 now; GTM-SC-13 … GTM-SC-16 and GTM-SC-21 when unblocked |
+| E15-40 | Future S0 amends ADR-017 and DESCAUTH-1 for schema and acceptance-producer suppliers; first-presentation record, selected-G Accept/Save writer (Slice 1c), outcome classes, Report a problem, billed cost per accepted and sealed plan after amended DESCAUTH-1 S3, S5–S8 and S11 | GTM-SC-12 requires future operator ADR acceptance; GTM-SC-13 … GTM-SC-16 and GTM-SC-21 require implementation evidence, including first unchanged/edited Accept and selected G with saved H through the real correction path |
 | DESCPICK-5 | Q4 cells generated under the shared decision profile; panel extended to four candidates with 192 reviews kept; rule v2 | GTM-SC-17 … GTM-SC-19 |
 
 ## Assumptions
@@ -48,6 +50,7 @@ Planning review E15-38-G1-001 extended the #20467 amendment after intake. It add
 | #10035 is fixed only on `feature/defwave-2` (`016789be8d`) | E15-39 S4 reconciles before any wait figure is quoted |
 | "Several minutes" stays the wait copy until a p95 with its n exists (PERF-01) | Copy changes only through a new copy decision |
 | ADR-017 stays Proposed until operator acceptance (`ADR-017…md:3`); DESCAUTH-1 Wave Order (:1111) bars S1+ | E15-40 S1+ stay blocked |
+| Amended DESCAUTH-1 supplies a server-owned G/media/actual-draft-text binding, and E15-40 Slice 1c preserves selected G through both real Accept/Save requests | Measurement collection/export/report dispatch stays held until Slice 1c and Slice 2 producer-to-export qualification; classifier fixtures alone cannot open the gate |
 | A10 price USD 2.00 per GPU-hour, per-second billing, 1-minute minimum (#20472 W1) | The always-on and scale-to-zero estimates here change. E15-40's cost report does not: it sums billed Usage API amounts and applies no rate. |
 | `packages/workbay-system` is absent here | Evals JSON stays provisional data |
 
@@ -57,7 +60,7 @@ Planning review E15-38-G1-001 extended the #20467 amendment after intake. It add
 |---|---|---|
 | Wait | Quote p95, never the mean; no number until a re-measure; Cancel offered (Stop waiting) | PERF-01, INT-08 |
 | Demo deadline | Client ceiling 120 s kept (`PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS`) | #20474 |
-| Idempotency | Same key replays free; client stop keeps key; server-terminal outcome or 403 `acx_public_demo_run_not_available` resets it; reports unique by `request_key`; one `presented` row per `generation_id`, repeats insert nothing | #20474, #20467, E15-40 Slice 1b |
+| Idempotency | Same key replays free; client stop keeps key; server-terminal outcome or 403 `acx_public_demo_run_not_available` resets it; reports unique by `request_key`; one `presented` row per `generation_id`, repeats insert nothing; selected-draft acceptance reuses its action key on retry and rejects conflicting reuse | #20474, #20467, E15-40 Slices 1b/1c |
 | Failure | No unscored fallback; GPU unavailable refuses before the quota charge | C5, `engineering/release-it.md:602` |
 | Cost | Always-on ≈ USD 1,400–1,460/month vs scale-to-zero. Billed cost per accepted (Usage API `computedAmount` over the sealed cohort period) replaces the F7 estimate; it is an internal measurement, not a price (ADR-014) | COST-04, #20472 |
 | Durability | Events append-only; a failed history write never loses the applied outcome | DESCAUTH-1 S7 |
@@ -97,6 +100,8 @@ Canon v0.26.2 rows, read through the pinned link:
 | DATA-14 | One system of record | E15-40 storage |
 | EVAL-01, EVAL-14 | Served build as baseline; counterbalanced order | DESCPICK-5 |
 | TEST-15 | Green can go red | Every RED lane |
+| MEAS-09 | Factor must be defined, observable, and decision-linked; *How to Measure Anything in Cybersecurity Risk*, ch. 6; *Measuring the User Experience (Albert & Tullis)*, §10.6 | Presented denominator and actual selected-generation acceptance numerator |
+| GRPH-32, GRPH-33 | An edge exists only where data moves; A node without a contract cannot be parallelised (both practice labels) | E15-40 Slice 1c names the real selected-id request/writer path, inputs and owned prerequisites |
 
 Corpus checks (S supports, Q qualifies):
 
@@ -135,9 +140,21 @@ Current research, FIR report v16 (2026-10-27, on main `8eece0358f`): `benchmarks
 | `#v15-heading` | "Verdict: Flint is excluded; it is not a native image-caption candidate." | No Flint candidate in any plan |
 | `#v16-heading` (FACEGROUP-0) | "No model training of any kind…" | Supports "They do not retrain the model"; FIR curriculum link not confirmed (#20470) |
 
+### Source3 correction evidence (2026-10-29)
+
+This is author correction of distinct HIGH E15-38-R2-R2-001 (finding 19995), not another independent review. Input: source2 `5ed571ff15684ec6027679dcaf5d7610d5e3bdbb`, tree `fe07267bad673388554d36994122511533e6a71e`; the VM's immutable snapshot commit is `cefb620ae0f59ced0584390f1e9395d2d5881770` with that same tree. The supplied G2 dispositions stay intact: G1-001 (HIGH first-presentation writer), G1-002 (MEDIUM builder destination) and G1-003 (MEDIUM billed-cost contract) were addressed by source2. The full plans remain; E15-38, E15-39 and DESCPICK-5 are unchanged by source3. The coordinator retains original source/review counts. No count is reset and no additional review was launched here; at most one final gate focused on this actual fix remains available to the coordinator.
+
+- Read the supplied read-only Canon **v0.26.2** at `/home/gate/workbay-sandbox/evalops-1-assets-20261029/canon`; verified all **53** manifest SHA-256 digests. Read MEAS-09, GRPH-32/33, TEST-15 and AGT-12, the evidence-before-commitment, measurement-integrity and durable-decision-memory cards, and the matching source locators. Original books/distilled corpus were not supplied; the earlier corpus evidence above is retained, not freshly revalidated. ADR-014 was read; cost remains internal under Stripe direct + Clerk/manual seller tax obligations.
+- Bounded source reads followed the supplied Accept call chain and DESCAUTH-1's explicit S7 correction contract. Graph MCP is unavailable in this isolated VM; no code-graph or dispatcher evidence is claimed.
+- Read-only documentation contract RED: `/tmp/e15-38-source3-doc-contract.py` exited 1 on the unmodified input, **6/18** checks passing; the **12** failures covered producer ownership/data fields, first acceptance, validation/retry, real-path regressions, measurement hold and future-test labelling. GREEN after correction: the identical validator exited 0, **18/18** passing. Validator SHA-256: `70500a5e961bfee348943a993e061d8f1dac137c97685701cf6f978ee3ffb78b`; local result logs: `/tmp/e15-38-source3-contract-red.json` and `/tmp/e15-38-source3-contract-green.json`. These are documentation checks, not executed feature tests [TEST-15, *The Pragmatic Programmer*, ch. 9].
+- `python3 -m json.tool docs/scopes/descpick-gtm-beta-readiness-evals.json` passed. Validated **21** unique planned eval IDs and all release-gate references; all **4** inline decomposition JSON blocks parse with resolved, acyclic dependencies; all relative Markdown links resolve. The future E15-40 lane table has **15** acyclic nodes, with acceptance → export and shared-surface serialization edges checked. `git diff --check` passed; only the three owned scope/eval/E15-40 documents changed.
+- No builder, scorer, future implementation suites, deployments, human acceptance, registered eval or live/model release gate was run. ADR-017 and DESCAUTH-1 are unchanged. Measurement dispatch remains held for the named future producer qualification and operator gates.
+
 ## Evals
 
 [`descpick-gtm-beta-readiness-evals.json`](descpick-gtm-beta-readiness-evals.json): one case per criterion, GTM-SC-01 … GTM-SC-21. **Provisional data:** `packages/workbay-system` is absent from this repo, so the suite is not runnable through the suite registry; registration needs an executor in `EXECUTOR_BY_SUITE_ID` (`packages/workbay-system/scripts/workbay_evals/registry.py`), owned by a separate lane. `make eval-list` (`mk/evals.mk`) is the model-eval harness, not that registry.
+
+All cases remain planned. GTM-SC-13/21 require the named real correction-request-to-export regressions, plus both UI producers using the real correction hook/API serializer. Measurement also requires operator ADR-017 acceptance and the pre-cohort sealed plan. Human blind audit, fresh registered eval results, deployment/live acceptance and model-choice release remain separate evidence gates; this documentation correction supplies none of those receipts.
 
 ## Dispatch decomposition
 

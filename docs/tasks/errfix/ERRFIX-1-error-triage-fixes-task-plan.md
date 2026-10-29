@@ -33,7 +33,7 @@ Baseline:
 
 - **Request (2026-10-29)**: "triage fixes to reduce errors … produce a task plan but do not spend 12 hours on it, use the improvements you are already proposing".
   - Implementation runs on codex-remote `gpt-6.1-sol`, high effort.
-  - Grunt work and web fetching run on `gpt-6.1-terra`, high effort.
+  - Grunt work and web fetching run on `gpt-6.1-terra`, high effort, as read-only jobs on the VM outside the lane ledger (Slice 6).
 - **Reused proposals**:
   - audit decision 20506 on `MAINT-EVALOPS-AUDIT-20261029`, P0–P2;
   - WorkBay `REQUEST-review-convergence-measurable-and-planning-acceptance-20261029.md`, R1–R5;
@@ -66,9 +66,9 @@ Signals outside the 441, all owned by WorkBay (see Contract and Boundary Impact)
 - Edit only this repo. WorkBay code, schema, hooks, targets and payload are filed upstream and never edited here.
 - Lane routing:
   - Implementation and RED lanes run on codex-remote `gpt-6.1-sol`, high effort.
-  - Grunt and web-fetch lanes run on `gpt-6.1-terra`, high effort.
+  - Grunt and web-fetch work runs on `gpt-6.1-terra`, high effort, as read-only `codex exec` jobs on the VM. It is not a lane: the review-cycle ledger routes every implement pass to sol (Slice 6).
   - Nothing runs on the local host.
-  - Each change is one RED lane, then one implementation lane, of 1–3 files each.
+  - Each change is one RED lane, then one implementation lane, of 1–3 files each. The implementation lane also owns the RED test file it inherits.
 - Commits are operator-only.
 - Agents never touch `handoff.db` with `sqlite3` (rg-018). VACUUM is operator-run, after a backup, with the MCP servers stopped.
 - Do not run `make task-reap REAP_ARGS=--apply` while `feature/errfix-1` has no commit. The dry run classifies ERRFIX-1 as closeable, because a zero-commit branch is an ancestor of main.
@@ -78,9 +78,9 @@ Signals outside the 441, all owned by WorkBay (see Contract and Boundary Impact)
 ## Workflow Principles
 
 - Fix the largest measured class first [OPS-75]. Fix preconditions, not retries [AUDIT-11].
-- New checks fail closed [RLSE-02]. Every subprocess call they make has a timeout [RES-02].
+- New checks fail closed: unreadable input is an error, never a silent pass [RLSE-05]. Every subprocess call they make has a timeout [RES-02].
 - Labels come from a human. Model pre-labels and agreement are diagnostics only [HITL-05, EVAL-12]. Disagreements are kept in writing [MLDATA-03].
-- Cleanup is proposed and the operator can veto it. Every skip is named [AGT-06].
+- Cleanup is proposed and the operator can veto it. An unsafe condition stops it and hands it to the operator [RES-31]. Every skip is named [AGT-06].
 
 ## Terminology
 
@@ -95,7 +95,7 @@ Signals outside the 441, all owned by WorkBay (see Contract and Boundary Impact)
 ## Current State Analysis
 
 **Provisioning**
-- `scripts/workstate/provision_lane_worktree.py:_require_inside` (l.213) refuses `scripts/workbay/wb`, because task-start symlinked it into the payload. As a result `worktree_bootstrap` exits 3 on every task-start.
+- `scripts/workstate/provision_lane_worktree.py:_validate_overlay_plan` (l.493) calls `_require_plain_overlay_dirs` (l.445), which refuses `scripts/workbay/wb`, because task-start symlinked it into the payload. As a result `worktree_bootstrap` exits 3 on every task-start.
 - WorkBay `resolve_transport` opens the transport with `O_NOFOLLOW` and refuses the symlinked `scripts/remote_agent.sh`. `offload_preflight` therefore returns `transport_missing`. Seen on errfix-1 and e15-38.
 
 **Task resolution**
@@ -129,7 +129,7 @@ Signals outside the 441, all owned by WorkBay (see Contract and Boundary Impact)
 
 ## Context Loading
 
-- `scripts/workstate/provision_lane_worktree.py` (`_require_inside`, `_plan_overlay`, `_contained_dest_rel`, `_require_plain_overlay_dirs`) and `scripts/tests/test_provision_lane_worktree.py`
+- `scripts/workstate/provision_lane_worktree.py` (`_plan_overlay`, `_validate_overlay_plan`, `_contained_dest_rel`, `_require_plain_overlay_dirs`) and `scripts/tests/test_provision_lane_worktree.py`
 - `CLAUDE.md`, `.github/copilot-instructions.md`, `Makefile.d/lifecycle.mk` (`task-start`, `task-reap`, `handoff-review-run`) and `Makefile:test-scripts`
 - `scripts/check_lane_manifest_overlaps.py`, `mk/lane-overlaps.mk` and `config/lane-orchestration/*.json`
 - `.task-state/evalops-20261029/{db,axial,analyze}.py` for replay. `db.py` reads through the `workbay_handoff_mcp` API.
@@ -157,20 +157,20 @@ Signals outside the 441, all owned by WorkBay (see Contract and Boundary Impact)
 | Deadletters (`compaction_failed`); retire-sweep completion | ops | REQUEST "Related" | — |
 | Lane tests limited to the changed tests | other (pytest) | to file | — |
 | Retrieve prior lessons before a command that failed before (19034 was missed before error 1535) | recurrence | to file | — |
-| Storage: embeddings as a rebuildable sidecar (f16/int8); external-content FTS5 and no redundant indexes; `auto_vacuum=INCREMENTAL` with a size budget alert; retention with a cold export and a tombstone pointing to it | storage | to file | STOR-07, STOR-01, STOR-03, STOR-10 |
+| Storage: embeddings as a rebuildable sidecar (f16/int8); external-content FTS5 and no redundant indexes; `auto_vacuum=INCREMENTAL` with a size budget alert; retention with a cold export and a tombstone pointing to it | storage | to file | STOR-07, STOR-01, STOR-03, RLSE-08 |
 
 ## Proposed Solution
 
 - Three code slices (1, 2, 4). Each is a RED lane, then an implementation lane, on sol high.
 - Three operator slices (S3, S5, S7). The coordinator prepares each one and the operator approves it.
-- One data slice (6): a terra pre-pass, then human labels.
+- One data slice (6): a coordinator export, a terra pre-pass on the VM, a sol lane for the seed-file test, then human labels.
 
 ## Files and Surfaces to Change
 
 - Slice 1: `scripts/tests/test_provision_lane_worktree.py`, `scripts/workstate/provision_lane_worktree.py`
-- Slice 2: `scripts/test_documented_make_commands.py` (new), `CLAUDE.md`, `.github/copilot-instructions.md`, `Makefile` (`test-scripts` list)
+- Slice 2: `scripts/test_documented_make_commands.py` (new), `CLAUDE.md`, `.github/copilot-instructions.md`, `Makefile` (`test-scripts` list), `docs/workbay/instructions.md`, `NEXT_SESSION_PROMPT.md`
 - Slice 4: `scripts/test_check_lane_manifest_rules.py` (new), `scripts/check_lane_manifest_rules.py` (new), `mk/lane-overlaps.mk`
-- Slice 6 (all new): `benchmarks/experiments/evalops/{findings,errors,qrels}-v0.jsonl`, `benchmarks/tests/test_evalops_seed_files.py`
+- Slice 6 (all new): `findings-v0.jsonl`, `findings-v0-prelabels.jsonl`, `errors-v0.jsonl`, `lessons-v0.jsonl` and `qrels-v0.jsonl` in `benchmarks/experiments/evalops/`, with exact re-include lines in `.gitignore`; `benchmarks/tests/test_evalops_seed_files.py`
 - Operator slices: handoff rows and plan cursors (MCP), `.task-state/` bundles, `handoff.db` retention
 
 ## Related Files
@@ -229,20 +229,21 @@ Until this slice merges, dispatch only from freshly provisioned lane worktrees.
 
 ### Slice 2: Documented commands run as written (P0)
 
-Lanes: `errfix-1-docr` (RED), then `errfix-1-doc`.
+Lanes: `errfix-1-docr` (RED), then `errfix-1-doc`, then `errfix-1-docfix`.
 
 **Goal**: a test fails when a documented make command does not exist or ignores its variables (rg-006).
 
 Files:
 - RED: `scripts/test_documented_make_commands.py`.
 - Implementation: `CLAUDE.md:15/46/98`, `.github/copilot-instructions.md:53/111`, `Makefile:297/305/1076` and `Makefile:test-scripts`.
+- Fix (`errfix-1-docfix`): `docs/workbay/instructions.md:142` and `NEXT_SESSION_PROMPT.md:79`.
 
 RED tests:
 
 1. Every `make <target>` documented in either doc is a target in `Makefile`, `Makefile.d/*.mk` or `mk/*.mk`. Nothing runs; skipped where `Makefile.d` is absent.
 2. Every `make handoff-review-run` line in the docs and the Makefile help uses `LIFECYCLE_ARGS=` and none of the dropped variables.
 3. `make -n` on the documented `handoff-review-run` line, with sentinels, prints every sentinel, with a 60 s timeout [RES-02]. This fails today, because only `LIFECYCLE_ARGS` is forwarded. Skipped where `Makefile.d` is absent.
-4. Every documented `MAINT-<…>` placeholder is uppercase: `MAINT-<SLUG>-<YYYYMMDD>`.
+4. Every documented `MAINT-<…>` placeholder is uppercase: `MAINT-<SLUG>-<YYYYMMDD>`. `errfix-1-docfix` adds `docs/workbay/instructions.md` and `NEXT_SESSION_PROMPT.md` to the files it scans.
 5. The `handoff-review-run` line is identical in both docs.
 
 Implementation:
@@ -286,11 +287,11 @@ The rules apply to non-terminal lanes in `config/lane-orchestration/*.json`. Ski
 | Rule | Level |
 |---|---|
 | `test_commands` is non-empty | error |
-| A lane that owns `apps/prototype-description-service/**` runs every test command with `uv run --directory apps/prototype-description-service` | error |
+| A lane that owns `apps/prototype-description-service/**` has at least one test command with `uv run --directory apps/prototype-description-service` | error |
 | A codex-remote lane has a non-null `preferred_model` and `preferred_reasoning_effort`, and a non-null `preferred_speed` when that key exists | error |
-| The objective or brief does not say "do not commit" or "no commits" | error |
+| The lane `objective` does not say "do not commit" or "no commits". Dispatch briefs are not in the manifest; the coordinator checks them | error |
 | More than 3 owned paths | warning |
-| Malformed JSON, or no `lanes` mapping | error (fail closed) [RLSE-02] |
+| Malformed JSON, or no `lanes` mapping | error (fail closed) [RLSE-05] |
 
 RED: one violating fixture per rule, plus one clean fixture. Each asserts the expected exit code and message. Golden and terminal lanes are skipped, and `--task-ref` scopes the check.
 
@@ -312,26 +313,29 @@ At 345 MB, `handoff.db` is not a correctness problem. The disk is: only 13 GiB i
    - `.task-state/bundles-samefs/repo-8ff638b3…/5541e4bfd8fe8f40-92c21115….bundle` (208 MB)
    - `.task-state/uxrec-resume-20261027/pre-v175/runtime-state.tgz` (160 MB). This is obsolete since the v0.1.78 closure; the operator confirms.
    - `.task-state/uxrec-resume-20261028/descpick4-aligned-source.tar.gz` (29 MB). The operator confirms DESCPICK-4 landed.
-2. Run `export_handoff_state`. Then run `archive(operation='retention')` at 60 days, first as a dry run (≈330 refs), then applied. The export is the tombstone target [STOR-10].
+2. Run `export_handoff_state`. Then run `archive(operation='retention')` at 60 days, first as a dry run (≈330 refs), then applied. The export is taken first, so retention can be backed out [RLSE-08].
 3. Optional, operator only: stop the MCP servers, `VACUUM INTO` a backup, then `VACUUM`.
 
 The durable fixes belong to WorkBay (the storage row in the dependency table).
 
 ### Slice 6: Labelled findings and qrels (P1)
 
-Lane: `errfix-1-lbl` on `gpt-6.1-terra`, high effort. This is the first terra dispatch.
+Lane: `errfix-1-lbl` on `gpt-6.1-sol`, high effort. It owns only `benchmarks/tests/test_evalops_seed_files.py`.
 
-**Before dispatch.** The coordinator exports two samples, read-only through the Python API, into `benchmarks/experiments/evalops/`. Both use a fixed seed.
-- `findings-v0.jsonl`: 100 findings, stratified by severity and review mode.
-- `errors-v0.jsonl`: 100 of the 441 errors.
+Terra cannot be a lane. The review-cycle ledger routes every implement pass to sol (`review_cycle_ledger._required_route`), and `review_cycle_dispatch.enforce_route` refuses any other model. The terra work therefore runs as read-only jobs on the VM (Orchestration Mode).
 
-**The lane** adds:
-- `pre_label` (`defect|not_defect|unclear`), evidence and rationale to each finding;
-- open codes to each error, written without seeing the axial class;
-- `qrels-v0.jsonl`, seeded with the `plan-done` lowercase-ref query → decisions 19034 and 20507, plus more pairs mined from lessons that preceded a repeat error;
-- `benchmarks/tests/test_evalops_seed_files.py`, which checks schema, counts, unique ids and the label enum.
+1. **Export.** The coordinator exports three files, read-only through the Python API, with seed 20261029:
+   - `findings-v0.jsonl`: 100 findings, stratified by severity (equal allocation) and review mode (proportional), with stratum weights. Status and resolution fields are left out, so labels are not anchored on the old disposition.
+   - `errors-v0.jsonl`: 100 of the 441 errors, with the full record text where it resolves.
+   - `lessons-v0.jsonl`: every lesson decision. These are the qrels documents.
+2. **Terra pre-pass** (`.task-state/errfix-1/terra_lbl.py`). The judge never sees human-label, weight or stratum fields. It writes:
+   - `findings-v0-prelabels.jsonl`: `pre_label` (`defect|not_defect|unclear`), evidence and rationale per finding. It is a separate file, so the operator labels blind;
+   - open codes on each error, written without seeing the axial class;
+   - `qrels-v0.jsonl`, seeded with the `plan-done` lowercase-ref query → decisions 19034 and 20507, plus pairs mined from lessons that preceded a repeat error.
+3. **Commit.** The coordinator commits the five files into the `errfix-1-lbl` lane base. `/benchmarks/**` is gitignored, and the remote sandbox builds its tree with `git add -A`, which drops ignored files. The base therefore also adds exact `.gitignore` re-include lines for the five paths.
+4. **The lane** adds `benchmarks/tests/test_evalops_seed_files.py`. It checks schema and count per file, unique ids, the label enums, that pre-label ids equal finding ids, that `findings-v0.jsonl` has no pre-label fields, and that every qrels document is in `lessons-v0.jsonl`. One synthetic bad row must fail.
 
-**The operator** then labels the 100 findings with the pre-labels hidden, and records `human_label`.
+**The operator** then labels the 100 findings in `findings-v0.jsonl` without opening the pre-labels, and records `human_label`.
 - Disagreements stay in the file [HITL-05, MLDATA-03].
 - The judge check is the blocking precision of review findings against the human labels [EVAL-12].
 
@@ -360,12 +364,13 @@ After each WorkBay release, and 7 days after S3, the coordinator reruns `.task-s
   "version": 1,
   "items": [
     {"id": "s1", "title": "ENVR RED: payload symlink provisioning", "independent": true, "owns": ["scripts/tests/test_provision_lane_worktree.py"], "depends": [], "blast": "none", "anchors": []},
-    {"id": "s2", "title": "ENV: provisioner accepts payload symlinks", "independent": false, "owns": ["scripts/workstate/provision_lane_worktree.py"], "depends": ["s1"], "blast": "none", "anchors": []},
+    {"id": "s2", "title": "ENV: provisioner accepts payload symlinks", "independent": false, "owns": ["scripts/workstate/provision_lane_worktree.py", "scripts/tests/test_provision_lane_worktree.py"], "depends": ["s1"], "blast": "none", "anchors": []},
     {"id": "s3", "title": "DOCR RED: documented make commands", "independent": true, "owns": ["scripts/test_documented_make_commands.py"], "depends": [], "blast": "none", "anchors": []},
-    {"id": "s4", "title": "DOC: doc fixes and test wiring", "independent": false, "owns": ["CLAUDE.md", ".github/copilot-instructions.md", "Makefile"], "depends": ["s3"], "blast": "none", "anchors": []},
+    {"id": "s4", "title": "DOC: doc fixes and test wiring", "independent": false, "owns": ["CLAUDE.md", ".github/copilot-instructions.md", "Makefile", "scripts/test_documented_make_commands.py"], "depends": ["s3"], "blast": "none", "anchors": []},
     {"id": "s5", "title": "RULR RED: lane manifest rules", "independent": true, "owns": ["scripts/test_check_lane_manifest_rules.py"], "depends": [], "blast": "none", "anchors": []},
-    {"id": "s6", "title": "RUL: lane manifest rules checker", "independent": false, "owns": ["scripts/check_lane_manifest_rules.py", "mk/lane-overlaps.mk"], "depends": ["s5"], "blast": "none", "anchors": []},
-    {"id": "s7", "title": "LBL: evalops seed data (terra)", "independent": true, "owns": ["benchmarks/experiments/evalops/findings-v0.jsonl", "benchmarks/experiments/evalops/errors-v0.jsonl", "benchmarks/experiments/evalops/qrels-v0.jsonl", "benchmarks/tests/test_evalops_seed_files.py"], "depends": [], "blast": "none", "anchors": []}
+    {"id": "s6", "title": "RUL: lane manifest rules checker", "independent": false, "owns": ["scripts/check_lane_manifest_rules.py", "mk/lane-overlaps.mk", "scripts/test_check_lane_manifest_rules.py"], "depends": ["s5"], "blast": "none", "anchors": []},
+    {"id": "s7", "title": "LBL: evalops seed-file test (sol; seed data in the lane base)", "independent": true, "owns": ["benchmarks/tests/test_evalops_seed_files.py"], "depends": [], "blast": "none", "anchors": []},
+    {"id": "s8", "title": "DOCFIX: uppercase MAINT placeholder in instructions and session prompt", "independent": false, "owns": ["docs/workbay/instructions.md", "NEXT_SESSION_PROMPT.md", "scripts/test_documented_make_commands.py"], "depends": ["s4"], "blast": "none", "anchors": []}
   ]
 }
 ```
@@ -377,18 +382,19 @@ After each WorkBay release, and 7 days after S3, the coordinator reruns `.task-s
 | Lane ID | Owned Paths | Upstream Dependencies | Required Tests | Model |
 |---|---|---|---|---|
 | `errfix-1-envr` | `scripts/tests/test_provision_lane_worktree.py` | None | `python3 -m pytest scripts/tests/test_provision_lane_worktree.py -q` (red) | sol, high |
-| `errfix-1-env` | `scripts/workstate/provision_lane_worktree.py` | `errfix-1-envr` | same | sol, high |
+| `errfix-1-env` | `scripts/workstate/provision_lane_worktree.py`, `scripts/tests/test_provision_lane_worktree.py` | `errfix-1-envr` | same | sol, high |
 | `errfix-1-docr` | `scripts/test_documented_make_commands.py` | None | `python3 -m pytest scripts/test_documented_make_commands.py -q` (red) | sol, high |
-| `errfix-1-doc` | `CLAUDE.md`, `.github/copilot-instructions.md`, `Makefile` | `errfix-1-docr` | same | sol, high |
+| `errfix-1-doc` | `CLAUDE.md`, `.github/copilot-instructions.md`, `Makefile`, `scripts/test_documented_make_commands.py` | `errfix-1-docr` | same | sol, high |
+| `errfix-1-docfix` | `docs/workbay/instructions.md`, `NEXT_SESSION_PROMPT.md`, `scripts/test_documented_make_commands.py` | `errfix-1-doc` | same | sol, high |
 | `errfix-1-rulr` | `scripts/test_check_lane_manifest_rules.py` | None | `python3 -m pytest scripts/test_check_lane_manifest_rules.py -q` (red) | sol, high |
-| `errfix-1-rul` | `scripts/check_lane_manifest_rules.py`, `mk/lane-overlaps.mk` | `errfix-1-rulr` | same | sol, high |
-| `errfix-1-lbl` | `benchmarks/experiments/evalops/{findings,errors,qrels}-v0.jsonl`, `benchmarks/tests/test_evalops_seed_files.py` | Wave 1 admitted | `python3 -m pytest benchmarks/tests/test_evalops_seed_files.py -q` | terra, high |
+| `errfix-1-rul` | `scripts/check_lane_manifest_rules.py`, `mk/lane-overlaps.mk`, `scripts/test_check_lane_manifest_rules.py` | `errfix-1-rulr` | same | sol, high |
+| `errfix-1-lbl` | `benchmarks/tests/test_evalops_seed_files.py` (the seed data is in its base) | Seed data committed (Slice 6) | `python3 -m pytest benchmarks/tests/test_evalops_seed_files.py -q` | sol, high |
 
 ### Merge Order
 
 1. Wave 1 (sol): `errfix-1-envr`, `errfix-1-docr`, `errfix-1-rulr`.
 2. Wave 2 (sol): `errfix-1-env`, `errfix-1-doc` and `errfix-1-rul`, each after its RED lane merges. `errfix-1-env` goes first, because it unblocks dispatch from task-start worktrees.
-3. `errfix-1-lbl` (terra) dispatches after wave 1 is admitted. A terra preflight refusal opens a configuration breaker, so it must not gate the sol lanes.
+3. Wave 3 (sol): `errfix-1-docfix` after `errfix-1-doc`, integrated after it because its test file supersedes doc's; `errfix-1-lbl` once the seed data is committed in its base.
 4. Operator slices:
    - S3: any time;
    - S5: before the next large wave;
@@ -397,12 +403,12 @@ After each WorkBay release, and 7 days after S3, the coordinator reruns `.task-s
 ### Manifest
 
 ```bash
-make lane-manifest-init TASK=ERRFIX-1 LANE_IDS='errfix-1-envr errfix-1-env errfix-1-docr errfix-1-doc errfix-1-rulr errfix-1-rul errfix-1-lbl' TASK_PLAN=docs/tasks/errfix/ERRFIX-1-error-triage-fixes-task-plan.md
+make lane-manifest-init TASK=ERRFIX-1 LANE_IDS='errfix-1-envr errfix-1-env errfix-1-docr errfix-1-doc errfix-1-docfix errfix-1-rulr errfix-1-rul errfix-1-lbl' TASK_PLAN=docs/tasks/errfix/ERRFIX-1-error-triage-fixes-task-plan.md
 ```
 
 Pins on every lane:
 - `preferred_backend`: `codex-remote`.
-- `preferred_model`: `gpt-6.1-sol`; `gpt-6.1-terra` for `errfix-1-lbl`.
+- `preferred_model`: `gpt-6.1-sol`. Terra work is not a lane (Slice 6).
 - `preferred_reasoning_effort`: `high`.
 - `preferred_speed`: set it explicitly, because a null value quarantines the manifest. Use `fast`, per the 2026-10-28 routing.
 - `test_commands`: from the Lanes table.
@@ -410,7 +416,7 @@ Pins on every lane:
 ### Orchestration Mode
 
 - **Codex remote**: lanes dispatch through the orchestrator MCP, from freshly provisioned lane worktrees. One lane per dispatch. Each launch prints the reaper command.
-- **Terra check**: `list_available_backends` has no per-model catalogue, so after the sol wave is admitted, `offload_preflight` on the `errfix-1-lbl` worktree with model `gpt-6.1-terra`, effort high, speed fast must pass. If it is refused, record a blocker and ask the operator. There is no fallback model.
+- **Terra jobs**: `codex exec -m gpt-6.1-terra -c model_reasoning_effort=high -c service_tier=fast -s read-only --output-schema <schema>` over ssh on the VM, one directory per run under `/home/gate/workbay-sandbox/errfix1-terra-*` (codex-cli 0.159.2 probe passed on 2026-10-29). Never preflight terra through the orchestrator: a refused live probe opens the 6 h breaker for every codex implement pass. Reaper: `rm -rf /home/gate/workbay-sandbox/errfix1-terra-*`.
 - **Reviews**: remote Claude Opus 5.5, xhigh effort, standard speed (Opus fast tier is org-disabled). The WorkBay review-cycle ledger admits gate passes only on `gpt-6.1-sol` xhigh, so the Opus reviews run read-only on the VM outside the ledger, and the merge is an operator step.
 - **Shell fallback**: use the repo lane helpers with the same owned paths and tests.
 
@@ -426,11 +432,11 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 | A pass verdict is refused while task-wide highs are open | Keep ERRFIX-1 free of open highs; defer them with a rationale [AGT-06] |
 | `task-finish` before `plan-accept` strands the doc (decision 20418) | Run `task-finish` only after `plan-accept` lands |
 | `task-reap --apply` closes a zero-commit task | Dry run only, until `feature/errfix-1` has a commit |
-| One negative probe blocks all codex implementation for 6 h | Terra dispatches only after the sol wave is admitted |
+| One negative probe blocks all codex implementation for 6 h | Terra never goes through orchestrator preflight; it runs out-of-band |
 | A stale `result.json` fakes completion, or a terminal event blocks re-dispatch | Clear both before arming a lane |
 | A non-success outcome that still landed work (finding 11867: each such lane shipped a defect its own test would catch) | Check `commit_landed`, self-verify and `turn.patch`, and run the lane's declared test, before merging or re-dispatching |
 | Finding ids reused across lanes overwrite each other | Use a fresh id range per lane and per review cycle |
-| Wide briefs exhaust the wall clock; briefs that forbid commits exit 4 | 1–3 files per lane, and briefs never forbid commits. Slice 4 enforces both |
+| Wide briefs exhaust the wall clock; briefs that forbid commits exit 4 | 1–3 files per lane, and briefs never forbid commits. Slice 4 warns on more than 3 owned paths (exit 0) and refuses a lane `objective` that forbids commits; the coordinator checks dispatch briefs |
 | The review sandbox has no git history | Embed the diff inline in review briefs |
 
 ---
@@ -454,6 +460,7 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 
 - [ ] RED tests 1–5 committed; tests 2–4 fail on main.
 - [ ] Doc lines fixed in `CLAUDE.md`, the copilot file and the `Makefile` help; the test is in `test-scripts`.
+- [ ] `docs/workbay/instructions.md` and `NEXT_SESSION_PROMPT.md` placeholders uppercase (`errfix-1-docfix`).
 
 ### Checklist for Operator S3: Rows and cursors
 
@@ -471,7 +478,7 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 
 ### Checklist for Slice 6: Labels and qrels
 
-- [ ] Samples exported; terra pre-labels, open codes and qrels committed.
+- [ ] Samples exported; terra pre-labels, open codes and qrels committed in the `errfix-1-lbl` base; the seed-file test passes.
 - [ ] 100 human labels recorded.
 
 ### Checklist for Operator S7: Replay
@@ -518,7 +525,8 @@ The corpus check traces each row through its card (where one applies) to the ori
 | OBS-02 | One wide event per unit of work | Observability Engineering, ch. 5 | Supported | `result.json` ask |
 | EVAL-12 | Validate the judge against humans | AI Engineering | Supported. Card `reasoning/context-obedience-is-a-separate-capability.md` | Slice 6 |
 | RLSE-29 | Classify changes and carry evidence | The DevOps Handbook, ch. 23 | Supported | R3 |
-| RLSE-02 | Gates are not suggestions | Release It!, ch. 18 | Not checked. Card `reasoning/contract-before-components.md` | Slice 4 fails closed |
+| RLSE-05 | Crash early when execution is suspect | The Pragmatic Programmer, ch. 4 | Supported: Tip 38, "A dead program normally does a lot less damage than a crippled one". Card `reasoning/fail-loudly-succeed-quietly.md` | Slice 4 fails closed |
+| RES-31 | Bound high-impact automation | The Site Reliability Workbook, ch. 6 | Supported: "Automation should default to human operators if it runs into an unsafe condition" | Workflow Principles; S3, S5 |
 | FM-12 | Concept ID, not preferred string | AAT; Semantic Web for the Working Ontologist, ch. 11 | Not checked | R5 |
 | OPS-75 | Improve the measured constraint | The DevOps Handbook, ch. 2 | Supported | Slice order; S7 |
 | AUDIT-11 | Account for cluster design effect | Sampling: Design and Analysis, ch. 5 | Supported: "Kish (1965) … design effect (abbreviated deff)". Card `reasoning/margin-and-design-effect-before-the-run.md` | Problem Statement; S7 |
@@ -528,4 +536,4 @@ The corpus check traces each row through its card (where one applies) to the ori
 | STOR-01 | Every index taxes writes | DDIA, ch. 3 | Supported: "every index slows down writes" | Storage ask |
 | STOR-03 | Monitor compaction backlog | DDIA, ch. 3 | Supported | Storage ask |
 | STOR-07 | Precompute is an optimization, not the source | DDIA, ch. 3 | Supported. Card `reasoning/correction-at-source.md` | Embeddings sidecar ask |
-| STOR-10 | Retain tombstones until safe | Database Internals, ch. 7 | Supported: "Preserving tombstones during compaction is important to avoid data resurrection." | S5 export before retention |
+| RLSE-08 | Rollback written before ship | Continuous Delivery, ch. 10 and 12 | Supported: "ensure that the state of your production system … is backed up before doing a release" (ch. 10). Card `reasoning/reversible-commitments.md` | S5 export before retention; storage ask |

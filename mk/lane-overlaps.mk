@@ -2,7 +2,7 @@
 # Live lane manifest owned-path overlap check
 # =============================================================================
 
-.PHONY: lane-overlaps-check lane-overlaps-tests lane-manifest-rules
+.PHONY: lane-overlaps-check lane-overlaps-tests lane-manifest-rules lane-dispatch-preflight
 
 LANE_OVERLAPS_MANIFEST_DIR ?= $(ROOT_MAKEFILE_DIR)/config/lane-orchestration
 LANE_OVERLAPS_STATUS_JSON ?=
@@ -10,6 +10,13 @@ LANE_STATUS_JSON ?= $(LANE_OVERLAPS_STATUS_JSON)
 LANE_OVERLAPS_PAGE_SIZE ?= 200
 LANE_OVERLAPS_EXPORTER ?=
 LANE_MANIFEST_RULES_TASKS = $(if $(filter command line,$(origin TASK)),$(TASK))
+
+# Export inputs as data so TASK/ref values never become shell source. This
+# opt-in pre-dispatch check deliberately is not a check-all prerequisite.
+export LANE_DISPATCH_PREFLIGHT_TASKS = $(LANE_MANIFEST_RULES_TASKS)
+export LANE_DISPATCH_PREFLIGHT_MANIFEST_DIR = $(LANE_OVERLAPS_MANIFEST_DIR)
+export LANE_DISPATCH_PREFLIGHT_INTEGRATION_REF ?= main
+export LANE_DISPATCH_PREFLIGHT_JSON ?=
 
 # Linked worktrees do not carry their own .venv, so fall back to the main
 # worktree's interpreter before bare python3.
@@ -78,6 +85,17 @@ lane-manifest-rules:
 	 set -- --manifest-dir "$(LANE_OVERLAPS_MANIFEST_DIR)"; \
 	 for ref in $(LANE_MANIFEST_RULES_TASKS); do set -- "$$@" --task-ref "$$ref"; done; \
 	 "$$resolved_python" "$$lane_root/scripts/check_lane_manifest_rules.py" "$$@"
+
+# Usage: make lane-dispatch-preflight TASK=<ref> [LANE_DISPATCH_PREFLIGHT_JSON=1]
+# Refresh the local integration ref before invoking this read-only check.
+lane-dispatch-preflight:
+	@set -euf; \
+	 $(LANE_OVERLAPS_RESOLVE_PYTHON); \
+	 set -- --manifest-dir "$$LANE_DISPATCH_PREFLIGHT_MANIFEST_DIR" \
+	  --integration-ref "$$LANE_DISPATCH_PREFLIGHT_INTEGRATION_REF"; \
+	 for ref in $$LANE_DISPATCH_PREFLIGHT_TASKS; do set -- "$$@" --task-ref "$$ref"; done; \
+	 if [ "$$LANE_DISPATCH_PREFLIGHT_JSON" = 1 ]; then set -- "$$@" --json; fi; \
+	 "$$resolved_python" "$$lane_root/scripts/check_lane_dispatch_preflight.py" "$$@"
 
 lane-overlaps-tests:
 	@set -eu; \

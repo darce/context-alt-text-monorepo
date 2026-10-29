@@ -432,9 +432,10 @@ class History:
         self.apply(event, batch)
         return event
 
-    def gap(self, reason, now, mono, **detail):
-        prior = self.last_observation['time'] if self.last_observation else self.config['started_at']
-        gap = {'reason':reason, 'since':prior, 'until':iso(now), **detail}
+    def gap(self, reason, now, mono, since=None, **detail):
+        if since is None:
+            since = self.last_observation['time'] if self.last_observation else self.config['started_at']
+        gap = {'reason':reason, 'since':since, 'until':iso(now), **detail}
         self.add('gap', now, mono, gap)
 
     def validate(self):
@@ -659,9 +660,14 @@ def run_capture(db, output_dir, *, duration_seconds=604800, poll_seconds=60,
                     if mono < next_due:
                         clock.sleep(min(30, next_due-mono, stop_mono-mono))
                         continue
-                    if mono > next_due + .05:
-                        history.gap('missed_cadence', now, mono, due_monotonic=next_due,
-                                    missed_polls=int((mono-next_due)//config['poll_seconds'])+1)
+                    # Fixed cadence grid: this read serves the latest slot already due. Each earlier
+                    # unserved slot is counted once here; the served slot is never counted as missed.
+                    late = math.floor((mono-next_due)/config['poll_seconds'])
+                    if late > 0:
+                        history.gap('missed_cadence', now, mono, cause='late_wakeup',
+                                    due_monotonic=next_due, missed_polls=late)
+                        next_due += late*config['poll_seconds']
+                    read_wall, read_mono = now, mono
                     require(source_identity(db) == config['source'], 'source replacement detected before read')
                     snapshot = reader(db, limits, clock, min(stop_mono, mono+limits.read_seconds))
                     now, mono = timing()
@@ -679,12 +685,14 @@ def run_capture(db, output_dir, *, duration_seconds=604800, poll_seconds=60,
                                 {'batch':ref}, batch)
                     if once:
                         return publish_exports(history, 'observed_once', now, mono)
-                    # Fixed cadence grid. Do not silently shift the schedule after a slow read.
-                    elapsed_slots = max(1, math.floor((mono-next_due)/config['poll_seconds'])+1)
-                    if elapsed_slots > 1:
-                        history.gap('missed_cadence', now, mono, missed_polls=elapsed_slots-1,
-                                    due_monotonic=next_due+config['poll_seconds'])
-                    next_due += elapsed_slots*config['poll_seconds']
+                    # Do not silently shift the schedule after a slow read: slots that came due while
+                    # it ran are skipped (no back-to-back reads) and counted once, over the read window.
+                    overrun = max(0, math.floor((mono-next_due)/config['poll_seconds']))
+                    if overrun:
+                        history.gap('missed_cadence', now, mono, since=iso(read_wall), cause='read_overrun',
+                                    due_monotonic=next_due+config['poll_seconds'], missed_polls=overrun,
+                                    read_started_monotonic=read_mono)
+                    next_due += (overrun+1)*config['poll_seconds']
         except (CaptureError, sqlite3.Error, OSError, ValueError) as exc:
             # Corrupt stored evidence never enters this block: validation precedes all append paths.
             now, mono = clock.now(), clock.monotonic()

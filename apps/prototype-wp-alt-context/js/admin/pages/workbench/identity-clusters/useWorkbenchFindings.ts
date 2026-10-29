@@ -461,6 +461,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
     mergeQuery,
     nameQuery,
     topUnlabeledQuery,
+    topUnlabeledOutage,
     assignmentDataSource,
     assignmentSuggestions,
     mergeSuggestions,
@@ -483,7 +484,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
   const isError = !hasAnyData && assignmentQuery.isError && mergeQuery.isError;
   // Separate flag so a top-unlabeled 500 is visible even when primary queues
   // returned empty success (UI-03 / UI-06) without blanking partial findings.
-  const isTopUnlabeledError = topUnlabeledQuery.isError;
+  const isTopUnlabeledError = topUnlabeledOutage.isError;
   // REV2-01: same class as isTopUnlabeledError. An assignment-only outage keeps
   // hasAnyData true (merge/name/top-unlabeled succeeded empty), so isError stays
   // false and the panel would otherwise announce an all-clear over a dead queue.
@@ -494,7 +495,8 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
     isQuerySettled(assignmentQuery) &&
     isQuerySettled(mergeQuery) &&
     isQuerySettled(nameQuery) &&
-    isQuerySettled(topUnlabeledQuery);
+    // RQ v5 resets a no-data refetch to pending; a held outage is settled with error.
+    (isTopUnlabeledError || isQuerySettled(topUnlabeledQuery));
 
   // COR-3 (rg-015): no authoritative backlog total exists; count loaded items.
   const assignmentTotal = assignmentSuggestions?.length ?? 0;

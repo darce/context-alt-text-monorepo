@@ -7,6 +7,8 @@
  */
 
 import { isHumanLabeledTarget } from './suggestionProjection';
+import type { CanonicalRosterPerson } from './canonicalRosterPerson';
+export type { CanonicalRosterPerson } from './canonicalRosterPerson';
 
 export type NamingOptionSource = 'person' | 'cluster';
 
@@ -38,12 +40,6 @@ export interface ClusterNamingEntry {
   readonly label: string;
   readonly identity_count?: number;
   readonly person_uuid?: string | null;
-}
-
-/** Existing local roster identity, resolved through binding data rather than a name. */
-export interface CanonicalRosterPerson {
-  readonly rosterEntryId: number;
-  readonly name: string;
 }
 
 export const canonicalPersonOption = (person: CanonicalRosterPerson): NamingOption => ({

@@ -12,6 +12,11 @@
 ## Jobs
 - `inspect-fir` — Inspect faces and occlusion outcomes on one isolated development model stack
 
+## Code references
+- `screen:media-selection` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`
+- `screen:scan-activity` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`
+- `screen:face-review` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`
+
 ## Screens
 | id | kind | route | title |
 | --- | --- | --- | --- |
@@ -19,12 +24,16 @@
 | `scan-activity` | screen | `#/workbench` | Face-only run activity |
 | `face-review` | exit | `#/workbench` | Existing face review |
 
-## Code references
-- `screen:media-selection` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`
-- `screen:scan-activity` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`
-- `screen:face-review` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`
-
 ### Review Queue media selection (`media-selection`)
+
+Purpose: Select images; Describe selected remains the normal primary. A collapsed Developer tools disclosure offers a separate CPU face-only command. Production/demo/staging environments and unknown settings omit this disclosure.
+
+url_params: `tab`, `run_id`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `selected-media` | Selected image thumbnails and filenames, shared with Describe | content | default, loading, empty, error |
+| `developer-tools` | Collapsed Developer tools; read-only configured API target; Run FIR pipeline (CPU). Preview explains selected image count, recognition writes and no descriptions/GPU. Disabled with an explanation for empty selection, recognition off, offline or another active operation. One fixed model per LocalWP instance; this command runs its configured pipeline. | job | default, loading, empty, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -59,6 +68,14 @@
 
 ### Face-only run activity (`scan-activity`)
 
+Purpose: Accepted work uses existing scan progress, Cancel, stream Retry and job history beside the selected media. Starting is pending; failures remain visible and do not start descriptions. Collapsing developer disclosure does not hide the shared job activity.
+
+url_params: `tab`, `run_id`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `scan-status` | Existing face scan progress, phase and processed counts; polite announcement; Cancel; read-only stream Retry | status | loading, error, degraded, default |
+
 ```
 +------------------------------------------------------------+
 | Face-only run activity  [screen]  #/workbench              |
@@ -85,6 +102,14 @@
 
 ### Existing face review (`face-review`)
 
+Purpose: Inspect found face boxes beside the source image and review suggestions in the existing queue; unknown or missed faces remain observable. Completion never promises a match, complete coverage, a model winner or a new description.
+
+url_params: `tab`, `panel`, `clusterId`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `face-evidence` | Existing source image, face boxes and recognition evidence; empty and error states remain distinct | ai_review | default, empty, error, degraded |
+
 ```
 +------------------------------------------------------------+
 | Existing face review  [exit]  #/workbench                  |
@@ -103,6 +128,15 @@
 +------------------------------------------------------------+
 ```
 
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `describe` | Describe selected | `Existing describe submission` | primary | yes | no | yes | `media-selection` |
+| `recognize-only` | Run FIR pipeline (CPU) | `POST recognition/analyze {development_faces_only:true}; existing scan pipeline only` | secondary | yes | no | yes | `media-selection` |
+| `cancel` | Cancel face scan | `Existing cancelScan; never describe` | secondary | no | no | no | `scan-activity` |
+| `retry-observation` | Retry status connection | `Existing retryScanStream; no duplicate inference` | secondary | no | no | no | `scan-activity` |
+
 ## Flows
 ### Run selected media through CPU recognition only (`recognize-selected`)
 
@@ -120,6 +154,7 @@ flow: Run selected media through CPU recognition only (recogn\
 ```mermaid
 flowchart TD
   %% flow: Run selected media through CPU recognition only job=inspect-fir
+  %% steps: [{"screen_id":"media-selection","branch_label":"Select images; expand Developer tools; inspect target and count; invoke face-only action"},{"screen_id":"scan-activity","branch_label":"Pending then observed progress; no Describe callback"},{"screen_id":"face-review","branch_label":"Terminal success: inspect actual face results, including unknown or empty"}]
   n_media_selection["Review Queue media selection (screen)"]
   n_scan_activity["Face-only run activity (screen)"]
   n_media_selection -->|Select images; expand Developer tools; inspect target and count; invoke face-only action| n_scan_activity
@@ -143,11 +178,33 @@ flow: Recover without a description or hidden GPU work (cance\
 ```mermaid
 flowchart TD
   %% flow: Recover without a description or hidden GPU work job=inspect-fir
+  %% steps: [{"screen_id":"media-selection","branch_label":"Start one explicit face-only command"},{"screen_id":"scan-activity","branch_label":"Cancel or typed error; keep selection, show outcome; stream Retry only reconnects"},{"screen_id":"media-selection","branch_label":"A new face scan requires another explicit command"}]
   n_media_selection["Review Queue media selection (screen)"]
   n_scan_activity["Face-only run activity (screen)"]
   n_media_selection -->|Start one explicit face-only command| n_scan_activity
   n_scan_activity -->|Cancel or typed error; keep selection, show outcome; stream Retry only reconnects| n_media_selection
 ```
+
+## Parity index
+
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
+
+Zone ids: selected-media developer-tools scan-status face-evidence
+
+Action ids: describe recognize-only cancel retry-observation
+
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Selected image thumbnails and filenames, shared with Describe
+- Collapsed Developer tools; read-only configured API target; Run FIR pipeline (CPU). Preview explains selected image count, recognition writes and no descriptions/GPU. Disabled with an explanation for empty selection, recognition off, offline or another active operation. One fixed model per LocalWP instance; this command runs its configured pipeline.
+- Existing face scan progress, phase and processed counts; polite announcement; Cancel; read-only stream Retry
+- Existing source image, face boxes and recognition evidence; empty and error states remain distinct
+
+States (all zones and screens): default loading empty error degraded
 
 ## Not doing
 - No persistent processing-mode switch or relabelled Describe button.

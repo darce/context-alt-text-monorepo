@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\TenantIdentity;
 use AltContext\Sovereign\Sync\CrossPlaneSequencer;
 use AltContext\Sovereign\Sync\OutboxDispatcher;
 use AltContext\Sovereign\Sync\OutboxDrain;
@@ -1420,6 +1421,109 @@ class OutboxDrainTest extends TestCase
 		$this->assertTrue( $this->isHookScheduled( 'acx_sync_purge_terminal_rows' ) );
 	}
 
+	/**
+	 * DEMO-12 through the cron hook: a superseded tenant's backlog is discarded in
+	 * capped passes, the tenant cursor still reaches the site's tenant, and no
+	 * superseded row is ever reclaimed into the drain.
+	 */
+	public function testScheduledPurgeDiscardsSupersededTenantInCappedPassesWithoutStarvingSiteTenant(): void
+	{
+		global $wpdb;
+
+		$this->setOption(TenantIdentity::OPTION_KEY, '5ab37d6d-1111-4111-8111-111111111111');
+		$siteTenant = self::currentTenantId();
+		$oldTenant = '4ddf8f36-2222-4222-8222-222222222222';
+		$GLOBALS['__ac_current_time'] = strtotime('2026-10-27 02:14:00 UTC');
+		add_filter('acx_sync_purge_tenant_page_size', static fn (): int => 1);
+		add_filter('acx_sync_purge_batch_size', static fn (): int => 2);
+		$wpdb->defaultQueryResult = 0;
+		$failed = static fn (int $id, string $tenantId, string $lastAttemptedAt): array => [
+			'id' => $id,
+			'tenant_id' => $tenantId,
+			'operation_type' => 'cluster_label_updated',
+			'entity_type' => 'cluster',
+			'entity_key' => 'cluster-' . $id,
+			'status' => 'failed',
+			'attempts' => 7,
+			'last_error_code' => 'transport_error',
+			'last_error_message' => 'failed',
+			'last_error_retryable' => 1,
+			'first_failed_at' => '2026-07-15 00:00:00',
+			'last_attempted_at' => $lastAttemptedAt,
+			'created_at' => '2026-07-15 00:00:00',
+			'payload' => '{"label":"Old","acx_auto_attempts":1}',
+			'next_attempt_at' => null,
+		];
+		$pending = static fn (int $id): array => [
+			'id' => $id,
+			'tenant_id' => $oldTenant,
+			'operation_type' => 'cluster_label_updated',
+			'entity_type' => 'cluster',
+			'entity_key' => 'cluster-' . $id,
+			'status' => 'pending',
+			'attempts' => 0,
+			'last_error_code' => null,
+			'last_error_retryable' => null,
+			'first_failed_at' => null,
+			'last_attempted_at' => null,
+			'created_at' => '2026-07-15 00:00:00',
+			'payload' => '{"label":"Old"}',
+			'next_attempt_at' => null,
+		];
+		$oldFailed = $failed(3, $oldTenant, '2026-10-01 02:14:00');
+		$wpdb->tableRows['wp_acx_sync_outbox'] = [
+			$pending(1),
+			$pending(2),
+			$oldFailed,
+			$failed(4, $siteTenant, '2026-10-26 02:14:00'),
+		];
+		$maintenance = new class( [$oldTenant, $siteTenant] ) extends OutboxMaintenanceService {
+			/** @param array<int,string> $tenantIds */
+			public function __construct( private array $tenantIds ) {
+				parent::__construct( null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts', new class() extends ReclaimerLiveness {
+					public function claim( string $tenant_id ): string|false|null {
+						return 'sweep-lease';
+					}
+
+					public function release( string $tenant_id, string $owner ): bool {
+						return true;
+					}
+				} );
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				$after = array_values( array_filter( $this->tenantIds, static fn ( string $id ): bool => strcmp( $id, $after_tenant_id ) > 0 ) );
+				return array_slice( $after, 0, (int) $limit );
+			}
+		};
+		$drain = new OutboxDrain( null, null, null, null, 'wp_acx_sync_outbox', null, $maintenance );
+		$rowsById = static fn (): array => array_column( $GLOBALS['wpdb']->tableRows['wp_acx_sync_outbox'], null, 'id' );
+
+		$drain->purge_terminal_rows();
+		$rows = $rowsById();
+		$this->assertSame(['discarded', 'discarded'], [$rows[1]['status'], $rows[2]['status']]);
+		$this->assertSame(['tenant_superseded', 'tenant_superseded'], [$rows[1]['last_error_code'], $rows[2]['last_error_code']]);
+		$this->assertSame($oldFailed, $rows[3], 'The per-pass cap leaves the third row for a later pass.');
+		$this->assertSame('failed', $rows[4]['status']);
+		$this->assertSame($oldTenant, get_option('acx_sync_purge_tenant_cursor'));
+
+		$drain->purge_terminal_rows();
+		$rows = $rowsById();
+		$this->assertSame('pending', $rows[4]['status'], 'The site tenant still gets its own reclaim pass.');
+		$this->assertSame($oldFailed, $rows[3]);
+		$this->assertSame($siteTenant, get_option('acx_sync_purge_tenant_cursor'));
+
+		$drain->purge_terminal_rows();
+		$this->assertSame('', get_option('acx_sync_purge_tenant_cursor'));
+
+		$drain->purge_terminal_rows();
+		$rows = $rowsById();
+		$this->assertSame('discarded', $rows[3]['status']);
+		$this->assertSame('tenant_superseded', $rows[3]['last_error_code']);
+		$this->assertSame('2026-10-01 02:14:00', $rows[3]['last_attempted_at']);
+		$this->assertTrue($this->isHookScheduled('acx_sync_purge_terminal_rows'));
+	}
+
 	public function testDrainReschedulesWhenPurgeThrowsForProcessedTenant(): void
 	{
 		add_filter(
@@ -1458,7 +1562,9 @@ class OutboxDrainTest extends TestCase
 	public function testDrainInvokesTerminalPurgeForProcessedTenants(): void
 	{
 		global $wpdb;
-		$wpdb->mockResults = [$this->pendingOperationRow()];
+		// The inline purge judges the processed tenant against the site's tenant, so the
+		// row must carry the identity TenantIdentity really produces for this site.
+		$wpdb->mockResults = [$this->pendingOperationRow(['tenant_id' => self::currentTenantId()])];
 		$wpdb->mockVar = '1';
 
 		$dispatcher = new class() extends OutboxDispatcher {
@@ -1477,6 +1583,8 @@ class OutboxDrainTest extends TestCase
 			'',
 			$this->findFirstQueryContaining($wpdb->queries, 'DELETE FROM `wp_acx_sync_outbox`')
 		);
+		// The site's own tenant gets the full purge, never the superseded-tenant discard.
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, 'COALESCE(last_attempted_at, created_at) <'));
 		$this->assertArrayNotHasKey( 'acx_sync_purge_tenant_cursor', $GLOBALS['__ac_options'] );
 	}
 
@@ -1736,14 +1844,16 @@ class OutboxDrainTest extends TestCase
 		$wpdb->mockResults = [];
 
 		$wpdb->queryResults[$wpdb->prepare(
-			'SELECT id FROM %i WHERE status = %s ORDER BY created_at ASC LIMIT 1',
+			'SELECT id FROM %i WHERE status = %s AND tenant_id = %s ORDER BY created_at ASC LIMIT 1',
 			'wp_acx_sync_outbox',
-			'pending'
+			'pending',
+			self::currentTenantId()
 		)] = '5';
 		$wpdb->queryResults[$wpdb->prepare(
-			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+			'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s AND tenant_id = %s',
 			'wp_acx_sync_outbox',
-			'pending'
+			'pending',
+			self::currentTenantId()
 		)] = gmdate('Y-m-d H:i:s', $earliestTimestamp);
 	}
 

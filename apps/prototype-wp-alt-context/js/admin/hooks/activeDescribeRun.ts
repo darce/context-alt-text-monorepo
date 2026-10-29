@@ -8,7 +8,6 @@ import {
   putDescribeOperationContext,
   resolveDescribeOperationTenantId,
   subscribeDescribeOperationStore,
-  type DescribeOperationContextInput,
 } from './describeOperationStore';
 
 export interface ActiveDescribeRunState {
@@ -16,11 +15,11 @@ export interface ActiveDescribeRunState {
   progressMounted: boolean;
 }
 
-const progressMountedByTenant = new Map<string | null, boolean>();
+const progressMountedByTenant = new Map<string | null, number>();
 const progressListeners = new Set<() => void>();
 
 const tenantProgressMounted = (): boolean =>
-  progressMountedByTenant.get(resolveDescribeOperationTenantId()) === true;
+  (progressMountedByTenant.get(resolveDescribeOperationTenantId()) ?? 0) > 0;
 
 const emitProgressChange = (): void => {
   progressListeners.forEach((listener) => listener());
@@ -33,38 +32,9 @@ const subscribeProgressMounted = (listener: () => void): (() => void) => {
   };
 };
 
-const getProgressMounted = (): boolean => {
-  const existing = getDescribeRunContext();
-  if (existing !== null) {
-    return existing.progress_mounted === true;
-  }
-  return tenantProgressMounted();
-};
+const getProgressMounted = tenantProgressMounted;
 
 const getActiveRunId = (): string | null => getDescribeRunContext()?.id ?? null;
-
-const persistRunContext = (
-  existing: DescribeOperationContextInput,
-  nextProgressMounted: boolean,
-): void => {
-  putDescribeOperationContext({
-    version: existing.version,
-    kind: existing.kind,
-    id: existing.id,
-    ...(existing.media_id !== undefined ? { media_id: existing.media_id } : {}),
-    startup_id: existing.startup_id,
-    started_at: existing.started_at,
-    ...(existing.warming_started_at !== undefined
-      ? { warming_started_at: existing.warming_started_at }
-      : {}),
-    ...(existing.startup_budget_seconds !== undefined
-      ? { startup_budget_seconds: existing.startup_budget_seconds }
-      : {}),
-    request: existing.request,
-    ...(existing.status !== undefined ? { status: existing.status } : {}),
-    ...(nextProgressMounted ? { progress_mounted: true } : {}),
-  });
-};
 
 export const useActiveDescribeRun = (): ActiveDescribeRunState => {
   const runId = useSyncExternalStore(
@@ -86,11 +56,7 @@ export const setActiveDescribeRunId = (runId: string | null): void => {
     return;
   }
   const existing = getDescribeRunContext();
-  const progressMounted = tenantProgressMounted();
   if (existing?.id === runId) {
-    if ((existing.progress_mounted === true) !== progressMounted) {
-      persistRunContext(existing, progressMounted);
-    }
     return;
   }
   putDescribeOperationContext({
@@ -100,7 +66,6 @@ export const setActiveDescribeRunId = (runId: string | null): void => {
     startup_id: null,
     started_at: Date.now(),
     request: { writeAlt: false, force: false },
-    ...(progressMounted ? { progress_mounted: true } : {}),
   });
 };
 
@@ -111,20 +76,13 @@ export const clearActiveDescribeRunId = (runId: string): void => {
 };
 
 export const setDescribeProgressMounted = (nextProgressMounted: boolean): void => {
-  const existing = getDescribeRunContext();
-  const recordMounted = existing?.progress_mounted === true;
-  const progressMounted = tenantProgressMounted();
-  if (nextProgressMounted === progressMounted && recordMounted === nextProgressMounted) {
-    return;
-  }
-  progressMountedByTenant.set(resolveDescribeOperationTenantId(), nextProgressMounted);
-  if (existing !== null && recordMounted !== nextProgressMounted) {
-    persistRunContext(existing, nextProgressMounted);
-  }
+  const tenantId = resolveDescribeOperationTenantId();
+  const count = progressMountedByTenant.get(tenantId) ?? 0;
+  progressMountedByTenant.set(tenantId, Math.max(0, count + (nextProgressMounted ? 1 : -1)));
   emitProgressChange();
 };
 
-/** Test-only: drop in-memory per-tenant progress flags. */
+/** Test-only: drop in-memory per-tenant progress mount counts. */
 export const _resetActiveDescribeRunForTests = (): void => {
   progressMountedByTenant.clear();
 };

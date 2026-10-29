@@ -142,9 +142,10 @@ class OutboxQueryRepositoryTest extends TestCase
 
         $earliest = '2026-07-16 10:00:00';
         $wpdb->queryResults[$wpdb->prepare(
-            'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s',
+            'SELECT MIN(COALESCE(next_attempt_at, created_at)) FROM %i WHERE status = %s AND tenant_id = %s',
             'wp_acx_sync_outbox',
-            'pending'
+            'pending',
+            self::currentTenantId()
         )] = $earliest;
 
         $repository = new OutboxQueryRepository('wp_acx_sync_outbox');

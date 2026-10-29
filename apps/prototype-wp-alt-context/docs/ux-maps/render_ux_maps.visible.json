@@ -1,15 +1,19 @@
 {
   "maps": {
     "dashboard": {
-      "projection_sha256": "6e65af9fb7d71cd0d5396af87ca4e2be53c64aca48a388cf51bb650fb59c189d",
+      "projection_sha256": "af69f78d56ac5301d3c50014afd640549763107971302d167a60c1497f0a5075",
       "source_sha256": "4de444cbf7c7283ec6761a07344bd70b436f82b4553c8044243cbc9cce25f29f"
     },
     "describe-gpu-tier": {
-      "projection_sha256": "8bdd676cb5de2a1881823d26d82492e006e5b4bf22b8a629c963ac038f1fe0ce",
-      "source_sha256": "5c0bb19238c03c7fa4e7fcd876a95618944eb82840e748a3ec11e12f7235ea85"
+      "projection_sha256": "523d25dc5e90b093dcf37436fa982c94c9da73ba33e8e1879263d85165be62df",
+      "source_sha256": "58e7f8cbecd3c81aa2d4c0cfa0ac7a18bdd1ed474a8588f919b5cde5bb6375fa"
+    },
+    "dev-face-recognition": {
+      "projection_sha256": "94cfe04fb6f06f79de0113a7867f70a0e7d03e5c2711bb2deb822eaf3268ea5f",
+      "source_sha256": "fa21901456ef977d0067e7f2a37ff9cbfb243e043a2944e66187c10d5cd87b65"
     },
     "febt-1-job-error-states": {
-      "projection_sha256": "3d179180800c5d1293240477022f00165164b5ffc238221a5d0b53b8932ea415",
+      "projection_sha256": "812c6fdf2ace0ce9b8301c6e3db560294030af5d3b843c6e081af82ce6d3a7cc",
       "source_sha256": "dea5305316cdcf6386a1bbf8afe5ae636902ee3391ef995b1a8fa54564612d23"
     },
     "gpu-operator-control": {
@@ -17,24 +21,24 @@
       "source_sha256": "13eed36cdbca57b8e16a488320d038c9b07b889f7113f00a663769692d1c7a9c"
     },
     "guided-prototype": {
-      "projection_sha256": "19fbbfed27852133db21acc1aa95991bb61b466940e1583dee6466aab7907dd3",
+      "projection_sha256": "845d6d983d6f90aa5e68f4e1519fc371fc07f4c2a4dcf42a843e906a0f4fe79c",
       "source_sha256": "264e382a0aac38ea840a50e5e1a92e6e3e237fc3c1cfaebd2a18cb24d7d17eb4"
     },
     "public-demo-describe": {
-      "projection_sha256": "c36c30e4c5abaade7c4a3b2948bd12369f23a22729c613432da36c0f77f7d1c2",
+      "projection_sha256": "c9c261af4fdd96137647b72ee47f8385dc153c4ba37db1572735c34f5fbe8bdc",
       "source_sha256": "b0b3761f20ece84f20b512cde30a970277ed831a8f705da77665f76715429257"
     },
     "public-guide": {
-      "projection_sha256": "64c8e4e63714e803203bff74fae6cacf5511fd68ec2dbc2e53a2b2cdb446517c",
+      "projection_sha256": "2c5ce9dda5636840adf8d9608329a9e53099154f4238e0489e16f20ddca19224",
       "source_sha256": "62bcfe0b31339eb731593aa3479b924a159e5d4b32c669e178eef731906c974c"
     },
     "roster-people": {
-      "projection_sha256": "28b5f730204a1fcd6c877eb44a8c04556af60e87c37a9d4ae7c7314d7def21a1",
+      "projection_sha256": "da6f9c380611a9abde29c450c2d7fcc4904039154b9f7731f33e4a78c2cc4ee9",
       "source_sha256": "3e4cb3a201bf6c691e452d6cc67efbb38722fdd0a9eee2e1cf2555dc24167a66"
     },
     "workbench-2pane": {
-      "projection_sha256": "74b67b30ff9d459f8a933e90c64fc3ebb97812a9e279f8592ad3c23c495a2f65",
-      "source_sha256": "0c8ed4abe3ddf2be27e62b2af4a26d59c104b48ff9d7b8244c60a3caf3ac5b54"
+      "projection_sha256": "002c3784b52c4153b3b3266ba40060c6022efffee2add24c7fda93ae9384e77a",
+      "source_sha256": "aff114a823384eeb7b830cbf8611e1fcdffc9c757fd3686eeadbbe44adf684e7"
     },
     "workbench-identity-chips": {
       "projection_sha256": "f1b7719d1c01d1a4674f7f5c234048734f3a930fce90575fc1afd59fa82b364f",

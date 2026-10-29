@@ -57,6 +57,7 @@ export interface ApiConfig {
   recognitionPolicy?: RecognitionPolicyBootstrapWire;
   effectiveTargetUrl?: string;
   guided_live_media_id?: unknown; // wp_localize_script stringifies numbers
+  accountUsageUrl?: string;
 }
 
 export interface NormalizedConfig {
@@ -73,6 +74,8 @@ export interface NormalizedConfig {
   effectiveTargetUrl: string;
   /** Attachment the guided prototype describes live; null when unconfigured. */
   guidedLiveMediaId: number | null;
+  /** Usage & billing account area; '' when there is no link to show. */
+  accountUsageUrl: string;
 }
 
 // NOTE: Batch limits removed for MVP. Previously 50, now set high to disable chunking.
@@ -168,6 +171,31 @@ const normalizeRecognitionPolicy = (value: unknown, requestLog: Logger): Recogni
   return policy;
 };
 
+/**
+ * Missing or empty means "no Usage & billing link", quietly: the field is
+ * optional. A present value that is not an absolute http(s) URL is dropped with
+ * a warning rather than rendered as an href.
+ */
+const normalizeAccountUsageUrl = (value: unknown, requestLog: Logger): string => {
+  if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    try {
+      const { protocol } = new URL(value.trim());
+      if (protocol === 'https:' || protocol === 'http:') {
+        return value.trim();
+      }
+    } catch {
+      // Not a URL; warned below.
+    }
+  }
+  requestLog.warn('AltContextAdmin configuration field "accountUsageUrl" is malformed; the link is hidden.', {
+    field: 'accountUsageUrl',
+  });
+  return '';
+};
+
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   // One normalization pass is one unit of work: every soft warning it emits
   // shares this id, and a later pass gets a different one (OBS-03). A
@@ -198,6 +226,7 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
     effectiveTargetUrl:
       typeof raw.effectiveTargetUrl === 'string' && raw.effectiveTargetUrl.trim() !== '' ? raw.effectiveTargetUrl : '',
     guidedLiveMediaId: normalizeAttachmentId(raw.guided_live_media_id),
+    accountUsageUrl: normalizeAccountUsageUrl(raw.accountUsageUrl, requestLog),
   };
 };
 

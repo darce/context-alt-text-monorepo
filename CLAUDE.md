@@ -12,7 +12,7 @@ On every session (cold start, mid-task re-entry, lane inherit):
 
 0. **Identify the task first.** Before `make context` or any MCP read that resolves the active task by cwd, decide which task owns this scope:
    - **Existing feature-branch task (resumption):** proceed to step 1 from inside the task's `target_worktree_path`.
-    - **Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches):** run `make maint-start TASK=MAINT-<slug>-<YYYYMMDD> OBJECTIVE="..."` FIRST. It registers the task against the repo root so later reads do not depend on cwd-only resolution. (`SLUG=` is the repo-local wrapper's signature; the shipped `Makefile.d/lifecycle.mk` overrides that target and requires `TASK=`.)
+    - **Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches):** run `make maint-start TASK=MAINT-<SLUG>-<YYYYMMDD> OBJECTIVE="..."` FIRST. It registers the task against the repo root so later reads do not depend on cwd-only resolution. (`SLUG=` is the repo-local wrapper's signature; the shipped `Makefile.d/lifecycle.mk` overrides that target and requires `TASK=`.)
    - **Ambiguous errors on startup** (`Ambiguous active task. Known task_refs: ...`) mean step 0 was skipped: either create/select the task_ref and pass it explicitly, or archive stale MAINT-* rows in one shot with `make maint-archive-stale` (add `MAINT_ARCHIVE_ARGS="--yes"` to skip the interactive prompt). `make context` also exits `2` (distinct from infra error `1`) on this ambiguity and prints the same hint.
 1. **Run `make context`** in a standalone shell call. It verifies branch/worktree alignment and prints a small startup summary (active task identity, open findings count, role-routing reminder). Do not batch it with MCP loading or other startup commands. If you see a drift warning, `cd` to the canonical path before continuing.
 2. **Apply the [MCP Loading Protocol](docs/workbay/rules/mcp-loading-protocol.md)** before fetching state. Read [`docs/workbay/maps/mcp-tool-routing.yaml`](docs/workbay/maps/mcp-tool-routing.yaml) and surface only the MCP servers whose triggers match the current prompt / task scope. `workbay-handoff-mcp` is always loaded; `workbay-orchestrator-mcp` and `computer-use` are on-demand. Concretely on Claude Code: `ToolSearch select:mcp__<server>__*` to surface a deferred server when its triggers fire.
@@ -43,7 +43,7 @@ from workbay_handoff_mcp import (
 configure_runtime(RuntimeConfig.for_repo(Path(".")))
 ```
 
-When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<task_plan|epic|branch|adr|roadmap|other> VERDICT=<pass|pass_with_findings|fail|conditional_pass> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
+When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run LIFECYCLE_ARGS="--task-ref <task-ref> --subject-path <path-or-.> --subject-kind <task_plan|epic|branch|adr|roadmap|other> --verdict <pass|pass_with_findings|fail|conditional_pass> --verdict-decision <decision-id> --session <session> --review-run-id <run-id>"`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
 
 Never use raw `sqlite3` to query `handoff.db` directly; the schema is internal and will break. `DASHBOARD.txt` is a last-resort stale read only when the Python package itself is also unavailable. `CURRENT_TASK.json` = optional task-scoped export only if an explicit render wrote it; do not assume it exists or is current. Record a blocker when Claude Code MCP tool access does not restore after session restart. **Stop implementation work until at least the Python API is available.**
 
@@ -95,7 +95,7 @@ A `PreToolUse` hook enforces this in both harnesses: VS Code runs `.github/hooks
 
 **Worktree naming convention** (mandatory for new tasks): `<repo-parent>/context-alt-text-monorepo-<lowercase-task-id>` paired with branch `feature/<lowercase-task-id>`. Examples: task `AHMCP-9` → worktree `context-alt-text-monorepo-ahmcp-9` on branch `feature/ahmcp-9`. The `make task-start TASK=<id>` helper enforces this convention and registers `target_worktree_path` on the active handoff state in one shot. The `make task-finish TASK=<id>` helper performs the post-merge teardown (worktree remove + branch delete + MCP archive).
 
-**Main-branch maintenance-task rule** (mandatory): before any permitted file edit on `main` (docs, Makefiles, configs, scripts), verify an active handoff task is registered. For ad-hoc patches use the maintenance-task pattern: `set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')`. Unregistered permitted edits trigger a warning from the main-branch hook.
+**Main-branch maintenance-task rule** (mandatory): before any permitted file edit on `main` (docs, Makefiles, configs, scripts), verify an active handoff task is registered. For ad-hoc patches use the maintenance-task pattern: `set_handoff_state(task_ref='MAINT-<SLUG>', objective='Describe the main-branch patch', status='in_progress')`. Unregistered permitted edits trigger a warning from the main-branch hook.
 
 **Context discipline for multi-agent flows:** Run `make context` at the start of every session to verify your shell is on the right `target_worktree_path` and `target_branch`. The `set_handoff_state` and `record_decision` write paths emit `context_drift` warnings (non-fatal) when actor branch or cwd diverges from the active task target — read those warnings and fix the drift before recording further events.
 
@@ -241,9 +241,9 @@ Epic titles: `E<number>. <Title>` · Task plans: `<EpicShortID>-<N>. <Title>` ·
 ## Key Triggers
 
 <!-- BEGIN GENERATED: codex-command-router -->
-<!-- GENERATED by .venv/lib/python3.12/site-packages/workbay_system/payload/scripts/generate_agent_workflows.py; do not edit by hand. -->
+<!-- GENERATED by scripts/generate_agent_workflows.py; do not edit by hand. -->
 
-If a user prompt begins with a registered `/command_id`, treat that prefix as a portable workflow command routed through `.venv/lib/python3.12/site-packages/workbay_system/payload/config/agent-workflows/portable_commands.json`.
+If a user prompt begins with a registered `/command_id`, treat that prefix as a portable workflow command routed through `config/agent-workflows/portable_commands.json`.
 
 Current managed ids: `/wb-scope`, `/wb-refactor`, `/wb-auto-fix`, `/wb-land`, `/wb-review-code`, `/wb-handoff`, `/wb-investigate`, `/wb-implement`, `/wb-draft`, `/wb-review-plan`, `/wb-review-slice`, `/wb-tdd`, `/wb-offload`, `/wb-harness`, `/wb-ux-map`.
 
@@ -252,7 +252,7 @@ Routing rules:
 - Strip the leading `/command_id` token before normal intent analysis.
 - Load the mapped skill from the manifest and use its `makefile_target` as the primary entry point when one exists.
 - Interpret the remainder of the user message using the manifest-defined argument names.
-- If generated adapters drift from the manifest, run `make generate-agent-workflows`; `make check-agent-workflows` verifies Claude, VS Code, and Codex outputs together. Regenerate from `.venv/lib/python3.12/site-packages/workbay_system/payload/scripts/generate_agent_workflows.py`.
+- If generated adapters drift from the manifest, run `make generate-agent-workflows`; `make check-agent-workflows` verifies Claude, VS Code, and Codex outputs together. Regenerate from `scripts/generate_agent_workflows.py`.
 
 Command map:
 

@@ -19,6 +19,8 @@ import type { GpuState } from '../../api/describeApi';
 import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../api/gpuApi';
 import * as gpuApi from '../../api/gpuApi';
 import * as describeApi from '../../api/describeApi';
+import { queryKeys } from '../../api/queryKeys';
+import { descriptionWaitPresentation } from '../../pages/workbench/gpuStatePresentation';
 import {
   _resetDescribeOperationStoreForTests,
   DESCRIBE_OPERATION_CONTEXT_VERSION,
@@ -42,6 +44,7 @@ import {
   type GpuActivityInput,
   type ScanActivityInput,
 } from '../useActivityStatus';
+import { GPU_SERVICE_STATUS_RETRY_COUNT, GPU_SERVICE_STATUS_RETRY_DELAY_MS } from '../useGpuServiceStatus';
 
 vi.mock('../../api/gpuApi', async (importOriginal) => {
   const actual = await importOriginal<typeof gpuApi>();
@@ -65,6 +68,17 @@ const fetchDescribeRunItemsMock = vi.mocked(describeApi.fetchDescribeRunItems);
 const submitBulkDescribeRunMock = vi.mocked(describeApi.submitBulkDescribeRun);
 
 const TENANT = 'tenant-a';
+
+const UNAVAILABLE_HEADLINE = 'Description service status unavailable';
+
+/** Exponential backoff summed across the retry budget: 1 s + 2 s. */
+const GPU_STATUS_RETRY_BUDGET_MS = GPU_SERVICE_STATUS_RETRY_DELAY_MS * (2 ** GPU_SERVICE_STATUS_RETRY_COUNT - 1);
+
+const advance = async (ms: number): Promise<void> => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
 
 const idleScan = (overrides: Partial<ScanActivityInput> = {}): ScanActivityInput => ({
   isScanning: false,
@@ -383,6 +397,44 @@ describe('resolveActivityStatus', () => {
     expect(staleStatus.warmingObservation?.status).toBe('unknown');
   });
 
+  it('marks a warming observation as a status outage only once the status query failed past its retries', () => {
+    const warmingDescribe = (runId: string): DescribeActivityInput => ({
+      runId,
+      progress: describeProgress(
+        { isWarming: true },
+        {
+          run_id: runId,
+          startup_id: `startup-${runId}`,
+          phase: DESCRIBE_RUN_PHASE.WARMING,
+          gpu_state: GPU_STATE.STARTING,
+          completed: 0,
+        },
+      ),
+    });
+
+    const unobserved = resolveActivityStatus({
+      scan: idleScan(),
+      describe: warmingDescribe('run-unobserved'),
+      gpu: gpuInput({ gpuState: GPU_STATE.UNKNOWN, isRunPending: true }),
+    });
+    expect(unobserved.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(unobserved.warmingObservation?.status).toBe('unknown');
+    expect(unobserved.warmingObservation?.statusOutage).toBeUndefined();
+    expect(descriptionWaitPresentation(unobserved.warmingObservation).headline).not.toBe(UNAVAILABLE_HEADLINE);
+
+    const outage = resolveActivityStatus({
+      scan: idleScan(),
+      describe: warmingDescribe('run-outage'),
+      gpu: gpuInput({ gpuState: GPU_STATE.UNKNOWN, isRunPending: true, isError: true }),
+    });
+    expect(outage.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(outage.isLiveRun).toBe(true);
+    expect(outage.reason).toBeNull();
+    expect(outage.warmingObservation?.status).toBe('unknown');
+    expect(outage.warmingObservation?.statusOutage).toBe(true);
+    expect(descriptionWaitPresentation(outage.warmingObservation).headline).toBe(UNAVAILABLE_HEADLINE);
+  });
+
   it('maps describing progress to describing', () => {
     const status = resolveActivityStatus({
       scan: idleScan(),
@@ -587,6 +639,7 @@ describe('useActivityStatus', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await queryClient?.cancelQueries();
     queryClient?.clear();
     _resetDescribeOperationStoreForTests();
@@ -1031,14 +1084,16 @@ describe('useActivityStatus', () => {
     expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
   });
 
-  it('does not retry an idle GPU status error or submit a describe run', async () => {
-    const { queryKeys } = await import('../../api/queryKeys');
+  it('does not offer a run retry after confirming an idle GPU status outage', async () => {
+    vi.useFakeTimers();
     fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
     queryClient = buildTestQueryClient();
     const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
-    await waitFor(() => expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error'));
-    await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE));
+    await advance(GPU_STATUS_RETRY_BUDGET_MS);
+    expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error');
+    expect(fetchGpuStatusMock).toHaveBeenCalledTimes(GPU_SERVICE_STATUS_RETRY_COUNT + 1);
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE);
     expect(result.current.status.gpuState).toBe(GPU_STATE.UNKNOWN);
     expect(result.current.status.reason).toBeNull();
     expect(result.current.status.retryable).toBe(false);
@@ -1047,8 +1102,101 @@ describe('useActivityStatus', () => {
     act(() => {
       result.current.actions.onRetry?.();
     });
-    await waitFor(() => expect(fetchGpuStatusMock.mock.calls.length).toBe(callsBefore));
+    await advance(0);
+    expect(fetchGpuStatusMock.mock.calls.length).toBe(callsBefore);
     expect(fetchDescribeRunItemsMock).not.toHaveBeenCalled();
     expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+  });
+
+  describe('DEMO-09 description service status outage', () => {
+    const warmingRun = (): DescribeRunResponse =>
+      describeRun({
+        phase: DESCRIBE_RUN_PHASE.WARMING,
+        gpu_state: GPU_STATE.STOPPED,
+        completed: 0,
+        eta_seconds: 90,
+      });
+
+    const renderWithRunSwitch = () =>
+      renderHook(({ runId }: { runId?: string }) => useActivityStatus({ describeRunId: runId }), {
+        wrapper: createQueryWrapper(queryClient),
+        initialProps: {},
+      });
+
+    it('reads a resumed warming run whose status poll never ran as unconfirmed, not unavailable', async () => {
+      putDescribeOperationContext({
+        version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+        kind: DESCRIBE_OPERATION_KIND.RUN,
+        id: 'run-1',
+        startup_id: null,
+        started_at: Date.now(),
+        request: { writeAlt: false, force: false },
+      });
+      fetchBulkDescribeRunMock.mockResolvedValue(warmingRun());
+      queryClient = buildTestQueryClient();
+      const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
+
+      await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.WARMING));
+      expect(fetchGpuStatusMock).not.toHaveBeenCalled();
+      expect(result.current.status.warmingObservation?.status).toBe('unknown');
+      expect(result.current.status.warmingObservation?.statusOutage).toBeUndefined();
+      expect(descriptionWaitPresentation(result.current.status.warmingObservation).headline).toBe(
+        'Description service status not confirmed yet',
+      );
+    });
+
+    it('does not mark a warming run as a status outage after one failed status poll', async () => {
+      vi.useFakeTimers();
+      fetchGpuStatusMock.mockRejectedValueOnce(new Error('transient')).mockResolvedValue(statusResponse());
+      fetchBulkDescribeRunMock.mockResolvedValue(warmingRun());
+      queryClient = buildTestQueryClient();
+      const { result, rerender } = renderWithRunSwitch();
+
+      await advance(GPU_SERVICE_STATUS_RETRY_DELAY_MS + 1);
+      expect(fetchGpuStatusMock).toHaveBeenCalledTimes(2);
+      expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('success');
+
+      rerender({ runId: 'run-1' });
+      await advance(1);
+      expect(result.current.status.kind).toBe(ACTIVITY_KIND.WARMING);
+      expect(result.current.status.warmingObservation?.status).toBe('waiting');
+      expect(result.current.status.warmingObservation?.statusOutage).toBeUndefined();
+      expect(descriptionWaitPresentation(result.current.status.warmingObservation).headline).toBe(
+        'Waiting for description service…',
+      );
+    });
+
+    it('confirms an outage only after the retry budget and clears it when Check status re-reads GPU status', async () => {
+      vi.useFakeTimers();
+      fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
+      fetchBulkDescribeRunMock.mockResolvedValue(warmingRun());
+      queryClient = buildTestQueryClient();
+      const { result, rerender } = renderWithRunSwitch();
+
+      await advance(GPU_STATUS_RETRY_BUDGET_MS);
+      expect(fetchGpuStatusMock).toHaveBeenCalledTimes(GPU_SERVICE_STATUS_RETRY_COUNT + 1);
+      expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error');
+
+      rerender({ runId: 'run-1' });
+      await advance(1);
+      expect(result.current.status.kind).toBe(ACTIVITY_KIND.WARMING);
+      expect(result.current.status.reason).toBeNull();
+      expect(result.current.status.warmingObservation?.statusOutage).toBe(true);
+      expect(descriptionWaitPresentation(result.current.status.warmingObservation).headline).toBe(
+        UNAVAILABLE_HEADLINE,
+      );
+
+      fetchGpuStatusMock.mockResolvedValue(statusResponse());
+      const onRetry = result.current.actions.onRetry;
+      expect(onRetry).not.toBeNull();
+      act(() => {
+        onRetry?.();
+      });
+      await advance(1);
+      expect(fetchGpuStatusMock).toHaveBeenCalledTimes(GPU_SERVICE_STATUS_RETRY_COUNT + 2);
+      expect(result.current.status.kind).toBe(ACTIVITY_KIND.WARMING);
+      expect(result.current.status.warmingObservation?.statusOutage).toBeUndefined();
+      expect(result.current.status.warmingObservation?.status).toBe('waiting');
+    });
   });
 });

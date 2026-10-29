@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient } from '@tanstack/react-query';
 import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -2133,10 +2133,10 @@ describe('QCR real React Query credential boundaries', () => {
       requests.push(request);
       return request.promise;
     });
-    render(<real.QueryClientProvider client={client}><SettingsPageWithRouter /></real.QueryClientProvider>);
+    const view = render(<real.QueryClientProvider client={client}><SettingsPageWithRouter /></real.QueryClientProvider>);
     await flush();
     vi.mocked(api.testConnection).mockClear();
-    return { api, client, requests, persist: (settings: SettingsResponse) => { persisted = settings; } };
+    return { api, client, requests, view, persist: (settings: SettingsResponse) => { persisted = settings; } };
   };
   const type = (element: HTMLElement, value: string) => fireEvent.change(element, { target: { value } });
   const finish = async (request: ReturnType<typeof deferred<import('../../api/settingsApi').SaveSettingsResponse>>, result: import('../../api/settingsApi').SaveSettingsResponse) => {
@@ -2144,13 +2144,144 @@ describe('QCR real React Query credential boundaries', () => {
     await flush();
   };
 
+  it.each(['independent', 'queued'] as const)('R4-F1 retains whole-form Retry alongside a later routing readback warning: %s', async (mode) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://review-a.example.com';
+    const urlB = 'https://review-b.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    expect(h.requests[0].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    if (mode === 'queued') { type(url, urlB); fireEvent.blur(url); await flush(); }
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    if (mode === 'independent') {
+      expect(screen.getByRole('button', { name: 'Retry save' })).toBeEnabled();
+      type(url, urlB); fireEvent.blur(url); await flush();
+    }
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('review readback unavailable'));
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(budget).toHaveValue(4);
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    expect(card).toHaveTextContent('Saved, but the page could not reload settings: settings unavailable.');
+    expect(within(card).getByRole('button', { name: 'Reload settings' })).toBeEnabled();
+    if (mode === 'queued') {
+      vi.mocked(h.api.fetchSettings).mockResolvedValue({ ...defaultSettings, url: urlB, effective_target_url: urlB });
+      fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+      expect(h.requests).toHaveLength(2);
+      expect(budget).toHaveValue(4);
+      expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+      expect(within(card).queryByRole('button', { name: 'Reload settings' })).not.toBeInTheDocument();
+    }
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({ description_budget: { max_attempts: 4 } });
+    vi.mocked(h.api.fetchSettings).mockResolvedValue({
+      ...defaultSettings, url: urlB, effective_target_url: urlB,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 },
+    });
+    await finish(h.requests[2], { saved: ['description_budget'], result: 'ok' });
+    expect(screen.queryByText(/Could not save settings/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reload settings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry save' })).not.toBeInTheDocument();
+  });
+
+  it('R4-F2 Check health during a budget-only Save survives an empty routing drain exactly once', async () => {
+    const h = await harness();
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    const check = screen.getByRole('button', { name: 'Check health' });
+    expect(check).toBeEnabled();
+    fireEvent.click(check); fireEvent.click(check); await flush();
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    const readback = deferred<SettingsResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
+    await finish(h.requests[0], { saved: ['description_budget'], result: 'ok' });
+    expect(h.api.fetchSettings).toHaveBeenCalled();
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    await act(async () => { readback.resolve({
+      ...defaultSettings,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 },
+    }); });
+    await flush();
+    expect(h.requests).toHaveLength(1);
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.api.testConnection).mock.calls[0][0]).toEqual({});
+    await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+  });
+
+  it('R4-control a partial subset acknowledgement preserves newer non-routing edits through routing', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const recognition = screen.getByLabelText('Identify people in photos');
+    const names = screen.getByLabelText('Include named people in descriptions');
+    const context = document.getElementById(`acx-settings-context-category-${CONTEXT_CATEGORIES[0]}`)!;
+    const urlA = 'https://review-a.example.com';
+    const urlB = 'https://review-b.example.com';
+    type(url, urlA); type(budget, '4'); fireEvent.click(recognition); fireEvent.click(context);
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    fireEvent.click(recognition); fireEvent.click(names); type(budget, '7');
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA, recognition_enabled: false });
+    await finish(h.requests[0], { saved: ['url', 'recognition_enabled'], failed: ['description_budget', 'context_categories'], result: 'partial' });
+    expect(recognition).toBeChecked(); expect(names).not.toBeChecked();
+    expect(budget).toHaveValue(7); expect(context).not.toBeChecked();
+    type(url, urlB); fireEvent.blur(url); await flush();
+    h.persist({ ...defaultSettings, url: urlB, effective_target_url: urlB, recognition_enabled: false });
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(recognition).toBeChecked(); expect(names).not.toBeChecked();
+    expect(budget).toHaveValue(7); expect(context).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({
+      description_budget: { max_attempts: 7 }, recognition_enabled: true,
+      allow_person_names: false, context_categories: CONTEXT_CATEGORIES.slice(1),
+    });
+    h.persist({
+      ...defaultSettings, url: urlB, effective_target_url: urlB,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 7 },
+      recognition_enabled: true, allow_person_names: false, context_categories: CONTEXT_CATEGORIES.slice(1),
+    });
+    await finish(h.requests[2], { saved: Object.keys(h.requests[2].payload), result: 'ok' });
+    expect(screen.queryByText(/Could not save settings/)).not.toBeInTheDocument();
+  });
+
+  it('R4-control an unblurred edit cancels a real post-save probe and rejects its stale response', async () => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://review-a.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent('Saved. Checking health…');
+    type(url, 'https://review-uncommitted.example.com');
+    expect(card).not.toHaveTextContent('Saved. Checking health…');
+    await act(async () => { probe.resolve({
+      outcome: 'connected', probe_mode: 'service_auth', status_code: 200,
+      probed_url: urlA + '/health/detailed',
+      body: { status: 'ok', model_cache: { status: 'ok', profile: 'insightface' } },
+    }); });
+    await flush();
+    expect(screen.queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(url).toHaveValue('https://review-uncommitted.example.com');
+    expect(h.requests).toHaveLength(1);
+  });
+
   it.each(['ok', 'transport', 'partial'] as const)('QCR retains and sends committed B after pending A: %s', async (outcome) => {
     const h = await harness();
     const key = screen.getByLabelText('API Key');
     type(key, 'draft-A'); fireEvent.blur(key); await flush();
     type(key, 'draft-B'); fireEvent.blur(key);
     expect(h.requests).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
     if (outcome === 'transport') { await act(() => Promise.resolve(h.requests[0].reject(new Error('transport failed')))); await flush(); }
     else { await finish(h.requests[0], outcome === 'ok' ? { saved: ['api_key'], result: 'ok' } : { saved: [], failed: ['api_key'], result: 'error' }); }
     expect(key).toHaveValue('draft-B');
@@ -2293,7 +2424,7 @@ describe('QCR real React Query credential boundaries', () => {
     vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
     await finish(h.requests[0], { saved: ['url'], result: 'ok' });
     expect(h.api.testConnection).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
     await act(() => Promise.resolve(readback.resolve({ ...defaultSettings, url: urlA, effective_target_url: urlA }))); await flush();
     expect(h.api.testConnection).toHaveBeenCalledTimes(1);
   });
@@ -2413,7 +2544,8 @@ describe('QCR real React Query credential boundaries', () => {
     vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
     await finish(h.requests[0], { saved: ['url', 'api_key'], result: 'ok' });
     expect(url).toHaveValue(urlC); expect(key).toHaveValue('probe-C');
-    expect(h.requests[1].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    // The queue drains against the acknowledged URL A, so A is not resent (gate1 F1).
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
     expect(h.api.testConnection).not.toHaveBeenCalled();
   });
 
@@ -2576,6 +2708,991 @@ describe('QCR real React Query credential boundaries', () => {
     expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent(external);
     expect(url).toHaveValue(satisfied ? external : defaultSettings.url);
     expect(h.requests).toHaveLength(1);
+  });
+
+  // UXREC-1 gate1 timelines: acknowledged writes survive a failed readback.
+  it('G1-F1 drains a queued O revert against acknowledged A when readback fails', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    type(url, defaultSettings.url); fireEvent.blur(url);
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests.map((r) => r.payload)).toEqual([{ url: urlA }, { url: defaultSettings.url }]);
+    expect(screen.queryByText('All changes are saved.')).not.toBeInTheDocument();
+    expect(url).toHaveValue(defaultSettings.url);
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(defaultSettings);
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(url).toHaveValue(defaultSettings.url);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it.each(['partial', 'transport'] as const)('G1-F3 Retry save resends the failed non-routing scope of a mixed save: %s', async (outcome) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    expect(h.requests[0].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    if (outcome === 'partial') {
+      h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+      await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    } else {
+      await act(async () => {
+        h.requests[0].reject(new Error('probe transport failure'));
+        await h.requests[0].promise.catch(() => undefined);
+      }); await flush();
+    }
+    expect(budget).toHaveValue(4);
+    const card = screen.getByTestId('acx-target-card-service');
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1]?.payload).toEqual(outcome === 'partial'
+      ? { description_budget: { max_attempts: 4 } }
+      : { url: urlA, description_budget: { max_attempts: 4 } });
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    await finish(h.requests[1], { saved: Object.keys(h.requests[1].payload), result: 'ok' });
+    expect(budget).toHaveValue(4);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('G1-F3 keeps a routing-only retry for a later failed autosave', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    const reject = async (index: number) => {
+      await act(async () => {
+        h.requests[index].reject(new Error('probe transport failure'));
+        await h.requests[index].promise.catch(() => undefined);
+      }); await flush();
+    };
+    type(url, urlA); type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    await reject(0);
+    type(url, urlB); fireEvent.blur(url); await flush();
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    await reject(1);
+    const card = screen.getByTestId('acx-target-card-service');
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2]?.payload).toEqual({ url: urlB });
+  });
+
+  it('G1-F4 drains queued key B after a failed A readback so a later C is written last', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'probe-A'); fireEvent.blur(key); await flush();
+    type(key, 'probe-B'); fireEvent.blur(key);
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: [], failed: ['api_key'], result: 'error' });
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(defaultSettings);
+    type(key, 'probe-C'); fireEvent.blur(key); await flush();
+    await finish(h.requests[1], { saved: ['api_key'], result: 'ok' });
+    await finish(h.requests[2], { saved: ['api_key'], result: 'ok' });
+    expect(h.requests.map((r) => r.payload)).toEqual([
+      { api_key: 'probe-A' }, { api_key: 'probe-B' }, { api_key: 'probe-C' },
+    ]);
+    expect(key).toHaveValue('');
+  });
+  it('G2-F1 queued mixed partial retry preserves the actual submitted budget', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://queued-a.example.com';
+    const urlB = 'https://queued-b.example.com';
+    type(budget, '4');
+    type(url, urlA); fireEvent.blur(url); await flush();
+    fireEvent.submit(url.closest('form')!);
+    type(url, urlB); fireEvent.blur(url);
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests[1].payload).toEqual({ url: urlB, description_budget: { max_attempts: 4 } });
+    h.persist({ ...defaultSettings, url: urlB, effective_target_url: urlB });
+    await finish(h.requests[1], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(budget).toHaveValue(4);
+    expect(h.requests[2]?.payload).toEqual({ description_budget: { max_attempts: 4 } });
+    h.persist({ ...defaultSettings, url: urlB, effective_target_url: urlB,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    await finish(h.requests[2], { saved: ['description_budget'], result: 'ok' });
+    expect(budget).toHaveValue(4);
+    expect(h.requests).toHaveLength(3);
+  });
+
+  it('G2-F1 queued mixed transport failure retries the actual submitted budget', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://queued-a.example.com';
+    const urlB = 'https://queued-b.example.com';
+    type(budget, '4');
+    type(url, urlA); fireEvent.blur(url); await flush();
+    fireEvent.submit(url.closest('form')!);
+    type(url, urlB); fireEvent.blur(url);
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests[1].payload).toEqual({ url: urlB, description_budget: { max_attempts: 4 } });
+    await act(async () => {
+      h.requests[1].reject(new Error('queued mixed transport failure'));
+      await h.requests[1].promise.catch(() => undefined);
+    }); await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(budget).toHaveValue(4);
+    expect(h.requests[2]?.payload).toEqual({ url: urlB, description_budget: { max_attempts: 4 } });
+  });
+
+  it.each(['before-first-readback', 'during-second-write', 'during-failed-readback'] as const)(
+    'G2-F1 queued mixed failure keeps a newer budget edit: %s', async (when) => {
+      const h = await harness();
+      const url = screen.getByLabelText('Service API URL');
+      const budget = screen.getByLabelText('Maximum description attempts');
+      const urlA = 'https://queued-a.example.com';
+      const urlB = 'https://queued-b.example.com';
+      type(budget, '4');
+      type(url, urlA); fireEvent.blur(url); await flush();
+      fireEvent.submit(url.closest('form')!);
+      type(url, urlB); fireEvent.blur(url);
+      if (when === 'before-first-readback') type(budget, '7');
+      h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+      await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+      expect(h.requests[1].payload).toEqual({ url: urlB, description_budget: { max_attempts: 4 } });
+      if (when === 'during-second-write') type(budget, '7');
+      const persisted = { ...defaultSettings, url: urlB, effective_target_url: urlB };
+      h.persist(persisted);
+      const readback = deferred<SettingsResponse>();
+      if (when === 'during-failed-readback') vi.mocked(h.api.fetchSettings).mockReturnValue(readback.promise);
+      await finish(h.requests[1], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+      if (when === 'during-failed-readback') {
+        type(budget, '7');
+        await act(async () => { readback.resolve(persisted); }); await flush();
+      }
+      expect(budget).toHaveValue(7);
+      expect(h.requests).toHaveLength(2);
+      fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+      expect(h.requests[2]?.payload).toEqual({ description_budget: { max_attempts: 7 } });
+    },
+  );
+
+  it('G2-F1 queued mixed partial retry keeps submitted recognition and context choices', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const recognition = screen.getByLabelText('Identify people in photos');
+    const names = screen.getByLabelText('Include named people in descriptions');
+    const context = document.getElementById(`acx-settings-context-category-${CONTEXT_CATEGORIES[0]}`)!;
+    const categories = CONTEXT_CATEGORIES.slice(1);
+    fireEvent.click(recognition); fireEvent.click(names); fireEvent.click(context);
+    const urlA = 'https://queued-a.example.com';
+    const urlB = 'https://queued-b.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    fireEvent.submit(url.closest('form')!);
+    type(url, urlB); fireEvent.blur(url);
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    const failed = { recognition_enabled: false, allow_person_names: false, context_categories: categories };
+    expect(h.requests[1].payload).toEqual({ url: urlB, ...failed });
+    h.persist({ ...defaultSettings, url: urlB, effective_target_url: urlB });
+    await finish(h.requests[1], { saved: ['url'], failed: Object.keys(failed), result: 'partial' });
+    expect(recognition).not.toBeChecked();
+    expect(names).not.toBeChecked();
+    expect(context).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2]?.payload).toEqual(failed);
+  });
+
+  it('G2-F2 empty routing drain preserves mixed partial feedback and Retry save', async () => {
+    const h = await harness();
+    const key = screen.getByLabelText('API Key');
+    type(key, 'acknowledged-key'); fireEvent.blur(key); await flush();
+    await finish(h.requests[0], { saved: ['api_key'], result: 'ok' });
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://partial.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    fireEvent.blur(url);
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[1], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    expect(budget).toHaveValue(4);
+    expect(h.requests).toHaveLength(2);
+    expect(screen.queryByText('All changes are saved.')).not.toBeInTheDocument();
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2]?.payload).toEqual({ description_budget: { max_attempts: 4 } });
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA,
+      description_budget: { ...defaultSettings.description_budget, max_attempts: 4 } });
+    await finish(h.requests[2], { saved: ['description_budget'], result: 'ok' });
+    expect(screen.queryByText(/Could not save settings/)).not.toBeInTheDocument();
+    expect(h.requests).toHaveLength(3);
+  });
+
+  // UXREC-1 gate3: failed or pending non-routing intent outlives every later
+  // routing write and readback until a write acknowledges it or a newer edit replaces it.
+  const budgetSettings = (url: string, maxAttempts: number): SettingsResponse => ({
+    ...defaultSettings, url, effective_target_url: url,
+    description_budget: { ...defaultSettings.description_budget, max_attempts: maxAttempts },
+  });
+  const rejectRequest = async (request: { reject: (error: Error) => void; promise: Promise<unknown> }) => {
+    await act(async () => {
+      request.reject(new Error('probe transport failure'));
+      await request.promise.catch(() => undefined);
+    }); await flush();
+  };
+
+  it.each(['4', '7'] as const)('G3-F1 queued routing C after an O-A-B mixed partial keeps failed budget %s and whole-form Retry', async (latest) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    const urlC = 'https://probe-c.example.com';
+    type(budget, '4');
+    type(url, urlA); fireEvent.blur(url); await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Saving…' }));
+    type(url, urlB); fireEvent.blur(url);
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests[1].payload).toEqual({ url: urlB, description_budget: { max_attempts: 4 } });
+    type(url, urlC); fireEvent.blur(url);
+    if (latest === '7') type(budget, '7');
+    h.persist(budgetSettings(urlB, -1));
+    await finish(h.requests[1], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    expect(budget).toHaveValue(Number(latest));
+    expect(h.requests[2].payload).toEqual({ url: urlC });
+    const probesBeforeC = vi.mocked(h.api.testConnection).mock.calls.length;
+    h.persist(budgetSettings(urlC, -1));
+    await finish(h.requests[2], { saved: ['url'], result: 'ok' });
+    // C still gets a fresh health check, but its success cannot erase the budget failure.
+    expect(vi.mocked(h.api.testConnection).mock.calls.length).toBeGreaterThan(probesBeforeC);
+    expect(budget).toHaveValue(Number(latest));
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[3]?.payload).toEqual({ description_budget: { max_attempts: Number(latest) } });
+    h.persist(budgetSettings(urlC, Number(latest)));
+    await finish(h.requests[3], { saved: ['description_budget'], result: 'ok' });
+    expect(budget).toHaveValue(Number(latest));
+    expect(screen.queryByText(/Could not save settings/)).not.toBeInTheDocument();
+    expect(screen.getByText('Settings saved.')).toBeInTheDocument();
+    expect(h.requests).toHaveLength(4);
+  });
+
+  it('G3-F1 direct mixed partial A+4 then queued routing B success keeps the failed budget and Retry', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.submit(url.closest('form')!); await flush();
+    expect(h.requests[0].payload).toEqual({ url: urlA, description_budget: { max_attempts: 4 } });
+    type(url, urlB); fireEvent.blur(url);
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    h.persist(budgetSettings(urlB, -1));
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(budget).toHaveValue(4);
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2]?.payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it('G3-F1 a later independent routing save keeps its routing-only Retry, then restores the budget failure', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.submit(url.closest('form')!); await flush();
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    type(url, urlB); fireEvent.blur(url); await flush();
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    await rejectRequest(h.requests[1]);
+    const card = screen.getByTestId('acx-target-card-service');
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2]?.payload).toEqual({ url: urlB });
+    h.persist(budgetSettings(urlB, -1));
+    await finish(h.requests[2], { saved: ['url'], result: 'ok' });
+    expect(budget).toHaveValue(4);
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[3]?.payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it('G3-F1 direct mixed transport failure keeps Retry after the queued routing B save', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.submit(url.closest('form')!); await flush();
+    type(url, urlB); fireEvent.blur(url);
+    await rejectRequest(h.requests[0]);
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    h.persist(budgetSettings(urlB, -1));
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(budget).toHaveValue(4);
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2]?.payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it('G3-F1 Check health with unchanged routing keeps the outstanding failure and Retry', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.submit(url.closest('form')!); await flush();
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    vi.mocked(h.api.testConnection).mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Check health' })); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(budget).toHaveValue(4);
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1]?.payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it('G3-F2 a newer budget draft typed during an acknowledged budget write survives its readback', async () => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    type(budget, '7');
+    h.persist(budgetSettings(defaultSettings.url, 4));
+    await finish(h.requests[0], { saved: ['description_budget'], result: 'ok' });
+    expect(budget).toHaveValue(7);
+    expect(h.requests).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    expect(h.requests[1]?.payload).toEqual({ description_budget: { max_attempts: 7 } });
+  });
+
+  it('G3-control a committed no-op budget edit follows a later external readback', async () => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    type(budget, '4'); type(budget, '-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    expect(screen.getByText('No changes to save.')).toBeInTheDocument();
+    h.persist(budgetSettings(defaultSettings.url, 10));
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); }); await flush();
+    expect(budget).toHaveValue(10);
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it('G3-control an acknowledged budget write follows a later external readback', async () => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    h.persist(budgetSettings(defaultSettings.url, 4));
+    await finish(h.requests[0], { saved: ['description_budget'], result: 'ok' });
+    h.persist(budgetSettings(defaultSettings.url, 10));
+    await act(async () => { await h.client.invalidateQueries({ queryKey: queryKeys.settings.all }); }); await flush();
+    expect(budget).toHaveValue(10);
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('G3-F2 repeated global Save without an edit does not reverse the queued budget', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    type(budget, '4');
+    const save = screen.getByRole('button', { name: 'Saving…' });
+    expect(save).toBeEnabled();
+    fireEvent.click(save); await flush();
+    expect(h.requests.map((r) => r.payload)).toEqual([{ url: urlA }]);
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Saving…' })); await flush();
+    expect(h.requests).toHaveLength(2);
+    h.persist(budgetSettings(urlA, 4));
+    await finish(h.requests[1], { saved: ['description_budget'], result: 'ok' });
+    expect(h.requests.map((r) => r.payload)).toEqual([
+      { url: urlA }, { description_budget: { max_attempts: 4 } },
+    ]);
+    expect(budget).toHaveValue(4);
+    expect(screen.getByText('Settings saved.')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['newer 7', ['7'], 7],
+    ['deliberate -1', ['', '-1'], -1],
+  ] as const)('G3-control %s typed during the pending budget write is queued as fresh full-form intent', async (_name, edits, expected) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Saving…' })); await flush();
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+    for (const edit of edits) type(budget, edit);
+    fireEvent.click(screen.getByRole('button', { name: 'Saving…' })); await flush();
+    expect(h.requests).toHaveLength(2);
+    h.persist(budgetSettings(urlA, 4));
+    await finish(h.requests[1], { saved: ['description_budget'], result: 'ok' });
+    expect(h.requests[2]?.payload).toEqual({ description_budget: { max_attempts: expected } });
+    h.persist(budgetSettings(urlA, expected));
+    await finish(h.requests[2], { saved: ['description_budget'], result: 'ok' });
+    expect(h.requests).toHaveLength(3);
+    expect(budget).toHaveValue(expected);
+    expect(screen.getByText('Settings saved.')).toBeInTheDocument();
+  });
+
+  it('G3-control direct mixed transport failure then queued routing B keeps the budget value', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.submit(url.closest('form')!); await flush();
+    type(url, urlB); fireEvent.blur(url);
+    await rejectRequest(h.requests[0]);
+    expect(h.requests[1].payload).toEqual({ url: urlB });
+    h.persist(budgetSettings(urlB, -1));
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    expect(budget).toHaveValue(4);
+  });
+
+  it('G3-control repeated full submit is serialized and de-duplicated', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://probe-a.example.com';
+    type(url, urlA);
+    fireEvent.submit(url.closest('form')!); await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Saving…' })); await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Saving…' })); await flush();
+    expect(h.requests).toHaveLength(1);
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests).toHaveLength(1);
+    expect(screen.queryByText('Saving…')).not.toBeInTheDocument();
+  });
+
+  it('G3-control same-value newer budget edit survives a queued partial snapshot', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    type(budget, '4');
+    type(url, urlA); fireEvent.blur(url); await flush();
+    fireEvent.submit(url.closest('form')!);
+    type(url, urlB); fireEvent.blur(url);
+    type(budget, '7'); type(budget, '4');
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    h.persist(budgetSettings(urlB, -1));
+    await finish(h.requests[1], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    expect(budget).toHaveValue(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it.each(['success', 'failure'] as const)('G3-control empty routing drain after a mixed partial keeps recovery, readback %s', async (readback) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-partial.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.submit(url.closest('form')!); await flush();
+    fireEvent.blur(url);
+    h.persist(budgetSettings(urlA, -1));
+    if (readback === 'failure') vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('probe readback failure'));
+    await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    expect(h.requests).toHaveLength(1);
+    expect(budget).toHaveValue(4);
+    expect(screen.getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it('G3-control queued full transport failure retries a still-newer unsubmitted budget', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://probe-a.example.com';
+    const urlB = 'https://probe-b.example.com';
+    type(budget, '4');
+    type(url, urlA); fireEvent.blur(url); await flush();
+    fireEvent.submit(url.closest('form')!);
+    type(url, urlB); fireEvent.blur(url);
+    type(budget, '7');
+    h.persist(budgetSettings(urlA, -1));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    expect(h.requests[1].payload).toEqual({ url: urlB, description_budget: { max_attempts: 4 } });
+    await rejectRequest(h.requests[1]);
+    expect(budget).toHaveValue(7);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({ url: urlB, description_budget: { max_attempts: 7 } });
+  });
+
+  it('G3-control unmount clears a scheduled post-save health deadline', async () => {
+    const h = await harness();
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    const clear = vi.spyOn(globalThis, 'clearTimeout');
+    try {
+      vi.mocked(h.api.testConnection).mockImplementation(() => new Promise(() => undefined));
+      const url = screen.getByLabelText('Service API URL');
+      const urlA = 'https://probe-a.example.com';
+      type(url, urlA); fireEvent.blur(url); await flush();
+      h.persist(budgetSettings(urlA, -1));
+      await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+      const index = timers.mock.calls.map((args) => args[1]).lastIndexOf(15000);
+      expect(index).toBeGreaterThanOrEqual(0);
+      const handle: unknown = timers.mock.results[index].value;
+      h.view.unmount();
+      expect(clear).toHaveBeenCalledWith(handle);
+    } finally {
+      timers.mockRestore();
+      clear.mockRestore();
+    }
+  });
+
+  // R6 continuations exercise the real QueryClient and deferred API producers.
+  it.each(['transport', 'partial'] as const)('R6-F1 a failed budget write still gives accepted health a terminal deadline: %s', async (mode) => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      await acceptCheckDuringBudgetSave(h);
+      const budget = screen.getByLabelText('Maximum description attempts');
+      type(budget, '7');
+      await settleBudgetWrite(h, h.requests[0], mode);
+      expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(h.api.testConnection).mock.calls[0][0]).toEqual({});
+      expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+      const deadline = timers.mock.calls.filter((args) => args[1] === 15000).at(-1);
+      expect(deadline).toBeDefined();
+      await act(async () => { (deadline![0] as () => void)(); }); await flush();
+      const card = screen.getByTestId('acx-target-card-service');
+      expect(card).toHaveTextContent(/Health not checked|health check timed out|Could not check/);
+      expect(within(card).getByRole('button', { name: 'Check health' })).toBeEnabled();
+      expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+      expect(budget).toHaveValue(7);
+      expect(screen.queryByText('Saved. Checking health…')).not.toBeInTheDocument();
+      await act(async () => {
+        probe.resolve({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+        await probe.promise;
+      }); await flush();
+      expect(within(card).queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+      vi.mocked(h.api.testConnection).mockResolvedValue({ outcome: 'network_error' });
+      fireEvent.click(within(card).getByRole('button', { name: 'Check health' })); await flush();
+      expect(h.api.testConnection).toHaveBeenCalledTimes(2);
+      expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Could not reach the recognition service.');
+      fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+      expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 7 } });
+    } finally { timers.mockRestore(); }
+  });
+
+  it('R6-F1 real 15.1 second deadline settles health independently of the failed budget Save', async () => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'transport');
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15100)); }); await flush();
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent(/Health not checked|health check timed out|Could not check/);
+    expect(within(card).getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+  }, 22000);
+
+  it.each(['url', 'key', 'url-roundtrip', 'key-roundtrip'] as const)('R6-F2 a routing edit revokes deferred Reload health ownership: %s', async (edit) => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'partial-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent('Health not checked: settings could not reload.');
+    const reload = deferred<SettingsResponse>();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(reload.promise);
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    expect(h.client.getQueryState(queryKeys.settings.all)?.fetchStatus).toBe('fetching');
+    const field = screen.getByLabelText(edit.startsWith('url') ? 'Service API URL' : 'API Key');
+    const original = (field as HTMLInputElement).value;
+    const newer = edit.startsWith('url') ? 'https://newer-uncommitted.example.com' : 'newer-uncommitted-key';
+    type(field, newer);
+    if (edit.endsWith('roundtrip')) type(field, original);
+    await act(async () => { reload.resolve(defaultSettings); await reload.promise; }); await flush();
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(field).toHaveValue(edit.endsWith('roundtrip') ? original : newer);
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+    expect(h.client.getQueryState(queryKeys.settings.all)?.status).toBe('success');
+    expect(within(card).queryByTestId('acx-settings-reload-warning')).not.toBeInTheDocument();
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R6-F2 old-key health cannot publish after a newer key revoked Reload recovery', async () => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'partial-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    const reload = deferred<SettingsResponse>();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(reload.promise);
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    type(screen.getByLabelText('API Key'), 'newer-uncommitted-key');
+    await act(async () => { reload.resolve(defaultSettings); await reload.promise; }); await flush();
+    await act(async () => {
+      probe.resolve({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+      await probe.promise;
+    }); await flush();
+    expect(within(card).queryByTestId('acx-test-connection-banner')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('API Key')).toHaveValue('newer-uncommitted-key');
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R6-F3 current manual health success retires only the stale health clause after a successful write and failed readback', async () => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'ok-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(card).toHaveTextContent('Health not checked: settings could not reload.');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    vi.mocked(h.api.testConnection).mockResolvedValue({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+    fireEvent.click(within(card).getByRole('button', { name: 'Check health' })); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Connection successful.');
+    expect(card).not.toHaveTextContent('Health not checked: settings could not reload.');
+    expect(screen.getByText('Saved, but the page could not reload settings: settings unavailable.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R6-control unrelated budget edits preserve Reload health ownership and real whole-form Retry', async () => {
+    const h = await harness();
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'partial-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    const reload = deferred<SettingsResponse>();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.fetchSettings).mockReturnValue(reload.promise);
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    type(screen.getByLabelText('Maximum description attempts'), '7');
+    await act(async () => { reload.resolve(defaultSettings); await reload.promise; }); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.api.testConnection).mock.calls[0][0]).toEqual({});
+    await act(async () => {
+      probe.resolve({ outcome: 'connected', auth_ok: true, health: { status: 'ok' } } as TestConnectionResponse);
+      await probe.promise;
+    }); await flush();
+    expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Connection successful.');
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(7);
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 7 } });
+  });
+
+  it('R6-control an immediate health error leaves a usable Check health and failed-budget Retry', async () => {
+    const h = await harness();
+    const probe = deferred<TestConnectionResponse>();
+    vi.mocked(h.api.testConnection).mockReturnValue(probe.promise);
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'transport');
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    await act(async () => { probe.reject(new Error('private health failure')); await probe.promise.catch(() => undefined); }); await flush();
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(within(card).getByTestId('acx-test-connection-banner')).toHaveTextContent('Could not reach the recognition service.');
+    expect(within(card).getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(card).toHaveTextContent('Could not save settings. (description_budget)');
+    expect(screen.queryByText('private health failure')).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it.each(['transport', 'partial-readback-error', 'ok-readback-error'] as const)('R6-control budget settlement never probes without explicit intent: %s', async (mode) => {
+    const h = await harness();
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    await settleBudgetWrite(h, h.requests[0], mode);
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(1);
+    expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+  });
+
+  it.each(['unknown', 'stopped'] as const)('R6-control dormant health never promotes prior GPU state: %s', async (prior) => {
+    const previous = gpuStatusQueryResult.data.gpu_state.state;
+    gpuStatusQueryResult.data.gpu_state.state = prior;
+    try {
+      const h = await harness();
+      vi.mocked(h.api.testConnection).mockResolvedValue({ outcome: 'starting', probe_mode: 'service_auth', health: { status: 'dormant' } } as TestConnectionResponse);
+      await acceptCheckDuringBudgetSave(h);
+      await settleBudgetWrite(h, h.requests[0], 'transport');
+      expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(prior === 'unknown' ? 'Service: not reported' : 'Service: stopped')).toBeInTheDocument();
+      expect(screen.queryByText('Service: ready')).not.toBeInTheDocument();
+      expect(screen.queryByText(/pool is healthy|GPU online/i)).not.toBeInTheDocument();
+      expect(screen.getByTestId('acx-test-connection-banner')).toHaveTextContent('Description service is starting.');
+      expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(4);
+      expect(screen.getByRole('button', { name: 'Retry save' })).toBeEnabled();
+    } finally { gpuStatusQueryResult.data.gpu_state.state = previous; }
+  });
+
+  // R5-F1: an accepted Check health settles once the write that carried it settles.
+  const PRIVATE_DETAIL = /private (budget write|readback) unavailable/;
+  type Harness = Awaited<ReturnType<typeof harness>>;
+  const settleBudgetWrite = async (
+    h: Harness,
+    request: Harness['requests'][number],
+    outcome: 'ok' | 'ok-readback-error' | 'transport' | 'partial' | 'partial-readback-error',
+    maxAttempts = 4,
+  ) => {
+    if (outcome === 'transport') {
+      await act(async () => {
+        request.reject(new Error('private budget write unavailable'));
+        await request.promise.catch(() => undefined);
+      }); await flush();
+      return;
+    }
+    if (outcome.endsWith('readback-error')) {
+      vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('private readback unavailable'));
+    }
+    if (outcome.startsWith('ok')) {
+      h.persist(budgetSettings(defaultSettings.url, maxAttempts));
+      await finish(request, { saved: ['description_budget'], result: 'ok' });
+    } else {
+      await finish(request, { saved: [], failed: ['description_budget'], result: 'error' });
+    }
+  };
+  const acceptCheckDuringBudgetSave = async (h: Harness) => {
+    type(screen.getByLabelText('Maximum description attempts'), '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    const check = screen.getByRole('button', { name: 'Check health' });
+    expect(check).toBeEnabled();
+    fireEvent.click(check); fireEvent.click(check); await flush();
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(h.requests[0].payload).toEqual({ description_budget: { max_attempts: 4 } });
+    return check;
+  };
+
+  it.each(['transport', 'partial', 'partial-readback-error'] as const)('R5-F1 Check health accepted during a failed budget-only Save settles exactly once: %s', async (mode) => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const check = await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], mode);
+    const card = screen.getByTestId('acx-target-card-service');
+    if (mode === 'partial-readback-error') {
+      // No trustworthy readback to bind: a bounded cause and a working recovery.
+      expect(h.api.testConnection).not.toHaveBeenCalled();
+      const notice = within(card).getByTestId('acx-settings-reload-warning');
+      expect(notice).toHaveAttribute('role', 'status');
+      expect(notice).toHaveAttribute('aria-live', 'polite');
+      expect(notice).toHaveTextContent('Health not checked: settings could not reload.');
+      vi.mocked(h.api.fetchSettings).mockResolvedValue(defaultSettings);
+      fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+      expect(within(card).queryByTestId('acx-settings-reload-warning')).not.toBeInTheDocument();
+    }
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.api.testConnection).mock.calls[0][0]).toEqual({});
+    expect(within(card).getByTestId('acx-test-connection-banner')).toBeInTheDocument();
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    expect(screen.queryByText('Saved. Checking health…')).not.toBeInTheDocument();
+    expect(screen.queryByText(PRIVATE_DETAIL)).not.toBeInTheDocument();
+    expect(budget).toHaveValue(4);
+    expect(h.requests).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
+    await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    fireEvent.click(check); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 4 } });
+  });
+
+  it('R5-F1 Check health accepted during a budget-only Save reports why it was not checked when the readback fails', async () => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    await acceptCheckDuringBudgetSave(h);
+    await settleBudgetWrite(h, h.requests[0], 'ok-readback-error');
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(screen.getByText('Saved, but the page could not reload settings: settings unavailable.')).toBeInTheDocument();
+    expect(within(card).getByTestId('acx-settings-reload-warning'))
+      .toHaveTextContent('Health not checked: settings could not reload.');
+    expect(within(card).getAllByRole('button', { name: 'Reload settings' })).toHaveLength(1);
+    expect(screen.queryByText(PRIVATE_DETAIL)).not.toBeInTheDocument();
+    expect(budget).toHaveValue(4);
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(budgetSettings(defaultSettings.url, 4));
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(within(card).queryByTestId('acx-settings-reload-warning')).not.toBeInTheDocument();
+    expect(budget).toHaveValue(4);
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R5-F1 Check health accepted during a routing save keeps one Reload settings when the readback fails', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const urlA = 'https://private-a.example.com';
+    type(url, urlA); fireEvent.blur(url); await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Check health' })); await flush();
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('private readback unavailable'));
+    await finish(h.requests[0], { saved: ['url'], result: 'ok' });
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(within(card).getByTestId('acx-settings-routing-save-message'))
+      .toHaveTextContent('Saved, but the page could not reload settings: settings unavailable.');
+    expect(within(card).getByTestId('acx-settings-reload-warning'))
+      .toHaveTextContent('Health not checked: settings could not reload.');
+    expect(within(card).getAllByRole('button', { name: 'Reload settings' })).toHaveLength(1);
+    vi.mocked(h.api.fetchSettings).mockResolvedValue({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('R5-F1 a budget-only transport failure while settings remain unreadable reports why health was not checked', async () => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    await settleBudgetWrite(h, h.requests[0], 'partial-readback-error');
+    expect(h.client.getQueryState(queryKeys.settings.all)?.status).toBe('error');
+    type(budget, '5');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Check health' })); await flush();
+    await settleBudgetWrite(h, h.requests[1], 'transport');
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(within(card).getByTestId('acx-settings-reload-warning'))
+      .toHaveTextContent('Health not checked: settings could not reload.');
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+    expect(budget).toHaveValue(5);
+    vi.mocked(h.api.fetchSettings).mockResolvedValue(budgetSettings(defaultSettings.url, 4));
+    fireEvent.click(within(card).getByRole('button', { name: 'Reload settings' })); await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(budget).toHaveValue(5);
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('R5-control an accepted check never probes a stale target after its routing write fails', async () => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://private-a.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Check health' })); await flush();
+    await settleBudgetWrite(h, h.requests[0], 'transport');
+    expect(h.requests[1].payload).toEqual({ url: urlA });
+    await settleBudgetWrite(h, h.requests[1], 'transport');
+    const card = screen.getByTestId('acx-target-card-service');
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(within(card).getByText('Not saved: Failed to save settings. Your edit is kept.')).toBeInTheDocument();
+    expect(screen.queryByText(/Health not checked/)).not.toBeInTheDocument();
+    expect(screen.queryByText(PRIVATE_DETAIL)).not.toBeInTheDocument();
+    expect(url).toHaveValue(urlA);
+    expect(budget).toHaveValue(4);
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({ url: urlA });
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[2], { saved: ['url'], result: 'ok' });
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(within(card).getByText('Could not save settings. (description_budget)')).toBeInTheDocument();
+  });
+
+  it.each(['transport', 'partial-readback-error'] as const)('R5-control a newer budget typed after the accepted check survives the failed write: %s', async (mode) => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    await acceptCheckDuringBudgetSave(h);
+    type(budget, '7');
+    await settleBudgetWrite(h, h.requests[0], mode);
+    expect(budget).toHaveValue(7);
+    expect(h.requests).toHaveLength(1);
+    fireEvent.submit(budget.closest('form')!); await flush();
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 7 } });
+  });
+
+  it.each(['ok', 'transport', 'partial-readback-error'] as const)('R5-control a newer routing edit cancels the accepted check: %s', async (mode) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    await acceptCheckDuringBudgetSave(h);
+    type(url, 'https://private-newer.example.com');
+    await settleBudgetWrite(h, h.requests[0], mode);
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(1);
+    expect(url).toHaveValue('https://private-newer.example.com');
+    expect(screen.queryByText('Saved. Checking health…')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Health not checked/)).not.toBeInTheDocument();
+  });
+
+  it('R5-control an accepted check carries through a queued later Save and probes once', async () => {
+    const h = await harness();
+    const budget = screen.getByLabelText('Maximum description attempts');
+    await acceptCheckDuringBudgetSave(h);
+    type(budget, '7'); fireEvent.submit(budget.closest('form')!); await flush();
+    await settleBudgetWrite(h, h.requests[0], 'transport');
+    expect(h.requests).toHaveLength(2);
+    expect(h.requests[1].payload).toEqual({ description_budget: { max_attempts: 7 } });
+    expect(h.api.testConnection).not.toHaveBeenCalled();
+    await settleBudgetWrite(h, h.requests[1], 'ok', 7);
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    await flush();
+    expect(h.api.testConnection).toHaveBeenCalledTimes(1);
+    expect(budget).toHaveValue(7);
+    expect(screen.queryByText(/Could not save settings/)).not.toBeInTheDocument();
+  });
+
+  it.each(['independent', 'queued'] as const)('R5-control reload and Retry preserve a genuine newer budget seven: %s', async (mode) => {
+    const h = await harness();
+    const url = screen.getByLabelText('Service API URL');
+    const budget = screen.getByLabelText('Maximum description attempts');
+    const urlA = 'https://private-a.example.com';
+    const urlB = 'https://private-b.example.com';
+    type(url, urlA); type(budget, '4');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' })); await flush();
+    if (mode === 'queued') { type(url, urlB); fireEvent.blur(url); await flush(); }
+    h.persist({ ...defaultSettings, url: urlA, effective_target_url: urlA });
+    await finish(h.requests[0], { saved: ['url'], failed: ['description_budget'], result: 'partial' });
+    if (mode === 'independent') { type(url, urlB); fireEvent.blur(url); await flush(); }
+    type(budget, '7');
+    vi.mocked(h.api.fetchSettings).mockRejectedValue(new Error('private readback unavailable'));
+    await finish(h.requests[1], { saved: ['url'], result: 'ok' });
+    const card = screen.getByTestId('acx-target-card-service');
+    const error = within(card).getByTestId('acx-settings-routing-save-message');
+    expect(error).toHaveAttribute('role', 'status');
+    expect(error).toHaveAttribute('aria-live', 'polite');
+    expect(within(card).getByTestId('acx-settings-reload-warning')).toHaveAttribute('aria-live', 'polite');
+    expect(budget).toHaveValue(7);
+    const reload = within(card).getByRole('button', { name: 'Reload settings' });
+    reload.focus(); expect(reload).toHaveFocus();
+    vi.mocked(h.api.fetchSettings).mockResolvedValue({ ...defaultSettings, url: urlB, effective_target_url: urlB });
+    fireEvent.click(reload); await flush();
+    expect(budget).toHaveValue(7);
+    expect(h.requests).toHaveLength(2);
+    fireEvent.click(within(card).getByRole('button', { name: 'Retry save' })); await flush();
+    expect(h.requests[2].payload).toEqual({ description_budget: { max_attempts: 7 } });
   });
 });
 

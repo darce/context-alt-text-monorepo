@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Sync the demo WordPress stack and Caddy edge config to the OCI host.
-#
-# Order matters: bring up acx-demo first so acx-demo-net exists, then recreate
-# Caddy (network join requires container recreate — reload-only is insufficient).
+# Sync the demo WordPress stack after verifying the shared Caddy edge.
+# The recognition deploy owns edge convergence; this deploy only probes it.
 # When PLUGIN_ZIP is unset, freshness-gates the newest dist/alt-context-*.zip and
 # runs bootstrap-wp.sh after the stack is healthy. An explicitly empty PLUGIN_ZIP
 # means no artifact: skip the plugin rsync, skip bootstrap, leave BOOTSTRAP_RAN=0.
@@ -84,7 +82,7 @@ elif [[ -z "${PLUGIN_ZIP}" ]]; then
 fi
 
 # Resolved early and preflighted with the other sources: discovering it missing
-# at the final smoke step would leave the Caddy promote applied but unsmoked.
+# at the final smoke step would leave the demo deployment unsmoked.
 # Remote smoke heredoc concatenation order (later definition wins):
 #   1. describe-gate.sh — ACX_TRUSTED_DESCRIBE_PROFILES + is_trusted_describe_profile
 #      (only definition site). Also carries a VM-self-contained copy of
@@ -135,6 +133,221 @@ else
   exit "$preflight_status"
 fi
 
+
+# Shared-edge ABI is owned by recognition/app-portal; recognition-service.sh is
+# the only edge writer. This deploy streams the frozen helper plus a read-only
+# program and refuses unless the live edge equals what that writer installs.
+# Decoded inputs exist only under the remote /tmp, never in /opt/acx-backend.
+# Any generic env converges the whole edge; the probe selects Aura networks as
+# that env would, so the printed command and the comparison cannot disagree.
+EDGE_CONVERGE_ENV="prod"
+
+# Bound one remote call on the local clock as well: the remote `timeout` cannot
+# help when the transport itself stalls. bash 3.2 has no BASHPID or wait -n.
+run_with_local_deadline() {
+  local limit="$1" pid started state
+  shift
+  # Without job control `cmd &` reads /dev/null; keep the caller's here-string.
+  "$@" <&0 &
+  pid=$!
+  started=$SECONDS
+  while kill -0 "$pid" 2>/dev/null; do
+    state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    [[ "$state" != Z* ]] || break
+    if ((SECONDS - started >= limit)); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "ERROR: shared edge probe exceeded ${limit}s on the local clock; edge state UNKNOWN" >&2
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+}
+
+# Remote program: $1 budget seconds, $2 converge env, $3/$4 base64 Caddyfile and
+# Compose. A function, not "$(cat <<...)", so bash 3.2 parses the heredoc.
+edge_probe_program() {
+  cat -- "$(dirname "${BASH_SOURCE[0]}")/lib/shared-edge.sh" || return 2
+  cat <<'EDGE_PROBE'
+set -euo pipefail
+budget="$1"
+converge_env="$2"
+[[ "$budget" =~ ^[1-9][0-9]{0,2}$ && "$budget" -le 600 ]] || { echo 'ERROR: shared edge probe budget must be 1..600 seconds' >&2; exit 2; }
+[[ "$converge_env" =~ ^(dev|staging|prod)$ ]] || { echo 'ERROR: shared edge probe needs a generic converge env' >&2; exit 2; }
+edge_dir=/opt/acx-backend
+live="$edge_dir/Caddyfile"
+base="$edge_dir/docker-compose.caddy.yml"
+overlay="$edge_dir/app/docker-compose.app.yml"
+journal="$edge_dir/app/activation.journal"
+handle=""
+scratch=""
+reaper=""
+refuse() { echo "ERROR: shared edge drift: $1" >&2; exit 1; }
+# Unknown is neither converged nor drift: exit 3, never the drift status 1.
+unknown() { echo "ERROR: shared edge probe could not $1 (rc $2); edge state UNKNOWN" >&2; exit 3; }
+
+# One shared budget. The outer `timeout -k 5` signals only its own process
+# group, but edge_bounded_run starts every Docker read under a nested `timeout`
+# that leads a new group, so a stalled read would outlive the deadline and keep
+# this session open. Each helper operation gets only what is left, and the
+# reaper starts killing those nested groups 2 s before the outer deadline and
+# keeps scanning until cleanup, including groups born after a slow helper read.
+stop_at=$((SECONDS + budget - 2))
+spend() {
+  EDGE_OP_DEADLINE=$((stop_at - SECONDS))
+  ((EDGE_OP_DEADLINE >= 1)) || {
+    echo "ERROR: shared edge probe ran out of its ${budget}s budget; edge state UNKNOWN" >&2
+    exit 124
+  }
+}
+reap_nested() {
+  local own groups group
+  own="$(ps -o pgid= -p "$$" | tr -d ' ')" || return 0
+  [[ "$own" =~ ^[1-9][0-9]*$ ]] || return 0
+  groups="$(ps -e -o pid= -o ppid= -o pgid= | awk -v root="$$" -v own="$own" '
+    { parent[$1] = $2; group[$1] = $3 }
+    END {
+      for (pid in parent) {
+        up = pid
+        for (hops = 0; hops < 64 && up != root && (up in parent); hops++) up = parent[up]
+        if (up == root && group[pid] != own && group[pid] > 1) print group[pid]
+      }
+    }' | sort -u)" || return 0
+  for group in $groups; do kill -KILL -- "-$group" 2>/dev/null || true; done
+}
+(
+  while ((SECONDS < stop_at)); do sleep 0.2; done
+  while :; do
+    reap_nested
+    sleep 0.1
+  done
+) </dev/null >/dev/null 2>&1 &
+reaper=$!
+cleanup() {
+  local rc=$?
+  kill "$reaper" 2>/dev/null || true
+  if [[ -n "$scratch" ]]; then rm -rf -- "$scratch"; fi
+  # Cleanup removes at most one private file; keep it inside the kill grace.
+  EDGE_OP_DEADLINE=1
+  edge_compose_cleanup || rc=1
+  if [[ -n "$handle" ]]; then edge_lock_release "$handle" 5 >/dev/null || rc=1; fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
+spend
+if handle="$(edge_lock_acquire "$edge_dir/app/activation.journal.lock" 0 "$((budget + 10))" 0)"; then
+  :
+else
+  rc=$?
+  handle=""
+  if [[ "$rc" == 75 ]]; then echo 'ERROR: shared edge drift: lock_busy' >&2; fi
+  exit "$rc"
+fi
+# Same admission as the writer probe: a pending journal is an unfinished
+# activation or recovery, so the edge is not settled.
+if [[ -e "$journal" || -L "$journal" ]]; then
+  echo 'ERROR: shared edge drift: lock_busy (pending activation journal; recovery required)' >&2
+  exit 75
+fi
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/sync-demo-edge.XXXXXX")"
+printf '%s' "$3" | base64 -d >"$scratch/Caddyfile.repo" || unknown "decode the repository Caddyfile" "$?"
+printf '%s' "$4" | base64 -d >"$scratch/compose.repo.yml" || unknown "decode the repository Compose file" "$?"
+
+TMPDIR="$scratch" edge_effective_caddyfile "$scratch/Caddyfile.repo" "$live" >"$scratch/Caddyfile" || refuse caddyfile
+cmp -s -- "$scratch/Caddyfile" "$live" || refuse caddyfile
+
+# The writer (recognition-service.sh edge_desired) installs the canonical JSON
+# of the resolved Compose model, with only absent unselected Aura networks
+# dropped, and its probe compares models. Compare the same models here.
+[[ -f "$base" && ! -L "$base" ]] || refuse compose
+spend
+model="$(edge_bounded_run docker compose --project-directory "$edge_dir" -f "$scratch/compose.repo.yml" config --format json)" ||
+  unknown "resolve the repository Compose model" "$?"
+spend
+inventory="$(edge_bounded_run docker network ls --format '{{.Name}}')" || unknown "read the Docker network inventory" "$?"
+python3 -c '
+import json,re,sys
+model,inventory,env=sys.argv[1:]
+d=json.loads(model); present=set(inventory.splitlines())
+if not all(re.fullmatch(r"[A-Za-z0-9_.-]+", n) for n in present): raise SystemExit(2)
+nets=d["networks"]; service=d["services"]["caddy"]["networks"]
+selected="acx-"+env+"-net"
+for key in list(service):
+    name=nets[key].get("name",key)
+    if re.fullmatch(r"acx-(dev|staging|prod)-auraface-net",name) and name not in present and name != selected:
+        if isinstance(service,list): service.remove(key)
+        else: del service[key]
+        del nets[key]
+print(json.dumps(d,sort_keys=True,separators=(",",":")))' "$model" "$inventory" "$converge_env" >"$scratch/desired.json" ||
+  unknown "select the desired Compose model" "$?"
+spend
+current="$(edge_bounded_run docker compose --project-directory "$edge_dir" -f "$base" config --format json)" ||
+  unknown "resolve the live Compose model" "$?"
+canonical="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1]),sort_keys=True,separators=(",",":")))' "$current")" ||
+  unknown "normalize the live Compose model" "$?"
+[[ "$canonical" == "$(cat -- "$scratch/desired.json")" ]] || refuse compose
+
+spend
+edge_compose_args "$base" "$overlay" || unknown "select the effective edge generation" "$?"
+spend
+names="$(edge_required_networks "$base" "$overlay")" || unknown "resolve the required caddy networks" "$?"
+spend
+cid="$(edge_bounded_run docker compose "${EDGE_COMPOSE_ARGV[@]}" ps -q caddy)" || unknown "find the caddy container" "$?"
+[[ "$cid" =~ ^[a-f0-9]{12,64}$ ]] || refuse 'network:acx-demo-net (caddy container absent or ambiguous)'
+spend
+networks="$(edge_bounded_run docker inspect -f '{{json .NetworkSettings.Networks}}' "$cid")" ||
+  unknown "inspect the caddy container" "$?"
+while IFS= read -r name; do
+  python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if isinstance(d,dict) and sys.argv[2] in d else 1)' "$networks" "$name" ||
+    refuse "network:$name"
+done <<<"$(printf '%s\nacx-demo-net\n' "$names" | LC_ALL=C sort -u)"
+# A live hold now proves every read above was serialized with the writers.
+edge_lock_check "$handle" 0 || unknown "prove the shared edge lock was held throughout" "$?"
+EDGE_PROBE
+}
+
+probe_shared_edge() {
+  local deadline command caddy64 compose64 program
+  deadline="${ACX_REMOTE_COMMAND_TIMEOUT:-120}"
+  [[ "$deadline" =~ ^[1-9][0-9]{0,2}$ && "$deadline" -le 600 ]] || {
+    echo "ERROR: shared edge deadline must be 1..600 seconds" >&2
+    return 2
+  }
+  [[ -r "$(dirname "${BASH_SOURCE[0]}")/lib/shared-edge.sh" ]] || { echo "ERROR: shared edge helper missing" >&2; return 2; }
+  caddy64="$(base64 < "$CADDYFILE_SRC" | tr -d '\n')" || return 2
+  compose64="$(base64 < "$CADDY_COMPOSE_SRC" | tr -d '\n')" || return 2
+  command="sudo -n timeout -k 5 $deadline bash -s -- $deadline $EDGE_CONVERGE_ENV $(shell_quote "$caddy64") $(shell_quote "$compose64")"
+  program="$(edge_probe_program)" || return 2
+  # Local bound: 5 s connect + the remote deadline + its 5 s kill grace.
+  run_with_local_deadline "$((deadline + 10))" \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 "${OCI_USER}@${OCI_HOST}" "$command" <<<"$program"
+}
+if probe_shared_edge; then
+  :
+else
+  edge_status=$?
+  echo "ERROR: shared edge probe refused (sudo, transport, deadline, unknown state or drift); no demo changes made." >&2
+  echo "Converge: OCI_HOST=$(shell_quote "$OCI_HOST") OCI_USER=$(shell_quote "$OCI_USER") ACX_EDGE_APPLY=1 bash scripts/deploy/recognition-service.sh sync-runtime ${EDGE_CONVERGE_ENV}" >&2
+  exit "$edge_status"
+fi
+
+# Retain an API baseline before demo mutations to detect collateral regressions.
+echo "==> Capture pre-deploy api vhost baseline"
+PRE_CODES=$($SSH bash -se <<'EOF'
+set -euo pipefail
+for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://${host}/health" || true)
+  [[ -n "$code" && "$code" != "000" ]] || code=000
+  printf '%s=%s ' "$host" "$code"
+done
+EOF
+)
+echo "    baseline: ${PRE_CODES}"
+
 echo "==> Target host: ${OCI_USER}@${OCI_HOST}"
 echo "==> Ensure demo secrets exist at ${REMOTE_DEMO_DIR}/secrets/.env (from ${ENV_EXAMPLE_SRC})"
 
@@ -169,18 +382,6 @@ else
   echo "==> No plugin artifact to rsync; skipping bootstrap-wp.sh"
 fi
 
-echo "==> Rsync Caddy edge config (repo-tracked source of truth)"
-$SCP "$CADDYFILE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_BACKEND_DIR}/Caddyfile.new"
-$SCP "$CADDY_COMPOSE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_BACKEND_DIR}/docker-compose.caddy.yml.new"
-
-echo "==> Stage rollback copies on the VM"
-$SSH bash -se <<'EOF'
-set -euo pipefail
-cd /opt/acx-backend
-if [[ -f Caddyfile ]]; then cp -a Caddyfile "Caddyfile.bak.$(date +%s)"; fi
-if [[ -f docker-compose.caddy.yml ]]; then cp -a docker-compose.caddy.yml "docker-compose.caddy.yml.bak.$(date +%s)"; fi
-EOF
-
 echo "==> Bring up demo stack (acx-demo-net is external — create it out-of-band)"
 $SSH bash -se <<EOF
 set -euo pipefail
@@ -214,105 +415,6 @@ if [[ -n "${PLUGIN_ZIP}" ]]; then
   FIRST_BURST_COUNT=$($SSH "cat '${REMOTE_DEMO_DIR}/.acx-describe-first-burst.count' 2>/dev/null" || true)
 fi
 
-# Baseline BEFORE the Caddy promote: an api.* vhost that was healthy (200) and
-# turns unhealthy after the promote is a deploy-caused edge regression and must
-# FAIL the smoke; one that was already broken stays a WARN (backend outage,
-# out of deploy scope). `caddy validate` below is syntax-only — it cannot catch
-# a typo'd reverse_proxy upstream, which is exactly what this baseline catches.
-echo "==> Capture pre-promote api vhost baseline"
-PRE_CODES=$($SSH bash -se <<'EOF'
-set -euo pipefail
-for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com; do
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://${host}/health" || true)
-  [[ -n "$code" && "$code" != "000" ]] || code=000
-  printf '%s=%s ' "$host" "$code"
-done
-EOF
-)
-echo "    baseline: ${PRE_CODES}"
-
-echo "==> Validate staged Caddy config, then promote"
-$SSH bash -se <<'EOF'
-set -euo pipefail
-cd /opt/acx-backend
-# Validate the staged .new file BEFORE promoting: a failed validation must
-# leave the live Caddyfile untouched, or the next container restart loads a
-# broken config and takes down every vhost.
-docker run --rm \
-  -v /opt/acx-backend/Caddyfile.new:/etc/caddy/Caddyfile:ro \
-  caddy:2-alpine \
-  caddy validate --config /etc/caddy/Caddyfile
-# `mv` over the live Caddyfile allocates a new inode. docker-compose.caddy.yml
-# bind-mounts this one file, and a single-file bind mount pins the inode at
-# container start, so a mv'd promote never reaches the running proxy: the deploy
-# reports success while Caddy keeps serving the pre-promote config
-# (GUIDEDEPLOY-1-BR-04). Truncate in place so the mounted inode is the one we
-# just wrote. Keep a copy in case the non-atomic write or its validation fails.
-rollback_file=""
-if [[ -e Caddyfile ]]; then
-  rollback_file="$(mktemp)"
-  cp -p Caddyfile "$rollback_file"
-fi
-restore_caddyfile() {
-  if [[ -n "$rollback_file" ]]; then
-    if cat "$rollback_file" > Caddyfile; then
-      rm -f "$rollback_file"
-    else
-      printf 'ERROR: Failed to restore Caddyfile; rollback file retained at %s\n' "$rollback_file" >&2
-      return 1
-    fi
-  else
-    rm -f Caddyfile
-  fi
-}
-if ! cat Caddyfile.new > Caddyfile; then
-  restore_caddyfile
-  echo "ERROR: Failed to promote Caddyfile; prior contents restored" >&2
-  exit 1
-fi
-if ! docker run --rm \
-  -v /opt/acx-backend/Caddyfile:/etc/caddy/Caddyfile:ro \
-  caddy:2-alpine \
-  caddy validate --config /etc/caddy/Caddyfile; then
-  restore_caddyfile
-  echo "ERROR: Promoted Caddyfile failed validation; prior contents restored" >&2
-  exit 1
-fi
-if [[ -n "$rollback_file" ]]; then rm -f "$rollback_file"; fi
-rm -f Caddyfile.new
-mv docker-compose.caddy.yml.new docker-compose.caddy.yml
-EOF
-
-echo "==> Recreate Caddy so it joins acx-demo-net"
-$SSH bash -se <<'EOF'
-set -euo pipefail
-cd /opt/acx-backend
-# acx-dev-fir-net is external:true on docker-compose.caddy.yml; create it if the
-# fir stack has never stood it up. Labels match docker-compose.env.yml's
-# declaring key (backend) + COMPOSE_PROJECT_NAME=acx-dev-fir so fir can adopt.
-docker network inspect acx-dev-fir-net >/dev/null 2>&1 || docker network create \
-  --label com.docker.compose.network=backend \
-  --label com.docker.compose.project=acx-dev-fir \
-  acx-dev-fir-net
-docker compose -f docker-compose.caddy.yml up -d
-
-# The in-place promote above only reaches Caddy when the container's mount
-# already pins the current inode. A container recreated before an earlier
-# mv-style promote is pinned to an orphaned inode that no reload can reach, so
-# compare host and container copies and recreate when they diverge. Reload
-# otherwise: it applies the new config without dropping in-flight TLS sessions.
-want_config="$(sha256sum Caddyfile | cut -d' ' -f1)"
-have_config="$(docker compose -f docker-compose.caddy.yml exec -T caddy sha256sum /etc/caddy/Caddyfile | cut -d' ' -f1)" || have_config=""
-if [ "$want_config" != "$have_config" ]; then
-  echo "    caddy mount diverged from /opt/acx-backend/Caddyfile; recreating"
-  docker compose -f docker-compose.caddy.yml up -d --force-recreate caddy
-else
-  docker compose -f docker-compose.caddy.yml exec -T caddy \
-    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-fi
-docker compose -f docker-compose.caddy.yml ps
-EOF
-
 echo "==> Install/refresh systemd unit (operator enables manually if first install)"
 $SCP "$SYSTEMD_SRC" "${OCI_USER}@${OCI_HOST}:/tmp/acx-demo.service"
 $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo systemctl daemon-reload"
@@ -321,9 +423,9 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # vhost serves the WP front page at /. Gate semantics (pinned by
 # scripts/deploy/tests/test-smoke-gate.sh; classification logic lives in
 # scripts/deploy/lib/smoke-gate.sh and is shipped to the VM inline): the deploy
-# owns the edge and the demo stack, NOT backend health. 000 after retries FAILs
-# (edge/TLS broken; retries absorb the Caddy-recreate/ACME startup window); an
-# api.* HTTP error FAILs only when the pre-promote baseline was healthy
+# owns the demo stack, not backend health. 000 after retries FAILs
+# (edge/TLS unreachable); an
+# api.* HTTP error FAILs only when the pre-deploy baseline was healthy
 # (deploy-caused regression), else WARNs; the demo probe follows redirects and
 # requires a final 2xx that is not the WP installer (a wiped DB 302->install.php
 # answers 200 and is a broken demo, not a healthy one).

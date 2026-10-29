@@ -12,6 +12,8 @@ Only real, explicit known answers and identity-linked repeats supply QC evidence
 import copy
 import importlib.util
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -387,3 +389,131 @@ def test_cli_cannot_clobber_operator_inputs(tmp_path, input_kind):
     assert result.returncode == 2
     assert json.loads(result.stderr)["status"] == "error"
     assert before == {key: path.read_bytes() for key, path in inputs.items()}
+
+
+def cli_texts():
+    """Valid disposable operator inputs; each strict-input case mutates exactly one of them."""
+    predictions = [{"id": "fnd-0", "label": "defect"}, {"id": "fnd-1", "label": "not_defect"}]
+    decision = {"decision_id": "d0", "item_id": "item-0", "annotator": "alice", "field": "human_label"}
+    return {
+        "findings": [json.dumps(row) for row in findings(["defect", "not_defect"])],
+        "predictions": json.dumps({"predictions": predictions, "protocol": PROTOCOL}),
+        "qc": json.dumps({"decisions": [dict(decision, label="defect", gold_label="defect")]}),
+    }
+
+
+def write_cli_inputs(tmp_path, texts):
+    paths = {
+        "findings": tmp_path / "findings.jsonl",
+        "predictions": tmp_path / "predictions.json",
+        "qc": tmp_path / "qc.json",
+    }
+    # The blank line puts the second finding on physical line 3.
+    paths["findings"].write_text("\n\n".join(texts["findings"]) + "\n")
+    paths["predictions"].write_text(texts["predictions"])
+    paths["qc"].write_text(texts["qc"])
+    return paths
+
+
+def run_cli(paths, output):
+    args = [sys.executable, str(SCRIPT)]
+    for key, path in paths.items():
+        args += ["--" + key, str(path)]
+    return subprocess.run([*args, "--output", str(output)], capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("input_kind", ["findings", "predictions", "qc"])
+def test_cli_rejects_output_hard_linked_to_operator_input(tmp_path, input_kind):
+    paths = write_cli_inputs(tmp_path, cli_texts())
+    before = {key: path.read_bytes() for key, path in paths.items()}
+    output = tmp_path / "report.json"
+    os.link(paths[input_kind], output)  # a second directory entry for the same inode
+    assert output.resolve() != paths[input_kind].resolve() and output.samefile(paths[input_kind])
+    result = run_cli(paths, output)
+    assert result.returncode == 2, result.stderr
+    assert result.stdout == ""
+    error = json.loads(result.stderr)
+    assert error["status"] == "error"
+    assert "must not overwrite input" in error["error"]
+    assert {key: path.read_bytes() for key, path in paths.items()} == before
+    assert output.read_bytes() == before[input_kind]
+
+
+def test_cli_replaces_an_existing_unlinked_report(tmp_path):
+    paths = write_cli_inputs(tmp_path, cli_texts())
+    before = {key: path.read_bytes() for key, path in paths.items()}
+    output = tmp_path / "report.json"
+    output.write_text("stale report\n")
+    for _ in range(2):  # a stale regular file, then this tool's own previous report
+        result = run_cli(paths, output)
+        assert result.returncode == 0, result.stderr
+        report = json.loads(output.read_text())
+        assert (report["schema_version"], report["status"]) == ("evalops-score-judge/v1", "scored")
+    assert {key: path.read_bytes() for key, path in paths.items()} == before
+
+
+def with_duplicate(text, member, earlier):
+    """Precede the single member starting with `member` by a conflicting earlier copy of its key."""
+    assert text.count(member) == 1
+    key = member.split(":", 1)[0]
+    duplicated = text.replace(member, f"{key}: {json.dumps(earlier)}, {member}")
+    assert json.loads(duplicated) == json.loads(text)  # plain JSON silently keeps the last value
+    return duplicated
+
+
+def assert_rejected_before_write(tmp_path, texts, match):
+    paths = write_cli_inputs(tmp_path, texts)
+    before = {key: path.read_bytes() for key, path in paths.items()}
+    output = tmp_path / "report.json"
+    result = run_cli(paths, output)
+    assert result.returncode == 2, result.stderr
+    assert result.stdout == ""
+    error = json.loads(result.stderr)
+    assert error["status"] == "error"
+    assert re.search(match, error["error"]), error
+    assert not output.exists()
+    assert {key: path.read_bytes() for key, path in paths.items()} == before
+
+
+@pytest.mark.parametrize(
+    "kind,member,earlier,match",
+    [
+        ("findings", '"human_label": "not_defect"', None, r"findings\.jsonl:3: duplicate JSON key 'human_label'"),
+        ("predictions", '"predictions": [', [], r"predictions\.json: duplicate JSON key 'predictions'"),
+        ("predictions", '"label": "not_defect"', "defect", r"predictions\.json: duplicate JSON key 'label'"),
+        ("predictions", '"seed": 0', 7, r"predictions\.json: duplicate JSON key 'seed'"),
+        ("qc", '"label": "defect"', "not_defect", r"qc\.json: duplicate JSON key 'label'"),
+    ],
+    ids=["finding-label", "predictions-top-level", "prediction-label", "protocol-seed", "qc-label"],
+)
+def test_cli_rejects_duplicate_json_keys_in_every_input(tmp_path, kind, member, earlier, match):
+    texts = cli_texts()
+    if kind == "findings":
+        texts["findings"][1] = with_duplicate(texts["findings"][1], member, earlier)
+    else:
+        texts[kind] = with_duplicate(texts[kind], member, earlier)
+    assert_rejected_before_write(tmp_path, texts, match)
+
+
+@pytest.mark.parametrize(
+    "kind,constant,match",
+    [
+        ("findings", "NaN", r"findings\.jsonl:3: invalid JSON constant NaN"),
+        ("predictions", "Infinity", r"predictions\.json: invalid JSON constant Infinity"),
+        ("qc", "-Infinity", r"qc\.json: invalid JSON constant -Infinity"),
+    ],
+    ids=["findings", "predictions", "qc"],
+)
+def test_cli_rejects_non_finite_json_constants_in_every_input(tmp_path, kind, constant, match):
+    value = float(constant)
+    texts = cli_texts()
+    if kind == "findings":
+        # line_start is an unvalidated descriptive field, so only the loader can reject it.
+        texts["findings"][1] = json.dumps(dict(json.loads(texts["findings"][1]), line_start=value))
+    elif kind == "predictions":
+        payload = json.loads(texts["predictions"])
+        texts["predictions"] = json.dumps(dict(payload, protocol=dict(PROTOCOL, decoding={"temperature": value})))
+    else:
+        texts["qc"] = json.dumps({"decisions": [dict(json.loads(texts["qc"])["decisions"][0], gold_label=value)]})
+    assert constant in (texts[kind][1] if kind == "findings" else texts[kind])
+    assert_rejected_before_write(tmp_path, texts, match)

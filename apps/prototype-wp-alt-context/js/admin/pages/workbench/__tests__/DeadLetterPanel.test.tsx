@@ -237,6 +237,82 @@ describe('DeadLetterPanel', () => {
     );
   });
 
+
+  describe('human change identity and waiting time', () => {
+    afterEach(() => vi.restoreAllMocks());
+    const uuid = 'b274c6a1-5f0e-4c1d-9a7e-123456789abc';
+
+    it.each([
+      [{ label: 'Jane Doe' }, 'Cluster label update: “Jane Doe”'],
+      [{ label: null }, 'Cluster label cleared'],
+      [undefined, 'Cluster label update: b274c6a1'],
+      [{ person_id: 'person-42' }, 'Cluster label update: Payload person: person-42'],
+    ])('names the change from payload %j', (payload, identity) => {
+      mockFailedPages(listResponse({ items: [buildOperation({ entity_key: uuid, payload: payload as OutboxOperation['payload'] })] }));
+      renderPanel();
+      const heading = screen.getByText(identity, { selector: 'strong' });
+      expect(heading).not.toHaveTextContent(uuid);
+      const row = heading.closest('li')!;
+      expect(within(row).getByText('cluster ' + uuid + ' · change #11')).toBeInTheDocument();
+      expect(within(row).getByRole('button', { name: 'Retry ' + identity })).toBeInTheDocument();
+      fireEvent.click(within(row).getByRole('button', { name: 'Discard ' + identity }));
+      expect(within(row).getByRole('button', { name: 'Confirm discard ' + identity })).toBeInTheDocument();
+    });
+
+    it.each([
+      [1, 'minute'], [2, 'minutes'], [60, 'hour'], [120, 'hours'],
+      [1440, 'day'], [2880, 'days'],
+    ])('pluralizes the waiting duration at %i minutes', (minutes, unit) => {
+      vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-27T12:00:00Z'));
+      const count = minutes < 60 ? minutes : minutes < 1440 ? minutes / 60 : minutes / 1440;
+      mockFailedPages(listResponse({ items: [buildOperation({
+        created_at: new Date(Date.now() - minutes * 60000).toISOString(),
+      })] }));
+      renderPanel();
+      expect(screen.getByText('Unresolved for ' + count + ' ' + unit)).toBeInTheDocument();
+      expect(catalog.plural).toHaveBeenCalledWith(
+        expect.stringContaining('%1$d'), expect.stringContaining('%1$d'), count, 'alt-context',
+      );
+    });
+
+    it.each([29, 30, 31])('marks a change stale after the threshold: %i days', (days) => {
+      vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-27T12:00:00Z'));
+      mockFailedPages(listResponse({ items: [buildOperation({
+        created_at: new Date(Date.now() - days * 86400000).toISOString(),
+        last_attempted_at: new Date(Date.now()).toISOString(),
+      })] }));
+      renderPanel();
+      expect(screen.getByText('Unresolved for ' + days + ' days')).toBeInTheDocument();
+      if (days > 30) {
+        expect(screen.getByText(/Stale: From/)).toHaveTextContent('over 31 days ago');
+      } else {
+        expect(screen.queryByText(/Stale: From/)).not.toBeInTheDocument();
+      }
+    });
+
+    it('shows how long a pending change has waited', () => {
+      vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-27T12:00:00Z'));
+      mockedUseOutboxOperations.mockReturnValue(createMockQuery<OutboxListResponse>({
+        data: listResponse({ items: [buildOperation({
+          status: 'pending', created_at: '2026-10-27T11:00:00Z',
+        })] }),
+      }));
+      renderPanel();
+      fireEvent.click(screen.getByRole('button', { name: 'History' }));
+      expect(screen.getByText('Waiting 1 hour')).toBeInTheDocument();
+    });
+
+    it('announces retry using the label identity', async () => {
+      mockFailedPages(listResponse({ items: [buildOperation({ payload: { label: 'Jane Doe' } })] }));
+      renderPanel();
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Retry Cluster label update: “Jane Doe”' }));
+        await Promise.resolve();
+      });
+      expect(screen.getByRole('status')).toHaveTextContent('Cluster label update: “Jane Doe” queued to retry.');
+    });
+  });
+
   describe('UXREC-1 needs attention', () => {
     const OLD_FAILED = buildOperation({
       id: 701,
@@ -270,7 +346,7 @@ describe('DeadLetterPanel', () => {
       renderPanel();
       expect(screen.getByRole('button', { name: 'Needs attention' })).toHaveAttribute('aria-pressed', 'true');
       expect(screen.getByRole('button', { name: 'Failed' })).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getAllByText('Entity: cluster-701 (cluster)')).toHaveLength(1);
+      expect(screen.getAllByText('cluster cluster-701 · change #701')).toHaveLength(1);
       expect(mockedUseOutboxOperations).not.toHaveBeenCalled();
       expect(screen.queryByRole('heading', { name: 'Change history' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Retry all failed (1)' })).toBeInTheDocument();
@@ -298,24 +374,24 @@ describe('DeadLetterPanel', () => {
       expect(screen.getByText('Status: discarded')).toBeInTheDocument();
       expect(screen.queryByTestId('acx-zone-z-dl-actions')).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'failed' }));
-      expect(screen.getAllByText('Entity: cluster-701 (cluster)')).toHaveLength(1);
-      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(screen.getAllByText('cluster cluster-701 · change #701')).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: /^Retry Cluster/ }));
       await waitFor(() => expect(mockedUseRetryOperation().mutateAsync).toHaveBeenCalledWith(701));
-      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Discard Cluster/ }));
       expect(mockedUseDiscardOperation().mutateAsync).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Confirm discard' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Confirm discard Cluster/ }));
       await waitFor(() => expect(mockedUseDiscardOperation().mutateAsync).toHaveBeenCalledWith(701));
     });
 
     it('view changes reset the timeline offset and disarm confirmations', () => {
       renderPanel();
-      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-      expect(screen.getByRole('button', { name: 'Confirm discard' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /^Discard Cluster/ }));
+      expect(screen.getByRole('button', { name: /^Confirm discard Cluster/ })).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'History' }));
       fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
       expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 10, status: undefined });
       fireEvent.click(screen.getByRole('button', { name: 'Needs attention' }));
-      expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Discard Cluster/ })).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (1)' }));
       fireEvent.click(screen.getByRole('button', { name: 'History' }));
       fireEvent.click(screen.getByRole('button', { name: 'Needs attention' }));
@@ -336,7 +412,7 @@ describe('DeadLetterPanel', () => {
 
     it('old failed rows stay in Needs attention until the server status changes', () => {
       renderPanel();
-      expect(screen.getAllByText('Entity: cluster-701 (cluster)')).toHaveLength(1);
+      expect(screen.getAllByText('cluster cluster-701 · change #701')).toHaveLength(1);
       expect(screen.getByRole('button', { name: 'Retry all failed (1)' })).toBeInTheDocument();
     });
 
@@ -391,26 +467,26 @@ describe('DeadLetterPanel', () => {
     // confirmation and its confirmation-only announcement; Discard must be armed again.
     describe('UXREC-1 navigation disarms confirmations', () => {
       const OLD_FAILED_ARMED =
-        'Discard armed for Cluster label update for cluster-701 (operation 701). Activate Confirm discard to continue.';
+        'Discard armed for Cluster label update: “Renamed”. Activate Confirm discard to continue.';
       const oldFailedRow = (): HTMLElement => {
-        const row = screen.getByText('Entity: cluster-701 (cluster)').closest('li');
+        const row = screen.getByText('cluster cluster-701 · change #701').closest('li');
         expect(row).not.toBeNull();
         return row!;
       };
       const expectRearmRequired = async (): Promise<void> => {
         const discard = mockedUseDiscardOperation().mutateAsync;
-        expect(within(oldFailedRow()).queryByRole('button', { name: 'Confirm discard' })).not.toBeInTheDocument();
+        expect(within(oldFailedRow()).queryByRole('button', { name: /^Confirm discard Cluster/ })).not.toBeInTheDocument();
         expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent('Discard armed');
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Discard Cluster/ }));
         expect(discard).not.toHaveBeenCalled();
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Confirm discard' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Confirm discard Cluster/ }));
         await waitFor(() => expect(discard).toHaveBeenCalledWith(701));
       };
 
       it('History All to failed disarms the row that stays visible', async () => {
         renderPanel();
         fireEvent.click(screen.getByRole('button', { name: 'History' }));
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Discard Cluster/ }));
         expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
         fireEvent.click(screen.getByRole('button', { name: 'failed' }));
         expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: 'failed' });
@@ -420,11 +496,11 @@ describe('DeadLetterPanel', () => {
       it('History page-away and back disarms the row', async () => {
         renderPanel();
         fireEvent.click(screen.getByRole('button', { name: 'History' }));
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Discard Cluster/ }));
         fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
         expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 10, status: undefined });
-        expect(within(oldFailedRow()).queryByRole('button', { name: 'Confirm discard' })).not.toBeInTheDocument();
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        expect(within(oldFailedRow()).queryByRole('button', { name: /^Confirm discard Cluster/ })).not.toBeInTheDocument();
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Discard Cluster/ }));
         fireEvent.click(screen.getByRole('button', { name: 'Previous timeline page' }));
         expect(mockedUseOutboxOperations).toHaveBeenLastCalledWith({ limit: 10, offset: 0, status: undefined });
         await expectRearmRequired();
@@ -433,7 +509,7 @@ describe('DeadLetterPanel', () => {
       it('cached same-total failed pages disarm row and bulk confirmations', async () => {
         mockFailedPages(listResponse({ items: [{ ...OLD_FAILED, age_seconds: 16 * 24 * 3600 }], total: 25 }));
         renderPanel();
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Discard Cluster/ }));
         fireEvent.click(screen.getByRole('button', { name: 'Next' }));
         expect(mockedUseDeadLetterOperations).toHaveBeenLastCalledWith({ limit: 50, offset: 0 });
         expect(mockedUseDeadLetterOperations).toHaveBeenCalledWith({ limit: 20, offset: 20 });
@@ -454,7 +530,7 @@ describe('DeadLetterPanel', () => {
 
       it('view changes clear the stale row discard announcement', async () => {
         renderPanel();
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Discard Cluster/ }));
         expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
         fireEvent.click(screen.getByRole('button', { name: 'History' }));
         expect(screen.getByTestId('acx-dead-letter-status')).not.toHaveTextContent('Discard armed');
@@ -466,10 +542,10 @@ describe('DeadLetterPanel', () => {
         renderPanel();
         fireEvent.click(screen.getByRole('button', { name: 'History' }));
         fireEvent.click(screen.getByRole('button', { name: 'failed' }));
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Discard' }));
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Discard Cluster/ }));
         fireEvent.click(screen.getByRole('button', { name: 'failed' }));
         fireEvent.click(screen.getByRole('button', { name: 'History' }));
-        expect(within(oldFailedRow()).getByRole('button', { name: 'Confirm discard' })).toBeInTheDocument();
+        expect(within(oldFailedRow()).getByRole('button', { name: /^Confirm discard Cluster/ })).toBeInTheDocument();
         expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(OLD_FAILED_ARMED);
         expect(mockedUseDiscardOperation().mutateAsync).not.toHaveBeenCalled();
       });
@@ -481,8 +557,8 @@ describe('DeadLetterPanel', () => {
           }),
         );
         renderPanel();
-        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: 'Retry' }));
-        const inFlight = 'Retrying Cluster label update for cluster-701 (operation 701).';
+        fireEvent.click(within(oldFailedRow()).getByRole('button', { name: /^Retry Cluster/ }));
+        const inFlight = 'Retrying Cluster label update: “Renamed”.';
         expect(screen.getByTestId('acx-dead-letter-status')).toHaveTextContent(inFlight);
         fireEvent.click(screen.getByRole('button', { name: 'History' }));
         fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
@@ -756,12 +832,12 @@ describe('DeadLetterPanel', () => {
 
     expect(screen.getByText('Failed changes')).toBeInTheDocument();
     expect(screen.getByText('Showing 1-1 of 1 failed changes.')).toBeInTheDocument();
-    expect(screen.getAllByText('Cluster label update')).toHaveLength(1);
-    expect(screen.getAllByText('Entity: cluster-1 (cluster)')).toHaveLength(1);
+    expect(screen.getAllByText('Cluster label update: “Renamed”')).toHaveLength(1);
+    expect(screen.getAllByText('cluster cluster-1 · change #11')).toHaveLength(1);
     expect(screen.getByText('Attempts: 5')).toBeInTheDocument();
     expect(screen.getAllByText(/Last attempted:/)).toHaveLength(1);
     expect(screen.getByText('Error: dispatch_failed: Remote curation replay failed.')).toBeInTheDocument();
-    expect(screen.getByText('Payload label: Renamed')).toBeInTheDocument();
+    expect(screen.queryByText('Payload label: Renamed')).not.toBeInTheDocument();
   });
 
   it('renders outbox timeline entries with status and acknowledgement metadata', () => {
@@ -814,7 +890,7 @@ describe('DeadLetterPanel', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
-    expect(screen.getByText('Entity: cluster-42 (cluster)')).toBeInTheDocument();
+    expect(screen.getByText('cluster cluster-42 · change #42')).toBeInTheDocument();
   });
 
   it('keeps non-failed timeline rows without error, attempts, or recovery actions', () => {
@@ -822,11 +898,13 @@ describe('DeadLetterPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     const timeline = within(getTimelinePanel());
-    expect(timeline.getByText('Status: acknowledged')).toBeInTheDocument();
-    expect(timeline.queryByText(/Attempts:/)).not.toBeInTheDocument();
-    expect(timeline.queryByText(/^Error:/)).not.toBeInTheDocument();
-    expect(timeline.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
-    expect(timeline.queryByRole('button', { name: 'Discard' })).not.toBeInTheDocument();
+    const row = within(timeline.getByRole('listitem'));
+    expect(row.getByText('Cluster label update: “Renamed”', { selector: 'strong' })).toBeInTheDocument();
+    expect(row.getByText('Status: acknowledged')).toBeInTheDocument();
+    expect(row.queryByText(/Attempts:/)).not.toBeInTheDocument();
+    expect(row.queryByText(/^Error:/)).not.toBeInTheDocument();
+    expect(row.queryByRole('button', { name: /^Retry(?:\s|$)/ })).not.toBeInTheDocument();
+    expect(row.queryByRole('button', { name: /^Discard(?:\s|$)/ })).not.toBeInTheDocument();
   });
 
   it('shows error code, attempts, and Retry/Discard on failed timeline rows', () => {
@@ -857,8 +935,8 @@ describe('DeadLetterPanel', () => {
     expect(timeline.getByText('Status: failed')).toBeInTheDocument();
     expect(timeline.getByText('Attempts: 4')).toBeInTheDocument();
     expect(timeline.getByText('Error: dispatch_failed: Remote curation replay failed.')).toBeInTheDocument();
-    expect(timeline.getByRole('button', { name: 'Retry' })).toBeEnabled();
-    expect(timeline.getByRole('button', { name: 'Discard' })).toBeEnabled();
+    expect(timeline.getByRole('button', { name: /^Retry Cluster/ })).toBeEnabled();
+    expect(timeline.getByRole('button', { name: /^Discard Cluster/ })).toBeEnabled();
   });
 
   it('retries a failed timeline row through the shared retry mutation', async () => {
@@ -887,13 +965,13 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
-    fireEvent.click(within(getTimelinePanel()).getByRole('button', { name: 'Retry' }));
+    fireEvent.click(within(getTimelinePanel()).getByRole('button', { name: /^Retry Cluster/ }));
 
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(51);
     });
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Cluster label update for cluster-51 (operation 51) queued to retry.',
+      'Cluster label update: “Renamed” queued to retry.',
     );
   });
 
@@ -924,15 +1002,15 @@ describe('DeadLetterPanel', () => {
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
     const timeline = within(getTimelinePanel());
-    fireEvent.click(timeline.getByRole('button', { name: 'Discard' }));
+    fireEvent.click(timeline.getByRole('button', { name: /^Discard Cluster/ }));
     expect(mutateAsync).not.toHaveBeenCalled();
-    fireEvent.click(timeline.getByRole('button', { name: 'Confirm discard' }));
+    fireEvent.click(timeline.getByRole('button', { name: /^Confirm discard Cluster/ }));
 
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(51);
     });
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Cluster label update for cluster-51 (operation 51) discarded.',
+      'Cluster label update: “Renamed” discarded.',
     );
   });
 
@@ -962,8 +1040,8 @@ describe('DeadLetterPanel', () => {
     const timeline = within(getTimelinePanel());
     expect(timeline.getByText('Will not retry')).toBeInTheDocument();
     expect(timeline.getByText('Error: unauthorized: Session expired.')).toBeInTheDocument();
-    expect(timeline.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
-    expect(timeline.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    expect(timeline.queryByRole('button', { name: /^Retry Cluster/ })).not.toBeInTheDocument();
+    expect(timeline.getByRole('button', { name: /^Discard Cluster/ })).toBeInTheDocument();
   });
 
   it('surfaces topology command status via pending-work vocabulary (no Sync backlog)', () => {
@@ -1020,7 +1098,7 @@ describe('DeadLetterPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(screen.getByText('Showing 21-21 of 21 failed changes.')).toBeInTheDocument();
-    expect(screen.getByText('Entity: cluster-21 (cluster)')).toBeInTheDocument();
+    expect(screen.getByText('cluster cluster-21 · change #21')).toBeInTheDocument();
   });
 
   it('retries an operation and shows success notice', async () => {
@@ -1032,14 +1110,14 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Retry Cluster/ }));
 
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Cluster label update for cluster-1 (operation 11) queued to retry.',
+      'Cluster label update: “Renamed” queued to retry.',
     );
   });
 
@@ -1062,9 +1140,9 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
-    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    const selectedRow = screen.getByText('cluster cluster-2 · change #12').closest('li');
     expect(selectedRow).not.toBeNull();
-    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Retry' }));
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: /^Retry Cluster/ }));
 
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(12);
@@ -1072,7 +1150,7 @@ describe('DeadLetterPanel', () => {
 
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent(
-      'Unable to retry Cluster label update for cluster-2 (operation 12). Please try again.',
+      'Unable to retry Cluster label update: “Renamed”. Please try again.',
     );
     expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
   });
@@ -1086,19 +1164,19 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Discard Cluster/ }));
 
-    expect(screen.getByRole('button', { name: 'Confirm discard' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Confirm discard Cluster/ })).toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm discard' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm discard Cluster/ }));
 
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Cluster label update for cluster-1 (operation 11) discarded.',
+      'Cluster label update: “Renamed” discarded.',
     );
   });
 
@@ -1121,17 +1199,17 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
-    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    const selectedRow = screen.getByText('cluster cluster-2 · change #12').closest('li');
     expect(selectedRow).not.toBeNull();
-    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Discard' }));
-    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Confirm discard' }));
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: /^Discard Cluster/ }));
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: /^Confirm discard Cluster/ }));
 
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenCalledWith(12);
     });
 
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Unable to discard Cluster label update for cluster-2 (operation 12). Please try again.',
+      'Unable to discard Cluster label update: “Renamed”. Please try again.',
     );
   });
 
@@ -1156,11 +1234,11 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
-    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    const selectedRow = screen.getByText('cluster cluster-2 · change #12').closest('li');
     expect(selectedRow).not.toBeNull();
-    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Retry' }));
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: /^Retry Cluster/ }));
 
-    expect(screen.getByRole('status')).toHaveTextContent('Retrying Cluster label update for cluster-2 (operation 12).');
+    expect(screen.getByRole('status')).toHaveTextContent('Retrying Cluster label update: “Renamed”.');
 
     await act(async () => {
       resolveRetry({ operation: null });
@@ -1168,7 +1246,7 @@ describe('DeadLetterPanel', () => {
     });
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(
-        'Cluster label update for cluster-2 (operation 12) queued to retry.',
+        'Cluster label update: “Renamed” queued to retry.',
       );
     });
   });
@@ -1196,16 +1274,16 @@ describe('DeadLetterPanel', () => {
     );
 
     renderPanel();
-    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    const selectedRow = screen.getByText('cluster cluster-2 · change #12').closest('li');
     expect(selectedRow).not.toBeNull();
-    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Discard' }));
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: /^Discard Cluster/ }));
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Discard armed for Cluster label update for cluster-2 (operation 12). Activate Confirm discard to continue.',
+      'Discard armed for Cluster label update: “Renamed”. Activate Confirm discard to continue.',
     );
 
-    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Confirm discard' }));
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: /^Confirm discard Cluster/ }));
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Discarding Cluster label update for cluster-2 (operation 12).',
+      'Discarding Cluster label update: “Renamed”.',
     );
 
     await act(async () => {
@@ -1214,7 +1292,7 @@ describe('DeadLetterPanel', () => {
     });
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(
-        'Cluster label update for cluster-2 (operation 12) discarded.',
+        'Cluster label update: “Renamed” discarded.',
       );
     });
   });
@@ -1411,8 +1489,8 @@ describe('DeadLetterPanel', () => {
     renderPanel();
 
     for (const button of [
-      screen.getByRole('button', { name: 'Retry' }),
-      screen.getByRole('button', { name: 'Discard' }),
+      screen.getByRole('button', { name: /^Retry Cluster/ }),
+      screen.getByRole('button', { name: /^Discard Cluster/ }),
     ]) {
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute('aria-disabled', 'true');
@@ -1428,9 +1506,10 @@ describe('DeadLetterPanel', () => {
     try {
       renderPanel();
 
-      expect(screen.getAllByText('Age: 8 days')).toHaveLength(1);
+      expect(screen.getAllByText('Unresolved for 8 days')).toHaveLength(1);
       fireEvent.click(screen.getByRole('button', { name: 'History' }));
       expect(screen.getAllByText('Age: 8 days')).toHaveLength(1);
+      expect(screen.queryByText('Unresolved for 8 days')).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -1456,8 +1535,8 @@ describe('DeadLetterPanel', () => {
     renderPanel();
 
     expect(screen.getByText('Will not retry')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Retry Cluster/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Discard Cluster/ })).toBeInTheDocument();
   });
 
   it('shows Will not retry for discarded timeline rows', () => {
@@ -1551,7 +1630,7 @@ describe('DeadLetterPanel', () => {
     expect(mutateAsync).toHaveBeenCalledWith(11);
 
     expect(screen.getByTestId('acx-bulk-discard-results')).toHaveTextContent(
-      'Cluster label update for cluster-1 (operation 11) discarded.',
+      'Cluster label update: “Renamed” discarded.',
     );
     expect(
       screen.getByText('Discarded 1 failed changes older than 7 days. 1 remain — run again for the next page.'),
@@ -1620,9 +1699,9 @@ describe('DeadLetterPanel', () => {
     expect(mutateAsync).not.toHaveBeenCalledWith(13);
 
     const results = screen.getByTestId('acx-bulk-discard-results');
-    expect(results).toHaveTextContent('Cluster label update for cluster-1 (operation 11) discarded.');
+    expect(results).toHaveTextContent('Cluster label update: “Renamed” discarded.');
     expect(results).toHaveTextContent(
-      'Stopped before discarding Cluster label update for cluster-2 (operation 12) (authorization or client error).',
+      'Stopped before discarding Cluster label update: “Renamed” (authorization or client error).',
     );
     expect(
       screen.getByText(

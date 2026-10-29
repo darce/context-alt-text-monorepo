@@ -151,3 +151,17 @@ export const unavailableReasonCopy = (reason: string): { why: string; fix: strin
     fix: __('Retry. If it continues, check Settings and the service logs.', 'alt-context'),
   };
 };
+
+/** Safe summary shared by retention surfaces; never displays response bodies. */
+export const unavailableSummary = (value: ServiceUnavailable): string => {
+  const cause = value.reason === UNAVAILABLE_REASON.UPSTREAM_5XX
+    ? __('server error', 'alt-context')
+    : unavailableReasonCopy(value.reason).why;
+  return value.http_status === null
+    ? sprintf(__('%s: %s.', 'alt-context'), unavailableServiceLabel(value.service), cause)
+    : sprintf(__('%s: %s (HTTP %d).', 'alt-context'), unavailableServiceLabel(value.service), cause, value.http_status);
+};
+
+export const unavailableNeedsSettings = (value: ServiceUnavailable): boolean =>
+  ([UNAVAILABLE_REASON.NOT_CONFIGURED, UNAVAILABLE_REASON.ENDPOINT_UNCONFIGURED,
+    UNAVAILABLE_REASON.API_KEY_MISSING, UNAVAILABLE_REASON.UPSTREAM_4XX] as string[]).includes(value.reason);

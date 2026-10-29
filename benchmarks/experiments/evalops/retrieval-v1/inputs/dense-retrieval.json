@@ -1,0 +1,2140 @@
+{
+  "schema": "acx-retrieval-observation/1",
+  "query_set": "qrels-v0-seed-dev-not-heldout",
+  "corpus": "handoff.db",
+  "results": [
+    {
+      "query_id": "q-000",
+      "query": "make plan-done says task_row_missing for a MAINT task I registered in lowercase",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20507",
+          "task_ref": "MAINT-EVALOPS-AUDIT-20261029",
+          "score": 0.7315652370452881,
+          "snippet": "make plan-done uppercases TASK (scripts/workbay_lifecycle/handlers/plan_done.py:155 `.strip().upper()`; resolver.py:276-282 likewise) while maint-start stores the ref verbatim, so lowercase MAINT rows fail task_row_missing…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19034",
+          "task_ref": "PUBFIG-1",
+          "score": 0.713969349861145,
+          "snippet": "make plan-done TASK=MAINT-public-figure-gallery-scope-20261021 normalized the ref to MAINT-PUBLIC-FIGURE-GALLERY-SCOPE-20261021 and failed task_row_missing (row key is mixed case). Workaround: set_handoff_state(task_ref=<exact ref>,…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "2055",
+          "task_ref": "E20-11",
+          "score": 0.6583575010299683,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "2698",
+          "task_ref": "MAINT-tenant-pairing-recovery-20260711",
+          "score": 0.6132858991622925,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2469",
+          "task_ref": "ALTQ-1",
+          "score": 0.6060560941696167,
+          "snippet": "invoke /plan-analyze for docs/tasks/altq/ALTQ-1-alt-text-quality-task-plan.md",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "3420",
+          "task_ref": "ALTQ-1",
+          "score": 0.6022171378135681,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "2921",
+          "task_ref": "RECOG-1",
+          "score": 0.5973913669586182,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2917",
+          "task_ref": "UXP-NET-2",
+          "score": 0.5971295237541199,
+          "snippet": "Self-served the plan-baseline gate that had read as operator-only. Root cause: this repo puts task plans in docs/tasks/**, which is excluded from the plan-accept `--local` allowlist (docs/plans, docs/scopes, docs/assessments, docs/adrs,…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-001",
+      "query": "A commit accidentally included a reviewer's temporary test mutation; how can I prevent that?",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "4272",
+          "task_ref": "MAINT-e21-5-pmrev-20260719-REV-r0719d604-C",
+          "score": 0.693239688873291,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "4287",
+          "task_ref": "MAINT-e21-5-pmrev-20260719",
+          "score": 0.693239688873291,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "1380",
+          "task_ref": "E19-1-REV-B",
+          "score": 0.693013072013855,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "1400",
+          "task_ref": "E19-1",
+          "score": 0.693013072013855,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "17672",
+          "task_ref": "ADVFIX-1",
+          "score": 0.678573489189148,
+          "snippet": "Run the relevant Vitest suites and required build/type checks on the reviewed commit, and record the commands, results, and commit identity. Until that evidence is available, change the verdict to reflect the verification gap.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "11090",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.678490161895752,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "610",
+          "task_ref": "REFA-10",
+          "score": 0.6765376329421997,
+          "snippet": "Final review fixes committed: test-hooks in check-all, merge-proof scope, plan wording. Zero open findings; close-check green.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "215",
+          "task_ref": "REFA-1",
+          "score": 0.6670598983764648,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-002",
+      "query": "Close check reports an open finding that didn't appear in my list results",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "102",
+          "task_ref": "E15-5A",
+          "score": 0.646902322769165,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "91",
+          "task_ref": "E15-5A-REV-A",
+          "score": 0.646902322769165,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "102",
+          "task_ref": "E15-5A",
+          "score": 0.6004346013069153,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "91",
+          "task_ref": "E15-5A-REV-A",
+          "score": 0.6004346013069153,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "1236",
+          "task_ref": "E15-29",
+          "score": 0.5971784591674805,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "9261",
+          "task_ref": "GPUOPS-1",
+          "score": 0.5963314175605774,
+          "snippet": "The peer flagged that GR-10/GR-11 were still open in the DB and would fail handoff_close_check(enforce=True) when they take the branch to main. They could not close on my evidence, so I closed them from the owning worktree with my own…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "5773",
+          "task_ref": "WBUX-5",
+          "score": 0.5768951773643494,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "5774",
+          "task_ref": "WBUX-5",
+          "score": 0.5768951773643494,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-003",
+      "query": "My findings query returned nine rows even though more exist; how do I get the rest?",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "16462",
+          "task_ref": "DEFWAVE-2",
+          "score": 0.5518519878387451,
+          "snippet": "Use an exact-label lookup, or page through results until the exact match is found or the response is no longer truncated.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "507",
+          "task_ref": "E15-24",
+          "score": 0.548113226890564,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "3525",
+          "task_ref": "E15-35",
+          "score": 0.5289232730865479,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "15357",
+          "task_ref": "GPUFLOW-3",
+          "score": 0.5254966020584106,
+          "snippet": "Apply the draft/run predicate at the query boundary or construct a complete filtered result set before pagination, derive totals and empty states from that set, and disable history lookup when no draft filter is active.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "16485",
+          "task_ref": "DEFWAVE-2",
+          "score": 0.5245040655136108,
+          "snippet": "Apply the confidence filter in the repository query, or expose an explicit partial-page/cursor contract instead of silently truncating the scan.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "5751",
+          "task_ref": "WBUX-5",
+          "score": 0.5204659700393677,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "42",
+          "task_ref": "E15-5A",
+          "score": 0.5144428014755249,
+          "snippet": "Combined verdict pass_with_findings for feature/e15-5a@426da2c9fe91: 9 findings (5 med, 4 low; 2 dup pairs) — caddy external-net precondition, wrong script path, run-log evidence/status-mirror issues. Reviewer rows merged from…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "6042",
+          "task_ref": "MAINT-fir-review-parallel-20260729-REV-r3a6e3494-V65-PROBE",
+          "score": 0.5116344094276428,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-004",
+      "query": "Tests pass separately but collecting two directories together imports the wrong conftest",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "10716",
+          "task_ref": "VMREAP-1",
+          "score": 0.6356515288352966,
+          "snippet": "Sort the imports and pass check=False explicitly before evaluating returncode.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "4499",
+          "task_ref": "E21-10",
+          "score": 0.6274690628051758,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "2760",
+          "task_ref": "MAINT-ds2b-postmerge-review-20260712-REV-r0712-HARM-A",
+          "score": 0.6208553314208984,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "2762",
+          "task_ref": "MAINT-ds2b-postmerge-review-20260712",
+          "score": 0.6208553314208984,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "16932",
+          "task_ref": "DEBTADJ-1",
+          "score": 0.6155473589897156,
+          "snippet": "Point each entry to an existing relevant test, or leave test_file empty until the tests exist.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "9255",
+          "task_ref": "VLM-6",
+          "score": 0.6131976842880249,
+          "snippet": "[TEST-15] tests import the constant and write files at that ratio; nothing asserts 0.89× is absent. Fix: pin literal + 0.89× file must not be present.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "2637",
+          "task_ref": "TESTSPEED-1-REV-r0710-S1-A",
+          "score": 0.6128390431404114,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "2641",
+          "task_ref": "TESTSPEED-1",
+          "score": 0.6128390431404114,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-005",
+      "query": "A lane's focused tests passed but the full PHP suite now has order-dependent failures",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "handoff_state.objective",
+          "entity_id": "MAINT-php-autoload-parity-20260904",
+          "task_ref": "MAINT-php-autoload-parity-20260904",
+          "score": 0.6555449962615967,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "3383",
+          "task_ref": "WBUX-5",
+          "score": 0.6501321196556091,
+          "snippet": "The PHP suite had been red by default with 7 errors (undefined wp_set_script_translations), so a new break was indistinguishable from the standing seven. Remote grok lane fixU added the missing WordPress shim beside the other wp_* script…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "11344",
+          "task_ref": "DEMOLAND-1",
+          "score": 0.6432483196258545,
+          "snippet": "[GAP] Lane test command `vendor/bin/phpunit --testsuite unit` runs zero tests (phpunit.xml.dist suite name is `Unit`, case-sensitive) and exits 0 — a false-green self_verify (rg-006). AdminPageAutoloadTest also needs `composer…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "1259",
+          "task_ref": "MAINT-wpac-arch-deadcode-review-20260613",
+          "score": 0.6351742744445801,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "19897",
+          "task_ref": "PLUGIN0041-FIX-20261025",
+          "score": 0.6312713623046875,
+          "snippet": "Full-suite and current-main integration acceptance are missing. Recover immutable original suite logs with runtime, lockfile and exit-status provenance, or provision the exact dependencies in an authorized VM with granted disk and run npm…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "9580",
+          "task_ref": "UXW2-2",
+          "score": 0.6304779052734375,
+          "snippet": "Fixed on feature/uxw2-2 @7dd60dfe8 by lane uxw2-2-fix-r5. Truncation repair gated on stale-low projection; repair_pending emitted on every envelope leg with exact-set-equality schema pinning; identity_count clamped at emit time with…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "9615",
+          "task_ref": "UXW2-2",
+          "score": 0.6304779052734375,
+          "snippet": "Fixed on feature/uxw2-2 @7dd60dfe8 by lane uxw2-2-fix-r5. Truncation repair gated on stale-low projection; repair_pending emitted on every envelope leg with exact-set-equality schema pinning; identity_count clamped at emit time with…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "9617",
+          "task_ref": "UXW2-2",
+          "score": 0.6304779052734375,
+          "snippet": "Fixed on feature/uxw2-2 @7dd60dfe8 by lane uxw2-2-fix-r5. Truncation repair gated on stale-low projection; repair_pending emitted on every envelope leg with exact-set-equality schema pinning; identity_count clamped at emit time with…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-006",
+      "query": "Two simultaneous red-proof runs left a mutant in the sandbox after both restored their backups",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "7009",
+          "task_ref": "OCIGOV-1",
+          "score": 0.6528526544570923,
+          "snippet": "Emergency stop does not demonstrably gate host reclaim mutations",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "10399",
+          "task_ref": "WBUX-6-REV-r0902w2-S7-A",
+          "score": 0.6348292827606201,
+          "snippet": "Add a same-`runId` path that flips `isTerminal` true→false→true (non-terminal poll, then terminal again) and assert the second terminal does not invalidate; that mutant must go RED.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "10400",
+          "task_ref": "WBUX-6",
+          "score": 0.6348292827606201,
+          "snippet": "Add a same-`runId` path that flips `isTerminal` true→false→true (non-terminal poll, then terminal again) and assert the second terminal does not invalidate; that mutant must go RED.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "18083",
+          "task_ref": "PORTALPROD-1",
+          "score": 0.6085584163665771,
+          "snippet": "Lane pp-fx-rollback4. Two guards added to the runbook in this delta survive mutation. M7: dropping `-o ! -type f -name 'Caddyfile.*' -printf` from app-portal-deploy.md:436-440 leaves all 165 runbook/rollback/snapshot/absence/marker tests…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "9143",
+          "task_ref": "PRIV-1-REV-r0818-7f8f-A",
+          "score": 0.6053338646888733,
+          "snippet": "Mutant M2 (search not findall — first 64-hex window only) survives 142 green; cd*32+newline+digest records in production, first-only returns {}. Window order untested. TEST-15.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "9190",
+          "task_ref": "PRIV-1",
+          "score": 0.6053338646888733,
+          "snippet": "Mutant M2 (search not findall — first 64-hex window only) survives 142 green; cd*32+newline+digest records in production, first-only returns {}. Window order untested. TEST-15.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "9291",
+          "task_ref": "UXW2-5",
+          "score": 0.6028485298156738,
+          "snippet": "Senior judgment-only closure @ed3af025c confirmed by VM grok prover lane uxw2-5-prove-r2 (.lane/PROVE.json): every predicted mutant went RED (R2-02/R1-06 collapse rule: Failures 1; R2-03/04/06/08/09 pytest '1 failed'). R2-05 = rename/alias…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "9391",
+          "task_ref": "UXW2-5",
+          "score": 0.6028485298156738,
+          "snippet": "Senior judgment-only closure @ed3af025c confirmed by VM grok prover lane uxw2-5-prove-r2 (.lane/PROVE.json): every predicted mutant went RED (R2-02/R1-06 collapse rule: Failures 1; R2-03/04/06/08/09 pytest '1 failed'). R2-05 = rename/alias…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-007",
+      "query": "A shared Python function changed and dozens of tests outside the lane's selected directories failed",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "62",
+          "task_ref": "MAINT-FB-DEFERRED-20260604",
+          "score": 0.6907268166542053,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "18794",
+          "task_ref": "FIRBENCH-1",
+          "score": 0.6369954943656921,
+          "snippet": "New regression test import ordering fails Ruff I001; configured formatter flags reviewed Python files. Nonblocking style backlog per final independent gate.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "1945",
+          "task_ref": "E20-11",
+          "score": 0.6356709003448486,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "10656",
+          "task_ref": "GPUSMOKE-1",
+          "score": 0.635176956653595,
+          "snippet": "[GAP] The two new test modules are absent from test-scripts/check-all, and root lint targets do not cover the new Python scripts. Although 44 targeted tests pass, fresh ruff checks report 19 violations, all four files fail formatting, and…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "10999",
+          "task_ref": "GPUUX-1",
+          "score": 0.6324084997177124,
+          "snippet": "[GAP] The `test-scripts` pytest argument list never included `scripts/deploy/tests`, and no other target collected it. Every Python test in that directory was dead code that no gate ever executed, including freshly added…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "1353",
+          "task_ref": "MAINT-descsvc-deadcode-review-20260614-REV-B",
+          "score": 0.6226111650466919,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "1374",
+          "task_ref": "MAINT-descsvc-deadcode-review-20260614",
+          "score": 0.6226111650466919,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "9254",
+          "task_ref": "VLM-6",
+          "score": 0.6119568347930908,
+          "snippet": "[TEST-15] PATH=stub:/usr/bin:/bin keeps python3; dropping `|| _cold=\"\"` still passes. Independently found by local lens L (L-07). Fix: failing python3 stub first on PATH; assert rc 0 + COLD empty.",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-008",
+      "query": "Several green lane gates missed failures in sibling modules and downstream callers",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7463",
+          "task_ref": "FEBT-1",
+          "score": 0.7347841262817383,
+          "snippet": "The g1 run proved all 15 combined-tree failures DETERMINISTIC (6 observations each; FLAKY none). Two defects account for 10 of the 15, both now root-caused.\n\nGATE-06/W2A-06: useLiveReviewTarget.ts:88-94 says 'never retry…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "5726",
+          "task_ref": "MAINT-uxui-wave2-orch-20260818",
+          "score": 0.7263659238815308,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2365",
+          "task_ref": "VLM-6",
+          "score": 0.7004062533378601,
+          "snippet": "Cleared every open issue. CANONICAL GATE NOW GREEN: make check-remote @d99dc53c = 1981 passed, 4 skipped, EXIT=0, DONE-ALL (was '1 failed' at 5bb9a699).\n\n1. VLM-6-GATE-01 FIXED (52cfc669): added @pytest.mark.timing to the breaker fast-path…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "16798",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.6994884014129639,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "7417",
+          "task_ref": "ORCH-LAUNCH-01",
+          "score": 0.6937426924705505,
+          "snippet": "Fixed by lane ol01-w7c, merged. Entrypoint gates are behavioural fixtures (missing / garbage / mismatch / ok) executed under a rewritten root with a stub PATH, not source regex. Mutation-proven: removing the gate and inverting its polarity…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2948",
+          "task_ref": "fir-unblock",
+          "score": 0.6822857856750488,
+          "snippet": "Gate failure fully diagnosed: NOT FIR-5 code (identical 16 failures at pre-BUFREV 9b33bca2 and 2f347e39 in same env; repro locally), NOT models-present (fails with models parked/absent — corrects GATEISO-01's initial theory). Mechanism…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "10561",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.6772872805595398,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "18638",
+          "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+          "score": 0.6755849123001099,
+          "snippet": "Announced gate failure and proposal in commentary before any fifth author. INCUMBENT-COMPOSE-G2 REVISE: all94 claimed checks pass but five independent mutations accepted: false cleanup/restoration, foreign pilot window or extended3600/3500…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-009",
+      "query": "Both branches pass their own tests but the combined merge fails on stale fakes and vocabulary",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "16783",
+          "task_ref": "FIRBENCH-1",
+          "score": 0.6792079210281372,
+          "snippet": "Branch_diff review verdict fail for merge readiness while three high findings remain, including unlanded Dcontractcyclefix, timestamp04 and scores05. Previous conditional_pass review-run write was correctly refused by task high-finding…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "16454",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.6681863069534302,
+          "snippet": "Lesson [TEST-15]: two of three c81 combined reviews found each sibling lane green on its own base but the mechanical merge red.\n- g4: the legacy fake misroutes r2's new SQL, giving 22 failures.\n- g2: the legacy vocabulary pin lacks r2's…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "10169",
+          "task_ref": "DEMOLIVE-3",
+          "score": 0.6653896570205688,
+          "snippet": "BLOCK now branches on which precondition actually failed. Verified by reading the trial-merge commit.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "2922",
+          "task_ref": "RECOG-1",
+          "score": 0.6557762622833252,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "20664",
+          "task_ref": "MAINT-EVALOPS-NEXT-20261029",
+          "score": 0.6541787385940552,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2372",
+          "task_ref": "VLM-6",
+          "score": 0.6515558362007141,
+          "snippet": "Branch-end /review-parallel: 6 adversarial reviewers, branch_diff scope. Centralized coordinator authoring (reviewers returned structured findings; coordinator recorded under VLM-6 with per-reviewer id prefixes A-F; no concurrent-write…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "1553",
+          "task_ref": "MAINT-descsvc-deadcode-20260613",
+          "score": 0.6500116586685181,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "1086",
+          "task_ref": "MAINT-e15-31-postmerge-review-20260621",
+          "score": 0.6473093032836914,
+          "snippet": "Merged reviewers A+B. S1 pass; S2 pass; S3 pass; S4 fail (Basic-auth JSON mutation CSRF exposure; newest keys hidden after cap); S5 fail (admin compose overlay absent from persistent deploy/systemd path). Five recorded findings include two…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-010",
+      "query": "A review done outside the standard pipeline passed, but git merge still demands an adjudication artifact",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "14915",
+          "task_ref": "APP-1",
+          "score": 0.7066179513931274,
+          "snippet": "review_pipeline adjudicate requires review docs committed in the staged rev worktree (feature/rev<n>-<slug>), but review lanes commit on their own feature/<slug>-<pre>-<shard> branches. guard-bash-lifecycle-primitives refuses `git merge…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7529",
+          "task_ref": "GPUSMOKE-1",
+          "score": 0.6940000653266907,
+          "snippet": "The review phase ran on the lane branch, not the integration branch, so five of ten findings describe code already replaced upstream; verifying each against the merged tree (git merge-base --is-ancestor, line reads) avoids dispatching…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17576",
+          "task_ref": "IDWEAVE-1",
+          "score": 0.6904746294021606,
+          "snippet": "Close check enforce=True passed at ddeb414d (0 open findings, structured slice decision exact match, tree clean, status done). Raw `git merge --no-ff feature/idweave-1` on main blocked by guard-bash-lifecycle-primitives: no review-pipeline…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "14407",
+          "task_ref": "FSSHARD-1",
+          "score": 0.6774862408638,
+          "snippet": "Decision: fs-gate3 verdict MERGE with no findings (verdict doc docs/reviews/fsshard-1-gate.md, rev3 tip 08e9e25e0); review-adjudicate ok and merge-gate ok at subject_tip 83aa5b89e7ff99284d72cb743e5ffeb84abfbeae.\n\nBlocked: `git merge…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "5722",
+          "task_ref": "MAINT-fir-review-parallel-20260729-REV-r07291f44-HARM-A",
+          "score": 0.67139732837677,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "5733",
+          "task_ref": "MAINT-fir-review-parallel-20260729",
+          "score": 0.67139732837677,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2496",
+          "task_ref": "E15-35",
+          "score": 0.6696110963821411,
+          "snippet": "Reviewer-reported 'integrity anomaly' (uncommitted BACKOFF_JITTER_DIVISOR 10->1 edit appearing mid-review, discarded via git checkout) is an ORCHESTRATION ARTIFACT, not an intruder: two adversarial reviewers (correctness + test-honesty)…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "16783",
+          "task_ref": "FIRBENCH-1",
+          "score": 0.668302059173584,
+          "snippet": "Branch_diff review verdict fail for merge readiness while three high findings remain, including unlanded Dcontractcyclefix, timestamp04 and scores05. Previous conditional_pass review-run write was correctly refused by task high-finding…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-011",
+      "query": "The task row disappeared while its new worktree was still active and the feature branch had no commits",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17571",
+          "task_ref": "IDWEAVE-1",
+          "score": 0.7137647271156311,
+          "snippet": "IDWEAVE-1 row was archived by workbay-lifecycle (archived_branch=main, archived_commit_sha=main HEAD d25922fa5) while the worktree was live and feature/idweave-1 had zero commits (tip == main). slice-commit then failed…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "16262",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.703558623790741,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "15141",
+          "task_ref": "MAINT-app1-teardown-20261004",
+          "score": 0.6852761507034302,
+          "snippet": "LESSON (harness-agnostic): `make task-finish` can half-delete a task worktree even when every precondition holds. On 2026-10-04 the APP-1 worktree was clean, all lane rows were closed (open_lanes=[]) and the branch was merged to main at…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "19993",
+          "task_ref": "MAINT-WORKTREE-LANDING-20261025",
+          "score": 0.6662139892578125,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "19617",
+          "task_ref": "DEVFIR-UX-1",
+          "score": 0.6496338844299316,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "305",
+          "task_ref": "WORKSTATE-REF-e15-launch-plans-review-20260608",
+          "score": 0.6435413360595703,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "9219",
+          "task_ref": "MAINT-reap-20260906",
+          "score": 0.6382666230201721,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "2780",
+          "task_ref": "MAINT-fir-postmerge-review-20260718",
+          "score": 0.6357223987579346,
+          "snippet": "Merged feature/fir-postmerge-2 into main at 2d0bbb03 (decision gpt_slice_complete_fir-final2_convergence). Task archived via task-finish; orphan worktree/branch removed after archive lost target paths (skipped_unset). Root on main, clean.",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-012",
+      "query": "Disk filled again with orphaned tmp_pack and tmp_idx files under .git/objects/pack",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18111",
+          "task_ref": "MAINT-AURAFACE-20261017",
+          "score": 0.759053111076355,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19915",
+          "task_ref": "MAINT-SDLC-PUBLISHING-20261025",
+          "score": 0.7506421804428101,
+          "snippet": "Urgent coordinated local disk relief: preserve active release files, unique source, root-owned review/recovery environments and shared runtimes. Exact 52 stale Git tmp_pack/tmp_idx files were closed, stable, classified as garbage, copied…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "handoff_state.objective",
+          "entity_id": "MAINT-DISK-REAP-20261022",
+          "task_ref": "MAINT-DISK-REAP-20261022",
+          "score": 0.6918432712554932,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18505",
+          "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+          "score": 0.6835428476333618,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19033",
+          "task_ref": "PUBFIG-1",
+          "score": 0.6709203124046326,
+          "snippet": "Disk at 2.2 GiB free 2026-10-21 21:40 EDT. Root monorepo .git/objects/pack held 112 tmp_pack/tmp_idx files, 8.63 GiB, written 2026-10-20 21:08 to 2026-10-21 21:29 in pack+idx pairs of ~165 MB (index-pack finished, rename never happened:…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19185",
+          "task_ref": "MAINT-DISK-REAP-20261022",
+          "score": 0.6693533658981323,
+          "snippet": "Disk at 96% (7.7 GiB free) on 2026-10-22. size-garbage in the monorepo was 10.03 GiB again: 129 tmp_pack/tmp_idx files. This is the third recurrence after decisions 18738, 19033 and 19036.\n\nNew evidence: 20 of the ~165 MB packs (~3.3 GB)…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18113",
+          "task_ref": "MAINT-AURAFACE-20261017",
+          "score": 0.6673989295959473,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18545",
+          "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+          "score": 0.6380423903465271,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-013",
+      "query": "Worktree retirement keeps leaking large temporary Git packs onto the full local disk",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "handoff_state.objective",
+          "entity_id": "MAINT-DISK-REAP-20261022",
+          "task_ref": "MAINT-DISK-REAP-20261022",
+          "score": 0.6626995801925659,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "18589",
+          "task_ref": "MAINT-IDENTITY-REWEAVE-DEPLOY-20261019",
+          "score": 0.6589232087135315,
+          "snippet": "Correction: native git worktree repair had restored .git despite error output. Verified residual custody TAR5272 members/4580 regular files SHA2563c8e3b390e5684f8f280fc9b2c4094d84eae288730d0b673f38cc9b634744011. Preserved sole untracked…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "10772",
+          "task_ref": "VMREAP-1",
+          "score": 0.645351767539978,
+          "snippet": "[GAP] (wave 4d lane review, verified on 9079210c2) The has_linked_worktrees guard (l731-734) is inside the archive_to branch only. In non-archive mode a parent repository whose branches appear merged into FETCH_HEAD is deleted even when…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "10772",
+          "task_ref": "VMREAP-1",
+          "score": 0.6394766569137573,
+          "snippet": "Run the has_linked_worktrees guard for every candidate regardless of archive mode, before the destructive path, and add a non-archive regression case: parent repo with a detached-HEAD linked worktree must be skipped with 'repo has linked…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19036",
+          "task_ref": "PUBFIG-1",
+          "score": 0.633628785610199,
+          "snippet": "Supersedes 'writer unidentified' in 19033/18738. UXREC peer found and I verified (/Volumes/Butter/CodexEvidence/uxrec-1-20261021/retirement-diagnosis/runtime-pack-diagnosis.json): the worktree-retirement verifier runs git -C <repo>…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "9503",
+          "task_ref": "UXW2-5",
+          "score": 0.6308614015579224,
+          "snippet": "Re-stamp the two SHA tables from `git log --format=%H` in this worktree (or delete the tables and keep the subject-line citations, which are already unambiguous and portable).",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "5764",
+          "task_ref": "MAINT-uxui-wave2-orch-20260818",
+          "score": 0.6269584894180298,
+          "snippet": "UXW2-ORCH-03. My macOS->VM tree sync poisoned three lane clones with 3,798 tracked AppleDouble files.\n\nRoot cause: `git ls-files -z | tar --null -czf` on macOS uses bsdtar, which serialises each file's extended attributes as a sibling…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "10766",
+          "task_ref": "VMREAP-1",
+          "score": 0.625792384147644,
+          "snippet": "[GAP] (wave 4c lane review, verified on beefed28a) parent is only resolved inside the archive_to branch (l713), so in non-archive mode a clean linked worktree is removed but git worktree prune on the parent (l861-863) never runs, leaving…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-014",
+      "query": "A new lane off main was assigned another task's review rounds and hit the cycle budget",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "20280",
+          "task_ref": "UXREC-1",
+          "score": 0.5831002593040466,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "15516",
+          "task_ref": "ENVMAN-4",
+          "score": 0.5638149976730347,
+          "snippet": "{\"boundary\": \"cycle_start\", \"from_quad\": {\"backend\": \"codex-remote\", \"effort\": \"max\", \"model\": \"gpt-6-luna\", \"speed\": \"fast\", \"tier\": \"junior\"}, \"lane_id\": \"w2-dotenv\", \"receipt_history\": {\"high_findings\": 3, \"pass_ids\":…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "12601",
+          "task_ref": "GPUFLOW-3",
+          "score": 0.5534639954566956,
+          "snippet": "{\"boundary\": \"cycle_start\", \"from_quad\": {\"backend\": \"codex-remote\", \"effort\": \"max\", \"model\": \"gpt-5.6-luna\", \"speed\": null, \"tier\": \"junior\"}, \"lane_id\": \"slice-g-review\", \"receipt_history\": {\"high_findings\": 1, \"pass_ids\":…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20027",
+          "task_ref": "ORCA-1",
+          "score": 0.5516266822814941,
+          "snippet": "Ledger route table is enforced authority; round 2 = opus-5.5 xhigh; rotating subjects to dodge charged rounds would circumvent the cycle budget.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "12603",
+          "task_ref": "GPUFLOW-3",
+          "score": 0.5513756275177002,
+          "snippet": "{\"boundary\": \"cycle_start\", \"from_quad\": {\"backend\": \"codex-remote\", \"effort\": \"max\", \"model\": \"gpt-5.6-luna\", \"speed\": null, \"tier\": \"junior\"}, \"lane_id\": \"slice-u-review\", \"receipt_history\": {\"high_findings\": 1, \"pass_ids\":…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "7847",
+          "task_ref": "OCIRV-1",
+          "score": 0.5510196685791016,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "7447",
+          "task_ref": "GPUUX-1",
+          "score": 0.5503582954406738,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20034",
+          "task_ref": "ORCA-1",
+          "score": 0.5457041263580322,
+          "snippet": "Lanes of one task that fan out from the same base HEAD are fused into one review-cycle subject. The first lane's dispatch receipt records source_head = that base, and retained_subject() binds every HEAD descending from it. The siblings are…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-015",
+      "query": "Fresh UX lanes report review_cycle_subject_ambiguous even though each has its own branch",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "10145",
+          "task_ref": "DUX-W2-INTEGRATION",
+          "score": 0.6250777244567871,
+          "snippet": "Stamped at main HEAD by an actor-less batch_record; fixes are in fix/dux-w2d14, merged into feature/demo-ux-1, hence the descendant resolve. Lane b verified at tip and the coordinator independently re-checked both against…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "10146",
+          "task_ref": "DUX-W2-INTEGRATION",
+          "score": 0.6250777244567871,
+          "snippet": "Stamped at main HEAD by an actor-less batch_record; fixes are in fix/dux-w2d14, merged into feature/demo-ux-1, hence the descendant resolve. Lane b verified at tip and the coordinator independently re-checked both against…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "11373",
+          "task_ref": "GPUFLOW-1",
+          "score": 0.6208271384239197,
+          "snippet": "{\"boundary\": \"cycle_start\", \"from_quad\": {\"backend\": \"codex-remote\", \"effort\": \"max\", \"model\": \"gpt-5.6-luna\", \"speed\": null, \"tier\": \"junior\"}, \"lane_id\": \"ux-service-review\", \"receipt_history\": {\"high_findings\": 1, \"pass_ids\":…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "11367",
+          "task_ref": "GPUFLOW-1",
+          "score": 0.6071206331253052,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7291",
+          "task_ref": "WBUX-6",
+          "score": 0.598517656326294,
+          "snippet": "Checklist item 'workbench-2pane.uxmap.json updated, critique zero high' done @a1599b346. Found the map no longer VALIDATED: wave lanes had appended non-enum states (twin_pending, queued/warming/describing/complete) — MapState enum only…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "8643",
+          "task_ref": "GPFACE-1",
+          "score": 0.5936726927757263,
+          "snippet": "Decision: wave 1 complete; all four lanes landed on codex-remote gpt-5.6-luna effort max; integration branch feature/gpface-1 @ 920ff9ed is the N6 review base.\n\nl4-uxmap landed 6484f389b (outcome self_verify_inconclusive, exit 127 = no…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "11118",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.5847697257995605,
+          "snippet": "Lane issuedag-uxfix (codex-remote gpt-5.6-luna max, dispatch issuedag-uxfix-20260913-a) removed the two misplaced `## Code references` H2 blocks from describe-gpu-tier.md and gpu-operator-control.md (commit 7ed865429, markdown-only).…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "19826",
+          "task_ref": "UXREC-1",
+          "score": 0.5840184688568115,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-016",
+      "query": "Sibling dispatches share the wrong ledger subject even when launched one at a time",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "19913",
+          "task_ref": "ORCA-1",
+          "score": 0.6103692054748535,
+          "snippet": "Upstream sibling review_cycle_dispatch.py:578-581: shell_entry resolves repo=Path.cwd(), so the ledger ancestry hold is evaluated against the caller's cwd HEAD, not the subject branch.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "18987",
+          "task_ref": "IDWEAVE-1",
+          "score": 0.5899191498756409,
+          "snippet": "Explicitly adopt the N4 zero wrong-binding ledger: incorrect face-to-span, role or possessor bindings, swapped identities, and naming unnamed people are wrong-name events. Require gold associations and non-vacuous partial-naming fixtures…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "17871",
+          "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+          "score": 0.5731549263000488,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18997",
+          "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+          "score": 0.5642802715301514,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "18584",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.5635391473770142,
+          "snippet": "Equal cluster/base/local_revision fields do not prove shared intent; independent operations collide in continuation ledger and stale bind overwrites correction.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "19522",
+          "task_ref": "CURUX-1",
+          "score": 0.5564339756965637,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "1913",
+          "task_ref": "MAINT-caption-harness-planning-20260706",
+          "score": 0.5529013276100159,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "10329",
+          "task_ref": "GPU-LAUNCH-1",
+          "score": 0.5514274835586548,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-017",
+      "query": "The review bridge exits 76 when a remote pass starts from a driver shell",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7551",
+          "task_ref": "VMREAP-1",
+          "score": 0.5781911015510559,
+          "snippet": "Accepted wave 4c (beefed28a) on feature/vmreap-1: reflog SHAs join the deletion-safety snapshot (H-06), the materializer-owned lock inode is retained by sibling cleanup (H-07), race fixtures use 10s bounded polling with a kill-and-reap…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "1172",
+          "task_ref": "E15-31B",
+          "score": 0.5618832111358643,
+          "snippet": "Auto-fix pass over the 9 open round-20260704 findings (no single failing_test_cmd; adapted loop = per-surface commit + targeted suite as the exit signal per commit). Scope bounds: (A) deploy-contract surface — S1-A-01 template…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "5716",
+          "task_ref": "VLM-6",
+          "score": 0.5618175268173218,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "19324",
+          "task_ref": "BAKEOFF-QWEN-BULKHEAD-20261020",
+          "score": 0.5583590269088745,
+          "snippet": "[GAP] The entrypoint reports success when the remote transport fails. runner.run() (reviewed copy references/admission/run_selected_root_resume_qualification.py) returns None; it writes the child's exit code only to…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18035",
+          "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+          "score": 0.5574884414672852,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "19916",
+          "task_ref": "ORCA-1",
+          "score": 0.5568051338195801,
+          "snippet": "Upstream scripts/remote_agent.sh:255-260 _review_cycle_bridge runs PATH python3 with sibling PYTHONPATH (no pinned interpreter); pre-model refusals are charged; no pre-charge preflight entrypoint exists (hand-built here).",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "6912",
+          "task_ref": "FIR-7",
+          "score": 0.5543918013572693,
+          "snippet": "_audit_row_licenses' `if raw is None` branch is untested; the adjacent `if not isinstance(raw, str)` branch IS killed by the suite, so the gap is one arm of a two-arm type guard. Flipping the None arm's _fail to _pass leaves 780/780 green…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "4671",
+          "task_ref": "FIR-7",
+          "score": 0.5526299476623535,
+          "snippet": "R18 adversarial panel (review run 783, fail) found 3 high incl. a genuine license-gate admit bypass; F16 closes all 15. R19 panel next.",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-018",
+      "query": "All open lane briefs are reported missing after projection_budget_exceeded",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "8626",
+          "task_ref": "GPFACE-1",
+          "score": 0.641353189945221,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "10639",
+          "task_ref": "GUIDEPOLISH-1",
+          "score": 0.6033929586410522,
+          "snippet": "Lane budget floor120000 is advisory under remote adapter, actual bounds900 seconds; preserve literal max. Input assessment and supplied image ingested verbatim. Missing exact copy files dispositioned by drafting from brief; unresolved…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "9438",
+          "task_ref": "VLMHEAL-1",
+          "score": 0.5647929906845093,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "10939",
+          "task_ref": "GPUUX-1",
+          "score": 0.5634655952453613,
+          "snippet": "[GAP] The plan still marks the frontend state work as deferred and unchecked even though the branch contains the implementation and its lane report. This contradicts the branch state and makes the planning record unreliable.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "9503",
+          "task_ref": "UXW2-5",
+          "score": 0.547822117805481,
+          "snippet": "Every one of the 15 forty-character SHAs cited in the report is unresolvable in the canonical worktree: `for s in $(grep -oE '\\b[0-9a-f]{40}\\b' docs/tasks/uxw2/UXW2-5-fix-lane-report.md | sort -u); do git cat-file -e \"$s^{commit}\" || echo…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "10241",
+          "task_ref": "MAINT-demow3-dispatch-20260825",
+          "score": 0.5461100935935974,
+          "snippet": "[lane-c d12728276] Failed projection still prints the cluster_count header while the zone body says the load failed — contradictory state presentation; 'refreshing' is mislabeled as stale. Source: CORRECT-06. Canon: designed-unknown.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "9260",
+          "task_ref": "GPUOPS-1",
+          "score": 0.5456249117851257,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "18712",
+          "task_ref": "BAKEOFF-QWEN-DURABLE-SOURCE-20261020",
+          "score": 0.5437859892845154,
+          "snippet": "Dispatch -fixd (FIXD brief #7751) produced 062aad2ab, a rewritten GATE2 report and no code change. Root cause: an older open orchestrator_to_worker message #7750 ('GATE2 continuation: report only ... do not edit any subject file') stayed…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-019",
+      "query": "Remote JavaScript tests cannot find jsdom and the lane has no node_modules",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "7472",
+          "task_ref": "FEBT-1",
+          "score": 0.6358305215835571,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "13391",
+          "task_ref": "APP-1",
+          "score": 0.619833767414093,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "13391",
+          "task_ref": "APP-1",
+          "score": 0.6036185026168823,
+          "snippet": "WorkBay manage_worktree_lane rejected chained npm ci&&test&&build as test_cmd_unusable before modelspawn. Job now npm --prefix apps/app-portal run verify; remoteimplementer mustdefineverify running scopedtests andproductionbuild,…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "1208",
+          "task_ref": "E15-28-REV-D",
+          "score": 0.5692628622055054,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "1219",
+          "task_ref": "E15-28",
+          "score": 0.5692628622055054,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "4321",
+          "task_ref": "E21-14",
+          "score": 0.5636683702468872,
+          "snippet": "Ran this lane locally rather than on the remote VM because the VM lane trees have no node_modules and no network, so vitest and tsc cannot run there -- a capability constraint, not a preference. Verified the central claim by re-running the…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "blocker.description",
+          "entity_id": "1247",
+          "task_ref": "WBRC-1",
+          "score": 0.5614622831344604,
+          "snippet": "UI dispatch1 jd32dbfb0f6de41b5aefc returned blocked/testsonly f08ee02: model sandbox DNS EAI_AGAIN prevented npm ci; offline cache missing zod-validation-error4.0.2; Vitest/tsc unavailable. Source implementation absent, not merge-ready.…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "13751",
+          "task_ref": "MAINT-LANDING-20260908",
+          "score": 0.560060441493988,
+          "snippet": "lint(npm): `npx vitest ...` fails in apps/prototype-wp-alt-context with 'npm error code EALLOWDIRECTORY / Fetching non-root packages of type \"directory\" have been disabled', caused by a file:/directory dependency in the workspace.…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-020",
+      "query": "A deleted lane still seems to block every remote implementation dispatch",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "17728",
+          "task_ref": "BAKECACHE-1",
+          "score": 0.6730437874794006,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "9224",
+          "task_ref": "MAINT-reap-20260906",
+          "score": 0.6449345350265503,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7458",
+          "task_ref": "FEBT-1",
+          "score": 0.6366527080535889,
+          "snippet": "Audited config/lane-orchestration/FEBT-1.json after a peer session warned of stale wave-creation backend pins. 32 of 33 lanes carried preferred_backend=grok-remote/grok-4.6; only febt-1-g1-combined-gate (hand-pinned earlier) was…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "19630",
+          "task_ref": "MAINT-LEXICON-EXTRACTION-20261022",
+          "score": 0.6343788504600525,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18037",
+          "task_ref": "MAINT-AURAFACE-20261017",
+          "score": 0.6320430040359497,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7523",
+          "task_ref": "GPUSMOKE-1",
+          "score": 0.629981517791748,
+          "snippet": "Dispatching a second pass on a locked lane is refused by design; letting the open pass consume the inbox avoids a duplicate sandbox re-init and keeps width within cap.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "10631",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.6299593448638916,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "10468",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.6292836666107178,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-021",
+      "query": "The installed ledger requires a route that conflicts with the newer operator policy",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "20294",
+          "task_ref": "UXREC-1",
+          "score": 0.6104422807693481,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "13360",
+          "task_ref": "APP-1",
+          "score": 0.580977201461792,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20519",
+          "task_ref": "ERRFIX-1",
+          "score": 0.5796019434928894,
+          "snippet": "Lesson: launching several run_offload_pass processes at the same moment makes the review-cycle ledger's non-blocking flock refuse the losers with ledger_busy / dispatch_refused. No round is consumed. Stagger launches by >=10 s; on refusal…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19478",
+          "task_ref": "UXREC-1",
+          "score": 0.5715726613998413,
+          "snippet": "No authorized remote models have started. All six native submissions stopped before VM job creation: route_mismatch or ledger_busy. Runtime dispatch/ledger hashes equal indexed upstream; ReviewCycleLedger.reserve hardcodes first implement…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "15944",
+          "task_ref": "APP-1",
+          "score": 0.5706034302711487,
+          "snippet": "Single fixwave landedb95948a6; VM29passed. No rereview. test_missing_required_artifact_demotes_passing_ledger_status; missing required evidence no longer leaves ledger passed.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19511",
+          "task_ref": "CURUX-1",
+          "score": 0.5701517462730408,
+          "snippet": "Previous blocker wording was incomplete. Fresh HEAD673d8275 and direct native import identity verify upstream .venv imports editable ledger cdc5621e/dispatchd78b3d7f with first-sourceHIGH and truthful analysis; consumer .venv still imports…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18360",
+          "task_ref": "MAINT-AURAFACE-20261017",
+          "score": 0.5656335949897766,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "16377",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.5651907920837402,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-022",
+      "query": "A plan was committed to a feature branch, but task-finish archived the row before the document reached main",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "19006",
+          "task_ref": "PUBFIG-1",
+          "score": 0.6778446435928345,
+          "snippet": "Blocker 1252: the scope draft was gitignored staging. Once the commit lands it is durable on the task branch.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "9201",
+          "task_ref": "LAND-1",
+          "score": 0.671992301940918,
+          "snippet": "LAND-1 Slice 2 row hygiene applied from root (main). 57 main-target/merged planning rows -> status done; 51 archived. 10 done rows stay UNARCHIVED because archive is blocked by 129 open high findings that are still live against main…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.fix",
+          "entity_id": "192",
+          "task_ref": "REFA",
+          "score": 0.6587722301483154,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20418",
+          "task_ref": "MAINT-desc-model-pick-20261026",
+          "score": 0.6564760804176331,
+          "snippet": "LESSON (harness-agnostic): assessments, scopes, plans and ADRs are planning artifacts (docs/workbay/rules/planning-artifact-home.md). They reach main through a planning review with verdict pass and zero open planning findings, then the…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "33",
+          "task_ref": "E15-LIVE-DEMO-PLAN",
+          "score": 0.6547676920890808,
+          "snippet": "Committed previously-uncommitted 158-line docs/operations/public-demo-oci-cohost-launch-plan.md (only real work in worktree; branch was 0 ahead). Discarded redundant Makefile dup-include block + stale uv.lock per user approval. Branch now…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "297",
+          "task_ref": "MAINT-demo-usage-model-20260608",
+          "score": 0.6508840918540955,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "298",
+          "task_ref": "MAINT-demo-usage-model-20260608",
+          "score": 0.6508840918540955,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "299",
+          "task_ref": "MAINT-demo-usage-model-20260608",
+          "score": 0.6508840918540955,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-023",
+      "query": "I need the full main tree, but a fresh lane is refused as belonging to another review-cycle subject",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "10429",
+          "task_ref": "GPU-LAUNCH-1",
+          "score": 0.6529742479324341,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7523",
+          "task_ref": "GPUSMOKE-1",
+          "score": 0.6221474409103394,
+          "snippet": "Dispatching a second pass on a locked lane is refused by design; letting the open pass consume the inbox avoids a duplicate sandbox re-init and keeps width within cap.",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "16024",
+          "task_ref": "MAINT-assessment-review-land-20261008",
+          "score": 0.6173567175865173,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "9490",
+          "task_ref": "GPUOPS-1",
+          "score": 0.6144410967826843,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "9451",
+          "task_ref": "merged-registry-reclaim",
+          "score": 0.6120951771736145,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "10944",
+          "task_ref": "FIR-13",
+          "score": 0.6102765798568726,
+          "snippet": "Typed error: Lane worktree path for lane 'fir-13-fix2' is already owned by live lane 'fir-13-fix1'@task:FIR-13. Gitpreservation+terminalworker outrankstaleactive row; no scope/permissionbypass. Successor3pathscope decision10942 andRED2219…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "8557",
+          "task_ref": "DEMOLAND-1",
+          "score": 0.6051355600357056,
+          "snippet": "Review lane was briefed READ-ONLY and judged the unrequested 76da40131 commit on its merits alongside r16. merge-tree dry runs: each lane merges cleanly onto main; g6 and g3 conflict with each other on gpu-lifecycle-install.sh, so g3 must…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "6296",
+          "task_ref": "DUX-W2-INTEGRATION",
+          "score": 0.5978511571884155,
+          "snippet": "{\"admitted_width\": 6, \"clique_lower_bound\": 1, \"deferred_count\": 0, \"env_cap\": 20, \"makespan_seconds\": 0.06212491699261591, \"makespan_vs_sum\": 0.20762345412008062, \"metrics_partial\": false, \"per_lane\": [{\"lane_id\": \"dux-w2v-a\", \"outcome\":…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-024",
+      "query": "Retrying task-start fails because a virtual environment already exists in the worktree",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "18996",
+          "task_ref": "MAINT-public-figure-gallery-scope-20261021",
+          "score": 0.7191110253334045,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "7061",
+          "task_ref": "TOOL-1",
+          "score": 0.6739974021911621,
+          "snippet": "`make task-start` completes ok=true but the new worktree has no `Makefile.d/` and no `scripts/workbay_lifecycle/`, so `make context` (agent startup protocol step 1), `make slice-start`, `make close-check` and `make review-run` all fail…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20451",
+          "task_ref": "DESCPICK-4",
+          "score": 0.6418771743774414,
+          "snippet": "The operator's second re-root run was refused by the command's own is-ancestor guard (the reflog shows one reset). make task-start TASK=DESCPICK-4 failed with root_venv_provisioning_failed (W4/.venv exists) and changed neither the row…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "16262",
+          "task_ref": "GTMSMOKE-1",
+          "score": 0.629572868347168,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "17724",
+          "task_ref": "MAINT-BAKEOFF-ROUNDS-20261017",
+          "score": 0.6247482895851135,
+          "snippet": "Accepted plan main0a97c2bc exacttree527ed693. WorkBay task-start always calls provision_worktree_env, which runs local uv sync/root environment provisioning. User explicitly requires all implementation/grunt lanes remote. Apply…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "10646",
+          "task_ref": "VMREAP-1",
+          "score": 0.5980110168457031,
+          "snippet": "Linked worktrees are created without the gitignored overlay, so lifecycle targets are absent exactly where work happens. The -vmreap-1 worktree was missing 10 of 11 Makefile.d/*.mk (only demo-auth.mk is tracked; .gitignore:138 ignores…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.description",
+          "entity_id": "13712",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.5935182571411133,
+          "snippet": "PYTHON ?= $(MCP_PYTHON) resolves to `uvx --from <orchestrator-package> python3`, whose bundled workbay_handoff_mcp has a list_lanes() without the all_tasks keyword. scripts/worktree_reap.py:349 calls list_lanes(all_tasks=True, ...), so…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20549",
+          "task_ref": "EVALOPS-1",
+          "score": 0.5928649306297302,
+          "snippet": "Root cause of error1543 is proven in installed review_ratchet._task_source/derive_task_subject: a feature task's lane must own that task's target branch and worktree; the main-parent exception requires task+manifest integration main.…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-025",
+      "query": "A remote pass says review failed with provider_transport_error, but it also says commit_landed and tests passed",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20520",
+          "task_ref": "ERRFIX-1",
+          "score": 0.6810011267662048,
+          "snippet": "Lesson: an offload result with failed_stage=review and 'review refused: provider_transport_error' but commit_landed=true and a green self_verify is a post-commit ceremony failure: the work is landed. Do not re-dispatch; the codex-remote…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "9613",
+          "task_ref": "EVID-1",
+          "score": 0.6671547889709473,
+          "snippet": "NewD05pass3d4644d0-d1fa-4e72-bcad-e0bccacb7736 wasactuallydispatched butauthoritativeterminalerror commit_landedfalse, reviewphaseuncleanhandoff. Artifact .task-state/remote-exec-vlmheal-1-d05-hrcavano. PeerClaudeactivelyinspectingfailure…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "4155",
+          "task_ref": "MAINT-doctor-harness-audit-20260728",
+          "score": 0.6445167064666748,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "5039",
+          "task_ref": "E21-15",
+          "score": 0.6424226760864258,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "10525",
+          "task_ref": "ISSUEDAG-1",
+          "score": 0.6419111490249634,
+          "snippet": "Both offload passes returned non-success enums (needs_guidance/error) with ceremony_status=failed and handoff_submit_failed=true, but commit_landed=true, work_status=landed and a passing off-box self_verify. Direct git verification…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "7827",
+          "task_ref": "GPUUX-1",
+          "score": 0.6386440396308899,
+          "snippet": "Both passes returned non-success outcomes while their work had actually landed.\n\nh05 (pass 1c3096ba): outcome=error, failed_stage=review, but commit_landed=true and self_verify passed. The review phase died in batch_record_review_findings…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "13285",
+          "task_ref": "APP-1",
+          "score": 0.6373788118362427,
+          "snippet": "v1 terminal review handoff submitfailed, cleanbaseline662114f7c, no tests/commit; remote resultbcpp_mmp/ykufnha4 both needs_guidance emptyblockers and startupsummary. This is execution failure, not implementation success or operator…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "16022",
+          "task_ref": "MAINT-assessment-review-land-20261008",
+          "score": 0.6349409818649292,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    },
+    {
+      "query_id": "q-026",
+      "query": "Several wave results are red at review with provider transport errors, although their commits and self-verification succeeded",
+      "status": "ok_with_results",
+      "results": [
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "20520",
+          "task_ref": "ERRFIX-1",
+          "score": 0.7032157778739929,
+          "snippet": "Lesson: an offload result with failed_stage=review and 'review refused: provider_transport_error' but commit_landed=true and a green self_verify is a post-commit ceremony failure: the work is landed. Do not re-dispatch; the codex-remote…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.title",
+          "entity_id": "8040",
+          "task_ref": "FIXWAVE-1",
+          "score": 0.6208170056343079,
+          "snippet": null,
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "7708",
+          "task_ref": "FIR23-STACK",
+          "score": 0.6167799234390259,
+          "snippet": "Fix wave 3 (commits bbedfceb fix + fb54f5d1 tests + 71940022 Darwin shim). V-02: _cc_fail wrapper rm's remote_tmp before every fail in converge_check (transport, unit, membership, drift paths). V-01: transport test now selective per arm…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "7709",
+          "task_ref": "FIR23-STACK",
+          "score": 0.6167799234390259,
+          "snippet": "Fix wave 3 (commits bbedfceb fix + fb54f5d1 tests + 71940022 Darwin shim). V-02: _cc_fail wrapper rm's remote_tmp before every fail in converge_check (transport, unit, membership, drift paths). V-01: transport test now selective per arm…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "finding.resolution_notes",
+          "entity_id": "7710",
+          "task_ref": "FIR23-STACK",
+          "score": 0.6167799234390259,
+          "snippet": "Fix wave 3 (commits bbedfceb fix + fb54f5d1 tests + 71940022 Darwin shim). V-02: _cc_fail wrapper rm's remote_tmp before every fail in converge_check (transport, unit, membership, drift paths). V-01: transport test now selective per arm…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "18836",
+          "task_ref": "SECAUDIT-1",
+          "score": 0.6135098934173584,
+          "snippet": "Fix wave 1 (GRPH-09 colouring of confirmed findings by owned paths; 7 disjoint groups, all parallel, codex-remote gpt-6.1-sol low): tenant-claim(routers-idor-01 HIGH), centroid-bypass(sql-rls-03), portal-tier(routers-idor-03),…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "10857",
+          "task_ref": "FIR-13",
+          "score": 0.6125364303588867,
+          "snippet": "Lane fir-13-red returned self_verify_inconclusive / commit_landed=true / failed_stage=self_verify (exit 70, zero tests executed). Sandbox pytest-invocation failure, not a code defect: re-running the identical --collect-only gate in the…",
+          "model_id": "gte-base-en-v1.5"
+        },
+        {
+          "entity_kind": "decision.rationale",
+          "entity_id": "8297",
+          "task_ref": "DEFWAVE-1",
+          "score": 0.6122443675994873,
+          "snippet": "{\"admitted_width\": 2, \"clique_lower_bound\": 1, \"deferred_count\": 0, \"effective_cap\": 12, \"env_cap\": 20, \"learned_cap\": 12, \"makespan_seconds\": 879.1225144579948, \"makespan_vs_sum\": 0.5998488997983833, \"metrics_partial\": false, \"per_lane\":…",
+          "model_id": "gte-base-en-v1.5"
+        }
+      ],
+      "min_score": 0.35,
+      "query_mode": "text",
+      "query_model_id": "gte-base-en-v1.5",
+      "note": null,
+      "ok": true,
+      "task_ref": "EVALOPS-3",
+      "embeddings_mode": "verified",
+      "semantic_degrade_reason": null
+    }
+  ]
+}

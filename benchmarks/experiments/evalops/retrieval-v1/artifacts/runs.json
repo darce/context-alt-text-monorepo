@@ -1,0 +1,749 @@
+{
+  "runs": [
+    {
+      "queries": [
+        {
+          "query_id": "q-000",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-001",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-002",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-003",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-004",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-005",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-006",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-007",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-008",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-009",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-010",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-011",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-012",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-013",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-014",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-015",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-016",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-017",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-018",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-019",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-020",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-021",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-022",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-023",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-024",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-025",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-026",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        }
+      ],
+      "reason": "No provider ranking snapshot supplied; no ranks generated.",
+      "results_file": null,
+      "status": "unavailable",
+      "strategy_id": "codemap",
+      "usage": null
+    },
+    {
+      "queries": [
+        {
+          "query_id": "q-000",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-001",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-002",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-003",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-004",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-005",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-006",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-007",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-008",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-009",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-010",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-011",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-012",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-013",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-014",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-015",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-016",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-017",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-018",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-019",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-020",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-021",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-022",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-023",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-024",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-025",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-026",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        }
+      ],
+      "reason": "No provider ranking snapshot supplied; no ranks generated.",
+      "results_file": null,
+      "status": "unavailable",
+      "strategy_id": "current-baseline",
+      "usage": null
+    },
+    {
+      "provider": {
+        "embeddings_mode": "verified",
+        "min_score": 0.35,
+        "query_mode": "text",
+        "query_model_id": "gte-base-en-v1.5"
+      },
+      "queries": [
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-000",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-001",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-002",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 6
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-003",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-004",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-005",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-006",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-007",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-008",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-009",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-010",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-011",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-012",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-013",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 7
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-014",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-015",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-016",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-017",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-018",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-019",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 7
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-020",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-021",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-022",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-023",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-024",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-025",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        },
+        {
+          "provider_status": "ok_with_results",
+          "query_id": "q-026",
+          "returned_field_count": 8,
+          "selected_field_count": 8,
+          "status": "available",
+          "unique_document_count": 8
+        }
+      ],
+      "results_file": "results/gte-dense.jsonl",
+      "snapshot_sha256": "fc9e80a5199c25b0ab808738832555996bdb480ee9e246c92a3f2476333c0929",
+      "status": "available",
+      "strategy_id": "gte-dense",
+      "usage": null
+    },
+    {
+      "queries": [
+        {
+          "query_id": "q-000",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-001",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-002",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-003",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-004",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-005",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-006",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-007",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-008",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-009",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-010",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-011",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-012",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-013",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-014",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-015",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-016",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-017",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-018",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-019",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-020",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-021",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-022",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-023",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-024",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-025",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        },
+        {
+          "query_id": "q-026",
+          "returned_field_count": null,
+          "status": "unavailable",
+          "unique_document_count": null
+        }
+      ],
+      "reason": "No provider ranking snapshot supplied; no ranks generated.",
+      "results_file": null,
+      "status": "unavailable",
+      "strategy_id": "lexical",
+      "usage": null
+    }
+  ],
+  "schema": "evalops.retrieval-runs.v1"
+}

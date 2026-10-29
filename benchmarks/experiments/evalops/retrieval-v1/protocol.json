@@ -1,0 +1,95 @@
+{
+  "acceptance": {
+    "artifact_contract": "bounded import and deterministic union only",
+    "calibration": "not_evaluated",
+    "human_gold": "unavailable",
+    "production_reliability": "unknown",
+    "quality": "not_accepted",
+    "runtime": "not_evaluated"
+  },
+  "canon_version": "0.26.2",
+  "corpus": {
+    "content": "Provider snippets only: truncated text or null, not complete documents. Seed-only references have unknown content.",
+    "full_index_document_count": null,
+    "full_index_snapshot_sha256": null,
+    "match_status": "provider_identity_and_observed_fields_only",
+    "scope": "union of returned record references and seed-qrel references"
+  },
+  "document_identity": {
+    "blocker": "blocker-<entity_id>",
+    "decision": "dec-<entity_id>",
+    "dedupe": "Collapse fields of the same entity; first provider occurrence determines record rank. Preserve every selected field occurrence as provenance. No score sorting or refill.",
+    "finding": "finding-<entity_id>",
+    "handoff_state": "handoff-<entity_id>"
+  },
+  "generation_faithfulness": {
+    "reason": "Retrieval recall/nDCG do not measure downstream answer support. Requires separate source/answer evidence, stale or contradictory context, missing context and abstention cases.",
+    "status": "not_evaluated"
+  },
+  "pool": {
+    "completeness": "incomplete",
+    "field_depth": 8,
+    "independent_relevance_status": "unavailable",
+    "ks": [
+      1,
+      5,
+      8
+    ],
+    "union_order": "query_id then doc_id; contributors sorted by strategy_id",
+    "unjudged": "null/UNKNOWN, never nonrelevant"
+  },
+  "queries": {
+    "exposure": "Existing qrels-v0 queries exposed to development and dense retrieval. No untouched human heldout queries supplied.",
+    "heldout_human_query_count": 0,
+    "split": "seed_dev"
+  },
+  "schema": "evalops.retrieval-pool-protocol.v1",
+  "seed_qrels": {
+    "path": "inputs/qrels-v0.jsonl",
+    "sha256": "46dcff758b957b925b14551c265919bff467ebd6c7e727baff2abd848e11e18b",
+    "status": "qualified_seed_not_independent_gold"
+  },
+  "source": {
+    "database": "handoff.db",
+    "scope": "operational telemetry; not application production traffic",
+    "source_sha": "fd4aca96df2b11222d575cb59de5fe8219412329",
+    "source_tree": "111c27d87e0707f966aeb0a0236c1a9c60a6a91b",
+    "transport": "external codex-remote; precedent20551, not native dispatch success"
+  },
+  "strategies": [
+    {
+      "captured_at": null,
+      "model_revision": null,
+      "provider": {
+        "embeddings_mode": "verified",
+        "min_score": 0.35,
+        "query_mode": "text",
+        "query_model_id": "gte-base-en-v1.5"
+      },
+      "requested_top_k": null,
+      "runtime_config_sha256": null,
+      "snapshot": {
+        "path": "inputs/dense-retrieval.json",
+        "schema": "acx-retrieval-observation/1",
+        "sha256": "fc9e80a5199c25b0ab808738832555996bdb480ee9e246c92a3f2476333c0929"
+      },
+      "strategy_id": "gte-dense"
+    },
+    {
+      "reason": "No provider ranking snapshot supplied; no ranks generated.",
+      "snapshot": null,
+      "strategy_id": "lexical"
+    },
+    {
+      "reason": "No provider ranking snapshot supplied; no ranks generated.",
+      "snapshot": null,
+      "strategy_id": "codemap"
+    },
+    {
+      "reason": "No provider ranking snapshot supplied; no ranks generated.",
+      "snapshot": null,
+      "strategy_id": "current-baseline"
+    }
+  ],
+  "version": "retrieval-v1-seed-dev-1"
+}

@@ -1,0 +1,357 @@
+{
+  "schema": "description-evaluation-research/v1",
+  "date": "2026-10-29",
+  "canon_version": "0.26.2",
+  "canon_manifest_sha256": "46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260",
+  "verified_published_files": {
+    "lexicons/ml-systems.md": "1dfbd751c2d52d223b0ae617da7f709dd29970f37ddd9bcdc0eb09a7e839cf20",
+    "lexicons/epistemics.md": "866f67e6fe626671999bc9debd3774188c23f7b82905ea7d5e008a08dd5f7f07",
+    "lexicons/accessibility.md": "4f6dba17a0026ba1971fba0bda21f35b63882a92cccf47f45a90f0f87267a246",
+    "PRINCIPLES.md": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+    "SOURCES.md": "d15d36f98434379a9e7b78ad7365360e70de9be546226c2d71575752e00762c7",
+    "reasoning/context-obedience-is-a-separate-capability.md": "26c8ab64970a0066b1e74810e4acae45f1a435b95d117ce27891db408b33661d",
+    "reasoning/controlled-vocabulary-caps-hallucination.md": "25e16382b355b2d7529936a4acdcd81a5cdc7c09d8b08992574e2348155f746b",
+    "reasoning/margin-and-design-effect-before-the-run.md": "186c94c2b0ba88897cebea26c39752d6f0e87bbab8bff3ec1fa9aace79f85aad",
+    "reasoning/quantization-delta-on-the-failure-metric.md": "33aaa9c49dc335cf4a92d2d1c0f908bfb6ee3a3c9f1eff8944ad2c71c7f01361",
+    "reasoning/signal-density-not-length.md": "ffa2ed92c7ed43bf6f3feb84e7cc0a2cc59b3bc584c3d111f7fcdd09ea8e1ca3"
+  },
+  "semantic_retrieval": {
+    "method": "Local two-tower document retrieval: distilled document path, introduction and headings; L2 normalized cosine; full source inspection follows retrieval. Scores indicate relevance, not model quality.",
+    "model_id": "gte-base-en-v1.5",
+    "model_sha256": "e7f6af7a9457d4fdd3af220c68e9a37325aad7c2d306bbc855fe0d019c326509",
+    "tokenizer_sha256": "cb374d6bc042c22455946f4e09a89d29882a199fdaf8fb25be00dc8b8857a448",
+    "document_count": 296,
+    "queries": [
+      {
+        "query": "How to evaluate generated image descriptions for factual correctness hallucinations essential missing information OCR and usefulness with a human rubric rather than reference wording similarity",
+        "results": [
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/occlusion-aware-labels.md",
+            "sha256": "025fa02d4e08ed6c39c81b12908265e263f7938a3cf69024b214c57bf60a2d29",
+            "representation_sha256": "630807b9f00fff40c428a06eb8d228e1cb8e8b957cbb5d03c0690e12afd3f3c5",
+            "cosine": 0.4829532504081726
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/anti-racist-description-resources.md",
+            "sha256": "7402848b13d00f9058f268936c3b3cfe5a3a667e9ce69569698a064617d761ea",
+            "representation_sha256": "1102ded0372cd965c3c4abe48170dd170ac6a41ba01dea781022ccc3630e0f74",
+            "cosine": 0.4791716933250427
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/porter-duff-compositing.md",
+            "sha256": "fdcf52fab67aed3557007cb38ed569b7cad629887402617cba3afc1f11e62ea5",
+            "representation_sha256": "c7ffecca264e0c4ddbb75e35c746c5f2f0169f51caf823b7966462ad98ac7579",
+            "cosine": 0.4637235999107361
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/interaction/tufte-envisioning-information.md",
+            "sha256": "96e8e8c44235ca47302b35d31639ab7762608a7b4a698071668a2abf54cb636a",
+            "representation_sha256": "013cf1b21d9375db42bf634ff81e43794e0139a57efd939c0538d0978f065887",
+            "cosine": 0.45667362213134766
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/mask-wearing-identification.md",
+            "sha256": "2e03aedbba216e4fc4b2d97fc08be6beca09aaa41908eeead041c25a9aac2354",
+            "representation_sha256": "f2b84e0931723f9ef2aad52733bc38437359d9b70a918b14c56de59b25de5813",
+            "cosine": 0.45651689171791077
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/chain-of-talkers-annotation.md",
+            "sha256": "8567907403eedfcf7b1a565015a4b778b34d1084f459fee6a8832b2e5ce94be1",
+            "representation_sha256": "66d6a81f1031bfd066ec77a1781b3c1e3582172b0cbc26b158b7c4bbaa1c6b19",
+            "cosine": 0.4562496542930603
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/depiction/berger-understanding-a-photograph.md",
+            "sha256": "579e4c5838aaab77a78c82a16b65fa3e84da37fbd9c5d0dd4d1d315eee587eba",
+            "representation_sha256": "d8c7a3ee958ef482327ff169bdcf936e49a5a3ebeba3b93f831002515ce57349",
+            "cosine": 0.45429933071136475
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/sface-synthetic-data.md",
+            "sha256": "cafc51a51e83df46228d72b6645ea7816971e96ad1d78ed9adf20b30d74ce9fd",
+            "representation_sha256": "31a2b950d3dec36fe3867f77cec651e6b5904f090d7e6a61781e62eb648289bc",
+            "cosine": 0.45280691981315613
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/forensic-face-matching.md",
+            "sha256": "ed37f16da8cb71b2d020af30b39aee39a9f8b7bc5506fb53253dcd63cc824a1c",
+            "representation_sha256": "bda09166ab6434f3c583c52f11de0d1bc74d2d1aeac4106e7fe9be8595459083",
+            "cosine": 0.4516613483428955
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/analyzing-video-sequences-humans.md",
+            "sha256": "8c39e9cb70460b0f735b66506f0f096578ac363e707a25ec8fbe9b26d84a0c8a",
+            "representation_sha256": "efc41c771e5ac9c43246f4f38d27c8e310821bac242644bc1b269137aa8da5f9",
+            "cosine": 0.44720029830932617
+          }
+        ]
+      },
+      {
+        "query": "How to compare multiple models on the same images with blinded randomized presentation counterbalanced order and judge validation against human gold agreement",
+        "results": [
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md",
+            "sha256": "f001564e26f7af485f6046e33ae4491123a26f35fa18b8089ac00d97333fa13f",
+            "representation_sha256": "a126e66abd7fb99218d8caf9ed5a6f7b4cd935b147e4091acdba723c81d94d1e",
+            "cosine": 0.5056939125061035
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/gender-shades.md",
+            "sha256": "c6011454661deda4ed3d07051ac5a6a395f9d0b60aa6c0eacabddb7b2aa74a75",
+            "representation_sha256": "e23c177d5297ffdb39c6f80975215c0eb8555fa7c85b1a5cd57c7f258e69ff29",
+            "cosine": 0.48821258544921875
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/forensic-face-matching.md",
+            "sha256": "ed37f16da8cb71b2d020af30b39aee39a9f8b7bc5506fb53253dcd63cc824a1c",
+            "representation_sha256": "bda09166ab6434f3c583c52f11de0d1bc74d2d1aeac4106e7fe9be8595459083",
+            "cosine": 0.4760226309299469
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/s3pot-occlusion-segmentation.md",
+            "sha256": "0c5c099d9cce2610426e0900db6ddf3d2dd25bcd2000d2c48ec59337fb493cc1",
+            "representation_sha256": "2b856243fb31e64b5279eebc55497b9e07347c0b24bc4481f456f668583307be",
+            "cosine": 0.4398941695690155
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/wcag-em-2.md",
+            "sha256": "28a3d7cba326c5b3a4e4c8d992250376acd96b38c713527cf7857916be003483",
+            "representation_sha256": "f4970b7ee257175d95ffacc7897d7cb54b6928dc7bdb874667c2d52896aae963",
+            "cosine": 0.4371165335178375
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/trustworthy-controlled-experiments.md",
+            "sha256": "5b6e55ead000f58aa419cf55ee551e6f9754dfd1588d5515539e4fea85cc06eb",
+            "representation_sha256": "b5b6d62fb2a8775898b8d76f09f84c06a149c2c58fa8bb56cac4ba9d47c2194a",
+            "cosine": 0.4366123080253601
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/sface-synthetic-data.md",
+            "sha256": "cafc51a51e83df46228d72b6645ea7816971e96ad1d78ed9adf20b30d74ce9fd",
+            "representation_sha256": "31a2b950d3dec36fe3867f77cec651e6b5904f090d7e6a61781e62eb648289bc",
+            "cosine": 0.4355435371398926
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/digiface-1m.md",
+            "sha256": "d371ef4c8a8ceb0a51a6ea91e683d4f80a1c9fd71246f5d9cd315891390c512c",
+            "representation_sha256": "2bf3b4bdedc6936feca5166f9d0755cfa83a60a9c3559a6f68acf836d6f495f5",
+            "cosine": 0.4349517226219177
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/surveillance-fiqa.md",
+            "sha256": "01d77bc5107b1e5ece172525a674d6fb933f4ce40808a4f27c96582417f283b1",
+            "representation_sha256": "27ffed1441a09529e7faf83cd0282e12fa530191c49aa39ac4feec37b039da7f",
+            "cosine": 0.43280985951423645
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/occface-per-point-visibility.md",
+            "sha256": "e351c3f1558c8369756883f5cd3cccf874c0c26e35470d962df73abedd5349b0",
+            "representation_sha256": "1f0d70bae926f126c72040c8aa7be1a360699466a2623760891772b8ed1c70de",
+            "cosine": 0.42478710412979126
+          }
+        ]
+      },
+      {
+        "query": "How to separate historical exploratory evaluation from confirmatory experiments and estimate paired confidence intervals at the independent image level with missing results",
+        "results": [
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/trustworthy-controlled-experiments.md",
+            "sha256": "5b6e55ead000f58aa419cf55ee551e6f9754dfd1588d5515539e4fea85cc06eb",
+            "representation_sha256": "b5b6d62fb2a8775898b8d76f09f84c06a149c2c58fa8bb56cac4ba9d47c2194a",
+            "cosine": 0.43197786808013916
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/pepe-medical-test-evaluation.md",
+            "sha256": "3f861316819ddffda5961e53b60f4072fba44d4ce6fc1f491fe81697bc69b9ea",
+            "representation_sha256": "b1e0d5ff665e5a448c4056705005ec7e43becce7c1b3af5dfbe887f2466f36e4",
+            "cosine": 0.427377313375473
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/reinhart-statistics-done-wrong.md",
+            "sha256": "e855270f27fe12532370f58b9dc31b2f8233e07d72697ca67effdd42930e4940",
+            "representation_sha256": "fc659103a7e613dee93fe75ea3dfa84f88c95ae26d91c87d7810e049699b036e",
+            "cosine": 0.4243386387825012
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/hubbard-measure-anything-cybersecurity.md",
+            "sha256": "723a25dec36e3edcbdfef2e13b3047d0dd9bd61e82d841d49cda5969a568305a",
+            "representation_sha256": "42196575133cad865ac8872c39bd3e228e09b60c3e00ab461d34bd005aab34b0",
+            "cosine": 0.4025982618331909
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/lohr-sampling-design-analysis.md",
+            "sha256": "d838be8eae3c7e0f8d228ec724c756d63d782f06e306422620f35260bc592522",
+            "representation_sha256": "167bc4a5473ce222ae629b60def3ccb06a319f10701c0fd3b2e41a4781b94645",
+            "cosine": 0.399111270904541
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/business/software-estimation-mcconnell.md",
+            "sha256": "afdfff94f109593582a46960ef7718db02fab9e54c9b10d558bbaf5b13b94bd1",
+            "representation_sha256": "3b928f6ed67714baa952fff20f734f0e27673426a4697c087f214f3c417dc496",
+            "cosine": 0.39001956582069397
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/sface-synthetic-data.md",
+            "sha256": "cafc51a51e83df46228d72b6645ea7816971e96ad1d78ed9adf20b30d74ce9fd",
+            "representation_sha256": "31a2b950d3dec36fe3867f77cec651e6b5904f090d7e6a61781e62eb648289bc",
+            "cosine": 0.38744544982910156
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/gender-shades.md",
+            "sha256": "c6011454661deda4ed3d07051ac5a6a395f9d0b60aa6c0eacabddb7b2aa74a75",
+            "representation_sha256": "e23c177d5297ffdb39c6f80975215c0eb8555fa7c85b1a5cd57c7f258e69ff29",
+            "cosine": 0.3863563537597656
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/wcag-em-2.md",
+            "sha256": "28a3d7cba326c5b3a4e4c8d992250376acd96b38c713527cf7857916be003483",
+            "representation_sha256": "f4970b7ee257175d95ffacc7897d7cb54b6928dc7bdb874667c2d52896aae963",
+            "cosine": 0.3802727162837982
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/surveillance-fiqa.md",
+            "sha256": "01d77bc5107b1e5ece172525a674d6fb933f4ce40808a4f27c96582417f283b1",
+            "representation_sha256": "27ffed1441a09529e7faf83cd0282e12fa530191c49aa39ac4feec37b039da7f",
+            "cosine": 0.37840282917022705
+          }
+        ]
+      },
+      {
+        "query": "How to evaluate accessible alt text descriptions for informative visual purpose and listening effort without rewarding verbosity or invented details",
+        "results": [
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/rescribe-audio-descriptions.md",
+            "sha256": "8ea2b1ec8e187b3247910ee1b1b9ee46fa46b40df5130c838a8df0e8a9f157f9",
+            "representation_sha256": "3518c22cdc6af7a4879ae89b8c6d0a1c63bd0bc14da6f4332d09bda3ed9a2ae1",
+            "cosine": 0.5602257251739502
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/chain-of-talkers-annotation.md",
+            "sha256": "8567907403eedfcf7b1a565015a4b778b34d1084f459fee6a8832b2e5ce94be1",
+            "representation_sha256": "66d6a81f1031bfd066ec77a1781b3c1e3582172b0cbc26b158b7c4bbaa1c6b19",
+            "cosine": 0.5138152837753296
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/atag20.md",
+            "sha256": "0d79053e3cb19d31e6447c254438b42c4d7e00f2dedf94c4f65601069fac09e7",
+            "representation_sha256": "2fda50c211087aa3b667a4157a6588b627daedfe9b17db264c00728933e81366",
+            "cosine": 0.502911388874054
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/wcag-em-2.md",
+            "sha256": "28a3d7cba326c5b3a4e4c8d992250376acd96b38c713527cf7857916be003483",
+            "representation_sha256": "f4970b7ee257175d95ffacc7897d7cb54b6928dc7bdb874667c2d52896aae963",
+            "cosine": 0.49283647537231445
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/wcag22-accessibility.md",
+            "sha256": "52e172aa00b908c57d483edd53048233c25021a8c40a5900b2ff2f25bae1c20f",
+            "representation_sha256": "0d5fd0026a2004e643154304b046896856d1f6999bed593c2c8fcba42443dc45",
+            "cosine": 0.49168089032173157
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/dcmp-description-key.md",
+            "sha256": "71bbeff93014a01033fa2f2c13d3da8e1e6a71f1885975a7d927b6e58ba083d0",
+            "representation_sha256": "854f2a1de530b1e4917d048326ded8d71adc31dd0e6195600676014f09c7eadd",
+            "cosine": 0.4903219938278198
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/interaction/information-visualization-ware.md",
+            "sha256": "2e27b4c7c910590f1ba0858977bb759e0ef8208cf4531679bd179d43fa6e155a",
+            "representation_sha256": "d60831c33bc5b8518729f80242b60cab8388f1ddbf04ca4f296398b170b8a905",
+            "cosine": 0.4789969325065613
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/anti-racist-description-resources.md",
+            "sha256": "7402848b13d00f9058f268936c3b3cfe5a3a667e9ce69569698a064617d761ea",
+            "representation_sha256": "1102ded0372cd965c3c4abe48170dd170ac6a41ba01dea781022ccc3630e0f74",
+            "cosine": 0.47863197326660156
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/professional-ux-accessibility-designer.md",
+            "sha256": "927eed66d5175b0c14ff2f232b3a74e73f792093b9ea5e95c76162404c3e487e",
+            "representation_sha256": "cf3b8693c537a5b896e3e6d9bc2200ceb03a044fe6c278636b3097aa19305142",
+            "cosine": 0.4748288094997406
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/depiction/barthes-systeme-de-la-mode.md",
+            "sha256": "a41ac83115ad7ecd5c36edfbc338ccc907b66238354faf6b054e07c506d172a6",
+            "representation_sha256": "f00c25ba5d996006e5c750b8081db2359df1dc2e990b5baaa89c5620af1ba3a5",
+            "cosine": 0.4707651138305664
+          }
+        ]
+      }
+    ]
+  },
+  "corpus_inventory_sha256": "7df41597564b28a53990ec934f09dd6afc43ece68fd4cb2e1b8a917c1fe238b8",
+  "corpus_representation": "For each document, relative path, first 1100 characters, and first 1300 characters of heading lines; research discovery only, not a description-quality metric. Broad semantic hits are supplemented by exact routed canon references.",
+  "inspected_research_sources": [
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/ai-engineering.md",
+      "sha256": "82ab786fef11d61fc4b1c80ca66865311efd92b4dbb570291aa4acd3be84b965"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/human-in-the-loop-ml.md",
+      "sha256": "db36e3aba05bcb6f710b4f6543cfe84fb55c86b7dbb99fdec552e0f1d8239f30"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/reinhart-statistics-done-wrong.md",
+      "sha256": "e855270f27fe12532370f58b9dc31b2f8233e07d72697ca67effdd42930e4940"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/trustworthy-controlled-experiments.md",
+      "sha256": "5b6e55ead000f58aa419cf55ee551e6f9754dfd1588d5515539e4fea85cc06eb"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/anti-racist-description-resources.md",
+      "sha256": "7402848b13d00f9058f268936c3b3cfe5a3a667e9ce69569698a064617d761ea"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/occlusion-aware-labels.md",
+      "sha256": "025fa02d4e08ed6c39c81b12908265e263f7938a3cf69024b214c57bf60a2d29"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/rescribe-audio-descriptions.md",
+      "sha256": "8ea2b1ec8e187b3247910ee1b1b9ee46fa46b40df5130c838a8df0e8a9f157f9"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/wcag-em-2.md",
+      "sha256": "28a3d7cba326c5b3a4e4c8d992250376acd96b38c713527cf7857916be003483"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/literature/extracted/epistemics/reinhart-statistics-done-wrong.txt",
+      "sha256": "6c814dba36426feed6e7f843d1c90f3d58e0aaf654837a909c93979b5f8282d2"
+    },
+    {
+      "path": "/Users/daniel/Development/heuristics-canon-research/literature/extracted/epistemics/trustworthy-controlled-experiments.txt",
+      "sha256": "73f93df560f80103d296c6f95f0a1974625955581ec4092e49d21a4b308b7303"
+    }
+  ],
+  "original_extract_limits": [
+    "AI Engineering and Human-in-the-Loop ML original extracted book files were absent at their expected literature/extracted/ml-systems paths; their original corpus distillations were inspected, not represented as direct book verification."
+  ],
+  "primary_web_sources": [
+    {
+      "title": "W3C WAI Images Tutorial",
+      "url": "https://www.w3.org/WAI/tutorials/images/"
+    },
+    {
+      "title": "Object Hallucination in Image Captioning (Rohrbach et al., EMNLP 2018)",
+      "url": "https://aclanthology.org/D18-1437/"
+    }
+  ],
+  "corpus_defects": [
+    {
+      "surface": "reasoning/signal-density-not-length.md",
+      "issue": "Card treats A11Y-16 as a listening-time authority, but the v0.26.2 published rule concerns author-set time limits/motion, not an image-description duration budget.",
+      "disposition": "Do not use this citation as evidence for a density or listening-time gate; treat any such composite as a product proposal requiring user-task validation."
+    }
+  ],
+  "outcome": "Image-first human rubric; correctness, essential coverage, relevant OCR, task purpose and operational completeness distinct. Preserve historical and registered decision evidence. No new automatic scores or scientific winner.",
+  "calibration_status": "Proposed task-specific protocol; no new multi-rater agreement, gold calibration, power claim or product-impact validation performed.",
+  "semantic_retrieval_limitations": [
+    "Document introductions and heading summaries are a discovery index, not full-text embeddings. Some high-ranked results (e.g. occlusion training and archival description) have task-mismatched mechanisms and were not used as authority for caption quality. Canon routing supplied AI Engineering and human-annotation mechanisms even when broad semantic ranking did not rank them first.",
+    "Audio-description speech-gap constraints and website conformance-sampling procedures were not transferred into a still-image caption scoring formula."
+  ]
+}

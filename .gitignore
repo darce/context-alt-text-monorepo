@@ -194,6 +194,7 @@ local/*-worktrees.txt
 !/benchmarks/tools/description-review/*.css
 !/benchmarks/tools/description-review/*.json
 !/benchmarks/tools/description-review/*.md
+!/benchmarks/tools/description-review/evaluation-method.html
 !/benchmarks/tools/description-review/test/
 !/benchmarks/tools/description-review/test/*.js
 !/benchmarks/tools/description-review/fixtures/

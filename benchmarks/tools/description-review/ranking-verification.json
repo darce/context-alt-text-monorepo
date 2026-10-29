@@ -1,0 +1,1477 @@
+{
+  "historical_reference_facts_outside_current_image_subset": [
+    {
+      "source_image_id": "original-017",
+      "input_sha256": "cb5adbad2760babea68a7317800f9f2e3abe9d7e21e327f8d2c5f36e2b799ac6"
+    }
+  ],
+  "schema": "description-review-ranking-verification/v1",
+  "date": "2026-10-29",
+  "sources": [
+    {
+      "file": "benchmarks/reports/operator-reviews.json",
+      "sha256": "811f6028a1d4e42e3ba4531e3d4c231d2c24db7c014926a46e55224632832caf",
+      "dataset_id": "description-lexicon-120-r2",
+      "annotations": 192,
+      "distinct_review_images": 24,
+      "reviewed": 180,
+      "lexicon_preferences": 88,
+      "model_preference_ballots": 0,
+      "model_assessments": [
+        {
+          "physical_model_id": "incumbent",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 22,
+          "severity": {
+            "major": 4,
+            "none": 11,
+            "minor": 9
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "wrong": 2,
+            "not_assessed": 20,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "qwen-gsq",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 20,
+          "severity": {
+            "minor": 9,
+            "none": 11,
+            "critical": 1,
+            "major": 3
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "not_assessed": 21,
+            "wrong": 1,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "incumbent",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 23,
+          "severity": {
+            "minor": 11,
+            "major": 2,
+            "none": 11
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "wrong": 2,
+            "not_assessed": 20,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "qwen-gsq",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 22,
+          "severity": {
+            "none": 13,
+            "major": 4,
+            "critical": 1,
+            "minor": 6
+          },
+          "ocr": {
+            "not_assessed": 22,
+            "wrong": 2
+          }
+        },
+        {
+          "physical_model_id": "mimo",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 23,
+          "severity": {
+            "minor": 10,
+            "major": 5,
+            "critical": 2,
+            "none": 6,
+            "not_assessed": 1
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "wrong": 1,
+            "not_assessed": 20,
+            "accurate": 1,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "mimo",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 24,
+          "severity": {
+            "minor": 8,
+            "none": 10,
+            "critical": 3,
+            "major": 3
+          },
+          "ocr": {
+            "not_applicable": 2,
+            "not_assessed": 19,
+            "wrong": 1,
+            "accurate": 1,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "joy",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 23,
+          "severity": {
+            "none": 7,
+            "major": 8,
+            "minor": 6,
+            "critical": 3
+          },
+          "ocr": {
+            "not_applicable": 2,
+            "wrong": 4,
+            "not_assessed": 18
+          }
+        },
+        {
+          "physical_model_id": "joy",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 23,
+          "severity": {
+            "none": 7,
+            "major": 8,
+            "minor": 6,
+            "critical": 3
+          },
+          "ocr": {
+            "not_applicable": 2,
+            "wrong": 3,
+            "not_assessed": 19
+          }
+        }
+      ]
+    },
+    {
+      "file": "benchmarks/reports/operator-reviews2.json",
+      "sha256": "831a1da3b7bbeda93590b5875c70753a2267f5fb760fac46f624a1e05fb2d700",
+      "dataset_id": "qwen-high-precision-12-all-history-20261025",
+      "annotations": 192,
+      "distinct_review_images": 24,
+      "reviewed": 0,
+      "lexicon_preferences": 0,
+      "model_preference_ballots": 0,
+      "model_assessments": [
+        {
+          "physical_model_id": "mimo",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "minor": 10,
+            "major": 5,
+            "none": 6,
+            "critical": 2,
+            "not_assessed": 1
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "wrong": 1,
+            "not_assessed": 20,
+            "accurate": 1,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "mimo",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "minor": 8,
+            "none": 10,
+            "major": 3,
+            "critical": 3
+          },
+          "ocr": {
+            "not_applicable": 2,
+            "not_assessed": 19,
+            "wrong": 1,
+            "accurate": 1,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "qwen-gsq",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "minor": 9,
+            "none": 11,
+            "major": 3,
+            "critical": 1
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "not_assessed": 21,
+            "omitted": 1,
+            "wrong": 1
+          }
+        },
+        {
+          "physical_model_id": "qwen-gsq",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "none": 13,
+            "major": 4,
+            "critical": 1,
+            "minor": 6
+          },
+          "ocr": {
+            "not_assessed": 22,
+            "wrong": 2
+          }
+        },
+        {
+          "physical_model_id": "joy",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "none": 7,
+            "major": 8,
+            "critical": 3,
+            "minor": 6
+          },
+          "ocr": {
+            "not_applicable": 2,
+            "wrong": 3,
+            "not_assessed": 19
+          }
+        },
+        {
+          "physical_model_id": "joy",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "none": 7,
+            "major": 8,
+            "critical": 3,
+            "minor": 6
+          },
+          "ocr": {
+            "not_applicable": 2,
+            "wrong": 4,
+            "not_assessed": 18
+          }
+        },
+        {
+          "physical_model_id": "incumbent",
+          "scope": "historical_full120",
+          "arm": "off",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "minor": 11,
+            "major": 2,
+            "none": 11
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "wrong": 2,
+            "not_assessed": 20,
+            "omitted": 1
+          }
+        },
+        {
+          "physical_model_id": "incumbent",
+          "scope": "historical_full120",
+          "arm": "on",
+          "annotations": 24,
+          "reviewed": 0,
+          "severity": {
+            "major": 4,
+            "none": 11,
+            "minor": 9
+          },
+          "ocr": {
+            "not_applicable": 1,
+            "wrong": 2,
+            "not_assessed": 20,
+            "omitted": 1
+          }
+        }
+      ]
+    }
+  ],
+  "identity_comparison": {
+    "same_output_annotations": 192,
+    "same_judgment_content_except_completion_and_gold_binding": 192,
+    "independent_annotation_sets": 1,
+    "do_not_sum_as": 384,
+    "changed_fields": {
+      "reviewed": 180,
+      "gold_snapshot": 108
+    },
+    "reviewed_to_pending": 180
+  },
+  "current_three_model_evidence": {
+    "available_descriptions": 86,
+    "images": 29,
+    "quality_reviews_in_operator_reviews2": 0,
+    "model_preference_ballots": 0,
+    "ranking_status": "No current-model human preference ranking exists in either supplied reference file."
+  },
+  "export_contract_verification": {
+    "test_data": "Synthetic ballots only; never added to user annotations or initial report state.",
+    "ballots_tested": 3,
+    "raw_json_round_trip": "passed",
+    "derived_ranking_recomputation": "passed",
+    "different_candidate_rosters_separated": true
+  },
+  "semantic_verification": {
+    "schema": "description-ranking-semantic-verification/v1",
+    "model_id": "gte-base-en-v1.5",
+    "model_sha256": "e7f6af7a9457d4fdd3af220c68e9a37325aad7c2d306bbc855fe0d019c326509",
+    "tokenizer_sha256": "cb374d6bc042c22455946f4e09a89d29882a199fdaf8fb25be00dc8b8857a448",
+    "input_sha256": "cceba51eabedaff5d9efbdee4a9a1011f22f9dd9721cf8fe66802babf23d8067",
+    "exact_historical_surface_matches": 192,
+    "historical_preference_anchors": 42,
+    "current_candidate_descriptions": 86,
+    "interpretation": "Diagnostic same-image text similarity to 42 descriptions explicitly preferred within historical lexicon A/B pairs. Those are preferences, not adjudicated gold or cross-model rankings. Cosine is not a factual-quality score, is not used to rank models, and comparisons sharing an image are dependent. Exact key/hash/text matching, not embeddings, establishes annotation identity.",
+    "similarity_diagnostics": [
+      {
+        "physical_model_id": "incumbent-f16",
+        "same_image_text_comparisons": 42,
+        "independent_images": 20,
+        "median_cosine": 0.8277567028999329,
+        "minimum_cosine": 0.5240294337272644,
+        "maximum_cosine": 0.9475740194320679
+      },
+      {
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "same_image_text_comparisons": 42,
+        "independent_images": 20,
+        "median_cosine": 0.8216668665409088,
+        "minimum_cosine": 0.6147596836090088,
+        "maximum_cosine": 0.9209301471710205
+      },
+      {
+        "physical_model_id": "qwen38-bf16",
+        "same_image_text_comparisons": 42,
+        "independent_images": 20,
+        "median_cosine": 0.8535335063934326,
+        "minimum_cosine": 0.4717894494533539,
+        "maximum_cosine": 0.9564562439918518
+      }
+    ],
+    "pairs": [
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-incumbent-full120__development_regression:off:full120:56bd5a4b8fae5fa379257a055775f0db3b6a811814c2d70dc33af1dfb1d1b46e",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:incumbent-f16__E0_development_regression:off:full120:882ca8774dfbe8a3d063d2e54d9bb32d76181c8bb9b5fa798bfcab7e29f61ed1",
+        "image_id": "original-001",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8131482601165771
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-incumbent-full120__development_regression:off:full120:56bd5a4b8fae5fa379257a055775f0db3b6a811814c2d70dc33af1dfb1d1b46e",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:qwen38-bf16__E0_development_regression:off:full120:671af40a71533e82c25e45ecc06d9d615b93cf9d05705bcfcc33e168e03156dd",
+        "image_id": "original-001",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8383516073226929
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-incumbent-full120__development_regression:off:full120:56bd5a4b8fae5fa379257a055775f0db3b6a811814c2d70dc33af1dfb1d1b46e",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:qwen3-vl-8b-f16__E0_development_regression:off:full120:cd55a7f42672b96237d82cebf8c99d6d03efcb34f0fa4f2c433ff2a495eb7c04",
+        "image_id": "original-001",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8110716938972473
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-qwen-gsq-full120__development_regression:on:full120:10d5bd3c53fd87b2f6e63cb80209106512993f8f2d01183b50bdb124d7699b60",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:incumbent-f16__E0_development_regression:off:full120:882ca8774dfbe8a3d063d2e54d9bb32d76181c8bb9b5fa798bfcab7e29f61ed1",
+        "image_id": "original-001",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8362522125244141
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-qwen-gsq-full120__development_regression:on:full120:10d5bd3c53fd87b2f6e63cb80209106512993f8f2d01183b50bdb124d7699b60",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:qwen38-bf16__E0_development_regression:off:full120:671af40a71533e82c25e45ecc06d9d615b93cf9d05705bcfcc33e168e03156dd",
+        "image_id": "original-001",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.9499452710151672
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-qwen-gsq-full120__development_regression:on:full120:10d5bd3c53fd87b2f6e63cb80209106512993f8f2d01183b50bdb124d7699b60",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:qwen3-vl-8b-f16__E0_development_regression:off:full120:cd55a7f42672b96237d82cebf8c99d6d03efcb34f0fa4f2c433ff2a495eb7c04",
+        "image_id": "original-001",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8670133352279663
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-joy-full120__development_regression:off:full120:0c55d71a9bbeb03873ee32fa8d79a6f7761b36ef37c52f7985373e4a567188a1",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:incumbent-f16__E0_development_regression:off:full120:882ca8774dfbe8a3d063d2e54d9bb32d76181c8bb9b5fa798bfcab7e29f61ed1",
+        "image_id": "original-001",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7576032876968384
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-joy-full120__development_regression:off:full120:0c55d71a9bbeb03873ee32fa8d79a6f7761b36ef37c52f7985373e4a567188a1",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:qwen38-bf16__E0_development_regression:off:full120:671af40a71533e82c25e45ecc06d9d615b93cf9d05705bcfcc33e168e03156dd",
+        "image_id": "original-001",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7800904512405396
+      },
+      {
+        "historical_preferred_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:history-joy-full120__development_regression:off:full120:0c55d71a9bbeb03873ee32fa8d79a6f7761b36ef37c52f7985373e4a567188a1",
+        "candidate_key": "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9:qwen3-vl-8b-f16__E0_development_regression:off:full120:cd55a7f42672b96237d82cebf8c99d6d03efcb34f0fa4f2c433ff2a495eb7c04",
+        "image_id": "original-001",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7862093448638916
+      },
+      {
+        "historical_preferred_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:history-qwen-gsq-full120__development_regression:off:full120:d1a1a1d455c2e8a7e8e58634ca55326548c1b3d06204f01a757d131e70471bd7",
+        "candidate_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:incumbent-f16__E0_development_regression:off:full120:2c432f3364b8809dc59cd50f905f8fbe5eaf69c9b4a5db326aa28b7ae1c4ace1",
+        "image_id": "original-002",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8086574077606201
+      },
+      {
+        "historical_preferred_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:history-qwen-gsq-full120__development_regression:off:full120:d1a1a1d455c2e8a7e8e58634ca55326548c1b3d06204f01a757d131e70471bd7",
+        "candidate_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:qwen38-bf16__E0_development_regression:off:full120:fd692266c6efed0b59ab20fb05bbacd9f829762c760c64e4a7964f2be5ef19fd",
+        "image_id": "original-002",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.9385490417480469
+      },
+      {
+        "historical_preferred_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:history-qwen-gsq-full120__development_regression:off:full120:d1a1a1d455c2e8a7e8e58634ca55326548c1b3d06204f01a757d131e70471bd7",
+        "candidate_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:qwen3-vl-8b-f16__E0_development_regression:off:full120:aed3efdda16174e7b179ab0ee0c35f52c7430438104a131608c4864d7fe014f3",
+        "image_id": "original-002",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8788130283355713
+      },
+      {
+        "historical_preferred_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:history-mimo-full120__development_regression:on:full120:cf6c4d4e1b49d385b820e85a7c4395e6c73d46785a15a936df6b9bd31154be49",
+        "candidate_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:incumbent-f16__E0_development_regression:off:full120:2c432f3364b8809dc59cd50f905f8fbe5eaf69c9b4a5db326aa28b7ae1c4ace1",
+        "image_id": "original-002",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.805050253868103
+      },
+      {
+        "historical_preferred_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:history-mimo-full120__development_regression:on:full120:cf6c4d4e1b49d385b820e85a7c4395e6c73d46785a15a936df6b9bd31154be49",
+        "candidate_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:qwen38-bf16__E0_development_regression:off:full120:fd692266c6efed0b59ab20fb05bbacd9f829762c760c64e4a7964f2be5ef19fd",
+        "image_id": "original-002",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8879097700119019
+      },
+      {
+        "historical_preferred_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:history-mimo-full120__development_regression:on:full120:cf6c4d4e1b49d385b820e85a7c4395e6c73d46785a15a936df6b9bd31154be49",
+        "candidate_key": "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda:qwen3-vl-8b-f16__E0_development_regression:off:full120:aed3efdda16174e7b179ab0ee0c35f52c7430438104a131608c4864d7fe014f3",
+        "image_id": "original-002",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8495648503303528
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-joy-full120__added_people_exploratory:off:full120:b5aa658f0c3a4b9b48857cb6e090fc8b1ab5efaf277d296da30acf7637a5f69e",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:incumbent-f16__E0_added_people_exploratory:off:full120:d19c289c09a59a4a09cc6a6f95a88921586bb5e9d9b03d13095d5f5a491e6e4a",
+        "image_id": "original-003",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.6023944020271301
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-joy-full120__added_people_exploratory:off:full120:b5aa658f0c3a4b9b48857cb6e090fc8b1ab5efaf277d296da30acf7637a5f69e",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:qwen38-bf16__E0_added_people_exploratory:off:full120:296f59c829a8b9cbff482193b3027a5ef64558983987b51c98540157237187f3",
+        "image_id": "original-003",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.6865040063858032
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-joy-full120__added_people_exploratory:off:full120:b5aa658f0c3a4b9b48857cb6e090fc8b1ab5efaf277d296da30acf7637a5f69e",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:qwen3-vl-8b-f16__E0_added_people_exploratory:off:full120:239f460eafc280e00d00da8ec527296f4efbefb06f6d9878f37ce7cf0cd2cd6e",
+        "image_id": "original-003",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.6177555322647095
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-qwen-gsq-full120__added_people_exploratory:on:full120:b24285cf4d31eb345e27c8910efe63e945d9e9463de688b330990e673da1bb48",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:incumbent-f16__E0_added_people_exploratory:off:full120:d19c289c09a59a4a09cc6a6f95a88921586bb5e9d9b03d13095d5f5a491e6e4a",
+        "image_id": "original-003",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8275947570800781
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-qwen-gsq-full120__added_people_exploratory:on:full120:b24285cf4d31eb345e27c8910efe63e945d9e9463de688b330990e673da1bb48",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:qwen38-bf16__E0_added_people_exploratory:off:full120:296f59c829a8b9cbff482193b3027a5ef64558983987b51c98540157237187f3",
+        "image_id": "original-003",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.823792576789856
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-qwen-gsq-full120__added_people_exploratory:on:full120:b24285cf4d31eb345e27c8910efe63e945d9e9463de688b330990e673da1bb48",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:qwen3-vl-8b-f16__E0_added_people_exploratory:off:full120:239f460eafc280e00d00da8ec527296f4efbefb06f6d9878f37ce7cf0cd2cd6e",
+        "image_id": "original-003",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8227900862693787
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-mimo-full120__added_people_exploratory:on:full120:717ddafae6ac8b09572b17d166abfa856f2eb5331377e523e61229013fa95eec",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:incumbent-f16__E0_added_people_exploratory:off:full120:d19c289c09a59a4a09cc6a6f95a88921586bb5e9d9b03d13095d5f5a491e6e4a",
+        "image_id": "original-003",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.6842553615570068
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-mimo-full120__added_people_exploratory:on:full120:717ddafae6ac8b09572b17d166abfa856f2eb5331377e523e61229013fa95eec",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:qwen38-bf16__E0_added_people_exploratory:off:full120:296f59c829a8b9cbff482193b3027a5ef64558983987b51c98540157237187f3",
+        "image_id": "original-003",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7527316808700562
+      },
+      {
+        "historical_preferred_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:history-mimo-full120__added_people_exploratory:on:full120:717ddafae6ac8b09572b17d166abfa856f2eb5331377e523e61229013fa95eec",
+        "candidate_key": "431bcbcf8e6d1f8122e86b4f6aaf1f0dbbdb6072259dcbcfd4a1ac31e5696f90:qwen3-vl-8b-f16__E0_added_people_exploratory:off:full120:239f460eafc280e00d00da8ec527296f4efbefb06f6d9878f37ce7cf0cd2cd6e",
+        "image_id": "original-003",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7131525278091431
+      },
+      {
+        "historical_preferred_key": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6:history-incumbent-full120__historical_review_archive:off:full120:a312f0d3f59453d58859f8df0f7ca22daccb10636c582d82d1c8ceadb562dc1c",
+        "candidate_key": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:4d404d479c0d376d0ee8236903f9c40f0cfd9126676b3f86431242f1a86e6765",
+        "image_id": "original-004",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8585360646247864
+      },
+      {
+        "historical_preferred_key": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6:history-incumbent-full120__historical_review_archive:off:full120:a312f0d3f59453d58859f8df0f7ca22daccb10636c582d82d1c8ceadb562dc1c",
+        "candidate_key": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6:incumbent-f16__E0_reviewed17_extension:off:full120:56969948a1f296daea6904b703bc53ca88e77db9a7276780db3a023220aed843",
+        "image_id": "original-004",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8475774526596069
+      },
+      {
+        "historical_preferred_key": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6:history-incumbent-full120__historical_review_archive:off:full120:a312f0d3f59453d58859f8df0f7ca22daccb10636c582d82d1c8ceadb562dc1c",
+        "candidate_key": "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6:qwen38-bf16__E0_reviewed17_extension:off:full120:2dbe91e23f13a80c069b8f5e6573abed78aaa9a0a420759a099e890fe0068156",
+        "image_id": "original-004",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7757276296615601
+      },
+      {
+        "historical_preferred_key": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27:history-incumbent-full120__historical_review_archive:on:full120:7bfc155086dc8ee1deefb27da3992b1120a5647eb7ee183afeb3a2cf1f7d8b82",
+        "candidate_key": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:e1a0f5c5d2a92dd91f528d18959ba94502bea064e03e7cbd3d230dd73d307b56",
+        "image_id": "original-005",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7175906300544739
+      },
+      {
+        "historical_preferred_key": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27:history-incumbent-full120__historical_review_archive:on:full120:7bfc155086dc8ee1deefb27da3992b1120a5647eb7ee183afeb3a2cf1f7d8b82",
+        "candidate_key": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27:incumbent-f16__E0_reviewed17_extension:off:full120:69d1e8dfa35efb9e08de2d51412e61a096cdeb5f3e43a8feca8c2d1cd7c76a1a",
+        "image_id": "original-005",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7873942852020264
+      },
+      {
+        "historical_preferred_key": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27:history-incumbent-full120__historical_review_archive:on:full120:7bfc155086dc8ee1deefb27da3992b1120a5647eb7ee183afeb3a2cf1f7d8b82",
+        "candidate_key": "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27:qwen38-bf16__E0_reviewed17_extension:off:full120:54f95969f369870177b678eab898f98b989658cedc42d30aae50771d9ecfdc2a",
+        "image_id": "original-005",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.6783064603805542
+      },
+      {
+        "historical_preferred_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:history-incumbent-full120__historical_review_archive:on:full120:0719ca3f879cd0e995564c9d93a27a8b09bdef81335163c0d1009771eccf16d7",
+        "candidate_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:ee2baa85031840986cc88cc3cdfc9e914a921a293a7b12395c8454b40b9f87f0",
+        "image_id": "original-006",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7950706481933594
+      },
+      {
+        "historical_preferred_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:history-incumbent-full120__historical_review_archive:on:full120:0719ca3f879cd0e995564c9d93a27a8b09bdef81335163c0d1009771eccf16d7",
+        "candidate_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:incumbent-f16__E0_reviewed17_extension:off:full120:ff96aeb7c55e24204f5bdac5958348f94cc0df2969093e1f88392ff4c1a010d7",
+        "image_id": "original-006",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8745659589767456
+      },
+      {
+        "historical_preferred_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:history-incumbent-full120__historical_review_archive:on:full120:0719ca3f879cd0e995564c9d93a27a8b09bdef81335163c0d1009771eccf16d7",
+        "candidate_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:qwen38-bf16__E0_reviewed17_extension:off:full120:b5b815bddf5ead12fb85961fcfc17cf1fe4d8e882d796cfca29036a0f1ed2c6e",
+        "image_id": "original-006",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8158209919929504
+      },
+      {
+        "historical_preferred_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:history-qwen-gsq-full120__historical_review_archive:off:full120:bc5b17f6ac905b15cfb8bbd57e2ae5c6ecf6a0637a3227b3f3dd1f780a636c57",
+        "candidate_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:ee2baa85031840986cc88cc3cdfc9e914a921a293a7b12395c8454b40b9f87f0",
+        "image_id": "original-006",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8169026374816895
+      },
+      {
+        "historical_preferred_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:history-qwen-gsq-full120__historical_review_archive:off:full120:bc5b17f6ac905b15cfb8bbd57e2ae5c6ecf6a0637a3227b3f3dd1f780a636c57",
+        "candidate_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:incumbent-f16__E0_reviewed17_extension:off:full120:ff96aeb7c55e24204f5bdac5958348f94cc0df2969093e1f88392ff4c1a010d7",
+        "image_id": "original-006",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8239281177520752
+      },
+      {
+        "historical_preferred_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:history-qwen-gsq-full120__historical_review_archive:off:full120:bc5b17f6ac905b15cfb8bbd57e2ae5c6ecf6a0637a3227b3f3dd1f780a636c57",
+        "candidate_key": "24ee356113a210d502072299ee77ccf84ca9a0aa2d743d91c88ae4d222acd969:qwen38-bf16__E0_reviewed17_extension:off:full120:b5b815bddf5ead12fb85961fcfc17cf1fe4d8e882d796cfca29036a0f1ed2c6e",
+        "image_id": "original-006",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8793073892593384
+      },
+      {
+        "historical_preferred_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:history-qwen-gsq-full120__historical_review_archive:on:full120:d0541ed9302414b8c22efd619c2d0499b133178277dc0e601cfa36ebab99d0da",
+        "candidate_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:0f9625fa129244d6855ca580253142a57ad44dae37381705bb69cf5c7ef9465f",
+        "image_id": "original-008",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8103322982788086
+      },
+      {
+        "historical_preferred_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:history-qwen-gsq-full120__historical_review_archive:on:full120:d0541ed9302414b8c22efd619c2d0499b133178277dc0e601cfa36ebab99d0da",
+        "candidate_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:incumbent-f16__E0_reviewed17_extension:off:full120:d16994c0353f8af119fec9cd436aab630ebea243ff8dc8b83401f635095c631a",
+        "image_id": "original-008",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8780068159103394
+      },
+      {
+        "historical_preferred_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:history-qwen-gsq-full120__historical_review_archive:on:full120:d0541ed9302414b8c22efd619c2d0499b133178277dc0e601cfa36ebab99d0da",
+        "candidate_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:qwen38-bf16__E0_reviewed17_extension:off:full120:8c1a46bdca4d1dc810c8e607aaec51216012a8290ec18fa7567c9b975c8cccea",
+        "image_id": "original-008",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8471879959106445
+      },
+      {
+        "historical_preferred_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:history-incumbent-full120__historical_review_archive:on:full120:426b23fd32b58078c5681425f5ba5ca0052f0177005bf526789faceb36b1d509",
+        "candidate_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:0f9625fa129244d6855ca580253142a57ad44dae37381705bb69cf5c7ef9465f",
+        "image_id": "original-008",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7982445955276489
+      },
+      {
+        "historical_preferred_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:history-incumbent-full120__historical_review_archive:on:full120:426b23fd32b58078c5681425f5ba5ca0052f0177005bf526789faceb36b1d509",
+        "candidate_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:incumbent-f16__E0_reviewed17_extension:off:full120:d16994c0353f8af119fec9cd436aab630ebea243ff8dc8b83401f635095c631a",
+        "image_id": "original-008",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8641737699508667
+      },
+      {
+        "historical_preferred_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:history-incumbent-full120__historical_review_archive:on:full120:426b23fd32b58078c5681425f5ba5ca0052f0177005bf526789faceb36b1d509",
+        "candidate_key": "6babb9bbf95538128235c024ecf1c62db4eb5ce4d832e895698a85babeb55de3:qwen38-bf16__E0_reviewed17_extension:off:full120:8c1a46bdca4d1dc810c8e607aaec51216012a8290ec18fa7567c9b975c8cccea",
+        "image_id": "original-008",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.815661609172821
+      },
+      {
+        "historical_preferred_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:history-qwen-gsq-full120__historical_review_archive:off:full120:b19b8dced3be8ad0e03057876ea7b66cc0e77aee99434f9ea32f18f934aab29a",
+        "candidate_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:c5a2155200ec8bb4e8d2691278b7207b63d98cf036f446fe6e110c97d7162da3",
+        "image_id": "original-010",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8624051809310913
+      },
+      {
+        "historical_preferred_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:history-qwen-gsq-full120__historical_review_archive:off:full120:b19b8dced3be8ad0e03057876ea7b66cc0e77aee99434f9ea32f18f934aab29a",
+        "candidate_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:incumbent-f16__E0_reviewed17_extension:off:full120:89067e71adcfc5505065f9b2ed99d2056b8ad4cdd2722744a459464c61f9b240",
+        "image_id": "original-010",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7299400568008423
+      },
+      {
+        "historical_preferred_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:history-qwen-gsq-full120__historical_review_archive:off:full120:b19b8dced3be8ad0e03057876ea7b66cc0e77aee99434f9ea32f18f934aab29a",
+        "candidate_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:qwen38-bf16__E0_reviewed17_extension:off:full120:a245caceda6f59ee3dd519205162cc30aac2fe59f6a2f1f6e55d57da925fd83f",
+        "image_id": "original-010",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.80640709400177
+      },
+      {
+        "historical_preferred_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:history-joy-full120__historical_review_archive:off:full120:76c0aee6b7857aa0799e42ee3e04e3c72bbbb511a03fda6474ff43c03b6aaecf",
+        "candidate_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:c5a2155200ec8bb4e8d2691278b7207b63d98cf036f446fe6e110c97d7162da3",
+        "image_id": "original-010",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8021020889282227
+      },
+      {
+        "historical_preferred_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:history-joy-full120__historical_review_archive:off:full120:76c0aee6b7857aa0799e42ee3e04e3c72bbbb511a03fda6474ff43c03b6aaecf",
+        "candidate_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:incumbent-f16__E0_reviewed17_extension:off:full120:89067e71adcfc5505065f9b2ed99d2056b8ad4cdd2722744a459464c61f9b240",
+        "image_id": "original-010",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.6975064277648926
+      },
+      {
+        "historical_preferred_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:history-joy-full120__historical_review_archive:off:full120:76c0aee6b7857aa0799e42ee3e04e3c72bbbb511a03fda6474ff43c03b6aaecf",
+        "candidate_key": "54cc9f8738e080771a7fd35e468a9537a5fb1230406a25cb68852f77a88faf70:qwen38-bf16__E0_reviewed17_extension:off:full120:a245caceda6f59ee3dd519205162cc30aac2fe59f6a2f1f6e55d57da925fd83f",
+        "image_id": "original-010",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7338563799858093
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-incumbent-full120__historical_review_archive:off:full120:de62d2f4762fcf4975f0cbb192267ccd7ff9ee7e8e9b5d9caca66448b09a65a5",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:e8c79a8caa1f8572c264bf7cca61c24a01c1520a05bd6a938e09fc1d9484b636",
+        "image_id": "original-011",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7938156127929688
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-incumbent-full120__historical_review_archive:off:full120:de62d2f4762fcf4975f0cbb192267ccd7ff9ee7e8e9b5d9caca66448b09a65a5",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:incumbent-f16__E0_reviewed17_extension:off:full120:c5cfbd996852322868c0121e9baf7a71024b9f08261818edd801c971321589a9",
+        "image_id": "original-011",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.9188128709793091
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-incumbent-full120__historical_review_archive:off:full120:de62d2f4762fcf4975f0cbb192267ccd7ff9ee7e8e9b5d9caca66448b09a65a5",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:qwen38-bf16__E0_reviewed17_extension:off:full120:812742af239849cb787413ce9a4a7c022edd7bdd5369c773f9525ad73c6c80b9",
+        "image_id": "original-011",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8398964405059814
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-mimo-full120__historical_review_archive:off:full120:59c4924f5a26e75bffae1798af19afef6f3b4f4e307e2e6b7aefcdc7715a726d",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:e8c79a8caa1f8572c264bf7cca61c24a01c1520a05bd6a938e09fc1d9484b636",
+        "image_id": "original-011",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8132387399673462
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-mimo-full120__historical_review_archive:off:full120:59c4924f5a26e75bffae1798af19afef6f3b4f4e307e2e6b7aefcdc7715a726d",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:incumbent-f16__E0_reviewed17_extension:off:full120:c5cfbd996852322868c0121e9baf7a71024b9f08261818edd801c971321589a9",
+        "image_id": "original-011",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8206429481506348
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-mimo-full120__historical_review_archive:off:full120:59c4924f5a26e75bffae1798af19afef6f3b4f4e307e2e6b7aefcdc7715a726d",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:qwen38-bf16__E0_reviewed17_extension:off:full120:812742af239849cb787413ce9a4a7c022edd7bdd5369c773f9525ad73c6c80b9",
+        "image_id": "original-011",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7640268802642822
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-qwen-gsq-full120__historical_review_archive:off:full120:146a0d8a51a0ac569b39a5bb0b4d911eb26c7302c7f2dfeb5faa0303cc12a3ac",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:e8c79a8caa1f8572c264bf7cca61c24a01c1520a05bd6a938e09fc1d9484b636",
+        "image_id": "original-011",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.754021406173706
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-qwen-gsq-full120__historical_review_archive:off:full120:146a0d8a51a0ac569b39a5bb0b4d911eb26c7302c7f2dfeb5faa0303cc12a3ac",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:incumbent-f16__E0_reviewed17_extension:off:full120:c5cfbd996852322868c0121e9baf7a71024b9f08261818edd801c971321589a9",
+        "image_id": "original-011",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7765812873840332
+      },
+      {
+        "historical_preferred_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:history-qwen-gsq-full120__historical_review_archive:off:full120:146a0d8a51a0ac569b39a5bb0b4d911eb26c7302c7f2dfeb5faa0303cc12a3ac",
+        "candidate_key": "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9:qwen38-bf16__E0_reviewed17_extension:off:full120:812742af239849cb787413ce9a4a7c022edd7bdd5369c773f9525ad73c6c80b9",
+        "image_id": "original-011",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7927495837211609
+      },
+      {
+        "historical_preferred_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:history-incumbent-full120__historical_review_archive:off:full120:4b1380268a03842c850de98395e94704d3099724ecec5e132d2b3bb0a029cf11",
+        "candidate_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:1e23e909ea41be8c349a15185da70498291008934b957af73040e55fd371d6a4",
+        "image_id": "original-013",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.86702561378479
+      },
+      {
+        "historical_preferred_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:history-incumbent-full120__historical_review_archive:off:full120:4b1380268a03842c850de98395e94704d3099724ecec5e132d2b3bb0a029cf11",
+        "candidate_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:incumbent-f16__E0_reviewed17_extension:off:full120:af1e308c93157d25e245027a91a8fb8f53a23f8bf16c678064f83e1e58f493b6",
+        "image_id": "original-013",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8279186487197876
+      },
+      {
+        "historical_preferred_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:history-incumbent-full120__historical_review_archive:off:full120:4b1380268a03842c850de98395e94704d3099724ecec5e132d2b3bb0a029cf11",
+        "candidate_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:qwen38-bf16__E0_reviewed17_extension:off:full120:920fe23c7e59ecb6cc96b309002dd3dd67c2759bb1b33f1c794d7fcc0b467db6",
+        "image_id": "original-013",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8339515924453735
+      },
+      {
+        "historical_preferred_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:history-qwen-gsq-full120__historical_review_archive:off:full120:2814eab71156365129a04320125131aa33702af59d35e1c6cb0a7de72e26422f",
+        "candidate_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:1e23e909ea41be8c349a15185da70498291008934b957af73040e55fd371d6a4",
+        "image_id": "original-013",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8635367155075073
+      },
+      {
+        "historical_preferred_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:history-qwen-gsq-full120__historical_review_archive:off:full120:2814eab71156365129a04320125131aa33702af59d35e1c6cb0a7de72e26422f",
+        "candidate_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:incumbent-f16__E0_reviewed17_extension:off:full120:af1e308c93157d25e245027a91a8fb8f53a23f8bf16c678064f83e1e58f493b6",
+        "image_id": "original-013",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8243985176086426
+      },
+      {
+        "historical_preferred_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:history-qwen-gsq-full120__historical_review_archive:off:full120:2814eab71156365129a04320125131aa33702af59d35e1c6cb0a7de72e26422f",
+        "candidate_key": "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19:qwen38-bf16__E0_reviewed17_extension:off:full120:920fe23c7e59ecb6cc96b309002dd3dd67c2759bb1b33f1c794d7fcc0b467db6",
+        "image_id": "original-013",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8867331743240356
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-mimo-full120__added_people_exploratory:on:full120:f255471182ab5bf93aa72f1b2197a82b0b7a1389ff33bc89eb9b0d8e64592744",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:incumbent-f16__E0_added_people_exploratory:off:full120:8d91fde40a7fa6b94454fb036ffee844290cb3362dddb47eb10e0fbd6856ed68",
+        "image_id": "original-018",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8815089464187622
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-mimo-full120__added_people_exploratory:on:full120:f255471182ab5bf93aa72f1b2197a82b0b7a1389ff33bc89eb9b0d8e64592744",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen38-bf16__E0_added_people_exploratory:off:full120:a5b9a059b99b0ef728349032fff80819f28e35bd10066e370fc594ff233c3bfe",
+        "image_id": "original-018",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8764870166778564
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-mimo-full120__added_people_exploratory:on:full120:f255471182ab5bf93aa72f1b2197a82b0b7a1389ff33bc89eb9b0d8e64592744",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen3-vl-8b-f16__E0_added_people_exploratory:off:full120:5e9b0a20e8f6e40b172c59cbc8a5f71b7ad38b621f3c4ad0e166d4970c73ee32",
+        "image_id": "original-018",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8438902497291565
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-qwen-gsq-full120__added_people_exploratory:off:full120:c3a41079e65a9a07ebfc8e0dcceb031d556895c309ba37b4948187d6277a488f",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:incumbent-f16__E0_added_people_exploratory:off:full120:8d91fde40a7fa6b94454fb036ffee844290cb3362dddb47eb10e0fbd6856ed68",
+        "image_id": "original-018",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8558061122894287
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-qwen-gsq-full120__added_people_exploratory:off:full120:c3a41079e65a9a07ebfc8e0dcceb031d556895c309ba37b4948187d6277a488f",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen38-bf16__E0_added_people_exploratory:off:full120:a5b9a059b99b0ef728349032fff80819f28e35bd10066e370fc594ff233c3bfe",
+        "image_id": "original-018",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.882609486579895
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-qwen-gsq-full120__added_people_exploratory:off:full120:c3a41079e65a9a07ebfc8e0dcceb031d556895c309ba37b4948187d6277a488f",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen3-vl-8b-f16__E0_added_people_exploratory:off:full120:5e9b0a20e8f6e40b172c59cbc8a5f71b7ad38b621f3c4ad0e166d4970c73ee32",
+        "image_id": "original-018",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8833813667297363
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-incumbent-full120__added_people_exploratory:off:full120:8143be2d833f51e724b482dbeff8642a05eff41b225f52e475333bc5d6ad9da1",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:incumbent-f16__E0_added_people_exploratory:off:full120:8d91fde40a7fa6b94454fb036ffee844290cb3362dddb47eb10e0fbd6856ed68",
+        "image_id": "original-018",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8627797365188599
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-incumbent-full120__added_people_exploratory:off:full120:8143be2d833f51e724b482dbeff8642a05eff41b225f52e475333bc5d6ad9da1",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen38-bf16__E0_added_people_exploratory:off:full120:a5b9a059b99b0ef728349032fff80819f28e35bd10066e370fc594ff233c3bfe",
+        "image_id": "original-018",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8764442205429077
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-incumbent-full120__added_people_exploratory:off:full120:8143be2d833f51e724b482dbeff8642a05eff41b225f52e475333bc5d6ad9da1",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen3-vl-8b-f16__E0_added_people_exploratory:off:full120:5e9b0a20e8f6e40b172c59cbc8a5f71b7ad38b621f3c4ad0e166d4970c73ee32",
+        "image_id": "original-018",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.9166444540023804
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-joy-full120__added_people_exploratory:on:full120:f1fd74d91b308ded5315534a9d3355fe7a756cf050432a53855bfecc0fdf65ad",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:incumbent-f16__E0_added_people_exploratory:off:full120:8d91fde40a7fa6b94454fb036ffee844290cb3362dddb47eb10e0fbd6856ed68",
+        "image_id": "original-018",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7917194962501526
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-joy-full120__added_people_exploratory:on:full120:f1fd74d91b308ded5315534a9d3355fe7a756cf050432a53855bfecc0fdf65ad",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen38-bf16__E0_added_people_exploratory:off:full120:a5b9a059b99b0ef728349032fff80819f28e35bd10066e370fc594ff233c3bfe",
+        "image_id": "original-018",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7582368850708008
+      },
+      {
+        "historical_preferred_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:history-joy-full120__added_people_exploratory:on:full120:f1fd74d91b308ded5315534a9d3355fe7a756cf050432a53855bfecc0fdf65ad",
+        "candidate_key": "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04:qwen3-vl-8b-f16__E0_added_people_exploratory:off:full120:5e9b0a20e8f6e40b172c59cbc8a5f71b7ad38b621f3c4ad0e166d4970c73ee32",
+        "image_id": "original-018",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7977973222732544
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-mimo-full120__historical_review_archive:on:full120:2226e2b8e50b4183236c4015bdcb9ba0f8ddcb39f376755a18c7f0a906c27340",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:a6e64a21792c6e4120d7783963bdadfeb25710d1794e75df7113db39bc0778ee",
+        "image_id": "original-019",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8528491258621216
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-mimo-full120__historical_review_archive:on:full120:2226e2b8e50b4183236c4015bdcb9ba0f8ddcb39f376755a18c7f0a906c27340",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:incumbent-f16__E0_reviewed17_extension:off:full120:5f8e317f8479b3c347c1187d6d5b9e518d669812b870cc85c2f7c22a3860c206",
+        "image_id": "original-019",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8818129301071167
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-mimo-full120__historical_review_archive:on:full120:2226e2b8e50b4183236c4015bdcb9ba0f8ddcb39f376755a18c7f0a906c27340",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:qwen38-bf16__E0_reviewed17_extension:off:full120:35358fc3e43becc761318bef0ba06680e6ab110d9c41f7ffc119533e1452ce34",
+        "image_id": "original-019",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8502854108810425
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-incumbent-full120__historical_review_archive:off:full120:a3e0d2b3c527386533c22b473471facfcc1bf1752215ad5795cce8483319eb4d",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:a6e64a21792c6e4120d7783963bdadfeb25710d1794e75df7113db39bc0778ee",
+        "image_id": "original-019",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.9209301471710205
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-incumbent-full120__historical_review_archive:off:full120:a3e0d2b3c527386533c22b473471facfcc1bf1752215ad5795cce8483319eb4d",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:incumbent-f16__E0_reviewed17_extension:off:full120:5f8e317f8479b3c347c1187d6d5b9e518d669812b870cc85c2f7c22a3860c206",
+        "image_id": "original-019",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.9475740194320679
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-incumbent-full120__historical_review_archive:off:full120:a3e0d2b3c527386533c22b473471facfcc1bf1752215ad5795cce8483319eb4d",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:qwen38-bf16__E0_reviewed17_extension:off:full120:35358fc3e43becc761318bef0ba06680e6ab110d9c41f7ffc119533e1452ce34",
+        "image_id": "original-019",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8682833909988403
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-qwen-gsq-full120__historical_review_archive:on:full120:e93572acbc93aef1804163924d7ec8f72cdf7f09ded47de4cbd4198b9d3b64e9",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:a6e64a21792c6e4120d7783963bdadfeb25710d1794e75df7113db39bc0778ee",
+        "image_id": "original-019",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.9105334281921387
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-qwen-gsq-full120__historical_review_archive:on:full120:e93572acbc93aef1804163924d7ec8f72cdf7f09ded47de4cbd4198b9d3b64e9",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:incumbent-f16__E0_reviewed17_extension:off:full120:5f8e317f8479b3c347c1187d6d5b9e518d669812b870cc85c2f7c22a3860c206",
+        "image_id": "original-019",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.942273736000061
+      },
+      {
+        "historical_preferred_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:history-qwen-gsq-full120__historical_review_archive:on:full120:e93572acbc93aef1804163924d7ec8f72cdf7f09ded47de4cbd4198b9d3b64e9",
+        "candidate_key": "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28:qwen38-bf16__E0_reviewed17_extension:off:full120:35358fc3e43becc761318bef0ba06680e6ab110d9c41f7ffc119533e1452ce34",
+        "image_id": "original-019",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8831872940063477
+      },
+      {
+        "historical_preferred_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:history-qwen-gsq-full120__historical_review_archive:on:full120:83d4b867d9afdec2e6a5dee3f275b02192e7172c1bccaedad7888040b72e3630",
+        "candidate_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:e1978a022ef633878836465b76698da01dbe85d09719f3623c0a7efe5f8ed876",
+        "image_id": "original-021",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8739147782325745
+      },
+      {
+        "historical_preferred_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:history-qwen-gsq-full120__historical_review_archive:on:full120:83d4b867d9afdec2e6a5dee3f275b02192e7172c1bccaedad7888040b72e3630",
+        "candidate_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:incumbent-f16__E0_reviewed17_extension:off:full120:89c97236b1858178e05ee331df13294c8f01692bc60c911adc0e1bc90e467960",
+        "image_id": "original-021",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8331904411315918
+      },
+      {
+        "historical_preferred_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:history-qwen-gsq-full120__historical_review_archive:on:full120:83d4b867d9afdec2e6a5dee3f275b02192e7172c1bccaedad7888040b72e3630",
+        "candidate_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:qwen38-bf16__E0_reviewed17_extension:off:full120:008f971b7d35d2052dfa852f9f6a47faf4d360fa72d312983c3ed28003dcc3a7",
+        "image_id": "original-021",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8897502422332764
+      },
+      {
+        "historical_preferred_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:history-mimo-full120__historical_review_archive:off:full120:93dcc5ea4fe468c72afdd361e99cd6966c81d29c3a2684a1cb18fbe62b277a91",
+        "candidate_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:e1978a022ef633878836465b76698da01dbe85d09719f3623c0a7efe5f8ed876",
+        "image_id": "original-021",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8683448433876038
+      },
+      {
+        "historical_preferred_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:history-mimo-full120__historical_review_archive:off:full120:93dcc5ea4fe468c72afdd361e99cd6966c81d29c3a2684a1cb18fbe62b277a91",
+        "candidate_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:incumbent-f16__E0_reviewed17_extension:off:full120:89c97236b1858178e05ee331df13294c8f01692bc60c911adc0e1bc90e467960",
+        "image_id": "original-021",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8819319009780884
+      },
+      {
+        "historical_preferred_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:history-mimo-full120__historical_review_archive:off:full120:93dcc5ea4fe468c72afdd361e99cd6966c81d29c3a2684a1cb18fbe62b277a91",
+        "candidate_key": "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff:qwen38-bf16__E0_reviewed17_extension:off:full120:008f971b7d35d2052dfa852f9f6a47faf4d360fa72d312983c3ed28003dcc3a7",
+        "image_id": "original-021",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.871025562286377
+      },
+      {
+        "historical_preferred_key": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603:history-qwen-gsq-full120__historical_review_archive:off:full120:d8e32d0486764e964bbdc0401126510ce3142a6f6f629d970ea8913ca003b4dc",
+        "candidate_key": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:086db09d1e484bd0bb9912ea30c556e89eedc21bc645184f21609dbedf461312",
+        "image_id": "original-022",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.820543646812439
+      },
+      {
+        "historical_preferred_key": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603:history-qwen-gsq-full120__historical_review_archive:off:full120:d8e32d0486764e964bbdc0401126510ce3142a6f6f629d970ea8913ca003b4dc",
+        "candidate_key": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603:incumbent-f16__E0_reviewed17_extension:off:full120:006c6d2bac039a6cac5e5c107c2db0d31e9d800784cfc181543119f8a49935f6",
+        "image_id": "original-022",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.881879448890686
+      },
+      {
+        "historical_preferred_key": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603:history-qwen-gsq-full120__historical_review_archive:off:full120:d8e32d0486764e964bbdc0401126510ce3142a6f6f629d970ea8913ca003b4dc",
+        "candidate_key": "88e91c52269a49d7176ddac5e40aa91295cb055565f34129b9e1e4bdfac8f603:qwen38-bf16__E0_reviewed17_extension:off:full120:faf38b54d4cc9bbe610e938a5c80ee776c4665b18283833ee6ba9c5cd84ea095",
+        "image_id": "original-022",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.9564562439918518
+      },
+      {
+        "historical_preferred_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:history-incumbent-full120__historical_review_archive:off:full120:39f9c5be39270a06d054a13048042775395919358598dbd9170b5afa950fe15a",
+        "candidate_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:ffb0b75dc8c0ad60c44730c20ebe8603a17908ea80ec8c80129ce8367e271693",
+        "image_id": "c008",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8383147120475769
+      },
+      {
+        "historical_preferred_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:history-incumbent-full120__historical_review_archive:off:full120:39f9c5be39270a06d054a13048042775395919358598dbd9170b5afa950fe15a",
+        "candidate_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:incumbent-f16__E0_reviewed17_extension:off:full120:ae71eb6636a1368a87aaf53cf3eaec2d96eecff150522bfc3f64f15d7569e37d",
+        "image_id": "c008",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8356475830078125
+      },
+      {
+        "historical_preferred_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:history-incumbent-full120__historical_review_archive:off:full120:39f9c5be39270a06d054a13048042775395919358598dbd9170b5afa950fe15a",
+        "candidate_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:qwen38-bf16__E0_reviewed17_extension:off:full120:feae9dfe74c22d603ad08966e751d49539cbd6f4a1ce0a84d3bae056fd7b9aeb",
+        "image_id": "c008",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.9219259023666382
+      },
+      {
+        "historical_preferred_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:history-qwen-gsq-full120__historical_review_archive:on:full120:a94d1bfab369b3c3316a6824f933217f8505b351bc9a6f38a2e5685b2be32be0",
+        "candidate_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:ffb0b75dc8c0ad60c44730c20ebe8603a17908ea80ec8c80129ce8367e271693",
+        "image_id": "c008",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8131930828094482
+      },
+      {
+        "historical_preferred_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:history-qwen-gsq-full120__historical_review_archive:on:full120:a94d1bfab369b3c3316a6824f933217f8505b351bc9a6f38a2e5685b2be32be0",
+        "candidate_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:incumbent-f16__E0_reviewed17_extension:off:full120:ae71eb6636a1368a87aaf53cf3eaec2d96eecff150522bfc3f64f15d7569e37d",
+        "image_id": "c008",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7751259803771973
+      },
+      {
+        "historical_preferred_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:history-qwen-gsq-full120__historical_review_archive:on:full120:a94d1bfab369b3c3316a6824f933217f8505b351bc9a6f38a2e5685b2be32be0",
+        "candidate_key": "d460e50da7c834ed5e99a4f2b23abb87f6d3679f00990e49e9b8bb48f8f68fa6:qwen38-bf16__E0_reviewed17_extension:off:full120:feae9dfe74c22d603ad08966e751d49539cbd6f4a1ce0a84d3bae056fd7b9aeb",
+        "image_id": "c008",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.9538400173187256
+      },
+      {
+        "historical_preferred_key": "5d79ff1332e8bc0573773d807a5a84320e2f51652a7dbc0736e0a8f332036422:history-qwen-gsq-full120__historical_review_archive:off:full120:8b6042dadf6cf254f5fd83b53acd97c857f8b7cb08b0c7f5098446bd9cec635b",
+        "candidate_key": "5d79ff1332e8bc0573773d807a5a84320e2f51652a7dbc0736e0a8f332036422:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:27e44240cca6700c6c4a7c1259e2344fd707b9e583efff015c7239607fe608ea",
+        "image_id": "c016",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8909353017807007
+      },
+      {
+        "historical_preferred_key": "5d79ff1332e8bc0573773d807a5a84320e2f51652a7dbc0736e0a8f332036422:history-qwen-gsq-full120__historical_review_archive:off:full120:8b6042dadf6cf254f5fd83b53acd97c857f8b7cb08b0c7f5098446bd9cec635b",
+        "candidate_key": "5d79ff1332e8bc0573773d807a5a84320e2f51652a7dbc0736e0a8f332036422:incumbent-f16__E0_reviewed17_extension:off:full120:e3bfe29f56e25fce8be026839a51c4da5245f436ca1e3ad8df4e96c4d3bea8bc",
+        "image_id": "c016",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8414238691329956
+      },
+      {
+        "historical_preferred_key": "5d79ff1332e8bc0573773d807a5a84320e2f51652a7dbc0736e0a8f332036422:history-qwen-gsq-full120__historical_review_archive:off:full120:8b6042dadf6cf254f5fd83b53acd97c857f8b7cb08b0c7f5098446bd9cec635b",
+        "candidate_key": "5d79ff1332e8bc0573773d807a5a84320e2f51652a7dbc0736e0a8f332036422:qwen38-bf16__E0_reviewed17_extension:off:full120:ce67ebad403c272304d6a0a0c50138ac0382057d47bdbf0eb094c97ad473fd33",
+        "image_id": "c016",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8608136177062988
+      },
+      {
+        "historical_preferred_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:history-qwen-gsq-full120__core_exploratory:on:full120:d661a3a964c8ad93a7744595083a3090fd77e53fe622c921a57677d7405ef993",
+        "candidate_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:incumbent-f16__E0_core_exploratory:off:full120:895318e72fcc8795a3b8c1ec4099bd56436ecc735eed768d4d329bc552ff030f",
+        "image_id": "c078",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7385135889053345
+      },
+      {
+        "historical_preferred_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:history-qwen-gsq-full120__core_exploratory:on:full120:d661a3a964c8ad93a7744595083a3090fd77e53fe622c921a57677d7405ef993",
+        "candidate_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:qwen38-bf16__E0_core_exploratory:off:full120:55d770517ceecc0f1e5ba5028072b473c8a0255d18494018ee7d316200a2c450",
+        "image_id": "c078",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.9207512736320496
+      },
+      {
+        "historical_preferred_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:history-qwen-gsq-full120__core_exploratory:on:full120:d661a3a964c8ad93a7744595083a3090fd77e53fe622c921a57677d7405ef993",
+        "candidate_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:qwen3-vl-8b-f16__E0_core_exploratory:off:full120:70a9aaafe94c0bd7c34aa96c3a7a8ab0bf4b452e82e7e3b522cf507639162b1c",
+        "image_id": "c078",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8492546081542969
+      },
+      {
+        "historical_preferred_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:history-mimo-full120__core_exploratory:on:full120:9481f2c27541dea0d892d20c8184e7393c4501adf1fe07c4ad06c73636832baf",
+        "candidate_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:incumbent-f16__E0_core_exploratory:off:full120:895318e72fcc8795a3b8c1ec4099bd56436ecc735eed768d4d329bc552ff030f",
+        "image_id": "c078",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.5240294337272644
+      },
+      {
+        "historical_preferred_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:history-mimo-full120__core_exploratory:on:full120:9481f2c27541dea0d892d20c8184e7393c4501adf1fe07c4ad06c73636832baf",
+        "candidate_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:qwen38-bf16__E0_core_exploratory:off:full120:55d770517ceecc0f1e5ba5028072b473c8a0255d18494018ee7d316200a2c450",
+        "image_id": "c078",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.6586481332778931
+      },
+      {
+        "historical_preferred_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:history-mimo-full120__core_exploratory:on:full120:9481f2c27541dea0d892d20c8184e7393c4501adf1fe07c4ad06c73636832baf",
+        "candidate_key": "4003c7ae7834be98609831734ce0c7fb136c8d26d1e81c4cd1bb644cc457d535:qwen3-vl-8b-f16__E0_core_exploratory:off:full120:70a9aaafe94c0bd7c34aa96c3a7a8ab0bf4b452e82e7e3b522cf507639162b1c",
+        "image_id": "c078",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.6147596836090088
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-qwen-gsq-full120__historical_review_archive:on:full120:a66301bb36747e62cdc0edcae2c10f8996b5a298a826f313ba91767befeb0019",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:281c748f20b89f78132aa6848b9e03921fd4999c7582fad2b1713a4448c54439",
+        "image_id": "c067",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8904253840446472
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-qwen-gsq-full120__historical_review_archive:on:full120:a66301bb36747e62cdc0edcae2c10f8996b5a298a826f313ba91767befeb0019",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:incumbent-f16__E0_reviewed17_extension:off:full120:705f9c25ebbad62b7b2f9bf5f4e5a8e9f547562e3e3905d33b930c87e475ffdc",
+        "image_id": "c067",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.7505147457122803
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-qwen-gsq-full120__historical_review_archive:on:full120:a66301bb36747e62cdc0edcae2c10f8996b5a298a826f313ba91767befeb0019",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:qwen38-bf16__E0_reviewed17_extension:off:full120:f9569602e39b31ef55f6f50f2b1ab1562a6f4c5050820563653b55d79a6b1fc9",
+        "image_id": "c067",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8567816019058228
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-incumbent-full120__historical_review_archive:on:full120:691e827529a8edcd4d3bd1fab6564c5a20c37041a7fb7f378f6c995a0ca750b9",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:281c748f20b89f78132aa6848b9e03921fd4999c7582fad2b1713a4448c54439",
+        "image_id": "c067",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.8291609883308411
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-incumbent-full120__historical_review_archive:on:full120:691e827529a8edcd4d3bd1fab6564c5a20c37041a7fb7f378f6c995a0ca750b9",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:incumbent-f16__E0_reviewed17_extension:off:full120:705f9c25ebbad62b7b2f9bf5f4e5a8e9f547562e3e3905d33b930c87e475ffdc",
+        "image_id": "c067",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8315664529800415
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-incumbent-full120__historical_review_archive:on:full120:691e827529a8edcd4d3bd1fab6564c5a20c37041a7fb7f378f6c995a0ca750b9",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:qwen38-bf16__E0_reviewed17_extension:off:full120:f9569602e39b31ef55f6f50f2b1ab1562a6f4c5050820563653b55d79a6b1fc9",
+        "image_id": "c067",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8657421469688416
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-mimo-full120__historical_review_archive:off:full120:9e7c1519267de2ba1e4a4db5d9ea3c24b1351f50ade521f6bc214951c78c22a2",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:qwen3-vl-8b-f16__E0_reviewed17_extension:off:full120:281c748f20b89f78132aa6848b9e03921fd4999c7582fad2b1713a4448c54439",
+        "image_id": "c067",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.757564127445221
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-mimo-full120__historical_review_archive:off:full120:9e7c1519267de2ba1e4a4db5d9ea3c24b1351f50ade521f6bc214951c78c22a2",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:incumbent-f16__E0_reviewed17_extension:off:full120:705f9c25ebbad62b7b2f9bf5f4e5a8e9f547562e3e3905d33b930c87e475ffdc",
+        "image_id": "c067",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.6898497343063354
+      },
+      {
+        "historical_preferred_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:history-mimo-full120__historical_review_archive:off:full120:9e7c1519267de2ba1e4a4db5d9ea3c24b1351f50ade521f6bc214951c78c22a2",
+        "candidate_key": "3065a1f1a2f74a66ebe1da53069faa3e00aea08b6ff4b36106f8a4ef0f4d7a75:qwen38-bf16__E0_reviewed17_extension:off:full120:f9569602e39b31ef55f6f50f2b1ab1562a6f4c5050820563653b55d79a6b1fc9",
+        "image_id": "c067",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.7761112451553345
+      },
+      {
+        "historical_preferred_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:history-incumbent-full120__core_exploratory:off:full120:319f989969aa8b840b72cbc98c07c28f0ab4190f034887cf09f94f1ddb6675e6",
+        "candidate_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:qwen38-bf16__E0_core_exploratory:off:full120:aa513b3c648faae97cf2255fe685cc3ff6d890f9fd0be58f27878a80d9a9a2cc",
+        "image_id": "c009",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.8908671736717224
+      },
+      {
+        "historical_preferred_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:history-incumbent-full120__core_exploratory:off:full120:319f989969aa8b840b72cbc98c07c28f0ab4190f034887cf09f94f1ddb6675e6",
+        "candidate_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:incumbent-f16__E0_core_exploratory:off:full120:2478363753c251b0a9b1c5f2ff93df2455eca909de25eea89301f769287d211f",
+        "image_id": "c009",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.9108885526657104
+      },
+      {
+        "historical_preferred_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:history-incumbent-full120__core_exploratory:off:full120:319f989969aa8b840b72cbc98c07c28f0ab4190f034887cf09f94f1ddb6675e6",
+        "candidate_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:qwen3-vl-8b-f16__E0_core_exploratory:off:full120:608bbef5e6dde5c2080630ad03b5427cb704ca28af25f9cae9722773ff2358a6",
+        "image_id": "c009",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7980403900146484
+      },
+      {
+        "historical_preferred_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:history-qwen-gsq-full120__core_exploratory:off:full120:d2c333792603b292c4b8e749fc3bfda18b2b5775badb55be26d4b15fa1bdec27",
+        "candidate_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:qwen38-bf16__E0_core_exploratory:off:full120:aa513b3c648faae97cf2255fe685cc3ff6d890f9fd0be58f27878a80d9a9a2cc",
+        "image_id": "c009",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.9083387851715088
+      },
+      {
+        "historical_preferred_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:history-qwen-gsq-full120__core_exploratory:off:full120:d2c333792603b292c4b8e749fc3bfda18b2b5775badb55be26d4b15fa1bdec27",
+        "candidate_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:incumbent-f16__E0_core_exploratory:off:full120:2478363753c251b0a9b1c5f2ff93df2455eca909de25eea89301f769287d211f",
+        "image_id": "c009",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8866581916809082
+      },
+      {
+        "historical_preferred_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:history-qwen-gsq-full120__core_exploratory:off:full120:d2c333792603b292c4b8e749fc3bfda18b2b5775badb55be26d4b15fa1bdec27",
+        "candidate_key": "f805420c67aeef5eb1df743e6533c9b7aaabc8160a2c1b0806cdad26dbb2f491:qwen3-vl-8b-f16__E0_core_exploratory:off:full120:608bbef5e6dde5c2080630ad03b5427cb704ca28af25f9cae9722773ff2358a6",
+        "image_id": "c009",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.7970885038375854
+      },
+      {
+        "historical_preferred_key": "015f9ec5325ae8c05b62807998e87b37cd86df889884a4a753dfcd65366d843c:history-joy-full120__core_exploratory:off:full120:0b03a7dcbb41f38626bc9e1f2e3099b1798ae2795b1c3c3299a3906ee2e45c1a",
+        "candidate_key": "015f9ec5325ae8c05b62807998e87b37cd86df889884a4a753dfcd65366d843c:incumbent-f16__E0_core_exploratory:off:full120:be7e0de3f1f1bc9f1c495426d9a9544b63f5b35945c91f70fc16efed1cf731dc",
+        "image_id": "n044",
+        "physical_model_id": "incumbent-f16",
+        "cosine": 0.8020018339157104
+      },
+      {
+        "historical_preferred_key": "015f9ec5325ae8c05b62807998e87b37cd86df889884a4a753dfcd65366d843c:history-joy-full120__core_exploratory:off:full120:0b03a7dcbb41f38626bc9e1f2e3099b1798ae2795b1c3c3299a3906ee2e45c1a",
+        "candidate_key": "015f9ec5325ae8c05b62807998e87b37cd86df889884a4a753dfcd65366d843c:qwen38-bf16__E0_core_exploratory:off:full120:c187230a9b5c54d4ebf2009fd44de9c34594c152693ee60b4959dad74e412d8e",
+        "image_id": "n044",
+        "physical_model_id": "qwen38-bf16",
+        "cosine": 0.4717894494533539
+      },
+      {
+        "historical_preferred_key": "015f9ec5325ae8c05b62807998e87b37cd86df889884a4a753dfcd65366d843c:history-joy-full120__core_exploratory:off:full120:0b03a7dcbb41f38626bc9e1f2e3099b1798ae2795b1c3c3299a3906ee2e45c1a",
+        "candidate_key": "015f9ec5325ae8c05b62807998e87b37cd86df889884a4a753dfcd65366d843c:qwen3-vl-8b-f16__E0_core_exploratory:off:full120:b95e08f76a0b023d433413346563ed1841b80ac06f4b2887936479d322a38f4b",
+        "image_id": "n044",
+        "physical_model_id": "qwen3-vl-8b-f16",
+        "cosine": 0.737073540687561
+      }
+    ],
+    "canon_corpus_retrieval": [
+      {
+        "query": "Compare multiple generated descriptions with blinded human top choice preference votes; keep identical candidate sets and incomplete comparisons separate; preserve exact output provenance and distinguish preference from factual accuracy",
+        "results": [
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/gender-shades.md",
+            "sha256": "c6011454661deda4ed3d07051ac5a6a395f9d0b60aa6c0eacabddb7b2aa74a75",
+            "representation_sha256": "e23c177d5297ffdb39c6f80975215c0eb8555fa7c85b1a5cd57c7f258e69ff29",
+            "cosine": 0.4521612823009491
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/trustworthy-controlled-experiments.md",
+            "sha256": "5b6e55ead000f58aa419cf55ee551e6f9754dfd1588d5515539e4fea85cc06eb",
+            "representation_sha256": "b5b6d62fb2a8775898b8d76f09f84c06a149c2c58fa8bb56cac4ba9d47c2194a",
+            "cosine": 0.4398071765899658
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/wcag-em-2.md",
+            "sha256": "28a3d7cba326c5b3a4e4c8d992250376acd96b38c713527cf7857916be003483",
+            "representation_sha256": "f4970b7ee257175d95ffacc7897d7cb54b6928dc7bdb874667c2d52896aae963",
+            "cosine": 0.43874138593673706
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/rescribe-audio-descriptions.md",
+            "sha256": "8ea2b1ec8e187b3247910ee1b1b9ee46fa46b40df5130c838a8df0e8a9f157f9",
+            "representation_sha256": "3518c22cdc6af7a4879ae89b8c6d0a1c63bd0bc14da6f4332d09bda3ed9a2ae1",
+            "cosine": 0.43780338764190674
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/forensic-face-matching.md",
+            "sha256": "ed37f16da8cb71b2d020af30b39aee39a9f8b7bc5506fb53253dcd63cc824a1c",
+            "representation_sha256": "bda09166ab6434f3c583c52f11de0d1bc74d2d1aeac4106e7fe9be8595459083",
+            "cosine": 0.43629831075668335
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/accessibility/anti-racist-description-resources.md",
+            "sha256": "7402848b13d00f9058f268936c3b3cfe5a3a667e9ce69569698a064617d761ea",
+            "representation_sha256": "1102ded0372cd965c3c4abe48170dd170ac6a41ba01dea781022ccc3630e0f74",
+            "cosine": 0.42760321497917175
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/epistemics/superforecasting.md",
+            "sha256": "244e23da68d6a8bb2d542f0a173a030288c8d9babc11abd5536b87d7237af047",
+            "representation_sha256": "1c9013a7b158d93a0fd41700c35d5e3f469e85c99f25003a4be4ae6aa0b1021d",
+            "cosine": 0.4196607172489166
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/mask-wearing-identification.md",
+            "sha256": "2e03aedbba216e4fc4b2d97fc08be6beca09aaa41908eeead041c25a9aac2354",
+            "representation_sha256": "f2b84e0931723f9ef2aad52733bc38437359d9b70a918b14c56de59b25de5813",
+            "cosine": 0.4163890480995178
+          }
+        ]
+      },
+      {
+        "query": "Repeated annotations of the same image are not independent evidence. A revised human reference invalidates prior review completeness; keep historical snapshots and do not double count exports.",
+        "results": [
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/simple-copy-paste.md",
+            "sha256": "4e0b54b0fbc0d069bb04b679cf4ea8ebbd59f00e949fe4b12ce23d6ff1e20c17",
+            "representation_sha256": "2fecffcbbe7879e2d82b4461c5fef7b982758c0d48945ca29767c387b7d2e5e0",
+            "cosine": 0.5222563743591309
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/chain-of-talkers-annotation.md",
+            "sha256": "8567907403eedfcf7b1a565015a4b778b34d1084f459fee6a8832b2e5ce94be1",
+            "representation_sha256": "66d6a81f1031bfd066ec77a1781b3c1e3582172b0cbc26b158b7c4bbaa1c6b19",
+            "cosine": 0.5020895600318909
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/forensic-face-matching.md",
+            "sha256": "ed37f16da8cb71b2d020af30b39aee39a9f8b7bc5506fb53253dcd63cc824a1c",
+            "representation_sha256": "bda09166ab6434f3c583c52f11de0d1bc74d2d1aeac4106e7fe9be8595459083",
+            "cosine": 0.4891695976257324
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/analyzing-video-sequences-humans.md",
+            "sha256": "8c39e9cb70460b0f735b66506f0f096578ac363e707a25ec8fbe9b26d84a0c8a",
+            "representation_sha256": "efc41c771e5ac9c43246f4f38d27c8e310821bac242644bc1b269137aa8da5f9",
+            "cosine": 0.4771278500556946
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md",
+            "sha256": "f001564e26f7af485f6046e33ae4491123a26f35fa18b8089ac00d97333fa13f",
+            "representation_sha256": "a126e66abd7fb99218d8caf9ed5a6f7b4cd935b147e4091acdba723c81d94d1e",
+            "cosine": 0.46490687131881714
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/depiction/berger-understanding-a-photograph.md",
+            "sha256": "579e4c5838aaab77a78c82a16b65fa3e84da37fbd9c5d0dd4d1d315eee587eba",
+            "representation_sha256": "d8c7a3ee958ef482327ff169bdcf936e49a5a3ebeba3b93f831002515ce57349",
+            "cosine": 0.4647274613380432
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/depiction/berger-permanent-red.md",
+            "sha256": "31d14ff3fa72bafb1fa7fade4b5189a7ea534739583ddbe0796d85556ced504f",
+            "representation_sha256": "f9d78a72ec4884f6888fd936d24378894ed02ba999c660b5a0ddbd7ca4891768",
+            "cosine": 0.46239739656448364
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/human-in-the-loop-ml.md",
+            "sha256": "db36e3aba05bcb6f710b4f6543cfe84fb55c86b7dbb99fdec552e0f1d8239f30",
+            "representation_sha256": "f50b7e228e614174704ca34e8afc9d13bec5e93b2b73efef98ce5a3049d7a30a",
+            "cosine": 0.45921510457992554
+          }
+        ]
+      },
+      {
+        "query": "Open-ended image caption evaluation needs a human rubric or validated preference judge. Semantic embedding similarity is not an oracle for hallucination truth and judge bias must be measured.",
+        "results": [
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/chain-of-talkers-annotation.md",
+            "sha256": "8567907403eedfcf7b1a565015a4b778b34d1084f459fee6a8832b2e5ce94be1",
+            "representation_sha256": "66d6a81f1031bfd066ec77a1781b3c1e3582172b0cbc26b158b7c4bbaa1c6b19",
+            "cosine": 0.5613296627998352
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/depiction/sontag-on-photography.md",
+            "sha256": "2d196ea958aafd1a357f59322e447eb71861f759690add4626b79561c68b2157",
+            "representation_sha256": "0791d23b0127ab4b199861d08f7316b27e2c183e653e775b15248cc4603ca5c9",
+            "cosine": 0.5257651805877686
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/component-ensemble-occluded-fer.md",
+            "sha256": "f73e0bbb86b75795dd32c7bab91f7a3433c050bcf459f837dd17e72cb677a515",
+            "representation_sha256": "fc4b085ad07f65aed4aef53903e2a5767e5fd996894c97237ba61cead900c1c2",
+            "cosine": 0.5002404451370239
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/occlusion-aware-labels.md",
+            "sha256": "025fa02d4e08ed6c39c81b12908265e263f7938a3cf69024b214c57bf60a2d29",
+            "representation_sha256": "630807b9f00fff40c428a06eb8d228e1cb8e8b957cbb5d03c0690e12afd3f3c5",
+            "cosine": 0.4935651421546936
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/s3pot-occlusion-segmentation.md",
+            "sha256": "0c5c099d9cce2610426e0900db6ddf3d2dd25bcd2000d2c48ec59337fb493cc1",
+            "representation_sha256": "2b856243fb31e64b5279eebc55497b9e07347c0b24bc4481f456f668583307be",
+            "cosine": 0.4847690463066101
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md",
+            "sha256": "f001564e26f7af485f6046e33ae4491123a26f35fa18b8089ac00d97333fa13f",
+            "representation_sha256": "a126e66abd7fb99218d8caf9ed5a6f7b4cd935b147e4091acdba723c81d94d1e",
+            "cosine": 0.48161232471466064
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/pepe-medical-test-evaluation.md",
+            "sha256": "3f861316819ddffda5961e53b60f4072fba44d4ce6fc1f491fe81697bc69b9ea",
+            "representation_sha256": "b1e0d5ff665e5a448c4056705005ec7e43becce7c1b3af5dfbe887f2466f36e4",
+            "cosine": 0.47876864671707153
+          },
+          {
+            "path": "/Users/daniel/Development/heuristics-canon-research/distilled/ml-systems/surveillance-fiqa.md",
+            "sha256": "01d77bc5107b1e5ece172525a674d6fb933f4ce40808a4f27c96582417f283b1",
+            "representation_sha256": "27ffed1441a09529e7faf83cd0282e12fa530191c49aa39ac4feec37b039da7f",
+            "cosine": 0.47741466760635376
+          }
+        ]
+      }
+    ]
+  },
+  "canon_verification": {
+    "release": "0.26.2",
+    "published_files": {
+      "lexicons/ml-systems.md": "1dfbd751c2d52d223b0ae617da7f709dd29970f37ddd9bcdc0eb09a7e839cf20",
+      "lexicons/epistemics.md": "866f67e6fe626671999bc9debd3774188c23f7b82905ea7d5e008a08dd5f7f07",
+      "lexicons/accessibility.md": "4f6dba17a0026ba1971fba0bda21f35b63882a92cccf47f45a90f0f87267a246",
+      "PRINCIPLES.md": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+      "SOURCES.md": "d15d36f98434379a9e7b78ad7365360e70de9be546226c2d71575752e00762c7",
+      "reasoning/context-obedience-is-a-separate-capability.md": "26c8ab64970a0066b1e74810e4acae45f1a435b95d117ce27891db408b33661d",
+      "reasoning/controlled-vocabulary-caps-hallucination.md": "25e16382b355b2d7529936a4acdcd81a5cdc7c09d8b08992574e2348155f746b",
+      "reasoning/margin-and-design-effect-before-the-run.md": "186c94c2b0ba88897cebea26c39752d6f0e87bbab8bff3ec1fa9aace79f85aad",
+      "reasoning/quantization-delta-on-the-failure-metric.md": "33aaa9c49dc335cf4a92d2d1c0f908bfb6ee3a3c9f1eff8944ad2c71c7f01361",
+      "reasoning/signal-density-not-length.md": "ffa2ed92c7ed43bf6f3feb84e7cc0a2cc59b3bc584c3d111f7fcdd09ea8e1ca3"
+    },
+    "rules": [
+      "EVAL-11",
+      "EVAL-13",
+      "EVAL-14",
+      "PROV-01",
+      "EXP-23"
+    ],
+    "conclusions": [
+      "Use explicit blinded human top-choice judgments for descriptive preference rankings.",
+      "Bind every choice to exact image/output keys and hashes; do not join by semantic similarity.",
+      "Separate two- and three-candidate rosters; ties, unusable, unjudgeable and missing remain explicit.",
+      "Two exports of the same 192 annotations are not 384 independent examples.",
+      "operator-reviews2 marks all historical reviews pending; do not promote those to confirmed assessments or current-model votes.",
+      "Semantic comparison to historical preferred text is a diagnostic, not an image-truth oracle or a validated model-quality ranking."
+    ]
+  },
+  "conclusion": {
+    "will_new_export_support_preference_ranking": true,
+    "conditions": "Choose preferred A/B/C (or explicit tie/unusable/unjudgeable), export ranking JSON, and inspect per-roster model wins/rates with coverage. Absolute factual accuracy still uses separately confirmed reviews.",
+    "can_existing_reference_files_rank_current_three_models": false,
+    "existing_history": "The first snapshot preserves 180 completed historical assessments and 88 within-model lexicon judgments. The second retains the same 192 judgment contents with 0 completed flags and 0 active preferences. Keep these snapshots distinct rather than summing or silently merging them."
+  }
+}

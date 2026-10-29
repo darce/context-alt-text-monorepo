@@ -155,3 +155,86 @@ Node tests use `node --test` (node 22 on the VM, no npm deps) and are run throug
 `test_cmd` is `LC_ALL=C uv run --no-project --with pytest python -m pytest benchmarks/tests/<wrapper>.py -q -p no:cacheprovider`
 (L4: its own `benchmarks/tests/test_build_decision_report.py`). Each lane shows its new
 test red on the base and green after [TEST-15].
+
+## Evaluation method and review navigation (29 October 2026)
+
+`evaluation-method.html` is the offline operational review protocol; the toolbar's
+**How to evaluate each model** guide links to it. `evaluation-research.json`
+records Canon v0.26.2 digest verification, inspected original distillations,
+local semantic retrieval and source limitations. The builder copies these
+auxiliary files when present and includes their hashes in the build receipt.
+
+The protocol uses image-first reference facts, separate factual-support and
+essential-coverage assessments, explicit relevant OCR, and purpose-specific
+utility checks. It keeps lexicon OFF/ON preference separate from absolute model
+quality. It treats existing historical annotations as retained evidence under
+their original rubric, and proposes human calibration and a fresh held-out
+comparison before any new confirmatory winner claim. It does not change the
+registered decision rule, its omission policy, manifest blocks or saved reviews.
+
+The toolbar names its modes **Lexicon A/B preference** and **Three-model blind
+review (A/B/C)**. The latter uses Candidate A/B/C position labels and retains the
+registered 86-cell cohort. **Show historical reviews** exits either blind mode,
+restores all columns, and focuses the first historical column without changing
+annotations. Historical and caption-only evidence remain outside that cohort.
+
+The optional Chrome regression is executable with:
+
+```sh
+uv run --no-project --with pytest --with playwright python -m pytest benchmarks/tests/test_drv_review_navigation_browser.py -q
+```
+
+It uses system Chrome on macOS and Playwright Chromium elsewhere (install that
+browser separately if needed). It covers the research guide and offline method
+link, A/B preference persistence, A/B/C labels, visible historical navigation and
+annotation preservation. The existing Node and deterministic-builder tests
+remain the fast checks.
+
+
+## Explicit model preferences and ranking export
+
+The A/B/C view includes one **Preferred description** dropdown per image: an
+explicit candidate key, Tie / no preference among all, All unusable, or Cannot
+judge. An image with two candidates offers A/B and is ranked separately from
+three-candidate images. The old lexicon A/B selectors remain unchanged.
+
+Raw annotation exports retain their existing root schema and add the optional
+`model_preferences` extension, versioned as `description-model-preferences/v1`.
+It records the comparison filter and one ballot per image, including ordered
+candidate keys, selected key/choice, reviewer, seed and timestamp. All candidate
+outputs receive hash-bound draft records when needed; a choice never promotes
+an output to Reviewed. The current reader accepts old exports with no extension;
+older readers fail on unknown fields rather than silently dropping new ballots.
+Seed/reviewer changes are refused after recorded model preferences, and imports
+refuse conflicting ballots. Blank removes a ballot; changing a choice replaces
+that image's ballot, so repeated exports cannot inflate the sample.
+
+**Export ranking JSON** produces `description-review-ranking/v1`: exact manifest,
+comparison rule, raw annotations and the recomputable `preference_ranking`.
+The labelled-mode **Description preference ranking** panel shows the same data.
+Counts rank models within identical physical-model rosters; equal chosen counts
+share rank. Selection rate divides chosen ballots by all judgeable ballots,
+including ties and all-unusable; cannot-judge and unscored are explicit. Without
+any selected candidate, rank is null. These descriptive preference ranks are
+separate from factual quality scores and the pre-registered decision gate.
+
+`ranking-verification.json` audits the two operator-supplied review snapshots:
+all 192 old output records map by source key, image/output hashes and exact
+surface text; judgment content is unchanged apart from completion/reference
+bindings. The first file contains 180 completed historical reviews and 88
+lexicon preferences; the second has zero completed reviews and zero preferences.
+They are overlapping snapshots, not 384 independent examples. Neither has model
+preferences or current three-model quality reviews. The audit retains source
+hashes, corpus/rule provenance, local semantic diagnostics and synthetic-only
+export/import checks. Synthetic ballots are never placed in the report seed.
+
+Local semantic comparison uses GTE embeddings of 42 historically preferred
+outputs and 86 current descriptions, comparing only the same images (20 unique
+images supply the anchors). Cosine measures text resemblance to earlier human
+preferences, not visual truth, and does not determine the ranking. Exact joins
+establish lineage; explicit human choices determine preference. Canon v0.26.2
+[EVAL-11] Open-ended tasks need the right scorer, *AI Engineering*;
+[EVAL-13] Pin the judging protocol, *AI Engineering*;
+[EVAL-14] Counterbalance and measure judge bias, *AI Engineering*;
+[PROV-01] Every output walks back to its evidence, *Model Cards* + *AI Engineering*;
+[EXP-23] Pseudoreplication check, *Statistics Done Wrong*, ch. 3.

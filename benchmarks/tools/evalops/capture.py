@@ -19,6 +19,7 @@ import re
 import signal
 import sqlite3
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -135,7 +136,24 @@ class Clock:
 
 def boot_id():
     # Monotonic values are comparable across process restarts only on this boot.
-    return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    if sys.platform == 'linux':
+        authority = 'Linux /proc/sys/kernel/random/boot_id'
+    elif sys.platform == 'darwin':
+        authority = 'Darwin kern.bootsessionuuid'
+    else:
+        raise CaptureError(f'boot identity unsupported platform: {sys.platform}')
+    try:
+        if sys.platform == 'linux':
+            value = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        else:
+            result = subprocess.run(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid'],
+                                    check=True, capture_output=True, text=True, timeout=2)
+            value = result.stdout.strip()
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise CaptureError(f'boot identity unavailable from {authority}: {exc}') from exc
+    require(re.fullmatch(r'[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}', value)
+            is not None, f'boot identity from {authority} is not a UUID')
+    return value if sys.platform == 'linux' else 'darwin:' + value.lower()
 
 
 def code_hashes():

@@ -1,10 +1,15 @@
 # EVALOPS observation capture
 
 This is **observation tooling**, not accepted QC, continuous event capture, native
-accounting success, or a mature replay. Sources 1-2 / `EVALOPS-2-CAPTURE` own only
+accounting success, or a mature replay. Sources 1-3 / `EVALOPS-2-CAPTURE` own only
 `capture.py`, its focused tests, and this runbook. No production capture was
-started by this implementation. The coordinator must pass the real independent
-pipeline gate and check host load/source compatibility before starting runtime.
+started by this implementation. Source 2 passed gate 1, but the coordinator's
+actual Mac launch failed before its first observation because boot identity
+unconditionally read Linux `/proc`. Failed runtime `77492` and
+`/Volumes/Butter/CodexEvidence/acx-evalops-replay-20261029T200902Z` are retained;
+no production seven-day observation started. Source 3 corrects that platform
+defect. The coordinator must verify the exact imported bytes on Mac, pass the
+independent pipeline gate and check host load/source compatibility before runtime.
 Human 100-label adjudication, gold and QC are unavailable; do not read
 `findings-v0-prelabels.jsonl` or infer acceptance from a successful CLI exit.
 
@@ -120,8 +125,8 @@ Each poll opens a URI with exactly `mode=ro`, sets `query_only=ON`, uses a bound
 busy timeout/progress-handler deadline, and closes one consistent read
 transaction promptly. There are no SQL writes, checkpoints, vacuums, full DB
 copies, network calls, classification models or native accounting operations.
-Only a fixed DB header, file identity and sidecar file types are read outside
-SQLite; full DB/sidecar hashing per poll is avoided. In WAL mode the single read
+Outside SQLite, source access is limited to a fixed DB header, file identity
+and sidecar file types; full DB/sidecar hashing per poll is avoided. In WAL mode the single read
 transaction is one snapshot: commits made while a poll reads are seen by the
 next poll, never spliced into the current one.
 
@@ -169,6 +174,18 @@ time is not independently proven. The first UTC or monotonic deadline ends the
 active run. Missed cadence is recorded rather than hidden by moving the next
 poll relative to a slow read. Timing, source replacement/schema/read/lock
 failures and size overflows cannot produce an acceptance claim.
+
+**Boot identity (source 3 correction).** Linux retains the stripped UUID from
+`/proc/sys/kernel/random/boot_id`. Darwin uses only
+`/usr/sbin/sysctl -n kern.bootsessionuuid`, which the coordinator checked on the
+target Mac (exit 0, 36-character UUID). The collector invokes that exact command
+without a shell, with a two-second timeout and required successful exit. Its
+nonempty output must be a hyphenated UUID, normalized as `darwin:<lowercase UUID>`.
+Linux UUID output is also validated. Unknown platforms, unreadable identity,
+nonzero exit, malformed output or timeout fail loudly with `CaptureError`;
+there is no fallback authority or fabricated identity. One boot keeps the same
+identity across process restarts; a reboot changes it so resume uses the
+existing reboot/offline-gap path rather than comparing unrelated monotonic clocks.
 
 ## Durable outputs and scorer contract
 
@@ -230,21 +247,34 @@ reset a native subject, or restore an old DB over newer source data. The focused
 stop/resume rehearsal verifies that previous artifact and source bytes survive.
 A deployment rollback against a live source has not been practiced here.
 
-The focused command, on the remote VM only, is:
+The focused suite command, on the remote VM, is:
 
 ```sh
 LC_ALL=C uv run --no-project --with pytest python -m pytest benchmarks/tests/test_evalops_capture.py -q -p no:cacheprovider
 ```
 
-Behavioral RED, scaffold/test hashes and logs are retained in
-`.task-state/tdd/red-evidence.json`; the external coordinator acknowledgement
-binds its SHA256 to MCP test-result `5701`. The source 2 WAL correction RED was
-acknowledged as MCP test-result `5707`; its GREEN evidence is
-`.task-state/tdd/green-evidence.json`. GREEN and deliberate original-scaffold,
-mutation-diff, ledger-hash and read-only-URI controls are retained beside it.
-Those controls restore the fixed bytes; they are test evidence, not quality
-acceptance or a seven-day production trial. No unrelated full suite is needed
-for this bounded slice.
+Prior source 1 RED/ack `5701` and source 2 WAL RED/ack `5707` / GREEN `5708`,
+including their original controls and receipts, remain in coordinator custody.
+Source 3 records its actual behavioral RED command, exit code, source/test hashes
+and logs in `.task-state/tdd/red-evidence.json`, `red.stdout` and `red.stderr`.
+The coordinator's `.task-state/tdd/ack.json` binds that named artifact's SHA256
+to MCP test-result `5709` before the behavior edit. The focused suite GREEN and
+its code/test hashes and acknowledgement are in `green-evidence.json` beside it.
+
+Before any further paid gate, the coordinator runs the following focused test
+on the actual Mac using the exact imported source/test bytes:
+
+```sh
+python -m pytest benchmarks/tests/test_evalops_capture.py -q -p no:cacheprovider -k native_darwin_boot_id
+```
+
+This test skips on Linux. On Darwin it calls the actual native `boot_id()` twice,
+checks the same identity in a fresh Python process, then invokes the actual CLI
+with `--once` against a disposable SQLite fixture and checks the recorded boot
+identity and single observation. It uses no host mocks or live DB. A VM skip or
+mocked Darwin test does not establish native Mac runtime compatibility. Tests
+are not quality acceptance or a seven-day production trial; no unrelated full
+suite is needed for this bounded slice.
 
 ## Decision trace
 
@@ -276,6 +306,15 @@ are inert here and supply no authority for capture decisions.
   *The Art of UNIX Programming*, ch. 1. The deliberate regression controls use
   [TEST-15, Prove the green can go red](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-15),
   *The Pragmatic Programmer*, ch. 9.
+- Source 3 pins Linux identity and exposes the Darwin failure before editing
+  under [TEST-03, Pin current behavior](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-03),
+  *Working Effectively with Legacy Code*, ch. 13; its host-boundary tests use
+  [TEST-19, Mock only non-domain seams](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#test-19),
+  *Clean Code Cookbook*, ch. 20. The native sysctl wait follows
+  [RES-02, Timeout on every blocking call](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/engineering.md#res-02),
+  *Release It!*, ch. 5. The observed Mac boot failure is the measured constraint
+  under [OPS-75, Improve the measured constraint](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/planning.md#ops-75),
+  *The DevOps Handbook*, ch. 2; snapshot, resume and storage contracts stay intact.
 - Future human/judge validation must satisfy
   [EVAL-12, Validate the judge against humans](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#eval-12)
   and [EVAL-13, Pin the judging protocol](https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#eval-13),

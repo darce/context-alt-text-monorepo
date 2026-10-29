@@ -250,6 +250,84 @@ def test_cli_once_real_fixture(db, tmp_path):
     assert report['quality_acceptance'] is False
 
 
+# Exercise the real boot_id: mock only platform and OS I/O, never capture semantics.
+BOOT_UUID = 'd106e40f-3326-4923-969c-13990990d149'
+NEXT_BOOT_UUID = 'ea006dad-79ba-4fa5-9e19-d46bea724bcd'
+BOOT_SYSCTL = ['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid']
+
+
+def test_boot_id_darwin_native_uuid_stability_and_reboot(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    outputs = iter([BOOT_UUID.upper() + '\n', BOOT_UUID + '\n', NEXT_BOOT_UUID + '\n'])
+    calls = []
+    def native(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, next(outputs), '')
+    monkeypatch.setattr(subprocess, 'run', native)
+    first = c.boot_id()
+    assert first == 'darwin:' + BOOT_UUID
+    assert c.boot_id() == first
+    assert c.boot_id() == 'darwin:' + NEXT_BOOT_UUID
+    assert calls == [(BOOT_SYSCTL, dict(check=True, capture_output=True, text=True, timeout=2))] * 3
+
+
+@pytest.mark.parametrize('fault', ['empty', 'malformed', 'uuid_with_junk', 'compact_uuid',
+                                  'unavailable', 'nonzero', 'timeout'])
+def test_boot_id_darwin_refuses_untrusted_identity(monkeypatch, fault):
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    def native(args, **kwargs):
+        if fault == 'unavailable': raise FileNotFoundError('sysctl unavailable')
+        if fault == 'nonzero': raise subprocess.CalledProcessError(1, args, stderr='unknown oid')
+        if fault == 'timeout': raise subprocess.TimeoutExpired(args, 2)
+        value = {'empty':'\n', 'malformed':'not-a-uuid\n',
+                 'uuid_with_junk':BOOT_UUID + '\nextra',
+                 'compact_uuid':BOOT_UUID.replace('-', '')}[fault]
+        return subprocess.CompletedProcess(args, 0, value, '')
+    monkeypatch.setattr(subprocess, 'run', native)
+    with pytest.raises(c.CaptureError, match='(?i)boot identity.*(Darwin|kern.bootsessionuuid)'):
+        c.boot_id()
+
+
+def test_boot_id_linux_preserves_proc_uuid(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    def read(path, *args, **kwargs):
+        assert path == Path('/proc/sys/kernel/random/boot_id')
+        return BOOT_UUID + '\n'
+    def unexpected(*args, **kwargs):
+        pytest.fail('Linux boot identity must not launch sysctl')
+    monkeypatch.setattr(Path, 'read_text', read)
+    monkeypatch.setattr(subprocess, 'run', unexpected)
+    assert c.boot_id() == BOOT_UUID
+
+
+def test_boot_id_unknown_platform_fails_loudly(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'unsupported')
+    with pytest.raises(c.CaptureError, match='(?i)boot identity.*unsupported'):
+        c.boot_id()
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='actual native Mac verification only')
+def test_native_darwin_boot_id_and_disposable_cli_once(db, tmp_path):
+    # No host mocks: coordinator runs these exact bytes on Mac, never a live DB.
+    identity = c.boot_id()
+    assert identity.startswith('darwin:')
+    assert c.boot_id() == identity
+    child = subprocess.run([sys.executable, '-c', 'import capture; print(capture.boot_id())'],
+                           cwd=ROOT/'benchmarks/tools/evalops',
+                           capture_output=True, text=True, timeout=10)
+    assert child.returncode == 0, child.stderr
+    assert child.stdout.strip() == identity
+    out = tmp_path / 'native-capture'
+    result = subprocess.run([sys.executable, str(ROOT/'benchmarks/tools/evalops/capture.py'),
+                             '--db', str(db), '--output-dir', str(out), '--once'],
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report['observations'] == 1
+    assert report['quality_acceptance'] is False
+    assert json.loads((out/'run.json').read_text())['boot_id'] == identity
+
+
 # Changed contract (decision 20657): the native producer runs WAL. A healthy WAL source
 # is read through ordinary mode=ro + query_only; SQLite may create/update its normal
 # -wal/-shm auxiliary files for that reader. Logical rows, schema and main-file bytes

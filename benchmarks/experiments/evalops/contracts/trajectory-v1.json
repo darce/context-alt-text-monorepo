@@ -1,0 +1,1476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:altcontext:evalops:trajectory:v1",
+  "title": "WorkBay trajectory consumer contract v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract_version",
+    "profile",
+    "source_refs",
+    "turn_observations",
+    "case",
+    "protocol",
+    "run",
+    "events",
+    "reviews",
+    "accepted_task",
+    "path_protocol",
+    "checks",
+    "coverage",
+    "acceptance",
+    "economics"
+  ],
+  "properties": {
+    "schema_version": {"const": "evalops.trajectory.v1"},
+    "contract_version": {
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Exporter declares the exact supported 1.x contract revision. This schema publishes 1.0.0; later compatible optional fields may be preserved without interpretation."
+    },
+    "profile": {"enum": ["legacy_observation", "controlled_trial"]},
+    "source_refs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}},
+    "case": {"$ref": "#/$defs/case"},
+    "protocol": {"$ref": "#/$defs/protocol"},
+    "run": {"$ref": "#/$defs/run"},
+    "events": {"type": "array", "items": {"$ref": "#/$defs/event"}},
+    "reviews": {"type": "array", "items": {"$ref": "#/$defs/review"}},
+    "accepted_task": {"$ref": "#/$defs/acceptedTask"},
+    "path_protocol": {"$ref": "#/$defs/pathProtocol"},
+    "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}},
+    "coverage": {"$ref": "#/$defs/coverage"},
+    "acceptance": {"$ref": "#/$defs/acceptance"},
+    "economics": {"$ref": "#/$defs/economics"},
+    "turn_observations": {"type": "array", "items": {"$ref": "#/$defs/turnObservation"}}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["ref", "sha256"],
+      "properties": {"ref": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+      "additionalProperties": true,
+      "description": "Immutable, access-controlled artifact. SHA-256 covers the exact referenced bytes, not a URI, query or paraphrase. No secret or unredacted tool payload in this export."
+    },
+    "pin": {
+      "type": "object",
+      "required": ["id", "version", "artifact"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "artifact": {"$ref": "#/$defs/artifact"}
+      },
+      "additionalProperties": true,
+      "description": "A versioned immutable configuration or data manifest; id alone is not a reproducibility pin."
+    },
+    "sourceRef": {
+      "type": "object",
+      "required": ["snapshot_ref", "snapshot_sha256", "entity", "row_id", "record_key"],
+      "properties": {
+        "snapshot_ref": {"type": "string", "minLength": 1},
+        "snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "entity": {"type": "string", "minLength": 1},
+        "row_id": {"type": ["integer", "string"]},
+        "record_key": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Reference to the unchanged source row. IDs are scoped by source snapshot and entity, not globally unique. record_key is the native string ID when available."
+    },
+    "case": {
+      "type": "object",
+      "required": ["case_id", "case_sha256", "dataset", "expected_output_or_rubric", "task_ref", "root_incident_id", "split"],
+      "properties": {
+        "case_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "case_sha256": {"anyOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
+        "dataset": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "expected_output_or_rubric": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "task_ref": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "root_incident_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "split": {"anyOf": [{"enum": ["train", "dev", "test", "quarantine"]}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Null legacy pins do not create an eval case. Group root incidents and repeats before splitting; operational aggregate rows are not independent episodes."
+    },
+    "seed": {
+      "type": "object",
+      "required": ["support", "value"],
+      "properties": {
+        "support": {"enum": ["supported", "not_supported", "unknown"]},
+        "value": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Unknown is not a fixed seed. not_supported must be attested in the protocol artifact; no reproducibility claim from it.",
+      "allOf": [
+        {
+          "if": {"properties": {"support": {"const": "supported"}}},
+          "then": {"properties": {"value": {"not": {"type": "null"}}}},
+          "else": {"properties": {"value": {"type": "null"}}}
+        }
+      ]
+    },
+    "protocol": {
+      "type": "object",
+      "required": ["protocol_id", "protocol_version", "manifest", "prompt", "model", "decoding", "seed", "environment", "judge"],
+      "properties": {
+        "protocol_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "protocol_version": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "prompt": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "model": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "decoding": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "seed": {"$ref": "#/$defs/seed"},
+        "environment": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "judge": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "manifest": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Model manifest pins provider, resolved model/revision and backend; decoding manifest pins all effective settings (temperature, top_p, token caps, stop and reasoning settings). Environment manifest pins source tree, harness/runtime/dependency/fixture identities, OS and provider configuration without credentials. Judge manifest, if used, separately pins model/prompt/rubric/decoding/seed/order handling and human-validation evidence; no current calibration is asserted."
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "trace_id",
+        "parent_run_id",
+        "repeat_id",
+        "repeat_index",
+        "cohort_id",
+        "native_task_id",
+        "backend",
+        "status",
+        "error_class",
+        "times",
+        "latency"
+      ],
+      "properties": {
+        "run_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "trace_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "parent_run_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "repeat_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "repeat_index": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "cohort_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "native_task_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "backend": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "status": {"enum": ["scheduled", "running", "succeeded", "failed", "cancelled", "unknown"]},
+        "error_class": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "times": {"$ref": "#/$defs/times"},
+        "latency": {"$ref": "#/$defs/latency"}
+      },
+      "additionalProperties": true,
+      "description": "IDs assigned once by the native owner. repeat_index is zero based within a frozen cohort. Legacy lane/session/cycle are correlation hints, never synthesized run/trace/repeat identities. Execution succeeded does not imply goal completion or task acceptance."
+    },
+    "times": {
+      "type": "object",
+      "required": ["queued_at", "started_at", "finished_at", "recorded_at", "clock_source"],
+      "properties": {
+        "queued_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "started_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "finished_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "recorded_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "clock_source": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Timezone-aware instants only. Preserve native naive timestamps in source artifacts; normalize only with independently documented timezone. created_at is a record time, not a start or finish."
+    },
+    "latency": {
+      "type": "object",
+      "required": ["queue_seconds", "active_seconds", "total_seconds", "operator_wait_seconds", "measurement_source"],
+      "properties": {
+        "queue_seconds": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "active_seconds": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "total_seconds": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "operator_wait_seconds": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "measurement_source": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Queue is queued_at to started_at; total is queued_at to terminal finish for the same scope/clock. Active excludes queue and separately measured operator wait. Never subtract unknown components or sum overlapping concurrent spans into wall time. Native duration_seconds remains an unclassified observation unless the producer establishes its boundaries."
+    },
+    "usage": {
+      "type": "object",
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+        "usage_source",
+        "accounting_scope"
+      ],
+      "properties": {
+        "input_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "output_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "cached_input_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "reasoning_output_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "total_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "usage_source": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "accounting_scope": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Every key is required; unknown values are null. Zero means measured zero. Preserve native totals rather than calculating them from incomplete components. Cached input and reasoning output may be subsets; provider-specific accounting must establish inclusion before costing. Do not sum the same turn usage again from child tool events."
+    },
+    "price": {
+      "type": "object",
+      "required": [
+        "price_version",
+        "price_manifest",
+        "currency",
+        "effective_at",
+        "unit_tokens",
+        "input_per_unit",
+        "output_per_unit",
+        "cached_input_per_unit",
+        "reasoning_output_per_unit",
+        "estimated_cost",
+        "measured_paid_cost",
+        "paid_cost_evidence"
+      ],
+      "properties": {
+        "price_version": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "price_manifest": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "currency": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "effective_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "unit_tokens": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "input_per_unit": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "output_per_unit": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "cached_input_per_unit": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "reasoning_output_per_unit": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "estimated_cost": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "measured_paid_cost": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "paid_cost_evidence": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Versioned provider/model/currency/effective-date rates and accounting conventions belong in the immutable price manifest. No rates are supplied by current snapshots. Paid cost and token-based estimate are separate. Unknown usage, price, currency, or inclusion conventions make the corresponding estimate null; never substitute a current or invented rate.",
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {"properties": {"input_per_unit": {"not": {"type": "null"}}}},
+              {"properties": {"output_per_unit": {"not": {"type": "null"}}}},
+              {"properties": {"cached_input_per_unit": {"not": {"type": "null"}}}},
+              {"properties": {"reasoning_output_per_unit": {"not": {"type": "null"}}}},
+              {"properties": {"estimated_cost": {"not": {"type": "null"}}}}
+            ]
+          },
+          "then": {
+            "properties": {
+              "price_version": {"not": {"type": "null"}},
+              "price_manifest": {"not": {"type": "null"}},
+              "currency": {"not": {"type": "null"}},
+              "effective_at": {"not": {"type": "null"}},
+              "unit_tokens": {"not": {"type": "null"}}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"measured_paid_cost": {"not": {"type": "null"}}}},
+          "then": {"properties": {"currency": {"not": {"type": "null"}}, "paid_cost_evidence": {"not": {"type": "null"}}}}
+        }
+      ]
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "run_id",
+        "trace_id",
+        "parent_event_id",
+        "sequence",
+        "kind",
+        "tool",
+        "redacted_args",
+        "redacted_result",
+        "redaction_version",
+        "status",
+        "error_class",
+        "retry_of_event_id",
+        "times",
+        "latency",
+        "usage",
+        "price",
+        "source_refs"
+      ],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+        "trace_id": {"type": "string", "minLength": 1},
+        "parent_event_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "sequence": {"type": "integer", "minimum": 0},
+        "kind": {"enum": ["tool", "model", "review", "state_transition"]},
+        "tool": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "redacted_args": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "redacted_result": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "redaction_version": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "status": {"enum": ["queued", "running", "succeeded", "failed", "cancelled", "unknown"]},
+        "error_class": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "retry_of_event_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "times": {"$ref": "#/$defs/times"},
+        "latency": {"$ref": "#/$defs/latency"},
+        "usage": {"$ref": "#/$defs/usage"},
+        "price": {"$ref": "#/$defs/price"},
+        "source_refs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}}
+      },
+      "additionalProperties": true,
+      "description": "One native event per attempt. A tool event requires its actual native tool name. Argument/result refs stay null when unavailable, with missingness and unknown argument/goal checks; do not fabricate payloads to satisfy a schema. Any supplied redacted artifact requires redaction_version. Sequence is unique and monotone per trace as recorded, not proof of causal order across concurrent branches.",
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "tool"}}},
+          "then": {"properties": {"tool": {"not": {"type": "null"}}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "succeeded"}}},
+          "then": {"properties": {"error_class": {"type": "null"}}}
+        },
+        {
+          "if": {
+            "anyOf": [
+              {"properties": {"redacted_args": {"not": {"type": "null"}}}},
+              {"properties": {"redacted_result": {"not": {"type": "null"}}}}
+            ]
+          },
+          "then": {"properties": {"redaction_version": {"not": {"type": "null"}}}}
+        }
+      ]
+    },
+    "blockingFinding": {
+      "type": "object",
+      "required": [
+        "finding_id",
+        "original_finding_id",
+        "original_source",
+        "original_review_run_id",
+        "affected_action",
+        "validity",
+        "disposition",
+        "evidence",
+        "adjudication"
+      ],
+      "properties": {
+        "finding_id": {"type": "string", "minLength": 1},
+        "original_finding_id": {"type": "string", "minLength": 1},
+        "original_source": {"type": "string", "minLength": 1},
+        "original_review_run_id": {"type": "string", "minLength": 1},
+        "affected_action": {"type": "string", "minLength": 1},
+        "validity": {"enum": ["defect", "not_defect", "unclear", "unknown"]},
+        "disposition": {"enum": ["blocks_affected_action", "followup", "nonblocking", "unknown"]},
+        "evidence": {"$ref": "#/$defs/artifact"},
+        "adjudication": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Keep defect validity separate from action-scoped blocking policy. A repeated finding retains its original identity, source, authority and counters; a new export cannot relabel it a new source1 finding."
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "native_row_id",
+        "native_review_run_id",
+        "task_ref",
+        "subject_path",
+        "subject_kind",
+        "review_mode",
+        "canonical_subject_id",
+        "parent_review_run_id",
+        "cycle",
+        "original_source",
+        "original_review_run_id",
+        "original_authority_ref",
+        "native_counters_ref",
+        "blocking_findings",
+        "judge_protocol",
+        "agent",
+        "model",
+        "model_label",
+        "branch",
+        "commit_sha",
+        "session",
+        "verdict",
+        "verdict_decision_ref",
+        "reviewed_at",
+        "recorded_at",
+        "source_refs"
+      ],
+      "properties": {
+        "native_row_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        "native_review_run_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "task_ref": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "subject_path": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "subject_kind": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "review_mode": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "canonical_subject_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "parent_review_run_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "cycle": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "original_source": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "original_review_run_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "original_authority_ref": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "native_counters_ref": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "blocking_findings": {"anyOf": [{"type": "array", "items": {"$ref": "#/$defs/blockingFinding"}}, {"type": "null"}]},
+        "judge_protocol": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "agent": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "model": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "model_label": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "branch": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "commit_sha": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "session": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "verdict": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "verdict_decision_ref": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "reviewed_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "recorded_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "source_refs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}}
+      },
+      "additionalProperties": true,
+      "description": "native_review_run_id is a review identity, not eval run_id. subject_path/kind/branch/commit are raw observations, not canonical identity. Nullable blocking_findings=null means unsupported, [] means affirmatively measured none. Retain native verdict vocabulary without upgrading pass to accepted task or gold."
+    },
+    "acceptedTask": {
+      "type": "object",
+      "required": [
+        "native_task_id",
+        "task_ref",
+        "acceptance_id",
+        "status",
+        "accepted_at",
+        "authority_ref",
+        "included_run_ids",
+        "included_review_run_ids",
+        "join_status",
+        "join_evidence"
+      ],
+      "properties": {
+        "native_task_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "task_ref": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "acceptance_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "status": {"enum": ["accepted", "rejected", "pending", "unknown"]},
+        "accepted_at": {
+          "anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"}, {"type": "null"}]
+        },
+        "authority_ref": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "included_run_ids": {"anyOf": [{"type": "array", "items": {"type": "string", "minLength": 1}}, {"type": "null"}]},
+        "included_review_run_ids": {"anyOf": [{"type": "array", "items": {"type": "string", "minLength": 1}}, {"type": "null"}]},
+        "join_status": {"enum": ["verified", "unresolved", "ambiguous", "unavailable"]},
+        "join_evidence": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Join only through the existing native owner explicit task/run/review links and acceptance receipt, including failed retries and all reviews. task_ref, lane_id, session, subject_path and matching verdicts alone cannot prove membership or acceptance.",
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "accepted"}}},
+          "then": {
+            "properties": {
+              "native_task_id": {"not": {"type": "null"}},
+              "acceptance_id": {"not": {"type": "null"}},
+              "accepted_at": {"not": {"type": "null"}},
+              "authority_ref": {"not": {"type": "null"}},
+              "included_run_ids": {"not": {"type": "null"}},
+              "included_review_run_ids": {"not": {"type": "null"}},
+              "join_evidence": {"not": {"type": "null"}},
+              "join_status": {"const": "verified"}
+            }
+          }
+        }
+      ]
+    },
+    "pathNode": {
+      "type": "object",
+      "required": ["node_id", "tool_selector", "min_occurrences", "max_occurrences"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "tool_selector": {"type": "string", "minLength": 1},
+        "min_occurrences": {"type": "integer", "minimum": 0},
+        "max_occurrences": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true,
+      "description": "Selectors are exact native tool names or explicit allowlists resolved in the pinned case, never substring matches on prose. Bounds must satisfy min <= max."
+    },
+    "pathEdge": {
+      "type": "object",
+      "required": ["before_node_id", "after_node_id", "when"],
+      "properties": {
+        "before_node_id": {"type": "string", "minLength": 1},
+        "after_node_id": {"type": "string", "minLength": 1},
+        "when": {"enum": ["both_present", "required"]}
+      },
+      "additionalProperties": true,
+      "description": "before precedes after causally. both_present constrains only selected alternatives; required requires both nodes. Every selected graph must be acyclic."
+    },
+    "alternative": {
+      "type": "object",
+      "required": ["group_id", "node_ids", "selection"],
+      "properties": {
+        "group_id": {"type": "string", "minLength": 1},
+        "node_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+        "selection": {"enum": ["exactly_one", "at_least_one"]}
+      },
+      "additionalProperties": true,
+      "description": "Each selected alternative remains subject to its argument, recovery and final-goal checks."
+    },
+    "assertion": {
+      "type": "object",
+      "required": ["check_id", "verifier", "expected_evidence", "required"],
+      "properties": {
+        "check_id": {"type": "string", "minLength": 1},
+        "verifier": {"$ref": "#/$defs/pin"},
+        "expected_evidence": {"$ref": "#/$defs/artifact"},
+        "required": {"type": "boolean"}
+      },
+      "additionalProperties": true,
+      "description": "Verifier and expectation are pinned outside the evaluated agent. Tool argument checks use redacted artifacts with sufficient observable fields; inaccessible evidence is unknown, not pass."
+    },
+    "pathProtocol": {
+      "type": "object",
+      "required": [
+        "pin",
+        "nodes",
+        "precedence_edges",
+        "alternatives",
+        "argument_invariants",
+        "recovery_checks",
+        "final_goal_checks",
+        "forbidden_effect_checks",
+        "max_tool_attempts",
+        "max_unchanged_retries",
+        "max_automatic_reviews_unchanged",
+        "extension_authority"
+      ],
+      "properties": {
+        "pin": {"anyOf": [{"$ref": "#/$defs/pin"}, {"type": "null"}]},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/pathNode"}},
+        "precedence_edges": {"type": "array", "items": {"$ref": "#/$defs/pathEdge"}},
+        "alternatives": {"type": "array", "items": {"$ref": "#/$defs/alternative"}},
+        "argument_invariants": {"type": "array", "items": {"$ref": "#/$defs/assertion"}},
+        "recovery_checks": {"type": "array", "items": {"$ref": "#/$defs/assertion"}},
+        "final_goal_checks": {"type": "array", "items": {"$ref": "#/$defs/assertion"}},
+        "forbidden_effect_checks": {"type": "array", "items": {"$ref": "#/$defs/assertion"}},
+        "max_tool_attempts": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "max_unchanged_retries": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "max_automatic_reviews_unchanged": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "extension_authority": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Case-specific declarative input for the existing consumer, not a scheduler. Permit any legal topological order, allowed extra verification, and selected legal alternatives. Do not require one exact tool string sequence or penalize solely by call count. Required final-goal checks examine external final state; an agent narrative/verdict or test_traces alone is insufficient. Bounds are finite and preregistered. Default automatic review budget on unchanged code is at most two; extensions require independent finite authorization retaining the native subject and counters. Logical DAG independence never sets concurrent capacity.",
+      "allOf": [
+        {
+          "if": {"properties": {"max_automatic_reviews_unchanged": {"type": "integer", "minimum": 3}}},
+          "then": {"properties": {"extension_authority": {"not": {"type": "null"}}}}
+        }
+      ]
+    },
+    "check": {
+      "type": "object",
+      "required": ["check_id", "kind", "status", "evidence", "reason"],
+      "properties": {
+        "check_id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["path", "argument", "recovery", "final_goal", "forbidden_effect"]},
+        "status": {"enum": ["pass", "fail", "unknown", "not_evaluated"]},
+        "evidence": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "reason": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {"properties": {"evidence": {"not": {"type": "null"}}}}
+        }
+      ]
+    },
+    "missing": {
+      "type": "object",
+      "required": ["path", "reason", "source_refs", "detail"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "reason": {
+          "enum": [
+            "source_null",
+            "unsupported",
+            "not_collected",
+            "redacted",
+            "ambiguous_join",
+            "unknown_timezone",
+            "not_applicable",
+            "capture_gap"
+          ]
+        },
+        "source_refs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}},
+        "detail": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true,
+      "description": "path is a JSON Pointer in this export. Describe every null/unsupported required measurement and each incomplete join. Do not infer absent events or turn rows from gaps in numeric row IDs."
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "population",
+        "trajectory_status",
+        "capture_evidence",
+        "expected_event_count",
+        "observed_event_count",
+        "missingness",
+        "gaps"
+      ],
+      "properties": {
+        "population": {"const": "handoff.db operational telemetry; not application production traffic"},
+        "trajectory_status": {"enum": ["partial", "complete", "unknown"]},
+        "capture_evidence": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "expected_event_count": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "observed_event_count": {"type": "integer", "minimum": 0},
+        "missingness": {"type": "array", "items": {"$ref": "#/$defs/missing"}},
+        "gaps": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
+      },
+      "additionalProperties": true,
+      "description": "Complete requires native producer start/terminal boundaries, all included attempts and evidence of coverage, not merely a nonempty array or a successful export. [] events with unknown expected count never proves zero tool calls.",
+      "allOf": [
+        {
+          "if": {"properties": {"trajectory_status": {"const": "complete"}}},
+          "then": {
+            "properties": {"capture_evidence": {"not": {"type": "null"}}, "expected_event_count": {"not": {"type": "null"}}}
+          }
+        }
+      ]
+    },
+    "checklistItem": {
+      "type": "object",
+      "required": ["id", "status", "evidence", "reason"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["pass", "fail", "unknown", "not_evaluated", "not_applicable"]},
+        "evidence": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "reason": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "A pass requires inspectable evidence. not_applicable requires an independently justified scope exemption; it cannot waive required goal-state, owner or provenance checks.",
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {"properties": {"evidence": {"not": {"type": "null"}}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "not_applicable"}}},
+          "then": {"properties": {"evidence": {"not": {"type": "null"}}, "reason": {"not": {"type": "null"}}}}
+        }
+      ]
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["checklist", "goal_status", "runtime_status", "owner_acceptance_ref"],
+      "properties": {
+        "checklist": {
+          "type": "object",
+          "required": [
+            "schema_and_version",
+            "source_mapping_and_nulls",
+            "protocol_pins",
+            "native_owner_compatibility",
+            "coverage_and_attempts",
+            "review_authority_and_budget",
+            "permitted_paths_and_invariants",
+            "external_final_goal",
+            "accepted_task_join",
+            "usage_price_and_latency",
+            "judge_validation",
+            "runtime_acceptance"
+          ],
+          "properties": {
+            "schema_and_version": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "schema_and_version"}}}],
+              "description": "Validate JSON, required keys, types and supported contract major version."
+            },
+            "source_mapping_and_nulls": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "source_mapping_and_nulls"}}}],
+              "description": "Verify snapshot hashes, row identity, nulls and timezone handling."
+            },
+            "protocol_pins": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "protocol_pins"}}}],
+              "description": "Verify immutable case/dataset/prompt/model/decoding/seed/environment/repeat/cohort pins."
+            },
+            "native_owner_compatibility": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "native_owner_compatibility"}}}],
+              "description": "Obtain WorkBay native owner acknowledgement and additive compatibility evidence; addendum alone is not acceptance."
+            },
+            "coverage_and_attempts": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "coverage_and_attempts"}}}],
+              "description": "Verify trace boundaries, all retries/reviews and capture gaps."
+            },
+            "review_authority_and_budget": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "review_authority_and_budget"}}}],
+              "description": "Verify canonical subject, parents, cycle, original source, finding provenance and retained native counters."
+            },
+            "permitted_paths_and_invariants": {
+              "allOf": [
+                {"$ref": "#/$defs/checklistItem"},
+                {"properties": {"id": {"const": "permitted_paths_and_invariants"}}}
+              ],
+              "description": "Check case partial order, alternatives, argument invariants, bounded retries and recovery."
+            },
+            "external_final_goal": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "external_final_goal"}}}],
+              "description": "Verify required independent final-state and forbidden-effect assertions."
+            },
+            "accepted_task_join": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "accepted_task_join"}}}],
+              "description": "Verify native acceptance receipt and complete task/run/review membership."
+            },
+            "usage_price_and_latency": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "usage_price_and_latency"}}}],
+              "description": "Report coverage of every usage, pricing and queue/active/total latency component; keep unknown economics null."
+            },
+            "judge_validation": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "judge_validation"}}}],
+              "description": "If a judge gates outcomes, require blinded independent human validation and pinned judge protocol. Assisted labels and agreement alone are insufficient."
+            },
+            "runtime_acceptance": {
+              "allOf": [{"$ref": "#/$defs/checklistItem"}, {"properties": {"id": {"const": "runtime_acceptance"}}}],
+              "description": "Obtain native owner runtime evidence separately from schema validity and baseline runner success."
+            }
+          },
+          "additionalProperties": true
+        },
+        "goal_status": {"enum": ["passed", "failed", "unknown", "not_evaluated"]},
+        "runtime_status": {"enum": ["accepted", "rejected", "unknown", "not_evaluated"]},
+        "owner_acceptance_ref": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Required protocol checklist, not claimed results. Default to unknown/not_evaluated until evidence exists. Missing evidence holds only the affected acceptance action under native policy; this contract creates no generic merge blocker or new review engine.",
+      "allOf": [
+        {
+          "if": {"properties": {"goal_status": {"const": "passed"}}},
+          "then": {
+            "properties": {
+              "checklist": {
+                "properties": {
+                  "coverage_and_attempts": {"properties": {"status": {"const": "pass"}, "evidence": {"not": {"type": "null"}}}},
+                  "permitted_paths_and_invariants": {"properties": {"status": {"const": "pass"}, "evidence": {"not": {"type": "null"}}}},
+                  "external_final_goal": {"properties": {"status": {"const": "pass"}, "evidence": {"not": {"type": "null"}}}}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"runtime_status": {"const": "accepted"}}},
+          "then": {
+            "properties": {
+              "owner_acceptance_ref": {"not": {"type": "null"}},
+              "checklist": {
+                "properties": {
+                  "native_owner_compatibility": {"properties": {"status": {"const": "pass"}, "evidence": {"not": {"type": "null"}}}},
+                  "runtime_acceptance": {"properties": {"status": {"const": "pass"}, "evidence": {"not": {"type": "null"}}}}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "economics": {
+      "type": "object",
+      "required": [
+        "currency",
+        "all_attempts_cost",
+        "accepted_task_count",
+        "cost_per_accepted_task",
+        "task_latency",
+        "coverage_report"
+      ],
+      "properties": {
+        "currency": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "all_attempts_cost": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "accepted_task_count": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "cost_per_accepted_task": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "task_latency": {"$ref": "#/$defs/latency"},
+        "coverage_report": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      },
+      "additionalProperties": true,
+      "description": "Compute only over a fixed cohort with verified native accepted-task membership and all attempts/reviews, including failures, no duplicate usage, compatible price versions/currency and known coverage. Sum known costs as explicitly partial subtotals in the coverage report; the complete total remains null if any included cost is unknown. Zero accepted tasks makes cost_per_accepted_task null (undefined), never zero. Quantiles require observed task durations and report missing/excluded counts; turn durations are not end-user latency.",
+      "allOf": [
+        {
+          "if": {"properties": {"accepted_task_count": {"const": 0}}},
+          "then": {"properties": {"cost_per_accepted_task": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"cost_per_accepted_task": {"not": {"type": "null"}}}},
+          "then": {
+            "properties": {
+              "accepted_task_count": {"type": "integer", "minimum": 1},
+              "all_attempts_cost": {"not": {"type": "null"}},
+              "currency": {"not": {"type": "null"}},
+              "coverage_report": {"not": {"type": "null"}}
+            }
+          }
+        }
+      ]
+    },
+    "turnObservation": {
+      "type": "object",
+      "required": [
+        "id",
+        "task_ref",
+        "lane_id",
+        "session",
+        "cycle",
+        "phase",
+        "backend",
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+        "usage_source",
+        "created_at",
+        "duration_seconds",
+        "source_ref"
+      ],
+      "properties": {
+        "id": {"type": "integer"},
+        "task_ref": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "lane_id": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "session": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "cycle": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "phase": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "backend": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "model": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "input_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "output_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "cached_input_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "reasoning_output_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "total_tokens": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "usage_source": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "created_at": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "duration_seconds": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "source_ref": {"$ref": "#/$defs/sourceRef"}
+      },
+      "additionalProperties": true,
+      "description": "Optional projection of an unchanged native turn_metrics row plus its source_ref. Native created_at remains the raw string, including unknown timezone. Preserve all nulls and native totals. This is a turn observation, never an eval event, complete trajectory, model pin or classified latency. An empty projection array says no rows projected, not no activity. No new producer or store is created."
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"profile": {"const": "controlled_trial"}}},
+      "then": {
+        "properties": {
+          "case": {
+            "properties": {
+              "case_id": {"not": {"type": "null"}},
+              "case_sha256": {"not": {"type": "null"}},
+              "dataset": {"not": {"type": "null"}},
+              "expected_output_or_rubric": {"not": {"type": "null"}},
+              "task_ref": {"not": {"type": "null"}},
+              "split": {"not": {"type": "null"}}
+            }
+          },
+          "protocol": {
+            "properties": {
+              "protocol_id": {"not": {"type": "null"}},
+              "protocol_version": {"not": {"type": "null"}},
+              "prompt": {"not": {"type": "null"}},
+              "model": {"not": {"type": "null"}},
+              "decoding": {"not": {"type": "null"}},
+              "environment": {"not": {"type": "null"}},
+              "seed": {"properties": {"support": {"enum": ["supported", "not_supported"]}}},
+              "manifest": {"not": {"type": "null"}}
+            }
+          },
+          "run": {
+            "properties": {
+              "run_id": {"not": {"type": "null"}},
+              "trace_id": {"not": {"type": "null"}},
+              "repeat_id": {"not": {"type": "null"}},
+              "repeat_index": {"not": {"type": "null"}},
+              "cohort_id": {"not": {"type": "null"}},
+              "native_task_id": {"not": {"type": "null"}},
+              "backend": {"not": {"type": "null"}}
+            }
+          },
+          "path_protocol": {
+            "properties": {
+              "pin": {"not": {"type": "null"}},
+              "max_tool_attempts": {"not": {"type": "null"}},
+              "max_unchanged_retries": {"not": {"type": "null"}},
+              "max_automatic_reviews_unchanged": {"not": {"type": "null"}},
+              "final_goal_checks": {"minItems": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"profile": {"const": "legacy_observation"}}},
+      "then": {
+        "properties": {
+          "coverage": {"properties": {"trajectory_status": {"enum": ["partial", "unknown"]}}},
+          "acceptance": {
+            "properties": {
+              "goal_status": {"enum": ["unknown", "not_evaluated"]},
+              "runtime_status": {"enum": ["unknown", "not_evaluated"]}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"acceptance": {"properties": {"goal_status": {"const": "passed"}}}}},
+      "then": {
+        "properties": {
+          "coverage": {"properties": {"trajectory_status": {"const": "complete"}}},
+          "checks": {
+            "minItems": 1,
+            "contains": {
+              "properties": {"kind": {"const": "final_goal"}, "status": {"const": "pass"}},
+              "required": ["kind", "status"]
+            },
+            "items": {
+              "if": {"properties": {"kind": {"enum": ["final_goal", "forbidden_effect"]}}},
+              "then": {"properties": {"status": {"const": "pass"}}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"economics": {"properties": {"cost_per_accepted_task": {"not": {"type": "null"}}}}}},
+      "then": {
+        "properties": {"accepted_task": {"properties": {"join_status": {"const": "verified"}, "status": {"const": "accepted"}}}}
+      }
+    }
+  ],
+  "x-contract": {
+    "status": "proposed_consumer_contract; no producer migration or owner acceptance established",
+    "owner": {
+      "authority": "existing WorkBay native telemetry and review/merge owner",
+      "consumer": "existing evalops runner/scorers; a future native-owner adapter may emit this contract",
+      "upstream_addendum": {
+        "id": 39191,
+        "related_requests": ["eval-evidence-rc-24", "closecheck-scope-29", "review-run-vars-17"],
+        "evidence": "supplied EVALOPS-3 task brief",
+        "owner_acknowledgement": null,
+        "migration_status": "unknown"
+      },
+      "excluded": [
+        "parallel telemetry store",
+        "second review or merge engine",
+        "second CI scheduler",
+        "deployment",
+        "paid review dispatch"
+      ]
+    },
+    "compatibility": {
+      "versioning": "schema_version fixes the major family; contract_version is semver. Required fields, changed meanings, removals, tightened nullability or incompatible enums require a major revision. Optional fields and documented metadata may be added in a minor revision; clarifications use patches. Exporters pin the exact contract bytes by SHA-256 in their evidence manifest.",
+      "required_vs_nullable": "Every named entity properties key is required as listed in its required array, including nullable keys; conditional schema fragments add constraints rather than keys. null records unknown/unsupported/not-applicable as explained in coverage.missingness; omitted required keys are invalid. Empty arrays mean measured none only where collection was complete; projection arrays may be empty when not projected. No implicit defaults or null-to-zero coercion.",
+      "extensions": "Additional properties are allowed for additive compatibility. Consumers preserve unknown fields, ignore their operational meaning, and treat unknown major versions or enum values as unsupported rather than mapping them to success.",
+      "legacy_profile": "Lossless source references plus explicit missingness, not an invented trial. Do not derive events from turn_metrics, review_runs, test_traces, narrative notes or row ordering.",
+      "controlled_profile": "Required immutable pins are prerequisites for a comparable controlled trial, not proof it ran or completed. Include all attempts; missing data still prevents affected claims.",
+      "integration": "This file does not modify the runner input schema, scorers, State journal, capture or native owner. evalops.runner.v1 remains unchanged. A runner exit 0/report execution_status=ok establishes measurement execution only. No trajectory scorer or adapter is implemented by this contract."
+    },
+    "provenance": {
+      "requested_source_sha": "fd4aca96df2b11222d575cb59de5fe8219412329",
+      "source_tree": "111c27d87e0707f966aeb0a0236c1a9c60a6a91b",
+      "sandbox_base": "112ebaee41a81a8e186559d1fc5ca6ae25b7605c",
+      "ancestry": "VM job receipt records exact source/sandbox tree equality; synthetic sandbox commit is not original ancestry.",
+      "execution_backend": "codex-remote",
+      "transport": "external transport precedent20551, not native dispatch success",
+      "evidence_scope": "bounded handoff.db operational snapshots; neither production application traffic nor independent episode census",
+      "observed_at": "2026-10-29T23:23:11.877676+00:00",
+      "input_manifest_schema": "acx-evalops-input-snapshot/1",
+      "input_manifest_sha256": "72c4a0adf2b18873c1e2ebf420ae94fa6ff2c45415d4abf29cee385360af426f"
+    },
+    "source_mapping": {
+      "mapping_notation": "turn_observations[] is an optional lossless flat projection with the exact turn_metrics column names plus a source_ref; reviews[] is a lossless review projection with explicit unknown fields. All projection arrays are required but may be empty when not projected; their length is not a trajectory activity denominator. Raw source refs remain authoritative. Native strings and nulls are copied without defaulting. Naive review timestamps remain in the source row, with null normalized times and unknown_timezone missingness. No adapter is implemented here.",
+      "turn_metrics": {
+        "file": "turn-metrics.json",
+        "sha256": "a19d3644e4ab45f3b6b1bce7b131253071f82cb76631f0a26719fdd0f2c3b35e",
+        "query": "select id,task_ref,lane_id,session,cycle,phase,backend,model,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,total_tokens,usage_source,created_at,duration_seconds from turn_metrics order by id desc limit 500",
+        "rows": 500,
+        "row_id_range": [4686, 5503],
+        "columns": [
+          {
+            "source": "id",
+            "destination": "turn_observations[].id",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Native turn row identity only; never event/run ID.",
+            "observed_type": "integer"
+          },
+          {
+            "source": "task_ref",
+            "destination": "turn_observations[].task_ref",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Candidate native task reference only; acceptance join unresolved.",
+            "observed_type": "string"
+          },
+          {
+            "source": "lane_id",
+            "destination": "turn_observations[].lane_id",
+            "support": "correlation_only",
+            "null_rows": 0,
+            "meaning": "Preserve in raw source; not run/trace ID.",
+            "observed_type": "string"
+          },
+          {
+            "source": "session",
+            "destination": "turn_observations[].session",
+            "support": "correlation_only",
+            "null_rows": 0,
+            "meaning": "Preserve in raw source; not trace or cohort ID.",
+            "observed_type": "string"
+          },
+          {
+            "source": "cycle",
+            "destination": "turn_observations[].cycle",
+            "support": "correlation_only",
+            "null_rows": 0,
+            "meaning": "Native turn cycle only; not review cycle or repeat index.",
+            "observed_type": "integer"
+          },
+          {
+            "source": "phase",
+            "destination": "turn_observations[].phase",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "All 500 rows are lane_prep, not complete agent episodes.",
+            "observed_type": "string"
+          },
+          {
+            "source": "backend",
+            "destination": "turn_observations[].backend",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Observed backend; not a model/revision pin.",
+            "observed_type": "string"
+          },
+          {
+            "source": "model",
+            "destination": "turn_observations[].model",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "All null; do not borrow review model or backend as model pin.",
+            "observed_type": "null"
+          },
+          {
+            "source": "input_tokens",
+            "destination": "turn_observations[].input_tokens",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "Lossless turn-level observation only; never attributed to invented child events. All 500 values null.",
+            "observed_type": "null"
+          },
+          {
+            "source": "output_tokens",
+            "destination": "turn_observations[].output_tokens",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "Lossless turn-level observation only; never attributed to invented child events. All 500 values null.",
+            "observed_type": "null"
+          },
+          {
+            "source": "cached_input_tokens",
+            "destination": "turn_observations[].cached_input_tokens",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "Lossless turn-level observation only; never attributed to invented child events. All 500 values null.",
+            "observed_type": "null"
+          },
+          {
+            "source": "reasoning_output_tokens",
+            "destination": "turn_observations[].reasoning_output_tokens",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "Lossless turn-level observation only; never attributed to invented child events. All 500 values null.",
+            "observed_type": "null"
+          },
+          {
+            "source": "total_tokens",
+            "destination": "turn_observations[].total_tokens",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "Lossless turn-level observation only; never attributed to invented child events. All 500 values null.",
+            "observed_type": "null"
+          },
+          {
+            "source": "usage_source",
+            "destination": "turn_observations[].usage_source",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "Lossless turn-level observation only; never attributed to invented child events. All 500 values null.",
+            "observed_type": "null"
+          },
+          {
+            "source": "created_at",
+            "destination": "turn_observations[].created_at",
+            "support": "raw_only_timezone_unknown",
+            "null_rows": 0,
+            "meaning": "Copy native naive timestamp verbatim; run.times.recorded_at remains null until timezone independently attested. Never use created_at as start/finish.",
+            "observed_type": "string"
+          },
+          {
+            "source": "duration_seconds",
+            "destination": "turn_observations[].duration_seconds",
+            "support": "source_null",
+            "null_rows": 500,
+            "meaning": "All null; even a future nonnull native duration requires boundary semantics before latency mapping.",
+            "observed_type": "null"
+          }
+        ]
+      },
+      "review_runs": {
+        "file": "review-runs.json",
+        "sha256": "57411987d58e0ccb706a1d490808049d05eec10acb5f18ab264042477145f6d5",
+        "query": "select * from review_runs order by id desc limit 240",
+        "rows": 240,
+        "row_id_range": [1508, 1747],
+        "columns": [
+          {
+            "source": "id",
+            "destination": "reviews[].native_row_id",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Row identity in source snapshot.",
+            "observed_type": "integer"
+          },
+          {
+            "source": "review_run_id",
+            "destination": "reviews[].native_review_run_id",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Native review ID; 240 distinct; not eval run_id.",
+            "observed_type": "string"
+          },
+          {
+            "source": "task_ref",
+            "destination": "reviews[].task_ref",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "subject_path",
+            "destination": "reviews[].subject_path",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "subject_kind",
+            "destination": "reviews[].subject_kind",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "review_mode",
+            "destination": "reviews[].review_mode",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "verdict_decision",
+            "destination": "reviews[].verdict_decision_ref",
+            "support": "available_nullable",
+            "null_rows": 20,
+            "meaning": "Reference original narrative bytes with custody/redaction policy; never infer structured findings or authority from it.",
+            "observed_type": "string|null"
+          },
+          {
+            "source": "verdict",
+            "destination": "reviews[].verdict",
+            "support": "available_nullable",
+            "null_rows": 14,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string|null"
+          },
+          {
+            "source": "reviewed_at",
+            "destination": "reviews[].reviewed_at",
+            "support": "timezone_unknown",
+            "null_rows": 0,
+            "meaning": "Naive string; retain raw, normalized null pending timezone evidence.",
+            "observed_type": "string"
+          },
+          {
+            "source": "agent",
+            "destination": "reviews[].agent",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "model",
+            "destination": "reviews[].model",
+            "support": "available_nullable",
+            "null_rows": 78,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string|null"
+          },
+          {
+            "source": "model_label",
+            "destination": "reviews[].model_label",
+            "support": "available_nullable",
+            "null_rows": 78,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string|null"
+          },
+          {
+            "source": "branch",
+            "destination": "reviews[].branch",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "commit_sha",
+            "destination": "reviews[].commit_sha",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "session",
+            "destination": "reviews[].session",
+            "support": "available",
+            "null_rows": 0,
+            "meaning": "Preserve native value; no inference of canonical identity, model pin, task acceptance or independent gold.",
+            "observed_type": "string"
+          },
+          {
+            "source": "created_at",
+            "destination": "reviews[].recorded_at",
+            "support": "timezone_unknown",
+            "null_rows": 0,
+            "meaning": "Record timestamp only; naive string; normalized null pending timezone evidence.",
+            "observed_type": "string"
+          }
+        ]
+      },
+      "unsupported": {
+        "both_snapshots": [
+          "case.case_id",
+          "case.case_sha256",
+          "case.dataset",
+          "case.expected_output_or_rubric",
+          "case.root_incident_id",
+          "case.split",
+          "protocol.protocol_id",
+          "protocol.protocol_version",
+          "protocol.manifest",
+          "protocol.prompt",
+          "protocol.model (immutable revision/configuration)",
+          "protocol.decoding",
+          "protocol.seed",
+          "protocol.environment",
+          "protocol.judge",
+          "run.run_id",
+          "run.trace_id",
+          "run.parent_run_id",
+          "run.repeat_id",
+          "run.repeat_index",
+          "run.cohort_id",
+          "run.native_task_id",
+          "run.status",
+          "run.error_class",
+          "run.times.queued_at",
+          "run.times.started_at",
+          "run.times.finished_at",
+          "run.latency (all classified components)",
+          "events (no native tool-attempt rows supplied)",
+          "accepted_task (acceptance ID/authority/membership unavailable)",
+          "coverage.capture_evidence",
+          "coverage.expected_event_count",
+          "path_protocol",
+          "checks",
+          "economics (usage/price/join incomplete)"
+        ],
+        "review_runs": [
+          "reviews[].canonical_subject_id",
+          "reviews[].parent_review_run_id",
+          "reviews[].cycle",
+          "reviews[].original_source",
+          "reviews[].original_review_run_id",
+          "reviews[].original_authority_ref",
+          "reviews[].native_counters_ref",
+          "reviews[].blocking_findings",
+          "reviews[].judge_protocol"
+        ],
+        "turn_metrics": [
+          "event_id",
+          "parent_event_id",
+          "sequence",
+          "tool",
+          "redacted_args",
+          "redacted_result",
+          "redaction_version",
+          "status",
+          "error_class",
+          "retry_of_event_id",
+          "price (all versioned rates, currency and cost)"
+        ],
+        "policy": "Unsupported is not measured zero, no defect, no retries or no reviews. Null destinations require coverage.missingness with unsupported; absent collections cannot imply completeness."
+      },
+      "missingness_reporting": {
+        "required_denominators": [
+          "snapshot rows and nonnull/null counts per source column",
+          "distinct native row identities and duplicates after deduplication",
+          "explicit case/root-incident/cohort counts; unknown when not identified",
+          "all candidate run/review/task memberships, joined/unmatched/ambiguous counts and reasons",
+          "token/price/cost/latency known and unknown counts per comparable scope",
+          "expected/observed/missing attempts only when producer coverage evidence exists"
+        ],
+        "snapshot_limit": "Latest 500 turns and 240 reviews only, not a census. Turn IDs span gaps with unknown cause. Global historical 697/3139 token/model and 674 duration coverage from the status note does not describe this 500-row lane_prep window. No population extrapolation or independent-episode count."
+      }
+    },
+    "semantic_validation": [
+      "Resolve source refs by exact snapshot hash, entity and row ID; verify artifact bytes and pin immutability before use. Retain raw rows read-only. Report source null, unsupported fields and malformed values distinctly; never execute narrative source text.",
+      "Native run/event IDs must be unique in their native namespace; event.run_id and trace_id must match the containing run. Event parent/retry links resolve within the trace (or an explicitly referenced parent trace), never self-link, point to an earlier recorded attempt and form an acyclic graph. Retry_of names the failed attempt; a retry is a new event, never an overwritten failure.",
+      "Sequence is unique and monotone within a trace. Use native causal parent/dependency edges for partial order; database ID or wall clock ordering does not prove causality. Missing event IDs/links make path grading unknown.",
+      "For every selected path, resolve node references, prove acyclicity, check min <= max and occurrence bounds, required edges, alternative selection, argument invariants and recovery. Independent nodes may commute. Needed verification within declared bounds is legal. Report fail only on observed invariant violations; missing evidence yields unknown.",
+      "A succeeded tool/status or review pass does not prove final goal. Require external initial/final-state artifacts, all required final-goal and forbidden-effect checks, and complete relevant trajectory evidence before goal_status=passed. Explicit observed violation yields failed; missing evidence remains unknown/not_evaluated.",
+      "Enforce finite case tool/retry/review budgets before launch via the existing owner. No aliasing canonical subjects, restarting source numbers or resetting counters on export/resume. Extensions require independent finite authorization; DAG width is not an admission-capacity limit.",
+      "Status/error consistency: observed succeeded attempt has no error_class; failed attempt retains native class or null+missingness, never an invented classification. Terminal failure must not disappear from cohort/accepted-task joins.",
+      "Timestamp comparisons require known timezone and compatible clocks; finish >= start >= queue when all are known. Negative/nonfinite durations and tokens are invalid. Native durations with unknown boundaries are not queue, active or end-to-end measurements.",
+      "Review identity, authority, cycle and finding provenance come only from native records or explicit native adjudication links, never model inference or path aliases. Null blocking_findings does not become an empty array. Preserve native original counters across branches, renamed files and retries.",
+      "Task acceptance requires native receipt and verified membership including retries, reviews, queue and operator waits. Keep unmatched/ambiguous rows and report join denominators and reasons, rather than inner-joining away failures.",
+      "Complete coverage requires producer attestations of start/terminal boundaries, retention and every attempt; expected/observed event counts must agree after deduplication and no unexplained gaps. A bounded snapshot or tests passing cannot establish this.",
+      "For all checklist items, pass requires evidence; not_applicable requires a scoped reason and independent scope evidence. Evaluate checklist statuses separately; schema validity, runtime acceptance, judge validity and production reliability are distinct.",
+      "Economics require compatible known units, measured usage semantics and versioned prices for every included attempt. Cached/reasoning counts cannot be double billed. Measured paid cost is sourced independently. Full cost/latency and cost-per-accepted-task stay null when membership or required measurements are incomplete.",
+      "Controlled cohorts group by real task/root-incident identity when available; healthy controls may have null root_incident_id with not_applicable provenance. Never invent incident identities to fill a required pin. Cross-record join, budget, count and arithmetic checks are semantic obligations of the existing owner; JSON Schema validation alone does not enforce or establish them.",
+      "Lossless turn/review projections reference each unchanged source row. Source mapping coverage counts refer to snapshot rows, not events or trials. Preserve native turn created_at as raw; review normalized timestamps stay null until timezone evidence exists. Do not assign whole-turn usage to multiple events, infer run.backend or protocol.model across unrelated turns, or turn [] projections into proof of no activity."
+    ],
+    "retained_authority": {
+      "UI19998": {
+        "original_source_route": "source2",
+        "required_backend": "claude-remote",
+        "required_model": "Opus5.5",
+        "required_effort": "xhigh",
+        "action": 171,
+        "identity_and_counters": "retain original subject and native counters; not a new source1 defect",
+        "scope": "excluded from authoring/fixing this slice"
+      },
+      "capture19999": {
+        "original_source_route": "source4",
+        "routing_evidence": "supplied brief; actual ledger/custody required before further authoring",
+        "identity_and_counters": "retain original subject, source history and native counters; not a new source1 defect",
+        "scope": "excluded from authoring/fixing this slice"
+      },
+      "unknown_rule": "If original authority/counters cannot be resolved, preserve source refs and null fields; report unresolved conditions, do not route anew."
+    },
+    "measurement_boundaries": {
+      "labels": "58 defect / 57 not_defect / 5 unclear are partly user-adjudicated presentations, not independent gold. No expert answers are read or changed by this contract. Agreement is diagnostic, not truth. Judge gating requires independent heldout human validation; labels/validity/disposition retain separate provenance.",
+      "retrieval": "Existing GTE-base-en-v1.5 ONNX semantic search/reinjection is prior art, not new ranking evidence. A retrieval gate requires a pinned corpus/query/qrel test collection and multi-strategy pool metadata; unjudged stays unknown, disclose pooling incompleteness. Reuse score_retrieval, never infer ranking quality from classifier or trajectory counts.",
+      "repeats": "Keep frozen case/cohort/repeat IDs and root-incident clusters, all attempts and missingness denominators. Descriptive historical review consistency is not controlled task reliability or production pass@k/pass^k.",
+      "capacity": "Record measured native capacity evidence in environment/cohort artifacts; logical independence in a permitted DAG does not authorize concurrency. This slice dispatches no extra processes or reviewers."
+    },
+    "existing_components": [
+      {
+        "path": "benchmarks/tools/evalops/run.py",
+        "ranges": "69-109 strict input helpers; 472-503 report and acceptance",
+        "role": "read-only runner; no model/network calls; execution success is not quality acceptance",
+        "sha256": "9a1ee0093a2bb54fe673adaa5f95a4385de1ce35b2b3a0c44993cfc1899024e1"
+      },
+      {
+        "path": "benchmarks/tools/evalops/score_judge.py",
+        "role": "reuse protocol, unknown-state and agreement diagnostics; no new judge engine",
+        "sha256": "d41f12c26d95b7fc8f55a73da8372c5da8c3189790c8942a3438408fde57ca07"
+      },
+      {
+        "path": "benchmarks/tools/evalops/score_retrieval.py",
+        "role": "reuse retrieval metrics with incomplete pool semantics",
+        "sha256": "611466af6f1721592b75002a741d0274f17745581f56e7b44fda873e164456f9"
+      },
+      {
+        "path": "benchmarks/tools/evalops/label_ui.py",
+        "ranges": "182-190 _payload; 192-212 _restore; 231-259 State.decide; 345-368 main",
+        "role": "existing append-only fsync journal remains authority; no schema or event edits",
+        "sha256": "a19cc71eef2f3a9f1bd66a33cf95af2bd15e475d7c951ba608985693b9b6bf93"
+      },
+      {
+        "path": "benchmarks/tools/evalops/capture.py",
+        "ranges": "290-362 Store; 379-481 History; 488-503 changed_batch",
+        "role": "existing capture/custody remains authority; not full trajectory telemetry",
+        "sha256": "85e50c94db51972f18418ce0613d580418db143935a0024d5053c68e3a49499f"
+      },
+      {
+        "path": "mk/evalops.mk",
+        "role": "existing make evalops entry point; no new scheduler",
+        "sha256": "59c717e2de837dce2900822074509ac8340d666fc4f921a43c87abfee18a714e"
+      }
+    ],
+    "canon": {
+      "version": "0.26.2",
+      "authority": "user-provided pinned resume-canon-rows.txt checked against trusted read-only canon release manifest",
+      "verified_files": [
+        "AGENTS.md",
+        "PRINCIPLES.md",
+        "SOURCES.md",
+        "lexicons/ml-systems.md",
+        "lexicons/planning.md",
+        "lexicons/graph-theory.md",
+        "reasoning/context-obedience-is-a-separate-capability.md",
+        "reasoning/evidence-before-commitment.md"
+      ],
+      "principles": [2, 3, 7, 13, 15, 16],
+      "rules": [
+        {
+          "id": "EVAL-12",
+          "name": "Validate the judge against humans",
+          "source": "AI Engineering",
+          "application": "independent human validation before judge gating"
+        },
+        {
+          "id": "EVAL-13",
+          "name": "Pin the judging protocol",
+          "source": "AI Engineering",
+          "application": "immutable model/prompt/rubric/decoding/seed/order-handling pins"
+        },
+        {
+          "id": "HITL-05",
+          "name": "Agreement is a diagnostic, not the truth",
+          "source": "Human-in-the-Loop ML",
+          "application": "assisted labels and agreement do not establish gold"
+        },
+        {
+          "id": "EVAL-24",
+          "name": "Retrieval needs a test collection",
+          "source": "Introduction to Information Retrieval, ch. 8",
+          "application": "keep corpus/query/qrels separate from trajectory metrics"
+        },
+        {
+          "id": "EVAL-25",
+          "name": "Pool judgments; disclose incompleteness",
+          "source": "Introduction to Information Retrieval, ch. 8",
+          "application": "unjudged remains unknown; version pool depth/contributors"
+        },
+        {
+          "id": "OPS-05",
+          "name": "Eliminate before automate/delegate",
+          "source": "The 4-Hour Workweek (Ferriss), ch. 8 + Business Analysis Methodology Book (Yayici), ch. 2",
+          "application": "one existing owner; contract only, no competing engine"
+        },
+        {
+          "id": "GRPH-31",
+          "name": "Critical-path schedule the task DAG",
+          "source": "The Algorithm Design Manual, ch. 17 + Scheduling: Theory, Algorithms, and Systems, ch. 5 and §D.4",
+          "application": "permitted partial order and separately measured finite admission capacity"
+        }
+      ],
+      "release_manifest_sha256": "46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260"
+    },
+    "version": "1.0.0"
+  }
+}

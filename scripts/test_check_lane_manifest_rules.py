@@ -48,7 +48,6 @@ def manifest_dir(tmp_path):
     return directory
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_manifest_malformed(manifest_dir, tmp_path):
     (manifest_dir / "BAD.json").write_text("{not json", encoding="utf-8")
 
@@ -58,7 +57,6 @@ def test_manifest_malformed(manifest_dir, tmp_path):
     assert "ERROR BAD.json -: manifest-malformed:" in result.stdout
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_test_commands_empty(manifest_dir, tmp_path):
     lane = _clean_lane()
     lane["test_commands"] = []
@@ -70,7 +68,6 @@ def test_test_commands_empty(manifest_dir, tmp_path):
     assert "ERROR EMPTY.json worker: test-commands-empty:" in result.stdout
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_description_service_env(manifest_dir, tmp_path):
     lane = _clean_lane()
     lane["owned_paths"] = ["apps/prototype-description-service/scene/a.py"]
@@ -82,7 +79,6 @@ def test_description_service_env(manifest_dir, tmp_path):
     assert "ERROR ENV.json worker: description-service-env:" in result.stdout
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_route_pin_null(manifest_dir, tmp_path):
     lane = _clean_lane()
     lane["preferred_model"] = None
@@ -94,7 +90,6 @@ def test_route_pin_null(manifest_dir, tmp_path):
     assert "ERROR PIN.json worker: route-pin-null:" in result.stdout
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_brief_forbids_commit(manifest_dir, tmp_path):
     lane = _clean_lane()
     lane["objective"] = "Add a. Do not commit the result."
@@ -106,7 +101,6 @@ def test_brief_forbids_commit(manifest_dir, tmp_path):
     assert "ERROR BRIEF.json worker: brief-forbids-commit:" in result.stdout
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_route_pin_null_speed_only(manifest_dir, tmp_path):
     lane = _clean_lane()
     lane["preferred_speed"] = None
@@ -118,7 +112,6 @@ def test_route_pin_null_speed_only(manifest_dir, tmp_path):
     assert "ERROR SPEED.json worker: route-pin-null:" in result.stdout
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_owned_paths_wide_warning(manifest_dir, tmp_path):
     lane = _clean_lane()
     lane["owned_paths"] = ["scripts/a.py", "scripts/b.py", "scripts/c.py", "scripts/d.py"]
@@ -131,7 +124,6 @@ def test_owned_paths_wide_warning(manifest_dir, tmp_path):
     assert result.stdout.splitlines()[-1] == "lane manifest rules: 0 error(s), 1 warning(s) in 1 manifest(s)"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_clean_manifest(manifest_dir, tmp_path):
     _write(manifest_dir, "CLEAN", {"worker": _clean_lane()})
 
@@ -141,7 +133,6 @@ def test_clean_manifest(manifest_dir, tmp_path):
     assert result.stdout == "lane manifest rules: 0 error(s), 0 warning(s) in 1 manifest(s)\n"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_golden_manifest_skipped(manifest_dir, tmp_path):
     lane = _clean_lane()
     lane["test_commands"] = []
@@ -154,7 +145,6 @@ def test_golden_manifest_skipped(manifest_dir, tmp_path):
     assert result.stdout == "lane manifest rules: 0 error(s), 0 warning(s) in 1 manifest(s)\n"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_terminal_lanes_skipped(manifest_dir, tmp_path):
     terminal_lane = _clean_lane()
     terminal_lane["test_commands"] = []
@@ -170,7 +160,6 @@ def test_terminal_lanes_skipped(manifest_dir, tmp_path):
     assert result.stdout == "lane manifest rules: 0 error(s), 0 warning(s) in 1 manifest(s)\n"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-rul")
 def test_task_ref_scoping(manifest_dir, tmp_path):
     _write(manifest_dir, "A", {"worker": _clean_lane()})
     lane = _clean_lane()

@@ -64,7 +64,7 @@ LIMITATIONS = [
     'Raw source times may be naive, delayed or imported; observation time never replaces event time.',
     'Deleted IDs retain their last observed record in exports; see deleted_ids and tombstones.',
     'Hash chains detect accidental tampering; they do not authenticate the producer or attest completeness.',
-    'WAL/sidecar sources are refused: stdlib SQLite mode=ro alone cannot guarantee unchanged WAL shared memory.',
+    'WAL sources are read with mode=ro; SQLite may create or update normal -wal/-shm files for that reader.',
     'duration_completed means only finite observation time elapsed; no accepted QC or mature replay.',
 ]
 
@@ -178,13 +178,19 @@ def source_identity(path):
         finally:
             os.close(fd)
         require(header[:16] == b'SQLite format 3\x00', 'read: source is not SQLite')
-        require(header[18:20] == b'\x01\x01', 'WAL/unsupported source refused: shared-memory mutation cannot be excluded')
+        # Journal version bytes: 1,1 rollback; 2,2 WAL (the native producer mode).
+        require(header[18:20] in (b'\x01\x01', b'\x02\x02'), 'read: unsupported SQLite journal version bytes')
+        wal = header[18:20] == b'\x02\x02'
         for suffix in ('-wal','-shm','-journal'):
             try:
-                os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
+                aux = os.stat(path.name + suffix, dir_fd=parent, follow_symlinks=False)
             except FileNotFoundError:
                 continue
-            raise CaptureError(f'source sidecar {suffix} present; refuse recovery or shared-memory mutation')
+            # Healthy WAL -wal/-shm come and go with SQLite's own lifecycle, so they are
+            # not part of identity; they must still be real single-link files, not aliases.
+            require(wal and suffix != '-journal',
+                    f'source sidecar {suffix} present outside WAL mode; refuse recovery')
+            regular(aux, f'source sidecar {suffix}')
     return {'path': str(path), 'device': info.st_dev, 'inode': info.st_ino}
 
 
@@ -258,7 +264,9 @@ def read_snapshot(db, limits, clock, deadline):
     except sqlite3.DataError as exc:
         raise CaptureError(f'SQLite read size limit exceeded: {exc}') from exc
     finally:
-        con.close()  # Close read transaction; no commit, checkpoint, vacuum or SQL writes.
+        # Close read transaction; no commit, checkpoint, vacuum, journal_mode or SQL writes.
+        # The main file is opened O_RDONLY, so a closing reader cannot checkpoint into it.
+        con.close()
 
 
 class Store:

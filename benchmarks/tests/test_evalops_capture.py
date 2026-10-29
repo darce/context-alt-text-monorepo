@@ -250,18 +250,127 @@ def test_cli_once_real_fixture(db, tmp_path):
     assert report['quality_acceptance'] is False
 
 
-def test_wal_source_refuses_without_mutating_shared_memory(db, tmp_path):
-    # SQLite can write WAL read marks even for mode=ro. This adapter refuses it.
-    con = sqlite3.connect(db)
+# Changed contract (decision 20657): the native producer runs WAL. A healthy WAL source
+# is read through ordinary mode=ro + query_only; SQLite may create/update its normal
+# -wal/-shm auxiliary files for that reader. Logical rows, schema and main-file bytes
+# must not change (no checkpoint, journal_mode change, immutable=1 or source copy).
+WAL_ROW = "INSERT INTO decisions (id,task_ref,session,decision,rationale,created_at) VALUES (7,'T','s','recur:wal','wal-only committed','2026-10-29 19:00:00')"
+WRITER = r'''
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1], isolation_level=None)
+assert con.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+con.execute('PRAGMA wal_autocheckpoint=0')
+for line in sys.stdin:
+    con.execute(line); print('ok', flush=True)
+'''
+
+@pytest.fixture
+def wal_writer(db):
+    """Separate producer process holding WAL open; each line is one committed statement."""
+    proc = subprocess.Popen([sys.executable, '-c', WRITER, str(db)], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, text=True)
+    def commit(sql):
+        proc.stdin.write(sql + '\n'); proc.stdin.flush()
+        assert proc.stdout.readline() == 'ok\n'
     try:
-        con.execute('PRAGMA journal_mode=WAL')
-        con.execute("UPDATE decisions SET commit_sha='wal'"); con.commit()
-        paths = [db, Path(str(db)+'-wal'), Path(str(db)+'-shm')]
-        before = {p:p.read_bytes() for p in paths}
-        with pytest.raises(c.CaptureError, match='WAL|sidecar'):
-            observe(db, tmp_path / 'capture', once=True)
-        assert {p:p.read_bytes() for p in paths} == before
-    finally: con.close()
+        commit(WAL_ROW)
+        assert db.read_bytes()[18:20] == b'\x02\x02'
+        assert b'wal-only committed' not in db.read_bytes()
+        assert Path(str(db)+'-wal').stat().st_size > 0
+        yield commit
+    finally:
+        proc.stdin.close(); proc.wait(10)
+
+def logical(db):
+    with sqlite3.connect(db) as con:
+        return (con.execute('SELECT sql FROM sqlite_master ORDER BY name').fetchall(),
+                con.execute('SELECT * FROM agent_errors ORDER BY id').fetchall(),
+                con.execute('SELECT * FROM decisions ORDER BY id').fetchall())
+
+def test_live_wal_writer_rows_are_captured_read_only(db, wal_writer, tmp_path, monkeypatch):
+    real = sqlite3.connect; statements = []; uris = []
+    def connected(database, **kwargs):
+        uris.append(database)
+        con = real(database, **kwargs); con.set_trace_callback(statements.append)
+        return con
+    monkeypatch.setattr(c.sqlite3, 'connect', connected)
+    main = db.read_bytes()
+    def produce(clock):
+        if clock.sleeps == 1:
+            wal_writer("UPDATE decisions SET rationale='updated in wal' WHERE id=1")
+    out = tmp_path/'capture'
+    report = observe(db, out, duration_seconds=2, poll_seconds=1, clock=FakeClock(produce))
+    assert report['observations'] == 2 and report['status'] == 'duration_completed'
+    first, second = batches(out)
+    assert [(x['table'], x['id']) for x in first['changes']] == [('agent_errors',1), ('decisions',1), ('decisions',7)]
+    assert [(x['kind'], x['id'], x['row']['rationale']) for x in second['changes']] == [('update', 1, 'updated in wal')]
+    assert {x['id']: x['rationale'] for x in exported(out, report, 'lessons')} == {1: 'updated in wal', 7: 'wal-only committed'}
+    assert report['seven_day_replay_ready'] is False and report['quality_acceptance'] is False
+    # No checkpoint into the main file, no SQL writes or journal changes, exact read-only URI.
+    assert db.read_bytes() == main
+    assert uris and all(u.endswith('?mode=ro') and 'immutable' not in u for u in uris)
+    assert all(s.startswith(('PRAGMA table_info','PRAGMA query_only=ON','SELECT','BEGIN')) for s in statements)
+    wal_writer("INSERT INTO agent_errors (repo_instance_id,harness,error_class,summary) VALUES ('r','codex','pytest','after capture')")
+
+def test_cold_wal_header_without_sidecars_is_captured_and_resumed(db, tmp_path):
+    con = sqlite3.connect(db); con.execute('PRAGMA journal_mode=WAL'); con.close()
+    assert db.read_bytes()[18:20] == b'\x02\x02'
+    assert not any(Path(str(db)+s).exists() for s in ('-wal','-shm','-journal'))
+    main, rows_before = db.read_bytes(), logical(db)
+    out = tmp_path/'capture'; clock = FakeClock()
+    first = observe(db, out, once=True, clock=clock)
+    assert first['observations'] == 1 and len(exported(out, first, 'lessons')) == 1
+    clock.advance(1)
+    # Normal SQLite-created auxiliary files from the first read are healthy, not a new source.
+    assert observe(db, out, resume=True, once=True, clock=clock)['observations'] == 2
+    assert batches(out)[1]['changes'] == []
+    assert db.read_bytes() == main and logical(db) == rows_before
+
+def test_wal_snapshot_is_one_transaction_while_writer_commits_mid_read(db, wal_writer, tmp_path):
+    fired = []
+    class MidReadClock(FakeClock):
+        calls = None
+        def monotonic(self):
+            if self.calls is not None:
+                self.calls += 1
+                if self.calls == 5 and not fired:  # After the read transaction's first rows.
+                    wal_writer("INSERT INTO decisions (id,task_ref,session,decision,created_at) VALUES (50,'T','s','mid-read','2026-10-29 19:30:00')")
+                    fired.append(True)
+            return self.mono
+    clock = MidReadClock()
+    def reader(*args):
+        clock.calls = 0
+        try: return c.read_snapshot(*args)
+        finally: clock.calls = None
+    out = tmp_path/'capture'
+    observe(db, out, once=True, limits=c.Limits(page_size=1), clock=clock, reader=reader)
+    assert fired
+    assert [x['id'] for x in batches(out)[0]['changes'] if x['table'] == 'decisions'] == [1, 7]
+    clock.advance(1)
+    observe(db, out, resume=True, once=True, clock=clock, reader=reader)
+    assert [(x['kind'], x['id']) for x in batches(out)[1]['changes']] == [('insert', 50)]
+
+@pytest.mark.parametrize('alias,match', [
+    ('wal_symlink','sidecar'), ('shm_symlink','sidecar'), ('wal_hardlink','sidecar'),
+    ('shm_hardlink','sidecar'), ('journal_in_wal','sidecar'), ('wal_in_rollback','sidecar'),
+    ('source_symlink','symbolic'),
+])
+def test_wal_source_and_sidecar_aliases_refuse(db, tmp_path, alias, match):
+    victim = tmp_path/'victim'; victim.write_bytes(b'unrelated bytes')
+    if alias != 'wal_in_rollback':
+        con = sqlite3.connect(db); con.execute('PRAGMA journal_mode=WAL'); con.close()
+    source = db
+    if alias == 'source_symlink':
+        source = tmp_path/'alias.sqlite'; source.symlink_to(db)
+    else:
+        sidecar = Path(str(db) + ('-shm' if 'shm' in alias else '-journal' if 'journal' in alias else '-wal'))
+        if 'symlink' in alias: sidecar.symlink_to(victim)
+        elif 'hardlink' in alias: os.link(victim, sidecar)
+        else: sidecar.write_bytes(b'')
+    before = (db.read_bytes(), victim.read_bytes())
+    with pytest.raises(c.CaptureError, match=match):
+        observe(source, tmp_path/'capture', once=True)
+    assert (db.read_bytes(), victim.read_bytes()) == before
 
 
 def test_progress_deadline_is_enforced_on_real_sqlite_read(db, tmp_path):

@@ -1,7 +1,7 @@
 # EVALOPS observation capture
 
 This is **observation tooling**, not accepted QC, continuous event capture, native
-accounting success, or a mature replay. Source 1 / `EVALOPS-2-CAPTURE` owns only
+accounting success, or a mature replay. Sources 1-2 / `EVALOPS-2-CAPTURE` own only
 `capture.py`, its focused tests, and this runbook. No production capture was
 started by this implementation. The coordinator must pass the real independent
 pipeline gate and check host load/source compatibility before starting runtime.
@@ -33,15 +33,30 @@ It snapshots every column of these two tables, checks their actual DDL and colum
 metadata, and pins that schema hash from the first successful observation.
 Additive or incompatible changes stop the run. Other tables are not scanned.
 
-**Journal compatibility is intentionally restrictive.** The adapter refuses WAL
-header mode and any existing `-wal`, `-shm` or `-journal` sidecar, before SQLite
-opens the source. Stdlib SQLite `mode=ro` alone does not guarantee unchanged WAL
-shared-memory read marks. Do not switch a production journal mode, checkpoint,
-reset a subject, chmod source files, or substitute `immutable=1` to bypass this
-check. A WAL source needs a separately reviewed read-only strategy; this slice
-does not establish production source compatibility. In rollback-journal mode,
-source writers can temporarily make a journal appear; refusal is a visible gap,
-not an instruction to touch the producer.
+**Journal compatibility (source 2 correction, decision 20657).** The native
+producer DB is in WAL mode (header journal version bytes 18/19 = `2,2`), even when
+no sidecar exists. Source 1 refused WAL and any `-wal`/`-shm`, so the requested
+capture could not start; that contract was overstrict and is replaced. Rollback
+(`1,1`) and WAL (`2,2`) headers are accepted; any other value is refused. A WAL
+source is read through the same ordinary `mode=ro` URI, `query_only=ON` and one
+bounded read transaction as a rollback source. SQLite may create or update its
+normal `-wal`/`-shm` auxiliary files for that read-only reader (WAL-index read
+marks, or empty files on a cold WAL DB); that is standard read behaviour, not a
+source change, and no byte-for-byte sidecar invariance is claimed. The main DB
+file is opened read-only, so a reader never checkpoints into it. Existing
+`-wal`/`-shm` must be regular single-link files: symlinks, hardlinks and other
+non-regular sidecars are refused before SQLite opens the source. A `-journal` in
+WAL mode, or any `-wal`/`-shm`/`-journal` beside a rollback-mode source, is
+refused; in rollback mode a writer can make a journal appear briefly, and that
+refusal is a visible gap, not an instruction to touch the producer. Sidecars
+are not part of the pinned source identity (path, device, inode), because a
+healthy WAL lifecycle recreates them. The adapter never switches journal mode,
+checkpoints, pauses the producer, uses `immutable=1`, chmods source files or
+copies the main file and WAL separately. Focused tests use disposable physical
+WAL fixtures only: a separate writer process holding WAL open with a committed
+WAL-only row and a mid-read commit, a cold WAL header with no sidecars, rollback
+sources and sidecar/source alias guards. Live-source compatibility is still
+established only by the coordinator's own gated runtime check.
 
 ## Start, smoke, resume and stop
 
@@ -105,8 +120,10 @@ Each poll opens a URI with exactly `mode=ro`, sets `query_only=ON`, uses a bound
 busy timeout/progress-handler deadline, and closes one consistent read
 transaction promptly. There are no SQL writes, checkpoints, vacuums, full DB
 copies, network calls, classification models or native accounting operations.
-Only a fixed DB header and file identity are read outside SQLite; full DB/sidecar
-hashing per poll is avoided.
+Only a fixed DB header, file identity and sidecar file types are read outside
+SQLite; full DB/sidecar hashing per poll is avoided. In WAL mode the single read
+transaction is one snapshot: commits made while a poll reads are seen by the
+next poll, never spliced into the current one.
 
 A poll reads both tables in indexed integer-ID keyset pages, including negative,
 old and imported IDs. It compares canonical UTF-8 compact sorted-key JSON row
@@ -221,7 +238,9 @@ LC_ALL=C uv run --no-project --with pytest python -m pytest benchmarks/tests/tes
 
 Behavioral RED, scaffold/test hashes and logs are retained in
 `.task-state/tdd/red-evidence.json`; the external coordinator acknowledgement
-binds its SHA256 to MCP test-result `5701`. GREEN and deliberate original-scaffold,
+binds its SHA256 to MCP test-result `5701`. The source 2 WAL correction RED was
+acknowledged as MCP test-result `5707`; its GREEN evidence is
+`.task-state/tdd/green-evidence.json`. GREEN and deliberate original-scaffold,
 mutation-diff, ledger-hash and read-only-URI controls are retained beside it.
 Those controls restore the fixed bytes; they are test evidence, not quality
 acceptance or a seven-day production trial. No unrelated full suite is needed

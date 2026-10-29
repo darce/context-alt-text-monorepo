@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "coding_certainty": {
+      "enum": [
+        "pattern-supported",
+        "uncertain",
+        "unassigned"
+      ]
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "incident_group_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "incident_link_status": {
+      "enum": [
+        "unknown"
+      ]
+    },
+    "last_seen_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "occurrence_count": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "open_codes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "original_summary_ref": {
+      "type": "object"
+    },
+    "original_summary_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "record_group_id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "integer"
+    },
+    "source_row_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_id",
+    "source_row_sha256",
+    "original_summary_sha256",
+    "original_summary_ref",
+    "created_at",
+    "last_seen_at",
+    "occurrence_count",
+    "open_codes",
+    "coding_certainty",
+    "incident_group_id",
+    "incident_link_status",
+    "record_group_id"
+  ],
+  "title": "Open-coded operational error record",
+  "type": "object"
+}

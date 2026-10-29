@@ -1,0 +1,16 @@
+{
+  "tenant_id": "00000000-0000-4000-8000-000000000001",
+  "used": 120,
+  "reserved": 8,
+  "remaining": 372,
+  "allowance": 500,
+  "period_start": "2026-10-01T00:00:00Z",
+  "period_end": "2026-11-01T00:00:00Z",
+  "period": {
+    "start": "2026-10-01T00:00:00Z",
+    "end": "2026-11-01T00:00:00Z"
+  },
+  "as_of": "2026-10-26T09:30:00Z",
+  "status": "paid_active",
+  "data_source": "authoritative"
+}

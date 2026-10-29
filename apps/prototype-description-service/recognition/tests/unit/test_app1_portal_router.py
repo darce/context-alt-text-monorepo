@@ -17,6 +17,7 @@ from recognition.application.services.tenant_key_service import (
     KeyPage,
 )
 from recognition.domain.portal_contracts import EntitlementSnapshot, EntitlementStatus, PortalPrincipal
+from recognition.interface_adapters.http import usage_read
 from recognition.interface_adapters.http.deps.portal_auth import require_portal_principal
 from recognition.interface_adapters.http.routers import portal
 
@@ -163,6 +164,11 @@ class _EntitlementStub:
             period_end=NOW + timedelta(days=30),
             grace_until=None,
         )
+
+
+class _FailingEntitlementStub(_EntitlementStub):
+    async def snapshot(self, tenant_id: UUID) -> EntitlementSnapshot:
+        raise RuntimeError("entitlement store unavailable")
 
 
 async def _principal() -> PortalPrincipal:
@@ -364,13 +370,44 @@ def test_usage_uses_authoritative_entitlement_provenance_without_inventing_metad
     assert response.status_code == 200
     assert payload["used"] == 3
     assert payload["reserved"] is None
-    assert payload["remaining"] == 7
+    assert payload["remaining"] is None
     assert payload["status"] == EntitlementStatus.BETA_ACTIVE.value
     assert payload["status"] in {member.value for member in EntitlementStatus}
     assert payload["data_source"] == "authoritative"
     assert payload["period_start"] == NOW.isoformat().replace("+00:00", "Z")
     assert payload["period"]["start"] == payload["period_start"]
     assert payload["as_of"] is None
+
+
+def test_usage_read_failure_is_503_without_fabricated_counts() -> None:
+    application = _app(key_service=_KeyServiceStub(), entitlement_service=_FailingEntitlementStub())
+
+    with TestClient(application) as client:
+        response = client.get("/portal/usage")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "portal usage unavailable"}
+
+
+def test_usage_delegates_to_the_shared_tenant_usage_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[UUID, object, object]] = []
+
+    async def recording_builder(
+        tenant_id: UUID, entitlement_service: object, usage_service: object
+    ) -> usage_read.PortalUsageResponse:
+        calls.append((tenant_id, entitlement_service, usage_service))
+        return await usage_read.build_tenant_usage(tenant_id, entitlement_service, usage_service)
+
+    monkeypatch.setattr(portal, "build_tenant_usage", recording_builder)
+    entitlement_service = _EntitlementStub()
+    application = _app(key_service=_KeyServiceStub(), entitlement_service=entitlement_service)
+
+    with TestClient(application) as client:
+        response = client.get("/portal/usage")
+
+    assert response.status_code == 200
+    assert calls == [(TENANT_ID, entitlement_service, None)]
+    assert portal.PortalUsageResponse is usage_read.PortalUsageResponse
 
 
 class _PagedKeyService(_KeyServiceStub):

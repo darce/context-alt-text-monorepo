@@ -1,7 +1,14 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { GPU_STATE, type GpuState } from '../../../api/describeApi';
+import type { ActivityWarmingObservation } from '../../../hooks/useActivityStatus';
 import {
+  WARMING_OBSERVATION_EVIDENCE,
+  WARMING_OBSERVATION_STATUS,
+  type WarmingObservationStatus,
+} from '../../../utils/warmingDeadline';
+import {
+  descriptionWaitPresentation,
   GPU_STATE_PRESENTATION,
   gpuStateNotice,
   gpuStatePresentation,
@@ -76,5 +83,51 @@ describe('gpuStatePresentation', () => {
     for (const state of Object.values(GPU_STATE)) {
       expect(gpuStateNotice(state, 3).length).toBeGreaterThan(0);
     }
+  });
+});
+
+const UNAVAILABLE_HEADLINE = 'Description service status unavailable';
+const NOT_CONFIRMED_HEADLINE = 'Description service status not confirmed yet';
+
+const waitObservation = (
+  status: WarmingObservationStatus,
+  overrides: Partial<ActivityWarmingObservation> = {},
+): ActivityWarmingObservation => ({
+  status,
+  evidence: WARMING_OBSERVATION_EVIDENCE.UNKNOWN,
+  firstObservedAt: 1,
+  deadlineAt: 2,
+  ...overrides,
+});
+
+describe('descriptionWaitPresentation', () => {
+  it.each([
+    ['unobserved', undefined],
+    ['unknown', waitObservation(WARMING_OBSERVATION_STATUS.UNKNOWN)],
+    ['not warming', waitObservation(WARMING_OBSERVATION_STATUS.NOT_WARMING)],
+    ['unknown without outage', waitObservation(WARMING_OBSERVATION_STATUS.UNKNOWN, { statusOutage: false })],
+  ] as const)('keeps a %s status observation quiet instead of reporting an outage', (_label, observation) => {
+    const wait = descriptionWaitPresentation(observation);
+    expect(wait.headline).toBe(NOT_CONFIRMED_HEADLINE);
+    expect(wait.headline).not.toBe(UNAVAILABLE_HEADLINE);
+    expect(wait.detail).toBe(
+      'This description run keeps waiting until the service reports its status. Check status or cancel the run.',
+    );
+  });
+
+  it('reports status unavailable only for a confirmed status outage', () => {
+    expect(
+      descriptionWaitPresentation(waitObservation(WARMING_OBSERVATION_STATUS.UNKNOWN, { statusOutage: true })),
+    ).toEqual({
+      headline: UNAVAILABLE_HEADLINE,
+      detail: 'Startup could not be confirmed. Check the run status or cancel this description run.',
+    });
+  });
+
+  it.each([
+    [WARMING_OBSERVATION_STATUS.WAITING, 'Waiting for description service…'],
+    [WARMING_OBSERVATION_STATUS.OVERDUE, 'Description service is taking longer than expected'],
+  ] as const)('keeps %s copy ahead of an outage verdict', (status, headline) => {
+    expect(descriptionWaitPresentation(waitObservation(status, { statusOutage: true })).headline).toBe(headline);
   });
 });

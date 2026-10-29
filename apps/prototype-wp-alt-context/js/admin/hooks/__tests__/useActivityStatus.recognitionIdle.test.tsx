@@ -7,7 +7,7 @@
  * scan, describe, and real terminal evidence must keep their own classification.
  */
 import type { QueryClient } from '@tanstack/react-query';
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache } from '../../api/config';
@@ -33,6 +33,7 @@ import {
   type GpuActivityInput,
   type ScanActivityInput,
 } from '../useActivityStatus';
+import { GPU_SERVICE_STATUS_RETRY_COUNT, GPU_SERVICE_STATUS_RETRY_DELAY_MS } from '../useGpuServiceStatus';
 
 vi.mock('../../api/gpuApi', async (importOriginal) => {
   const actual = await importOriginal<typeof gpuApi>();
@@ -40,6 +41,15 @@ vi.mock('../../api/gpuApi', async (importOriginal) => {
 });
 
 const fetchGpuStatusMock = vi.mocked(gpuApi.fetchGpuStatus);
+
+/** Exponential backoff summed across the retry budget: 1 s + 2 s. */
+const GPU_STATUS_RETRY_BUDGET_MS = GPU_SERVICE_STATUS_RETRY_DELAY_MS * (2 ** GPU_SERVICE_STATUS_RETRY_COUNT - 1);
+
+const advance = async (ms: number): Promise<void> => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
 
 const TENANT = 'tenant-a';
 const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
@@ -277,6 +287,7 @@ describe('useActivityStatus after a transient GPU status failure', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await queryClient?.cancelQueries();
     queryClient?.clear();
     _resetDescribeOperationStoreForTests();
@@ -285,19 +296,29 @@ describe('useActivityStatus after a transient GPU status failure', () => {
     cleanup();
   });
 
-  it('does not keep a transient GPU status failure as sticky strip state after GPU status recovers', async () => {
-    fetchGpuStatusMock.mockRejectedValueOnce(new Error('gpu down'));
+  it('does not keep a confirmed GPU status outage as sticky strip state after GPU status recovers', async () => {
+    vi.useFakeTimers();
+    fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
     queryClient = buildTestQueryClient();
     const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
-    await waitFor(() => expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error'));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    // One failed request is retried; only the exhausted budget is observable as an error.
+    await advance(GPU_STATUS_RETRY_BUDGET_MS - 1);
+    expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('pending');
+    await advance(1);
+    expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('error');
+    expect(fetchGpuStatusMock).toHaveBeenCalledTimes(GPU_SERVICE_STATUS_RETRY_COUNT + 1);
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE);
+    expect(result.current.status.gpuState).toBe(GPU_STATE.UNKNOWN);
+
+    fetchGpuStatusMock.mockResolvedValue(statusResponse());
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: queryKeys.gpu.status(), exact: true });
     });
+    await advance(0);
 
-    await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE));
+    expect(queryClient.getQueryState(queryKeys.gpu.status())?.status).toBe('success');
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE);
+    expect(result.current.status.gpuState).toBe(GPU_STATE.STOPPED);
   });
 });

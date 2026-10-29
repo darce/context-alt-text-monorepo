@@ -1357,7 +1357,7 @@ def test_active_lane_paths_without_backend_raises_unavailable(
 
 def _install_registry_response(
     monkeypatch: pytest.MonkeyPatch, response: object
-) -> None:
+) -> list[dict[str, Any]]:
     backend = types.ModuleType("workbay_handoff_mcp")
     recording = types.ModuleType("workbay_handoff_mcp.lanes_recording")
 
@@ -1368,9 +1368,16 @@ def _install_registry_response(
 
     backend.RuntimeConfig = RuntimeConfig  # type: ignore[attr-defined]
     backend.configure_runtime = lambda _config: None  # type: ignore[attr-defined]
-    recording.list_lanes = lambda **_kwargs: response  # type: ignore[attr-defined]
+    calls: list[dict[str, Any]] = []
+
+    def list_lanes(**kwargs: Any) -> object:
+        calls.append(kwargs)
+        return response(**kwargs) if callable(response) else response
+
+    recording.list_lanes = list_lanes  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "workbay_handoff_mcp", backend)
     monkeypatch.setitem(sys.modules, "workbay_handoff_mcp.lanes_recording", recording)
+    return calls
 
 
 def test_registry_error_envelope_fails_closed(
@@ -1600,3 +1607,180 @@ def test_env_protect_preserves_a_path_containing_spaces(
     record = next(item for item in reaper.classify(repo) if item.path == spaced.resolve())
     assert record.status == "LIVE"
     assert record.protected is True
+
+
+def _lane_page(
+    *ids: int, has_more: bool, next_after_id: object = None
+) -> dict[str, Any]:
+    """Build a keyset page envelope as ``list_lanes`` returns it."""
+    lanes = [{"id": row_id, "lane_id": f"done-{row_id}", "status": "merged"}
+             for row_id in ids]
+    return {"ok": True, "data": {"lanes": lanes, "returned": len(lanes),
+                                 "has_more": has_more, "next_after_id": next_after_id}}
+
+
+def test_registry_all_tasks_kwarg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_registry_response(monkeypatch, _lane_page(has_more=False))
+    _real_active_lane_paths(tmp_path)
+    assert calls == [{"all_tasks": True, "limit": reaper._LANE_PAGE_LIMIT, "after_id": None}]
+
+
+def test_registry_all_tasks_avoids_ambiguity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def response(**kwargs: Any) -> object:
+        if not kwargs.get("all_tasks"):
+            return {"ok": False, "error": "Ambiguous active task"}
+        return {"ok": True, "data": {"lanes": [
+            {"id": 1, "lane_id": "other-task", "status": "running",
+             "worktree_path": str(tmp_path)}
+        ]}}
+
+    _install_registry_response(monkeypatch, response)
+    assert _real_active_lane_paths(tmp_path) == {tmp_path.resolve(): "other-task"}
+
+
+def test_registry_keyset_pages_and_deduplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    duplicate = {"id": 7, "lane_id": "done", "status": "merged"}
+    pages = iter([
+        {"ok": True, "data": {"lanes": [duplicate], "returned": 1,
+                              "has_more": True, "next_after_id": 7}},
+        {"ok": True, "data": {"lanes": [duplicate,
+            {"id": 3, "lane_id": "live", "status": "running",
+             "worktree_path": str(tmp_path)}], "returned": 2,
+            "has_more": False, "next_after_id": None}},
+    ])
+    calls = _install_registry_response(monkeypatch, lambda **kwargs: next(pages))
+    original = reaper._lane_owners_from_rows
+    reduced = []
+
+    def reduce(rows: Any) -> Any:
+        reduced.extend(rows)
+        return original(rows)
+
+    monkeypatch.setattr(reaper, "_lane_owners_from_rows", reduce)
+    assert _real_active_lane_paths(tmp_path) == {tmp_path.resolve(): "live"}
+    assert [call.get("after_id", "<omitted>") for call in calls] == [None, 7]
+    assert not any("offset" in call or "task_ref" in call for call in calls)
+    assert all(call["all_tasks"] is True for call in calls)
+    assert all(call["limit"] == reaper._LANE_PAGE_LIMIT for call in calls)
+    assert [row["id"] for row in reduced] == [7, 3]
+
+
+@pytest.mark.parametrize("pages", [
+    pytest.param([_lane_page(9, has_more=True, next_after_id=None)],
+                 id="missing-cursor"),
+    pytest.param([_lane_page(9, has_more=True, next_after_id=True)],
+                 id="bool-cursor"),
+    pytest.param([_lane_page(9, has_more=True, next_after_id="9")],
+                 id="str-cursor"),
+    pytest.param([_lane_page(9, 7, has_more=True, next_after_id=7),
+                  _lane_page(6, has_more=True, next_after_id=7)],
+                 id="equal-cursor"),
+    pytest.param([_lane_page(9, 7, has_more=True, next_after_id=7),
+                  _lane_page(6, has_more=True, next_after_id=8)],
+                 id="rising-cursor"),
+])
+def test_registry_cursor_must_advance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pages: list[object]
+) -> None:
+    feed = iter(pages)
+    calls = _install_registry_response(monkeypatch, lambda **kwargs: next(feed))
+    with pytest.raises(reaper.LaneStateError, match="made no progress"):
+        _real_active_lane_paths(tmp_path)
+    assert len(calls) == len(pages)
+
+
+def test_registry_page_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(reaper, "_LANE_PAGE_MAX", 2, raising=False)
+
+    def response(**kwargs: Any) -> object:
+        cursor = (kwargs["after_id"] or 100) - 1
+        return _lane_page(cursor, has_more=True, next_after_id=cursor)
+
+    calls = _install_registry_response(monkeypatch, response)
+    with pytest.raises(reaper.LaneStateError, match="page limit"):
+        _real_active_lane_paths(tmp_path)
+    assert [call["after_id"] for call in calls] == [None, 99]
+
+
+@pytest.mark.parametrize("bad_page", [None, {"ok": False},
+    {"ok": True, "data": []}, {"ok": True, "data": {"lanes": None}}])
+def test_registry_second_page_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_page: object
+) -> None:
+    pages = iter([_lane_page(7, has_more=True, next_after_id=7), bad_page])
+    calls = _install_registry_response(monkeypatch, lambda **kwargs: next(pages))
+    with pytest.raises(reaper.LaneStateError):
+        _real_active_lane_paths(tmp_path)
+    assert [call["after_id"] for call in calls] == [None, 7]
+
+
+_OMITTED = object()
+
+
+def _racing_registry(live_path: Path) -> Any:
+    """Model ``list_lanes`` over six rows whose live row heartbeats mid-sweep.
+
+    Keyset calls page by the immutable id.  Offset calls (``after_id``
+    omitted) page by ``updated_at DESC, id DESC``, as the real registry does,
+    so the heartbeat after the first read moves the live row into page 1.
+    """
+    rows = [{"id": row_id, "lane_id": f"done-{row_id}", "status": "merged",
+             "updated_at": row_id} for row_id in range(1, 7)]
+    live = rows[1]
+    live.update(lane_id="live", status="running", worktree_path=str(live_path))
+    reads = 0
+
+    def list_lanes(*, all_tasks: bool = False, limit: int = 100, offset: int = 0,
+                   after_id: object = _OMITTED, **_kwargs: Any) -> object:
+        nonlocal reads
+        if not all_tasks:
+            return {"ok": False, "error": "Ambiguous active task"}
+        if after_id is _OMITTED:
+            ordered = sorted(rows, key=lambda r: (r["updated_at"], r["id"]),
+                             reverse=True)
+            page = ordered[offset:offset + limit]
+            has_more = offset + len(page) < len(rows)
+            next_after_id = None
+        elif after_id is not None and type(after_id) is not int:
+            return {"ok": False, "error": "after_id must be an integer"}
+        else:
+            fetched = sorted((r for r in rows if after_id is None or r["id"] < after_id),
+                             key=lambda r: r["id"], reverse=True)[:limit + 1]
+            page = fetched[:limit]
+            has_more = len(fetched) > limit
+            next_after_id = page[-1]["id"] if page and has_more else None
+        reads += 1
+        if reads == 1:
+            live["updated_at"] = max(r["updated_at"] for r in rows) + 1
+        return {"ok": True, "data": {
+            "total_matching": len(rows), "returned": len(page), "has_more": has_more,
+            "next_after_id": next_after_id, "lanes": [dict(r) for r in page]}}
+
+    return list_lanes
+
+
+def test_registry_heartbeat_between_pages_cannot_hide_a_live_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live_path = tmp_path / "live-lane"
+
+    # Control: an offset sweep of this model really does lose the live row.
+    offset_sweep = _racing_registry(live_path)
+    seen: set[int] = set()
+    offset = 0
+    while True:
+        data = offset_sweep(all_tasks=True, limit=2, offset=offset)["data"]
+        seen.update(row["id"] for row in data["lanes"])
+        if not data["has_more"]:
+            break
+        offset += data["returned"]
+    assert seen == {1, 3, 4, 5, 6}
+
+    monkeypatch.setattr(reaper, "_LANE_PAGE_LIMIT", 2, raising=False)
+    calls = _install_registry_response(monkeypatch, _racing_registry(live_path))
+    assert _real_active_lane_paths(tmp_path) == {live_path.resolve(): "live"}
+    assert [call.get("after_id", "<omitted>") for call in calls] == [None, 5, 3]

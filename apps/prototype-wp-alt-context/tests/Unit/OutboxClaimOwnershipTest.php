@@ -32,7 +32,7 @@ final class OutboxClaimOwnershipTest extends TestCase
         $GLOBALS['wpdb'] = $this->db;
         $GLOBALS['__ac_current_time'] = strtotime('2026-10-10 12:00:00 UTC');
         $this->db->row = [
-            'id' => 7, 'tenant_id' => 'tenant-test', 'entity_type' => 'cluster',
+            'id' => 7, 'tenant_id' => self::currentTenantId(), 'entity_type' => 'cluster',
             'entity_key' => 'cluster-1', 'operation_type' => 'cluster_person_bound',
             'idempotency_key' => 'idem-1', 'status' => 'pending', 'attempts' => 0,
             'payload' => '{}', 'first_failed_at' => null, 'next_attempt_at' => null,

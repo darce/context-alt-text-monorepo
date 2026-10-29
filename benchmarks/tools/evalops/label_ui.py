@@ -17,6 +17,8 @@ import uuid
 MAX_PACKET = 8 * 1024 * 1024
 MAX_LOG = 64 * 1024 * 1024
 LABELS = {'defect', 'not_defect', 'unclear'}
+ANNOTATION_SCHEMA = 'evalops.annotation.v2'
+ANNOTATION_FIELDS = {'disposition', 'affected_action', 'blocking_reason', 'provenance'}
 ASSETS = {'/': ('index.html', 'text/html; charset=utf-8'),
           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
           '/style.css': ('style.css', 'text/css; charset=utf-8')}
@@ -133,7 +135,7 @@ class State:
                 if meta['annotator'] is not None:
                     text(meta['annotator'], 100, 'annotator')
                 self.meta = meta
-            self.events = []; self.answers = {}; self.clients = {}; self.event_ids = set()
+            self.events = []; self.answers = {}; self.clients = {}; self.event_ids = set(); self.originals = {}
             raw = self._read('events.jsonl', MAX_LOG, missing=True) or b''
             require(not raw or raw.endswith(b'\n'), 'Truncated event log')
             for line in raw.splitlines():
@@ -179,20 +181,53 @@ class State:
             try: os.unlink(name, dir_fd=self.dirfd)
             except FileNotFoundError: pass
 
-    def _payload(self, data):
+    def _payload(self, data, legacy=False):
         require(isinstance(data, dict), 'Expected decision object')
         pid = text(data.get('presentation_id'), 128, 'presentation_id')
         require(pid in self.ids, 'Unknown presentation')
         label = data.get('label')
         require(isinstance(label, str) and label in LABELS, 'Invalid label')
-        return {'presentation_id': pid, 'label': label,
+        payload = {'presentation_id': pid, 'label': label,
                 'note': text(data.get('note', ''), 4000, 'note', empty=True),
                 'client_id': text(data.get('client_id'), 128, 'client_id')}
+        if legacy:
+            return payload
+        require(ANNOTATION_FIELDS <= set(data), 'Disposition and provenance are required')
+        disposition = data['disposition']
+        require(isinstance(disposition, str) and disposition in ('blocks', 'nonblocking', 'unknown'), 'Invalid disposition')
+        action = data['affected_action']; reason = data['blocking_reason']
+        if action is not None: action = text(action, 1024, 'affected_action')
+        if reason is not None: reason = text(reason, 4000, 'blocking_reason')
+        require(disposition == 'unknown' or action is not None, 'Known disposition requires affected action')
+        require(disposition != 'blocks' or (label == 'defect' and reason is not None),
+                'Blocking requires a defect and evidence/conditions')
+        provenance = data['provenance']
+        require(isinstance(provenance, dict) and set(provenance) == {
+            'kind', 'exposure', 'attestation_ref', 'original_ref', 'protocol_version'}, 'Invalid provenance fields')
+        kind = provenance['kind']; exposure = provenance['exposure']
+        require(isinstance(kind, str) and kind in ('blind_human', 'user_assisted', 'post_review', 'independent_expert', 'unknown'), 'Invalid provenance kind')
+        require(isinstance(exposure, str) and exposure in ('unexposed', 'exposed', 'unknown'), 'Invalid exposure')
+        provenance = dict(provenance)
+        for key in ('attestation_ref', 'original_ref'):
+            if provenance[key] is not None: provenance[key] = text(provenance[key], 1024, key)
+        provenance['protocol_version'] = text(provenance['protocol_version'], 128, 'protocol_version')
+        require(kind not in ('blind_human', 'independent_expert') or exposure == 'unexposed',
+                'Independent/blind annotation requires unexposed attestation')
+        require(kind not in ('user_assisted', 'post_review') or exposure != 'unexposed',
+                'Assisted/post-review annotation cannot attest unexposed')
+        require(kind != 'independent_expert' or provenance['attestation_ref'] is not None,
+                'Independent expert requires an attestation reference')
+        payload.update(disposition=disposition, affected_action=action, blocking_reason=reason, provenance=provenance)
+        return payload
 
     def _restore(self, event):
         require(isinstance(event, dict), 'Corrupt event')
-        payload = self._payload(event)
+        legacy = 'annotation_schema' not in event
+        payload = self._payload(event, legacy=legacy)
         keys = set(payload) | {'event_id', 'role', 'annotator', 'packet_id', 'rubric_version', 'labeled_at', 'label_source', 'supersedes'}
+        if not legacy:
+            keys |= {'annotation_schema', 'original_event_id'}
+            require(event['annotation_schema'] == ANNOTATION_SCHEMA, 'Invalid annotation schema')
         require(set(event) == keys, 'Corrupt event fields')
         require(self.meta['annotator'] is not None and event['annotator'] == self.meta['annotator'], 'Event identity mismatch')
         require(event['role'] == self.role and event['packet_id'] == self.packet['packet_id'] and event['rubric_version'] == self.packet['rubric_version'] and event['label_source'] == 'human', 'Event provenance mismatch')
@@ -206,9 +241,13 @@ class State:
         require(payload['client_id'] not in self.clients, 'Duplicate client ID in log')
         previous = self.answers.get(payload['presentation_id'])
         require(event['supersedes'] == (previous['event_id'] if previous else None), 'Broken correction history')
+        original = self.originals.get(payload['presentation_id'], event['event_id'])
+        if not legacy:
+            require(event['original_event_id'] == original, 'Broken original event reference')
         require(len(self.events) < 50000, 'Event limit reached')
         self.events.append(event); self.event_ids.add(event['event_id'])
         self.answers[payload['presentation_id']] = event
+        self.originals[payload['presentation_id']] = original
         self.clients[payload['client_id']] = (payload, event)
 
     def _available(self):
@@ -231,7 +270,14 @@ class State:
     def decide(self, data):
         self._available()
         require(self.meta['annotator'] is not None, 'Enter your name before labeling')
-        payload = self._payload(data)
+        # Old clients can acknowledge an exact retry of a legacy event, but
+        # cannot create another annotation without the new structured fields.
+        require(isinstance(data, dict), 'Expected decision object')
+        client = text(data.get('client_id'), 128, 'client_id')
+        prior = self.clients.get(client)
+        legacy_retry = (prior is not None and 'annotation_schema' not in prior[1]
+                        and not (ANNOTATION_FIELDS & set(data)))
+        payload = self._payload(data, legacy=legacy_retry)
         prior = self.clients.get(payload['client_id'])
         if prior:
             require(prior[0] == payload, 'Conflicting retry ID')
@@ -242,6 +288,8 @@ class State:
                      rubric_version=self.packet['rubric_version'], label_source='human',
                      labeled_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
                      supersedes=previous['event_id'] if previous else None)
+        event['annotation_schema'] = ANNOTATION_SCHEMA
+        event['original_event_id'] = self.originals.get(payload['presentation_id'], event['event_id'])
         raw = encode(event) + b'\n'
         require(len(self.events) < 50000 and os.fstat(self.logfd).st_size + len(raw) <= MAX_LOG, 'Event log full')
         # An I/O failure is fatal: never continue appending after a partial write.
@@ -261,12 +309,23 @@ class State:
     def snapshot(self):
         self._available()
         return {'packet': self.packet, 'role': self.role, 'annotator': self.meta['annotator'],
-                'answers': self.answers, 'progress': {'answered': len(self.answers), 'total': len(self.ids)},
+                'answers': {pid: self._project(e) for pid, e in self.answers.items()},
+                'progress': {'answered': len(self.answers), 'total': len(self.ids)},
                 'csrf_token': self.csrf}
+
+    def _project(self, event):
+        if 'annotation_schema' in event:
+            return event
+        # Enrich only the view. Original journal bytes and votes stay intact.
+        return dict(event, annotation_schema='evalops.annotation.legacy',
+                    disposition='unknown', affected_action=None, blocking_reason=None,
+                    original_event_id=self.originals[event['presentation_id']],
+                    provenance={'kind': 'legacy_unknown', 'exposure': 'unknown',
+                                'attestation_ref': None, 'original_ref': None, 'protocol_version': None})
 
     def export(self):
         self._available()
-        return ''.join(encode(e).decode() + '\n' for e in self.events)
+        return ''.join(encode(self._project(e)).decode() + '\n' for e in self.events)
 
     def close(self):
         for key in ['logfd', 'lockfd', 'dirfd']:

@@ -31,7 +31,10 @@ def paths(tmp_path):
 
 
 def decision(label='unclear', client_id='retry-1'):
-    return dict(presentation_id='opaque-a', label=label, note='synthetic note', client_id=client_id)
+    return dict(presentation_id='opaque-a', label=label, note='synthetic note', client_id=client_id,
+                disposition='unknown', affected_action=None, blocking_reason=None,
+                provenance=dict(kind='unknown', exposure='unknown', attestation_ref=None,
+                                original_ref=None, protocol_version='demo-protocol-v2'))
 
 
 def test_packet_projection_and_missing_context(paths):
@@ -212,3 +215,153 @@ def test_output_directory_symlink_rejected(paths):
     paths[1].symlink_to(actual, target_is_directory=True)
     with pytest.raises(ValueError): ui.State(*paths, 'reviewer')
     assert not list(actual.iterdir())
+
+
+def test_legacy_restore_projection_export_and_correction(paths):
+    """A frozen v1 event is read, never rewritten or reclassified."""
+    import uuid
+    s = ui.State(*paths, 'expert'); s.start({'annotator': 'DEMO legacy expert'}); s.close()
+    event_id = str(uuid.uuid4())
+    legacy = dict(presentation_id='opaque-a', label='defect', note='DEMO original', client_id='old-retry',
+                  event_id=event_id, role='expert', annotator='DEMO legacy expert', packet_id='DEMO-batch',
+                  rubric_version='finding-rubric-v1', label_source='human',
+                  labeled_at='2026-10-29T00:00:00Z', supersedes=None)
+    raw = (json.dumps(legacy, indent=None) + '\n').encode()
+    journal = paths[1] / 'events.jsonl'; journal.write_bytes(raw)
+    s = ui.State(*paths, 'expert')
+    try:
+        current = s.snapshot()['answers']['opaque-a']
+        assert current['label'] == 'defect' and current['disposition'] == 'unknown'
+        assert current['provenance'] == dict(kind='legacy_unknown', exposure='unknown',
+                                           attestation_ref=None, original_ref=None, protocol_version=None)
+        assert json.loads(s.export()) == current
+        assert s.decide({k: legacy[k] for k in ('presentation_id', 'label', 'note', 'client_id')}) == legacy
+        with pytest.raises(ValueError, match='Conflicting retry'):
+            s.decide(dict(presentation_id='opaque-a', label='not_defect', note='DEMO original', client_id='old-retry'))
+        assert journal.read_bytes() == raw
+        with pytest.raises(ValueError, match='required'):
+            s.decide(dict(presentation_id='opaque-a', label='defect', client_id='new-unstructured'))
+        corrected = s.decide(decision('defect', 'new-correction'))
+        assert corrected['supersedes'] == event_id and corrected['original_event_id'] == event_id
+        assert journal.read_bytes().startswith(raw)
+    finally: s.close()
+    s = ui.State(*paths, 'expert')
+    try:
+        assert s.snapshot()['answers']['opaque-a'] == corrected
+        assert journal.read_bytes().startswith(raw)
+        assert len(s.export().splitlines()) == 2
+    finally: s.close()
+
+
+def test_assisted_provenance_roundtrip_retry_and_history(paths):
+    s = ui.State(*paths, 'reviewer'); s.start({'annotator': 'DEMO human'})
+    first = s.decide(decision('defect'))
+    payload = decision('defect', 'assisted-correction')
+    payload.update(disposition='nonblocking', affected_action='merge bounded rubric change')
+    payload['provenance'].update(kind='user_assisted', exposure='exposed',
+                                 original_ref=first['event_id'], attestation_ref='DEMO user adjudication receipt')
+    corrected = s.decide(payload)
+    assert corrected['label'] == 'defect' and corrected['disposition'] == 'nonblocking'
+    assert corrected['supersedes'] == first['event_id'] == corrected['original_event_id']
+    assert corrected['rubric_version'] == 'finding-rubric-v1'
+    raw = (paths[1] / 'events.jsonl').read_bytes(); s.close()
+    s = ui.State(*paths, 'reviewer')
+    try:
+        assert s.decide(payload) == corrected
+        assert (paths[1] / 'events.jsonl').read_bytes() == raw
+        assert s.snapshot()['answers']['opaque-a'] == corrected
+        assert [json.loads(line) for line in s.export().splitlines()] == [first, corrected]
+        for mutate in ('disposition', 'action', 'reason', 'provenance'):
+            changed = json.loads(json.dumps(payload))
+            if mutate == 'disposition': changed['disposition'] = 'unknown'
+            if mutate == 'action': changed['affected_action'] = 'another action'
+            if mutate == 'reason': changed['blocking_reason'] = 'different conditions'
+            if mutate == 'provenance': changed['provenance']['exposure'] = 'unknown'
+            with pytest.raises(ValueError, match='Conflicting retry'): s.decide(changed)
+        assert (paths[1] / 'events.jsonl').read_bytes() == raw
+    finally: s.close()
+
+
+@pytest.mark.parametrize('label,disposition,action,reason', [
+    ('defect', 'nonblocking', 'merge feature', None),
+    ('defect', 'blocks', 'accept affected action', 'DEMO invariant fails under the specified condition'),
+    ('defect', 'unknown', None, None),
+    ('unclear', 'unknown', None, None),
+    ('not_defect', 'unknown', None, None),
+    ('unclear', 'nonblocking', 'unaffected merge', None),
+])
+def test_independent_validity_and_disposition(paths, label, disposition, action, reason):
+    s = ui.State(*paths, 'reviewer'); s.start({'annotator': 'DEMO human'})
+    try:
+        payload = dict(decision(label), disposition=disposition, affected_action=action, blocking_reason=reason)
+        saved = s.decide(payload)
+        assert (saved['label'], saved['disposition'], saved['affected_action'], saved['blocking_reason']) == (label, disposition, action, reason)
+        assert saved['provenance']['kind'] == 'unknown'
+    finally: s.close()
+
+
+@pytest.mark.parametrize('kind,exposure,reference', [
+    ('blind_human', 'unexposed', None),
+    ('user_assisted', 'unknown', None),
+    ('post_review', 'exposed', None),
+    ('independent_expert', 'unexposed', 'DEMO independent attestation'),
+    ('unknown', 'unknown', None),
+])
+def test_provenance_is_explicit_not_inferred_from_role_or_note(paths, kind, exposure, reference):
+    s = ui.State(*paths, 'expert'); s.start({'annotator': 'DEMO expert'})
+    try:
+        payload = decision(); payload['note'] = 'DEMO independent gold majority says so'
+        payload['provenance'].update(kind=kind, exposure=exposure, attestation_ref=reference)
+        saved = s.decide(payload)
+        assert saved['provenance'] == payload['provenance']
+        assert json.loads(s.export())['provenance']['kind'] == kind
+        assert 'gold' not in saved
+    finally: s.close()
+
+
+@pytest.mark.parametrize('change', [
+    {'disposition': 'blocks', 'affected_action': 'merge', 'blocking_reason': 'evidence'},
+    {'label': 'not_defect', 'disposition': 'blocks', 'affected_action': 'merge', 'blocking_reason': 'evidence'},
+    {'label': 'defect', 'disposition': 'blocks', 'affected_action': None, 'blocking_reason': 'evidence'},
+    {'label': 'defect', 'disposition': 'blocks', 'affected_action': 'merge', 'blocking_reason': None},
+    {'disposition': 'nonblocking'}, {'disposition': 'blocker'}, {'disposition': []},
+    {'affected_action': ' '}, {'blocking_reason': 'x' * 4001}, {'affected_action': 'x' * 1025},
+    {'provenance': None}, {'provenance': {'kind': 'blind_human'}},
+])
+def test_invalid_annotation_combinations_do_not_append(paths, change):
+    s = ui.State(*paths, 'reviewer'); s.start({'annotator': 'DEMO human'})
+    try:
+        with pytest.raises(ValueError): s.decide(dict(decision(), **change))
+        assert s.export() == ''
+        assert (paths[1] / 'events.jsonl').read_bytes() == b''
+    finally: s.close()
+
+
+@pytest.mark.parametrize('change', [
+    {'kind': 'blind_human'}, {'kind': 'independent_expert', 'exposure': 'unexposed'},
+    {'kind': 'independent_expert', 'exposure': 'exposed', 'attestation_ref': 'DEMO ref'},
+    {'kind': 'user_assisted', 'exposure': 'unexposed'},
+    {'kind': 'post_review', 'exposure': 'unexposed'},
+    {'kind': 'legacy_unknown'}, {'kind': []}, {'exposure': True},
+    {'attestation_ref': 'x' * 1025}, {'original_ref': 'x' * 1025}, {'protocol_version': ''},
+    {'protocol_version': None}, {'protocol_version': 'x' * 129}, {'gold': True},
+])
+def test_invalid_provenance_does_not_append(paths, change):
+    s = ui.State(*paths, 'reviewer'); s.start({'annotator': 'DEMO human'})
+    try:
+        payload = decision(); payload['provenance'].update(change)
+        with pytest.raises(ValueError): s.decide(payload)
+        assert s.export() == ''
+    finally: s.close()
+
+
+@pytest.mark.parametrize('change', ['original', 'schema', 'provenance', 'disposition'])
+def test_annotation_replay_rejects_tampering(paths, change):
+    s = ui.State(*paths, 'reviewer'); s.start({'annotator': 'DEMO human'})
+    event = s.decide(decision()); s.close()
+    if change == 'original': event['original_event_id'] = 'wrong'
+    if change == 'schema': event['annotation_schema'] = 'future-unknown'
+    if change == 'provenance': event['provenance']['kind'] = 'blind_human'
+    if change == 'disposition': event['disposition'] = 'blocks'
+    (paths[1] / 'events.jsonl').write_text(json.dumps(event) + '\n')
+    with pytest.raises(ValueError): ui.State(*paths, 'reviewer')

@@ -3,13 +3,13 @@
   "map_ref": "evalops-labeler",
   "product": "Private finding review",
   "goals": [
-    "Complete independent human judgments with source evidence and durable progress",
-    "Curate independent expert reference answers in a separate session"
+    "Record defect validity separately from action-scoped blocking disposition with durable history",
+    "Record human annotation provenance and exposure without claiming independent gold"
   ],
   "jobs": [
     {
       "id": "review",
-      "label": "Review findings independently"
+      "label": "Review evidence and record validity, action disposition and provenance"
     }
   ],
   "screens": [
@@ -17,7 +17,7 @@
       "id": "session",
       "kind": "screen",
       "title": "Start a review",
-      "purpose": "Identify reviewer; explain the rubric and independent review",
+      "purpose": "Identify annotator; explain the frozen rubric, protocol and provenance boundaries",
       "route": "/#session",
       "job_entry": true,
       "deep_link": false,
@@ -66,7 +66,7 @@
       "id": "finding",
       "kind": "screen",
       "title": "Review finding",
-      "purpose": "Compare the claim with frozen source context; record a judgment",
+      "purpose": "Compare claim with frozen evidence; separately annotate validity, action scope and provenance",
       "route": "/#finding",
       "job_entry": false,
       "deep_link": false,
@@ -99,12 +99,49 @@
         },
         {
           "id": "judgment",
-          "label": "Defect / Not a defect / Need more context",
+          "label": "Defect validity: defect / not defect / uncertain",
           "role": "form",
           "states": [
             "default",
             "loading",
             "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "disposition",
+          "label": "Action disposition: blocks / nonblocking / unknown; affected action and evidence/conditions",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "provenance",
+          "label": "Annotation source, explicit exposure, attestation/original references, rubric and protocol versions",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "decision-error",
+          "label": "Focused, announced validation and save errors; draft retained",
+          "role": "status",
+          "states": [
+            "default",
             "error",
             "offline",
             "edge_input"
@@ -201,7 +238,7 @@
     },
     {
       "id": "save",
-      "verb": "Save judgment and continue",
+      "verb": "Save & Next",
       "target": "finding",
       "hierarchy": "primary",
       "costly": false,
@@ -238,7 +275,7 @@
     {
       "id": "label-findings",
       "job": "review",
-      "label": "Start → review evidence → save labels → export",
+      "label": "Start → inspect evidence → annotate validity, disposition and provenance → save → export",
       "steps": [
         {
           "screen_id": "session"
@@ -253,12 +290,16 @@
     }
   ],
   "open_questions": [
-    "Human reviewer and expert curator identities must be supplied by the actual people; no AI labels are human evidence."
+    "Independent expert attestations and external QC require verification by actual humans; role, notes and agreement cannot certify gold.",
+    "Human usability and assistive-technology acceptance remain external."
   ],
   "not_doing": [
     "Public publication",
     "Model-generated gold",
     "Quality approval without human QC",
-    "Retrieval relevance labeling in this finding-labeling flow"
+    "Retrieval relevance labeling in this finding-labeling flow",
+    "Rewrite legacy journal events or infer their disposition/exposure",
+    "Adjudicate the 99 unlisted presentations",
+    "Resolve UI19998 or capture19999 or reset their original identities/counters"
   ]
 }

@@ -1464,7 +1464,6 @@ def _native_payload_layout(tmp_path: Path, wb_target: Path | None = None) -> tup
     return primary, worktree, payload
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-env")
 def test_provision_accepts_payload_symlinks(tmp_path: Path, isolated_git: None) -> None:
     primary, worktree, payload = _native_payload_layout(tmp_path)
     links_before = {rel: os.readlink(worktree / rel) for rel in ("scripts/workbay/wb", "Makefile.d/ace.mk")}
@@ -1479,7 +1478,6 @@ def test_provision_accepts_payload_symlinks(tmp_path: Path, isolated_git: None) 
     assert _tree_snapshot(payload) == payload_before
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-env")
 def test_provision_materialises_symlinked_transport(tmp_path: Path, isolated_git: None) -> None:
     primary, worktree, payload = _native_payload_layout(tmp_path)
     payload_before = _tree_snapshot(payload)

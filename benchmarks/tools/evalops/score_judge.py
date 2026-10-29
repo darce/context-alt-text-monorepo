@@ -57,6 +57,8 @@ protocol (AI Engineering); [HITL-03] Gold-embedded annotator QC, [HITL-04]
 Chance-adjusted annotator score, [HITL-05] Agreement is a diagnostic, not the
 truth (Human-in-the-Loop ML). [AGT-10] Degrade loudly (The Art of UNIX
 Programming, ch. 1): CLI I/O/schema errors emit structured stderr and exit 2.
+CLI JSON/JSONL is strict: duplicate keys and NaN/Infinity are errors. --output
+may replace an earlier report, never an input by path, symlink or hard link.
 Successful exports exit 0, including needs_labels; this is not quality approval.
 No external services, optional imports, or model calls are used.
 """
@@ -403,9 +405,35 @@ def score(findings, predictions=None, qc=None, *, protocol=None):
     }
 
 
+def _json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        _require(key not in result, f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def _invalid_constant(value):
+    raise ValueError(f"invalid JSON constant {value}")
+
+
+def _parse_json(text):
+    """Strict JSON: duplicate keys and NaN/Infinity are errors, never a silently chosen value."""
+    return json.loads(text, object_pairs_hook=_json_object, parse_constant=_invalid_constant)
+
+
 def _load_json(path):
     with Path(path).open(encoding="utf-8") as stream:
-        return json.load(stream)
+        text = stream.read()
+    try:
+        return _parse_json(text)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+
+
+def _same_file(left, right):
+    """Same path, or another name (hard link) for the same existing file."""
+    return left.resolve() == right.resolve() or (left.exists() and right.exists() and left.samefile(right))
 
 
 def main(argv=None):
@@ -422,7 +450,7 @@ def main(argv=None):
             for number, line in enumerate(stream, 1):
                 if line.strip():
                     try:
-                        rows.append(json.loads(line))
+                        rows.append(_parse_json(line))
                     except ValueError as exc:
                         raise ValueError(f"{args.findings}:{number}: {exc}") from exc
         predictions, protocol = None, None
@@ -438,7 +466,7 @@ def main(argv=None):
         else:
             inputs = (args.findings, args.predictions, args.qc)
             _require(
-                args.output.resolve() not in {p.resolve() for p in inputs if p is not None},
+                not any(_same_file(args.output, p) for p in inputs if p is not None),
                 "output must not overwrite input labels/predictions/QC",
             )
             args.output.write_text(serialized, encoding="utf-8")

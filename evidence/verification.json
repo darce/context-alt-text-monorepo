@@ -1,0 +1,1447 @@
+{
+  "task_ref": "MAINT-FLINT-20261026",
+  "verified_at": "2026-10-26T17:33:59.483744+00:00",
+  "outcome": "pass_with_preserved_missing_historical_targets",
+  "owned_report": "benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html",
+  "report_sha256": "87e374f40e61b278cbecc06a632618759280575d9c9425b8d23fc1ea1f61b570",
+  "frozen_input": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html",
+  "frozen_input_sha256": "c56bd223da2179985bbcbbde2fd2d08cde48b20767607c287d624db00daf05a9",
+  "preservation": {
+    "original_recovered_byte_for_byte": true,
+    "recovered_sha256": "c56bd223da2179985bbcbbde2fd2d08cde48b20767607c287d624db00daf05a9",
+    "original_body_sha256": "7a7c97f028c65de63ee9d5ddd5e7cb1f2c60da3ef8eebd0666c1eb2205afcfbd",
+    "recovered_body_sha256": "7a7c97f028c65de63ee9d5ddd5e7cb1f2c60da3ef8eebd0666c1eb2205afcfbd",
+    "scripts_and_attributes_unchanged": true,
+    "historical_content_tables_claims_dates_and_auraface_status": "Exact recovery of entire original proves preservation; no historical replacements beyond documented title and h1 version.",
+    "allowed_delta_receipt": "preservation_deltas.json",
+    "new_section_precedes_v14": true,
+    "old_tag_counts": {
+      "html": 1,
+      "head": 1,
+      "meta": 2,
+      "title": 1,
+      "style": 1,
+      "body": 1,
+      "main": 1,
+      "h1": 1,
+      "span": 273,
+      "div": 53,
+      "b": 1019,
+      "a": 297,
+      "code": 302,
+      "nav": 1,
+      "h2": 39,
+      "p": 128,
+      "h3": 33,
+      "ol": 16,
+      "li": 185,
+      "table": 24,
+      "tr": 207,
+      "th": 90,
+      "td": 770,
+      "i": 159,
+      "ul": 29,
+      "em": 2,
+      "sup": 2,
+      "br": 13,
+      "blockquote": 1,
+      "sub": 29,
+      "pre": 1
+    },
+    "new_tag_counts": {
+      "html": 1,
+      "head": 1,
+      "meta": 2,
+      "title": 1,
+      "style": 1,
+      "body": 1,
+      "main": 1,
+      "h1": 1,
+      "span": 274,
+      "div": 58,
+      "b": 1033,
+      "a": 364,
+      "code": 344,
+      "nav": 1,
+      "section": 1,
+      "h2": 40,
+      "p": 147,
+      "h3": 37,
+      "table": 27,
+      "thead": 3,
+      "tr": 229,
+      "th": 99,
+      "tbody": 3,
+      "td": 833,
+      "sup": 3,
+      "br": 30,
+      "ol": 17,
+      "li": 189,
+      "i": 159,
+      "ul": 29,
+      "em": 2,
+      "blockquote": 1,
+      "sub": 29,
+      "pre": 1
+    }
+  },
+  "htmlparser": {
+    "whole_document_parsed": true,
+    "new_ids_unique": true,
+    "new_ids": [
+      "v15-flint-evaluation",
+      "v15-heading",
+      "v15-prior-art",
+      "v15-capacity",
+      "v15-evaluation-contract",
+      "v15-canon"
+    ],
+    "new_same_document_anchors_valid": true
+  },
+  "local_links": {
+    "every_local_href_and_src_checked": true,
+    "resolution_policy": "Owned file/evidence in lane first; unchanged supplied siblings against frozen inputs layout. No copies or symlinks to other lanes.",
+    "new_local_links_pass": true,
+    "new_broken_links": [],
+    "preserved_unique_historical_targets_not_supplied": 45,
+    "results": [
+      {
+        "link": "#bottom",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#canon",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#decisions",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#downstream",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#evidence",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#feasibility",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#how",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#links",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#metrics",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#oec",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q1",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q10",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q11",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q12",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q13",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q14",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q15",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q16",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q17",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q18",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q19",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q2",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q3",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q4",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q5",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q6",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q7",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q8",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#q9",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#tasks",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-canon",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-clustering",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-corpus",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-cull",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-methods",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-mining",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-state",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v11-work",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v12",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v12-config",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v12-gates",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v12-rollback",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v12-space",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v12-status",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v13-caption",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v14-canon",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v14-crop-papers",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v14-crops",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v14-experiment",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v14-freeze",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v14-occlusion-papers",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v14-pose",
+        "introduced_by_v15": false,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v15-canon",
+        "introduced_by_v15": true,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v15-capacity",
+        "introduced_by_v15": true,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v15-evaluation-contract",
+        "introduced_by_v15": true,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v15-flint-evaluation",
+        "introduced_by_v15": true,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "#v15-prior-art",
+        "introduced_by_v15": true,
+        "kind": "same_document",
+        "exists": true,
+        "status": "pass"
+      },
+      {
+        "link": "../../../heuristics-canon-research/PRINCIPLES.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/PRINCIPLES.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/PRINCIPLES.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/distilled/ml-systems/janus-benchmark-c.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/distilled/ml-systems/occface-per-point-visibility.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/distilled/ml-systems/occface-per-point-visibility.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/distilled/ml-systems/occface-per-point-visibility.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/distilled/ml-systems/occluded-face-recognition-survey.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/distilled/ml-systems/occluded-face-recognition-survey.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/distilled/ml-systems/occluded-face-recognition-survey.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/lexicons/ml-systems.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/lexicons/ml-systems.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/lexicons/ml-systems.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/literature/extracted/ml-systems/janus-benchmark-c.txt",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/literature/extracted/ml-systems/janus-benchmark-c.txt",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/literature/extracted/ml-systems/janus-benchmark-c.txt",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/literature/extracted/ml-systems/occface-per-point-visibility.txt",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/literature/extracted/ml-systems/occface-per-point-visibility.txt",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/literature/extracted/ml-systems/occface-per-point-visibility.txt",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/literature/extracted/ml-systems/occluded-face-recognition-survey.txt",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/literature/extracted/ml-systems/occluded-face-recognition-survey.txt",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/literature/extracted/ml-systems/occluded-face-recognition-survey.txt",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/reasoning/condition-matched-reference.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/condition-matched-reference.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/condition-matched-reference.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/reasoning/margin-and-design-effect-before-the-run.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/margin-and-design-effect-before-the-run.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/margin-and-design-effect-before-the-run.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/reasoning/measurement-integrity.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/measurement-integrity.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/measurement-integrity.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/reasoning/proxy-outcome-integrity.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/proxy-outcome-integrity.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/proxy-outcome-integrity.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../../heuristics-canon-research/reasoning/synthetic-artifact-control-arm.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/synthetic-artifact-control-arm.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/heuristics-canon-research/reasoning/synthetic-artifact-control-arm.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../.task-state/bakeoff-rounds-20261017/crop-research-20261023/research-synthesis.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/.task-state/bakeoff-rounds-20261017/crop-research-20261023/research-synthesis.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/.task-state/bakeoff-rounds-20261017/crop-research-20261023/research-synthesis.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/.env.fir.example",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/.env.fir.example",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/.env.fir.example",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/api/main.py#L285",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/api/main.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/api/main.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/db/settings.py",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/db/settings.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/db/settings.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/recognition/config/settings.py",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/recognition/config/settings.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/recognition/config/settings.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/recognition/infrastructure/face_pipeline/activation.py",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/recognition/infrastructure/face_pipeline/activation.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/recognition/infrastructure/face_pipeline/activation.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/recognition/tests/fixtures/face_pipeline/auraface_alignment_measurement.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/recognition/tests/fixtures/face_pipeline/auraface_alignment_measurement.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/recognition/tests/fixtures/face_pipeline/auraface_alignment_measurement.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/recognition/tests/fixtures/face_pipeline/auraface_composed/aligner_composed_embedding_meta.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/recognition/tests/fixtures/face_pipeline/auraface_composed/aligner_composed_embedding_meta.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/recognition/tests/fixtures/face_pipeline/auraface_composed/aligner_composed_embedding_meta.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scene/config/profiles.py#L105",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scene/config/profiles.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scene/config/profiles.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scene/config/settings.py#L73",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scene/config/settings.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scene/config/settings.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py#L89",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scene/infrastructure/vlm/ensemble_decode.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scene/tests/test_ensemble_decode.py#L341",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scene/tests/test_ensemble_decode.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scene/tests/test_ensemble_decode.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scripts/eval_harness/bakeoff_candidates.yaml#L71",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scripts/eval_harness/bakeoff_candidates.yaml",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scripts/eval_harness/bakeoff_candidates.yaml",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scripts/eval_harness/face_assignment.py#L215",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scripts/eval_harness/face_assignment.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scripts/eval_harness/face_assignment.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scripts/eval_harness/face_metrics.py#L782",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scripts/eval_harness/face_metrics.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scripts/eval_harness/face_metrics.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../apps/prototype-description-service/scripts/eval_harness/open_set_identification.py#L128",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/apps/prototype-description-service/scripts/eval_harness/open_set_identification.py",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/apps/prototype-description-service/scripts/eval_harness/open_set_identification.py",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/adrs/ADR-016-auraface-512d-activation-refusal.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/adrs/ADR-016-auraface-512d-activation-refusal.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/adrs/ADR-016-auraface-512d-activation-refusal.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/archive/tasks/4.0/4.2.3/clustering-algorithm-comprehensive-analysis.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/archive/tasks/4.0/4.2.3/clustering-algorithm-comprehensive-analysis.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/archive/tasks/4.0/4.2.3/clustering-algorithm-comprehensive-analysis.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/assessments/current/caption-quality-occlusion-model-combination-assessment-2026-10-07.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+        "introduced_by_v15": true,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+        "exists": true,
+        "checked_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+        "status": "pass"
+      },
+      {
+        "link": "../../docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md#configuration-drift-to-keep-visible",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+        "exists": true,
+        "checked_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+        "status": "pass"
+      },
+      {
+        "link": "../../docs/research/fir-occlusion-pipeline-codemap-2026-09-04.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/research/fir-occlusion-pipeline-codemap-2026-09-04.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/research/fir-occlusion-pipeline-codemap-2026-09-04.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/scopes/fir-development-and-measurement-wave.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/scopes/fir-development-and-measurement-wave.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/scopes/fir-development-and-measurement-wave.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/tasks/altq/bakeoff-results/run-altq-646-interleave-v3.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/tasks/altq/bakeoff-results/run-altq-646-interleave-v3.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/tasks/altq/bakeoff-results/run-altq-646-interleave-v3.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/tasks/fir/evidence/opencv-5-embedding-drift.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/tasks/fir/evidence/opencv-5-embedding-drift.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/tasks/fir/evidence/opencv-5-embedding-drift.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/tasks/firdv/FIRDV-1-isolated-development-install-task-plan.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/tasks/firdv/FIRDV-1-isolated-development-install-task-plan.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/tasks/firdv/FIRDV-1-isolated-development-install-task-plan.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/tasks/firdv/FIRDV-2-comparative-harness-and-bakeoff-task-plan.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/tasks/firdv/FIRDV-2-comparative-harness-and-bakeoff-task-plan.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/tasks/firdv/FIRDV-2-comparative-harness-and-bakeoff-task-plan.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../docs/tasks/firdv/FIRDV-3-embedder-capacity-and-training-feasibility-task-plan.md",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/docs/tasks/firdv/FIRDV-3-embedder-capacity-and-training-feasibility-task-plan.md",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/docs/tasks/firdv/FIRDV-3-embedder-capacity-and-training-feasibility-task-plan.md",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "../../evidence/quant_sizes.json",
+        "introduced_by_v15": true,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/evidence/quant_sizes.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/evidence/quant_sizes.json",
+        "exists": true,
+        "checked_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/evidence/quant_sizes.json",
+        "status": "pass"
+      },
+      {
+        "link": "../../evidence/verification.json",
+        "introduced_by_v15": true,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/evidence/verification.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/evidence/verification.json",
+        "exists": true,
+        "checked_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/evidence/verification.json",
+        "status": "pass"
+      },
+      {
+        "link": "../manifests/corpus-manifest-v3r-20260814.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/benchmarks/manifests/corpus-manifest-v3r-20260814.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/benchmarks/manifests/corpus-manifest-v3r-20260814.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "fir-auraface-512d-vm-validation-20260922.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/benchmarks/reports/fir-auraface-512d-vm-validation-20260922.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/benchmarks/reports/fir-auraface-512d-vm-validation-20260922.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "fir-layered-pose-crops-research-20261023.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/benchmarks/reports/fir-layered-pose-crops-research-20261023.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/benchmarks/reports/fir-layered-pose-crops-research-20261023.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "fir-occlusion-caption-mining-20260904.json",
+        "introduced_by_v15": false,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/benchmarks/reports/fir-occlusion-caption-mining-20260904.json",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/benchmarks/reports/fir-occlusion-caption-mining-20260904.json",
+        "exists": false,
+        "checked_target": null,
+        "status": "preexisting_target_not_supplied"
+      },
+      {
+        "link": "qwen-high-precision-20261025/review-all-history-v2/index.html",
+        "introduced_by_v15": true,
+        "kind": "file",
+        "lane_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/FIR-REPORT/benchmarks/reports/qwen-high-precision-20261025/review-all-history-v2/index.html",
+        "supplied_layout_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/benchmarks/reports/qwen-high-precision-20261025/review-all-history-v2/index.html",
+        "exists": true,
+        "checked_target": "/home/gate/acx-flint-evaluation-20261026T1729Z/inputs/benchmarks/reports/qwen-high-precision-20261025/review-all-history-v2/index.html",
+        "status": "pass"
+      }
+    ]
+  },
+  "canon": {
+    "version": "0.26.2",
+    "manifest_sha256": "46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260",
+    "manifest_files_checked": 53,
+    "mismatches": [],
+    "files": [
+      {
+        "path": "lexicons/accessibility.md",
+        "expected_sha256": "4f6dba17a0026ba1971fba0bda21f35b63882a92cccf47f45a90f0f87267a246",
+        "actual_sha256": "4f6dba17a0026ba1971fba0bda21f35b63882a92cccf47f45a90f0f87267a246",
+        "matches": true
+      },
+      {
+        "path": "lexicons/business-marketing.md",
+        "expected_sha256": "1cfdbd62b9481d7a0dbe88679638828c5779abe7168937be1fac6f055d499fb8",
+        "actual_sha256": "1cfdbd62b9481d7a0dbe88679638828c5779abe7168937be1fac6f055d499fb8",
+        "matches": true
+      },
+      {
+        "path": "lexicons/depiction.md",
+        "expected_sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "actual_sha256": "765a46f1633332e8c8b58cb6875b623e495df933828ba43790fdc05432ca4fb8",
+        "matches": true
+      },
+      {
+        "path": "lexicons/design-aesthetics.md",
+        "expected_sha256": "ef47bce7e1b65f9082a409e50ab67aaaf6c66e751b03132e4dfb3896d48a3018",
+        "actual_sha256": "ef47bce7e1b65f9082a409e50ab67aaaf6c66e751b03132e4dfb3896d48a3018",
+        "matches": true
+      },
+      {
+        "path": "lexicons/engineering.md",
+        "expected_sha256": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d",
+        "actual_sha256": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d",
+        "matches": true
+      },
+      {
+        "path": "lexicons/epistemics.md",
+        "expected_sha256": "866f67e6fe626671999bc9debd3774188c23f7b82905ea7d5e008a08dd5f7f07",
+        "actual_sha256": "866f67e6fe626671999bc9debd3774188c23f7b82905ea7d5e008a08dd5f7f07",
+        "matches": true
+      },
+      {
+        "path": "lexicons/graph-theory.md",
+        "expected_sha256": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c",
+        "actual_sha256": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c",
+        "matches": true
+      },
+      {
+        "path": "lexicons/interaction-ux.md",
+        "expected_sha256": "986a319d91f00c5c96382b3b299b2dee6f23cc64d89cd50e125ddbe8f5203659",
+        "actual_sha256": "986a319d91f00c5c96382b3b299b2dee6f23cc64d89cd50e125ddbe8f5203659",
+        "matches": true
+      },
+      {
+        "path": "lexicons/ml-systems.md",
+        "expected_sha256": "1dfbd751c2d52d223b0ae617da7f709dd29970f37ddd9bcdc0eb09a7e839cf20",
+        "actual_sha256": "1dfbd751c2d52d223b0ae617da7f709dd29970f37ddd9bcdc0eb09a7e839cf20",
+        "matches": true
+      },
+      {
+        "path": "lexicons/planning.md",
+        "expected_sha256": "82d13ac75270c354613fcaad8d7269a7ff6dfce4e08d2a8ba2f19b1207419a48",
+        "actual_sha256": "82d13ac75270c354613fcaad8d7269a7ff6dfce4e08d2a8ba2f19b1207419a48",
+        "matches": true
+      },
+      {
+        "path": "lexicons/security.md",
+        "expected_sha256": "4f5884055c27df2b39813d8f90ef3510c94b0c83d66720ed3dfd29bf57f6bac8",
+        "actual_sha256": "4f5884055c27df2b39813d8f90ef3510c94b0c83d66720ed3dfd29bf57f6bac8",
+        "matches": true
+      },
+      {
+        "path": "lexicons/writing.md",
+        "expected_sha256": "4dad819ddf730b145c535838fa7c69c59fcd10ae2da7414f829f9ca960508bb3",
+        "actual_sha256": "4dad819ddf730b145c535838fa7c69c59fcd10ae2da7414f829f9ca960508bb3",
+        "matches": true
+      },
+      {
+        "path": "PRINCIPLES.md",
+        "expected_sha256": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+        "actual_sha256": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+        "matches": true
+      },
+      {
+        "path": "NOTICE.md",
+        "expected_sha256": "104fde3eea6b5da7127dd86a481c62c2a548a4b2e3de21cc114ea65c81eb966c",
+        "actual_sha256": "104fde3eea6b5da7127dd86a481c62c2a548a4b2e3de21cc114ea65c81eb966c",
+        "matches": true
+      },
+      {
+        "path": "README.md",
+        "expected_sha256": "915107fc7b4d347f83d7936afe8be36f80b3360a04e9d1c668feb099cbad14b2",
+        "actual_sha256": "915107fc7b4d347f83d7936afe8be36f80b3360a04e9d1c668feb099cbad14b2",
+        "matches": true
+      },
+      {
+        "path": "AGENTS.md",
+        "expected_sha256": "174d8b4dea3b440fa47fa35b0887993aa0b98235ac56852e65528f80fef40536",
+        "actual_sha256": "174d8b4dea3b440fa47fa35b0887993aa0b98235ac56852e65528f80fef40536",
+        "matches": true
+      },
+      {
+        "path": "CLAUDE.md",
+        "expected_sha256": "509452c6f05abefe86ba88d4d1d07c1c978bfc6eb1c1c4e5ae8d66ecd68a3361",
+        "actual_sha256": "509452c6f05abefe86ba88d4d1d07c1c978bfc6eb1c1c4e5ae8d66ecd68a3361",
+        "matches": true
+      },
+      {
+        "path": "SOURCES.md",
+        "expected_sha256": "d15d36f98434379a9e7b78ad7365360e70de9be546226c2d71575752e00762c7",
+        "actual_sha256": "d15d36f98434379a9e7b78ad7365360e70de9be546226c2d71575752e00762c7",
+        "matches": true
+      },
+      {
+        "path": "reasoning/CONTRACT.md",
+        "expected_sha256": "efe2349bda77e1a4e276e15523b5124a35384071edbeffeee98c516526a1ca5d",
+        "actual_sha256": "efe2349bda77e1a4e276e15523b5124a35384071edbeffeee98c516526a1ca5d",
+        "matches": true
+      },
+      {
+        "path": "reasoning/MAP.md",
+        "expected_sha256": "236e5e8c0a0740e9a38c2d108ca13a09889d2d995b50f38963d3b2325f309cb7",
+        "actual_sha256": "236e5e8c0a0740e9a38c2d108ca13a09889d2d995b50f38963d3b2325f309cb7",
+        "matches": true
+      },
+      {
+        "path": "reasoning/README.md",
+        "expected_sha256": "1ccfc8adbe84f64ede274a13ee261a60333267db6ad2f2977289a8c0d35bc58f",
+        "actual_sha256": "1ccfc8adbe84f64ede274a13ee261a60333267db6ad2f2977289a8c0d35bc58f",
+        "matches": true
+      },
+      {
+        "path": "reasoning/attribute-claims-to-their-bearer.md",
+        "expected_sha256": "4a84b1b002860f0c354bfae967bf5374bde0ec040767b2af0db98ca0f3eafd5f",
+        "actual_sha256": "4a84b1b002860f0c354bfae967bf5374bde0ec040767b2af0db98ca0f3eafd5f",
+        "matches": true
+      },
+      {
+        "path": "reasoning/bounded-role-lets-a-small-model-be-safe.md",
+        "expected_sha256": "2b385213b976cf14675e316b239e583523591ac23db301705ee23578bedf14e0",
+        "actual_sha256": "2b385213b976cf14675e316b239e583523591ac23db301705ee23578bedf14e0",
+        "matches": true
+      },
+      {
+        "path": "reasoning/compose-at-the-boundary-before-inside-the-graph.md",
+        "expected_sha256": "ab5c9553249f7579679a9043cbb8b917ca5d98a8f8e250f6a21b69cdd6ab3569",
+        "actual_sha256": "ab5c9553249f7579679a9043cbb8b917ca5d98a8f8e250f6a21b69cdd6ab3569",
+        "matches": true
+      },
+      {
+        "path": "reasoning/compression-is-selection-not-truncation.md",
+        "expected_sha256": "517afff698a7ea1de33d746da10bfe4879c7766ab1feec72972ff2a6bcad56f2",
+        "actual_sha256": "517afff698a7ea1de33d746da10bfe4879c7766ab1feec72972ff2a6bcad56f2",
+        "matches": true
+      },
+      {
+        "path": "reasoning/condition-matched-reference.md",
+        "expected_sha256": "0bea4031cecd3e0743d6c28477fa0ce2b4b73c1933ab821134ad8707c0730a81",
+        "actual_sha256": "0bea4031cecd3e0743d6c28477fa0ce2b4b73c1933ab821134ad8707c0730a81",
+        "matches": true
+      },
+      {
+        "path": "reasoning/constrained-domains-have-solved-it.md",
+        "expected_sha256": "9361957f995b142d458adc882f3b7f1927922a8cfccbaa8d1137d3164677eb41",
+        "actual_sha256": "9361957f995b142d458adc882f3b7f1927922a8cfccbaa8d1137d3164677eb41",
+        "matches": true
+      },
+      {
+        "path": "reasoning/constraint-before-capacity.md",
+        "expected_sha256": "8dc52bf41c77e9414c6489cf6a671586ee26213436ce5a0804d49779692935f4",
+        "actual_sha256": "8dc52bf41c77e9414c6489cf6a671586ee26213436ce5a0804d49779692935f4",
+        "matches": true
+      },
+      {
+        "path": "reasoning/context-obedience-is-a-separate-capability.md",
+        "expected_sha256": "26c8ab64970a0066b1e74810e4acae45f1a435b95d117ce27891db408b33661d",
+        "actual_sha256": "26c8ab64970a0066b1e74810e4acae45f1a435b95d117ce27891db408b33661d",
+        "matches": true
+      },
+      {
+        "path": "reasoning/contract-before-components.md",
+        "expected_sha256": "aa2a28b4ced769d05518a715feba0fa240054132a6f75264885b27107f6b1e18",
+        "actual_sha256": "aa2a28b4ced769d05518a715feba0fa240054132a6f75264885b27107f6b1e18",
+        "matches": true
+      },
+      {
+        "path": "reasoning/controlled-vocabulary-caps-hallucination.md",
+        "expected_sha256": "25e16382b355b2d7529936a4acdcd81a5cdc7c09d8b08992574e2348155f746b",
+        "actual_sha256": "25e16382b355b2d7529936a4acdcd81a5cdc7c09d8b08992574e2348155f746b",
+        "matches": true
+      },
+      {
+        "path": "reasoning/correction-at-source.md",
+        "expected_sha256": "4d1be28240c0f7b12ade71a0f595cffe69ffd25a53b88ba5a4c64c022d75b2b7",
+        "actual_sha256": "4d1be28240c0f7b12ade71a0f595cffe69ffd25a53b88ba5a4c64c022d75b2b7",
+        "matches": true
+      },
+      {
+        "path": "reasoning/designed-unknown.md",
+        "expected_sha256": "ad40d8aa302ff9d249cccdc7280b414eefd7aacb3ddc6ab7edca6832dd9e82fd",
+        "actual_sha256": "ad40d8aa302ff9d249cccdc7280b414eefd7aacb3ddc6ab7edca6832dd9e82fd",
+        "matches": true
+      },
+      {
+        "path": "reasoning/dual-control-two-keys.md",
+        "expected_sha256": "892498186571b851177a394a392d26af9efd6f94991ebb1ba87ab1afe6714fbf",
+        "actual_sha256": "892498186571b851177a394a392d26af9efd6f94991ebb1ba87ab1afe6714fbf",
+        "matches": true
+      },
+      {
+        "path": "reasoning/durable-decision-memory.md",
+        "expected_sha256": "4d3cfde0adbe98e8f4e07c5c6bbff5267c626ec13d0636a31810e433308547fb",
+        "actual_sha256": "4d3cfde0adbe98e8f4e07c5c6bbff5267c626ec13d0636a31810e433308547fb",
+        "matches": true
+      },
+      {
+        "path": "reasoning/evidence-before-commitment.md",
+        "expected_sha256": "e48acbf579002de19890e3af34e170776d59fa93d56347e48042d67652ec57d1",
+        "actual_sha256": "e48acbf579002de19890e3af34e170776d59fa93d56347e48042d67652ec57d1",
+        "matches": true
+      },
+      {
+        "path": "reasoning/fail-loudly-succeed-quietly.md",
+        "expected_sha256": "377a21ad0078761760395e97063b7a0daeb8829a8c905b5b878c1b7e53d28975",
+        "actual_sha256": "377a21ad0078761760395e97063b7a0daeb8829a8c905b5b878c1b7e53d28975",
+        "matches": true
+      },
+      {
+        "path": "reasoning/falsification-disconfirmers.md",
+        "expected_sha256": "9e572c986919420c614c6ae26033480a25294874c6bc6b4bb81341d32bba0771",
+        "actual_sha256": "9e572c986919420c614c6ae26033480a25294874c6bc6b4bb81341d32bba0771",
+        "matches": true
+      },
+      {
+        "path": "reasoning/feedback-bounded-waiting.md",
+        "expected_sha256": "acf18f3e2ffad3777598e34e0d2b8dd71d678bb432a6e4c05e8db05466b8879a",
+        "actual_sha256": "acf18f3e2ffad3777598e34e0d2b8dd71d678bb432a6e4c05e8db05466b8879a",
+        "matches": true
+      },
+      {
+        "path": "reasoning/frozen-base-additive-delta.md",
+        "expected_sha256": "2b13095d16fd3283d0d4ec751e1229dc38bad776758aa03c384a824fc5b10632",
+        "actual_sha256": "2b13095d16fd3283d0d4ec751e1229dc38bad776758aa03c384a824fc5b10632",
+        "matches": true
+      },
+      {
+        "path": "reasoning/least-privilege-blast-radius.md",
+        "expected_sha256": "e057cf4e013aab997eb986909a328fbfe998063f2a43c52553bc94c083a2ae93",
+        "actual_sha256": "e057cf4e013aab997eb986909a328fbfe998063f2a43c52553bc94c083a2ae93",
+        "matches": true
+      },
+      {
+        "path": "reasoning/licence-provenance-is-transitive.md",
+        "expected_sha256": "46ebc032724e047cb97c7ec78cff56c98fe4f159d4fc855b8f0424d9c27acdc7",
+        "actual_sha256": "46ebc032724e047cb97c7ec78cff56c98fe4f159d4fc855b8f0424d9c27acdc7",
+        "matches": true
+      },
+      {
+        "path": "reasoning/margin-and-design-effect-before-the-run.md",
+        "expected_sha256": "186c94c2b0ba88897cebea26c39752d6f0e87bbab8bff3ec1fa9aace79f85aad",
+        "actual_sha256": "186c94c2b0ba88897cebea26c39752d6f0e87bbab8bff3ec1fa9aace79f85aad",
+        "matches": true
+      },
+      {
+        "path": "reasoning/measurement-integrity.md",
+        "expected_sha256": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8",
+        "actual_sha256": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8",
+        "matches": true
+      },
+      {
+        "path": "reasoning/perceived-enforced-boundaries.md",
+        "expected_sha256": "c0707174df44e03e5cf7e18fcaacadf72756ee0a8528fe8efae7758ef5e99c78",
+        "actual_sha256": "c0707174df44e03e5cf7e18fcaacadf72756ee0a8528fe8efae7758ef5e99c78",
+        "matches": true
+      },
+      {
+        "path": "reasoning/proxy-outcome-integrity.md",
+        "expected_sha256": "c259401b65c3adab219bc15db4a349c18f447c20df7ab584d9787ada79c1e2fc",
+        "actual_sha256": "c259401b65c3adab219bc15db4a349c18f447c20df7ab584d9787ada79c1e2fc",
+        "matches": true
+      },
+      {
+        "path": "reasoning/quantization-delta-on-the-failure-metric.md",
+        "expected_sha256": "33aaa9c49dc335cf4a92d2d1c0f908bfb6ee3a3c9f1eff8944ad2c71c7f01361",
+        "actual_sha256": "33aaa9c49dc335cf4a92d2d1c0f908bfb6ee3a3c9f1eff8944ad2c71c7f01361",
+        "matches": true
+      },
+      {
+        "path": "reasoning/reversible-commitments.md",
+        "expected_sha256": "d0c36d32ee18f9e0f3fe23002b992b62ca25fffea4a1b9da2b14892c630130b1",
+        "actual_sha256": "d0c36d32ee18f9e0f3fe23002b992b62ca25fffea4a1b9da2b14892c630130b1",
+        "matches": true
+      },
+      {
+        "path": "reasoning/runtime-fork-is-part-of-provenance.md",
+        "expected_sha256": "130b855badec2e058dde6816f0cb455d3c7be680bdbe87478c6928919acbd720",
+        "actual_sha256": "130b855badec2e058dde6816f0cb455d3c7be680bdbe87478c6928919acbd720",
+        "matches": true
+      },
+      {
+        "path": "reasoning/second-exit-hostile-landlord.md",
+        "expected_sha256": "955cc421d315a1b250a938b61814b54465132023b5212c5683e0c3274d819c46",
+        "actual_sha256": "955cc421d315a1b250a938b61814b54465132023b5212c5683e0c3274d819c46",
+        "matches": true
+      },
+      {
+        "path": "reasoning/signal-density-not-length.md",
+        "expected_sha256": "ffa2ed92c7ed43bf6f3feb84e7cc0a2cc59b3bc584c3d111f7fcdd09ea8e1ca3",
+        "actual_sha256": "ffa2ed92c7ed43bf6f3feb84e7cc0a2cc59b3bc584c3d111f7fcdd09ea8e1ca3",
+        "matches": true
+      },
+      {
+        "path": "reasoning/step-size-by-feedback.md",
+        "expected_sha256": "3296cefbc1555c8e087eeed41f4f98f6f63ea4d609ab3b8768444d9c310eb613",
+        "actual_sha256": "3296cefbc1555c8e087eeed41f4f98f6f63ea4d609ab3b8768444d9c310eb613",
+        "matches": true
+      },
+      {
+        "path": "reasoning/synthetic-artifact-control-arm.md",
+        "expected_sha256": "cb2341b452eb7aa5ae4570bcf1448b295728723269a0ad4f253029c972754b47",
+        "actual_sha256": "cb2341b452eb7aa5ae4570bcf1448b295728723269a0ad4f253029c972754b47",
+        "matches": true
+      }
+    ],
+    "consulted_paths": [
+      "reasoning/compose-at-the-boundary-before-inside-the-graph.md",
+      "reasoning/context-obedience-is-a-separate-capability.md",
+      "reasoning/evidence-before-commitment.md",
+      "reasoning/frozen-base-additive-delta.md",
+      "reasoning/runtime-fork-is-part-of-provenance.md",
+      "reasoning/quantization-delta-on-the-failure-metric.md",
+      "reasoning/margin-and-design-effect-before-the-run.md",
+      "reasoning/proxy-outcome-integrity.md",
+      "reasoning/condition-matched-reference.md",
+      "lexicons/ml-systems.md",
+      "PRINCIPLES.md"
+    ],
+    "row_authority": "Pinned canon only; originals used for mechanisms, not replacement rows."
+  },
+  "source_input_hashes": [
+    {
+      "path": "context/context.json",
+      "sha256": "f0521464d940089856a5447320ea9e7fb208dd0038d3e1d82a32f2095a50295c"
+    },
+    {
+      "path": "inputs/benchmarks/reports/qwen-high-precision-20261025/review-all-history-v2/index.html",
+      "sha256": "8ba00da0674e88d62d9d7e9c1dc392ef1ebfd2bf4fa68c25573726412f5d7400"
+    },
+    {
+      "path": "inputs/docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+      "sha256": "1991bce7685dc4c4030de48a272757ae3f4c89c6e34f5d0a22cf574284e712a0"
+    },
+    {
+      "path": "original-corpus/distilled/ml-systems/ai-engineering.md",
+      "sha256": "82ab786fef11d61fc4b1c80ca66865311efd92b4dbb570291aa4acd3be84b965"
+    },
+    {
+      "path": "original-corpus/distilled/ml-systems/model-cards.md",
+      "sha256": "7085e9fb439fa9928d3a111e3d7ca0bbe8505f161e435cedfb382bb29f57f326"
+    },
+    {
+      "path": "original-corpus/distilled/ml-systems/bruch-vector-retrieval.md",
+      "sha256": "b0ea4a49549e02ee1b66eb0e64a2525b6443d57607342116cd4f63660d54565f"
+    }
+  ],
+  "artifact_hashes": [
+    {
+      "path": "evidence/RecursiveSI_flint_README_md.json",
+      "sha256": "f3ac4675e4f44e46177a8dd8f6c12055749c9eb3bb5c78f9df2b43bae7ce551c"
+    },
+    {
+      "path": "evidence/RecursiveSI_flint_config_json.json",
+      "sha256": "9b705d1af300555c0fbf014ea3721c8fbab59f15619cec4d9a2bda3aa1720b7c"
+    },
+    {
+      "path": "evidence/build_report.py",
+      "sha256": "207b7f5b05b63cf53bf0f73c3dfcfb80f346ee11cf9621c7d836dffade1c234c"
+    },
+    {
+      "path": "evidence/flint_gguf_api.json",
+      "sha256": "7792bb9364fca890d68a38a19a63f236cf67e45ccb804ee20fb86b36ce348679"
+    },
+    {
+      "path": "evidence/flint_upstream_api.json",
+      "sha256": "af2a1693ed22c6c3a04f40b2264ecd15ac3684d00149b3f9f02dc7f33b52f08d"
+    },
+    {
+      "path": "evidence/preservation_deltas.json",
+      "sha256": "2bfdb617968bf1d1394359987b28b3c1bd1e2a919387101f3fb26ebbf6b8a1c3"
+    },
+    {
+      "path": "evidence/quant_sizes.json",
+      "sha256": "7ff00632b2ba76f6792d5402d9b1991b7e608e99fa3242c805ec41da869f9945"
+    },
+    {
+      "path": "evidence/unsloth_docs.json",
+      "sha256": "736a3d210d04de212152eb7eb32f69197f84cd22246de40c2b8a3a11ae0f7d90"
+    },
+    {
+      "path": "evidence/unsloth_flint-GGUF_README_md.json",
+      "sha256": "c2373f3cdec031f1a707726172ffc706294d4534ed86ca8e5fac31064304a453"
+    },
+    {
+      "path": "evidence/verify_report.py",
+      "sha256": "1778a98ca7ddbec119db4048af628fcd2cdebeaaefce87f20685c0c1b16b842a"
+    }
+  ],
+  "quant_metadata": {
+    "revision": "20468edfc38ab43d6914cc88b08cbecb05d0fc62",
+    "all_ten_sizes_verified": true,
+    "bf16_all_shards_bytes": 79576479200,
+    "q4_raw_file_below_physical_ram_bytes": 84871744,
+    "file_size_is_not_runtime_fit": true
+  },
+  "execution_boundary": {
+    "model_execution": false,
+    "weight_download": false,
+    "gpu_start": false,
+    "production_change": false,
+    "external_message": false,
+    "agent_launch": false,
+    "review_rating_change": false,
+    "system_resource_values": "Supplied context snapshot, not measured by this lane",
+    "gpu_stopped_status": "Supplied continuation, not a fresh power-state probe"
+  },
+  "limitations": [
+    "45 unique historical file-link targets were not supplied; no new unresolved links. Sibling report/assessment links validate against frozen inputs rather than lane copies.",
+    "Q4 raw file is just below physical RAM; complete runtime budget fails. No claim that its raw file exceeds physical total.",
+    "No inference performance or quality experiment performed; no fresh hardware/power-state measurement."
+  ]
+}

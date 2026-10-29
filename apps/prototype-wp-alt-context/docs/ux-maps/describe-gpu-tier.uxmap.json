@@ -53,7 +53,7 @@
         },
         {
           "id": "z-gpu-tier-chip",
-          "label": "GPU observation is not description readiness: unknown stays quiet with neutral copy; starting, warming, ready and degraded never certify results or CPU capability; canonical state labels are unchanged.",
+          "label": "State vocabulary: hidden-no-run = empty; unknown = default. GPU observation is not description readiness: unknown stays quiet with neutral copy; starting, warming, ready and degraded never certify results or CPU capability; canonical state labels are unchanged.",
           "role": "status",
           "states": ["default", "loading", "empty", "degraded"]
         },

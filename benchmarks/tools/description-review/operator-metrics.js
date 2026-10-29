@@ -1,0 +1,181 @@
+/* Pinned operator contract v1. Human annotations are the only quality evidence. */
+(function (root) {
+'use strict';
+const DATA='qwen-high-precision-12-all-history-20261025', SHA='20bec411e94963641b1882edb680240991771bcc7b350856eb293398e3aa4d0e';
+const issues=['unsupported','subject_object','attribute_count','action_relation','ocr_wrong','ocr_omission','salient_omission','context_identity'];
+const factual=issues.filter(x=>!x.endsWith('omission'));
+const severities=['not_assessed','none','minor','major','critical','uncertain'], ocrs=['not_assessed','accurate','wrong','omitted','not_applicable','uncertain'];
+const surfaces=['title','alt','caption'], verdicts=['supported','contradicted','unsupported','unverifiable'];
+function check(x,msg){if(!x)throw new Error(msg);}
+function str(x){return typeof x==='string'&&x.trim().length>0;}
+function arr(x){check(Array.isArray(x),'Expected array');return x;}
+function enumv(x,vs){check(vs.includes(x),'Invalid enum: '+x);}
+function unique(xs){check(new Set(xs).size===xs.length,'Duplicate values');}
+function rate(n,d){return d?n/d:null;}
+function mean(xs){return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:null;}
+function ci(xs){if(xs.length<2)return null;let s=0x51f15e;const vals=[];for(let b=0;b<2000;b++){let sum=0;for(let i=0;i<xs.length;i++){s^=s<<13;s^=s>>>17;s^=s<<5;sum+=xs[(s>>>0)%xs.length];}vals.push(sum/xs.length);}vals.sort((a,b)=>a-b);return [vals[49],vals[1949]];}
+function norm(s){return s.replace(/\r\n?/g,'\n').normalize('NFC');}
+function distance(a,b){a=Array.from(a);b=Array.from(b);let p=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let q=[i];for(let j=1;j<=b.length;j++)q[j]=Math.min(q[j-1]+1,p[j]+1,p[j-1]+(a[i-1]!==b[j-1]));p=q;}return p[b.length];}
+function summarize(m,a){
+check(m&&a,'Missing inputs');
+function jsonValid(x){check(x!==undefined&&!(typeof x==='number'&&!Number.isFinite(x)),'Undefined/nonfinite input');if(x&&typeof x==='object')Object.values(x).forEach(jsonValid);}jsonValid(m);jsonValid(a);for(const [x,schema] of [[m,'bakeoff-operator-manifest/v1'],[a,'bakeoff-operator-reviews/v1']]){check(x.schema===schema&&x.dataset_id===DATA&&x.manifest_sha256===SHA&&x.rubric_version==='accuracy-v1','Schema/dataset/manifest/rubric mismatch');}
+check(str(a.reviewer_id)&&typeof a.blind_seed==='string','Missing reviewer/seed');
+const images=new Map(),cells=new Map(), combos=new Set(), arms=new Map(), pairs=new Map(), reviewed=new Map(), bound=new Set();
+arr(m.images).forEach(im=>{check(str(im.image_id)&&str(im.input_sha256)&&!images.has(im.image_id),'Invalid/duplicate image');images.set(im.image_id,im);});
+check(a.reviews&&a.gold&&a.blind_orders&&typeof a.reviews==='object','Missing annotation maps');
+Object.entries(a.gold).forEach(([id,g])=>{check(images.has(id)&&g.input_sha256===images.get(id).input_sha256,'Gold image mismatch');arr(g.facts).forEach(f=>check(str(f),'Empty fact'));enumv(g.ocr_state,['not_assessed','present','none','unreadable']);check(typeof g.ocr_truth==='string'&&Number.isInteger(g.revision)&&g.revision>=0,'Invalid gold');});
+arr(m.cells).forEach(c=>{check(str(c.key)&&!cells.has(c.key)&&images.has(c.image_id)&&c.input_sha256===images.get(c.image_id).input_sha256&&str(c.output_sha256)&&str(c.model_key)&&str(c.model_label)&&typeof c.generation_error==='boolean','Invalid cell binding');enumv(c.arm,['off','on','caption']);enumv(c.scope,["caption_reference", "diagnostic30", "full120", "generation_failure_pilot", "historical_caption_reference", "historical_diagnostic30", "historical_full120", "historical_pilot", "pilot", "reference_pilot"]);check((c.arm==='caption')===["caption_reference", "historical_caption_reference"].includes(c.scope),'Caption scope mismatch');const k=JSON.stringify([c.model_key,c.scope,c.arm,c.image_id]);check(!combos.has(k),'Duplicate image/model/arm/scope');combos.add(k);unique(arr(c.surfaces).map(s=>{enumv(s.name,surfaces);check(typeof s.text==='string','Invalid output text');return s.name;}));cells.set(c.key,c);});
+Object.entries(a.blind_orders).forEach(([id,keys])=>{check(images.has(id),'Unknown blind image');unique(arr(keys));keys.forEach(k=>check(cells.has(k)&&cells.get(k).image_id===id,'Invalid blind mapping'));});
+Object.entries(a.reviews).forEach(([key,r])=>{const c=cells.get(key);check(c&&r.output_sha256===c.output_sha256&&r.image_id===c.image_id&&r.input_sha256===c.input_sha256,'Review binding mismatch');bound.add(key);check(typeof r.reviewed==='boolean'&&typeof r.notes==='string'&&str(r.updated_at)&&Number.isFinite(Date.parse(r.updated_at)),'Missing review fields');enumv(r.severity,severities);enumv(r.ocr,ocrs);unique(arr(r.issues));r.issues.forEach(x=>enumv(x,issues));unique(arr(r.affected_surfaces));r.affected_surfaces.forEach(x=>enumv(x,surfaces));arr(r.claims).forEach(cl=>{check(str(cl.text),'Empty claim');enumv(cl.surface,surfaces);check(c.surfaces.some(s=>s.name===cl.surface),'Absent claim surface');enumv(cl.verdict,verdicts);});const g=a.gold[c.image_id],current=!!g&&r.gold_snapshot===JSON.stringify({facts:g.facts,ocr_state:g.ocr_state,ocr_truth:g.ocr_truth});unique(arr(r.covered_fact_ids));r.covered_fact_ids.forEach(i=>check(Number.isInteger(i)&&i>=0&&(!current||i<g.facts.length),'Invalid fact id'));check(typeof r.gold_snapshot==='string'&&(r.ocr_prediction===null||typeof r.ocr_prediction==='string'),'Invalid snapshot/OCR prediction');if(r.reviewed){check(r.severity!=='not_assessed','Incomplete review');if(!c.generation_error)reviewed.set(key,r);}});
+function clean(r){return r.severity!=='uncertain'&&!['not_assessed','wrong','uncertain'].includes(r.ocr)&&!r.issues.some(x=>factual.includes(x));}
+for(const c of cells.values()){
+const k=JSON.stringify([c.model_key,c.scope,c.arm]);if(!arms.has(k))arms.set(k,{model_key:c.model_key,model_label:c.model_label,arm:c.arm,scope:c.scope,total:0,generation_errors:0,reviewed:0,pending:0,uncertain:0,confirmed_error_free:0,major_issues:0,unsupported_count:0,omission_count:0,ocr_assessed:0,ocr_errors:0,ocr_not_applicable:0,ocr_uncertain:0,ocr_not_assessed:0,claims_assessed:0,claim_unverifiable:0,claim_count:0,claim_supported:0,claim_decidable:0,audited_span_count:0,ocr_truth_chars:0,ocr_edit_distance:0,ocr_exact_count:0,salient_images:0,salient_unavailable:0,_claim:[],_decidable:[],_recall:[]});const t=arms.get(k);check(t.model_label===c.model_label||(({"[\"qwen38-bf16__core_exploratory\",\"full120\",\"on\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction ON \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E1/W1 \u00b7 core_exploratory"],"[\"qwen38-bf16__core_exploratory\",\"full120\",\"off\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction ON \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E1/W1 \u00b7 core_exploratory"],"[\"qwen38-bf16__E0_core_exploratory\",\"full120\",\"off\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction OFF \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E0/W0 \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 18 CUDA layers + GPU vision \u00b7 E0/W0"],"[\"qwen38-bf16__E0_core_exploratory\",\"full120\",\"on\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction OFF \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E0/W1 \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 18 CUDA layers + GPU vision \u00b7 E0/W1"]})[JSON.stringify([c.model_key,c.scope,c.arm])]||[]).includes(c.model_label)&&(({"[\"qwen38-bf16__core_exploratory\",\"full120\",\"on\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction ON \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E1/W1 \u00b7 core_exploratory"],"[\"qwen38-bf16__core_exploratory\",\"full120\",\"off\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction ON \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E1/W1 \u00b7 core_exploratory"],"[\"qwen38-bf16__E0_core_exploratory\",\"full120\",\"off\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction OFF \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E0/W0 \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 18 CUDA layers + GPU vision \u00b7 E0/W0"],"[\"qwen38-bf16__E0_core_exploratory\",\"full120\",\"on\"]":["Current Qwen3.8-27B BF16 \u00b7 extraction OFF \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 E0/W1 \u00b7 core_exploratory","Qwen3.8-27B BF16 \u00b7 18 CUDA layers + GPU vision \u00b7 E0/W1"]})[JSON.stringify([c.model_key,c.scope,c.arm])]||[]).includes(t.model_label),'Inconsistent model label');t.total++;if(c.generation_error){t.generation_errors++;continue;}const r=reviewed.get(c.key);if(!r){t.pending++;continue;}t.reviewed++;t.omission_count+=Number(r.issues.some(x=>x==='salient_omission'||x==='ocr_omission'));t.uncertain+=Number(r.severity==='uncertain'||r.ocr==='uncertain');t.confirmed_error_free+=Number(clean(r));t.major_issues+=Number(['major','critical'].includes(r.severity));t.unsupported_count+=Number(r.issues.includes('unsupported'));if(['accurate','wrong','omitted'].includes(r.ocr)){t.ocr_assessed++;t.ocr_errors+=Number(r.ocr!=='accurate');}t.ocr_not_applicable+=Number(r.ocr==='not_applicable');t.ocr_uncertain+=Number(r.ocr==='uncertain');t.ocr_not_assessed+=Number(r.ocr==='not_assessed');
+const cls=new Map();r.claims.forEach(cl=>{const id=JSON.stringify([cl.text,cl.surface]);if(cls.has(id))check(cls.get(id).verdict===cl.verdict,'Conflicting claim labels');cls.set(id,cl);});if(cls.size){let s=0,u=0;for(const cl of cls.values()){s+=Number(cl.verdict==='supported');u+=Number(cl.verdict==='unverifiable');}t.claims_assessed++;t.claim_count+=cls.size;t.claim_supported+=s;t.claim_unverifiable+=u;t.claim_decidable+=cls.size-u;t._claim.push(s/cls.size);if(cls.size-u)t._decidable.push(s/(cls.size-u));}
+const g=a.gold[c.image_id], valid=g&&r.gold_snapshot===JSON.stringify({facts:g.facts,ocr_state:g.ocr_state,ocr_truth:g.ocr_truth});if(valid&&g.facts.length){t.salient_images++;t._recall.push(r.covered_fact_ids.length/g.facts.length);}else t.salient_unavailable++;
+if(valid&&g.ocr_state==='present'&&g.ocr_truth.length&&r.ocr_prediction!==null){const truth=norm(g.ocr_truth),pred=norm(r.ocr_prediction);t.audited_span_count++;t.ocr_truth_chars+=Array.from(truth).length;t.ocr_edit_distance+=distance(truth,pred);t.ocr_exact_count+=Number(truth===pred);}
+}
+for(const t of arms.values()){t.confirmed_error_free_rate=rate(t.confirmed_error_free,t.reviewed);t.major_issue_rate=rate(t.major_issues,t.reviewed);t.unsupported_rate=rate(t.unsupported_count,t.reviewed);t.ocr_error_rate=rate(t.ocr_errors,t.ocr_assessed);t.claim_precision=mean(t._claim);t.decidable_precision=mean(t._decidable);t.decidable_cells=t._decidable.length;t.claim_precision_micro=rate(t.claim_supported,t.claim_count);t.salient_recall=mean(t._recall);t.ocr_exact_match=rate(t.ocr_exact_count,t.audited_span_count);t.ocr_cer=rate(t.ocr_edit_distance,t.ocr_truth_chars);t.execution_coverage=rate(t.total-t.generation_errors,t.total);delete t._claim;delete t._decidable;delete t._recall;}
+function pairGroup(model,scope){const k=JSON.stringify([model,scope]);if(!pairs.has(k))pairs.set(k,{model_key:model,scope,n_pairs:0,off_better:0,on_better:0,ties:0,both_unusable:0,unjudgeable:0,accuracy_matched_n:0,accuracy_generation_error_pairs:0,accuracy_ocr_not_assessed_excluded:0,factual_only_matched_n:0,_accuracy:[],_factual:[],_prefs:[]});return pairs.get(k);}
+for(const c of cells.values()){if(c.arm==='on')pairGroup(c.model_key,c.scope);if(c.arm!=='off')continue;const on=Array.from(cells.values()).find(x=>x.model_key===c.model_key&&x.scope===c.scope&&x.image_id===c.image_id&&x.arm==='on');const p=pairGroup(c.model_key,c.scope);if(!on)continue;check(on.input_sha256===c.input_sha256,'Pair hash mismatch');const r=reviewed.get(c.key),s=reviewed.get(on.key);if((r||c.generation_error)&&(s||on.generation_error)){if([r,s].some(x=>x&&x.ocr==='not_assessed')){p.accuracy_ocr_not_assessed_excluded++;continue;}const d=Number(!!s&&clean(s))-Number(!!r&&clean(r));p._accuracy.push(d);p.accuracy_matched_n++;if(c.generation_error||on.generation_error)p.accuracy_generation_error_pairs++;else{p._factual.push(d);p.factual_only_matched_n++;}}}
+const seen=new Set();arr(a.pairs).forEach(j=>{const l=cells.get(j.left_key),r=cells.get(j.right_key);check(l&&r&&l.image_id===j.image_id&&r.image_id===j.image_id&&l.model_key===j.model_key&&r.model_key===j.model_key&&l.scope===j.scope&&r.scope===j.scope&&l.input_sha256===r.input_sha256&&new Set([l.arm,r.arm]).size===2&&[l.arm,r.arm].every(x=>['on','off'].includes(x)),'Invalid pair binding');check(bound.has(l.key)&&bound.has(r.key),'Missing pair output binding');check(str(j.updated_at)&&Number.isFinite(Date.parse(j.updated_at)),'Invalid pair timestamp');check(str(j.reviewer_id)&&j.reviewer_id===a.reviewer_id&&j.seed===a.blind_seed,'Pair reviewer/seed mismatch');const order=a.blind_orders[j.image_id];check(order&&order.indexOf(l.key)>=0&&order.indexOf(l.key)<order.indexOf(r.key),'Pair blind mapping mismatch');const id=JSON.stringify([j.image_id,j.model_key,j.scope]);check(!seen.has(id),'Duplicate pair judgement');seen.add(id);enumv(j.choice,['left','right','tie','both_unusable','unjudgeable']);const p=pairGroup(j.model_key,j.scope);if(j.choice==='unjudgeable'){p.unjudgeable++;return;}p.n_pairs++;let d=0;if(j.choice==='tie')p.ties++;else if(j.choice==='both_unusable')p.both_unusable++;else{const winner=j.choice==='left'?l:r;d=winner.arm==='on'?1:-1;p[d===1?'on_better':'off_better']++;}p._prefs.push(d);});
+for(const p of pairs.values()){p.net_preference=mean(p._prefs);p.net_preference_ci95=ci(p._prefs);p.accuracy_delta=mean(p._accuracy);p.accuracy_delta_ci95=ci(p._accuracy);p.factual_only_accuracy_delta=mean(p._factual);delete p._prefs;delete p._accuracy;delete p._factual;}
+return {arms:Array.from(arms.values()),paired:Array.from(pairs.values()),notes:['Provisional human review; no automatic winner. Uncertain remains in reviewed denominator, never confirmed clean.','OCR errors concern required salient text; not every decorative visible word.','Claims macro averaged by cell; unverifiable is undecidable, not definite false. Gold facts must be fixed by humans before candidate review.','Bootstrap protocol paired-image-xorshift32-v1, seed 0x51f15e, 2000 resamples, percentile 95%; n<2 gives null.','Scopes isolated. Generation errors are pipeline failures and paired accuracy zero, never fabricated hallucination labels.','OCR is optional for Reviewed. OCR not assessed is unknown, not an observed error: it counts in reviewed and the conservative confirmed error-free denominator but never as confirmed error-free, adds nothing to OCR assessed/error/not-applicable counts, and its pair is excluded from accuracy deltas (accuracy_ocr_not_assessed_excluded).']};
+}
+function decisionCells(manifest,rule){
+return manifest.cells.filter(cell=>Object.entries(rule.filter).every(([key,value])=>cell[key]===value));
+}
+function decisionAssessment(cell,review,contract){
+return !!(cell&&review&&contract&&!cell.generation_error&&review.reviewed===true&&
+review.output_sha256===cell.output_sha256&&review.image_id===cell.image_id&&review.input_sha256===cell.input_sha256&&
+contract.severity.includes(review.severity)&&contract.ocr.includes(review.ocr)&&
+review.severity!=='not_assessed'&&review.ocr!=='not_assessed'&&Array.isArray(review.issues)&&
+!(review.severity==='none'&&review.issues.length));
+}
+function decisionReviewed(cell,review,contract,reviewerId){
+return str(reviewerId)&&decisionAssessment(cell,review,contract);
+}
+function accepted(cell,review,rule){
+// The three-argument API has no reviewer context; decide gates on the actual reviewer first.
+return decisionAssessment(cell,review,{severity:severities,ocr:ocrs})&&
+rule.accepted.severity_in.includes(review.severity)&&
+!review.issues.some(issue=>rule.accepted.factual_issues.includes(issue))&&
+!rule.accepted.ocr_not_in.includes(review.ocr);
+}
+function median(values){
+const sorted=values.slice().sort((a,b)=>a-b),middle=Math.floor(sorted.length/2);
+return sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2;
+}
+function decide(manifest,state,perf,rule,contract){
+check(manifest&&state&&perf&&rule&&contract,'Missing decision inputs');
+for(const field of ['dataset_id','manifest_sha256','rubric_version']){
+check(str(rule[field])&&manifest[field]===rule[field]&&state[field]===rule[field],'Decision '+field+' mismatch');
+}
+const cells=decisionCells(manifest,rule),images=manifest.images.map(image=>image.image_id),reviews=state.reviews||{};
+const notes=[],byModel=new Map(rule.candidates.map(id=>[id,new Map()]));
+for(const cell of cells)if(byModel.has(cell.physical_model_id))byModel.get(cell.physical_model_id).set(cell.image_id,cell);
+const missing=[];
+for(const id of rule.candidates)for(const image of images){
+if(!byModel.get(id).has(image))missing.push({physical_model_id:id,image_id:image});
+}
+const reviewed=cells.filter(cell=>decisionReviewed(cell,reviews[cell.key],contract,state.reviewer_id)).length;
+const pending=cells.filter(cell=>!cell.generation_error&&!decisionReviewed(cell,reviews[cell.key],contract,state.reviewer_id));
+const coverage={decision_cells:cells.length,reviewed,pending_keys:pending.map(cell=>cell.key),missing,
+generation_errors:cells.filter(cell=>cell.generation_error).length};
+const timingRows=new Map();
+for(const row of perf.rows){
+if(row.E!==rule.filter.extraction_lexicon||row.W!==rule.filter.writing_lexicon)continue;
+const key=JSON.stringify([row.physical_model_id,row.image_id]);
+if(!timingRows.has(key))timingRows.set(key,[]);
+timingRows.get(key).push(row);
+}
+const models=rule.candidates.map(id=>{
+const profiles=new Map(),timing_missing=[],modelCells=cells.filter(cell=>cell.physical_model_id===id);
+for(const cell of modelCells){
+const rows=timingRows.get(JSON.stringify([id,cell.image_id]))||[];
+let reason=rows.length!==1?'expected one timing row, found '+rows.length:null;
+const row=rows[0];
+if(!reason&&cell.response_sha256!==undefined&&cell.response_sha256!==row.response_sha256)reason='response_sha256 mismatch';
+if(!reason&&(!Number.isFinite(row.summed_stage_seconds)||row.summed_stage_seconds<0))reason='invalid timing seconds';
+if(reason){timing_missing.push(cell.image_id);notes.push('Timing missing for '+id+' '+cell.image_id+': '+reason+'.');continue;}
+if(!profiles.has(row.profile_sha256))profiles.set(row.profile_sha256,[]);
+profiles.get(row.profile_sha256).push(row.summed_stage_seconds);
+}
+const ranked=Array.from(profiles,([profile_sha256,values])=>({profile_sha256,n:values.length,p50_seconds:median(values)}));
+ranked.sort((a,b)=>b.n-a.n||b.p50_seconds-a.p50_seconds||
+(a.profile_sha256<b.profile_sha256?-1:a.profile_sha256>b.profile_sha256?1:0));
+return {physical_model_id:id,label:rule.candidate_labels[id],images:rule.images,cells:modelCells.length,
+accepted:null,accepted_rate:null,accepted_rate_bounds:null,major_or_worse:null,major_or_worse_rate:null,
+latency:ranked.length?{...ranked[0],other_profiles:ranked.slice(1)}:null,timing_missing,seconds_per_accepted:null};
+});
+const result={schema:'description-model-decision/v1',status:'insufficient_reviews',coverage,models,
+comparisons:null,quality:null,performance:null,power:null,notes};
+if(pending.length)return result;
+function evaluate(optimistic){
+const scores=new Map();
+for(const id of rule.candidates){
+const acc=[],maj=[];
+for(const image of images){
+const cell=byModel.get(id).get(image);
+if(!cell){acc.push(Number(optimistic));maj.push(Number(!optimistic));}
+else if(cell.generation_error){acc.push(0);maj.push(0);}
+else {acc.push(Number(accepted(cell,reviews[cell.key],rule)));maj.push(Number(rule.major_or_worse.includes(reviews[cell.key].severity)));}
+}
+const acceptedCount=acc.reduce((a,b)=>a+b,0),majorCount=maj.reduce((a,b)=>a+b,0);
+scores.set(id,{acc,maj,accepted:acceptedCount,accepted_rate:acceptedCount/rule.images,
+major_or_worse:majorCount,major_or_worse_rate:majorCount/rule.images});
+}
+const paired=new Map();
+function comparison(a,b){
+const key=JSON.stringify([a,b]);
+if(!paired.has(key)){
+const left=scores.get(a),right=scores.get(b),acc=left.acc.map((x,i)=>x-right.acc[i]),maj=left.maj.map((x,i)=>x-right.maj[i]);
+paired.set(key,{a,b,n_images:images.length,accepted_delta:mean(acc),accepted_delta_ci95:ci(acc),
+major_delta:mean(maj),major_delta_ci95:ci(maj)});
+}
+return paired.get(key);
+}
+let leader=rule.candidates[0];
+for(const id of rule.candidates)if(scores.get(id).accepted_rate>scores.get(leader).accepted_rate)leader=id;
+const winner=rule.candidates.every(id=>{
+if(id===leader)return true;
+const interval=comparison(leader,id).accepted_delta_ci95;
+return interval&&interval[0]>0;
+})?leader:null;
+const quality={winner,verdict:winner?'winner':'undecided',reason:winner?
+'Highest accepted rate with paired CI95 lower bound above zero against every other candidate.':
+'No candidate has a positive paired CI95 lower bound against every other candidate.'};
+const fastest=models.filter(model=>model.latency).slice().sort((a,b)=>a.latency.p50_seconds-b.latency.p50_seconds);
+const performer=fastest.find(model=>{
+if(model.physical_model_id===leader)return true;
+const pair=comparison(model.physical_model_id,leader);
+return pair.accepted_delta_ci95&&pair.major_delta_ci95&&
+pair.accepted_delta_ci95[0]>-rule.delta&&pair.major_delta_ci95[1]<rule.delta;
+});
+const performance={winner:performer?performer.physical_model_id:null,leader,verdict:performer?'winner':'none',
+reason:performer?'Fastest profile p50 passing the paired acceptance margin and major-error guardrail.':
+'No candidate with joined latency passes the paired acceptance margin and major-error guardrail.'};
+const comparisons=[];
+for(let a=0;a<rule.candidates.length;a++)for(let b=a+1;b<rule.candidates.length;b++)comparisons.push(comparison(rule.candidates[a],rule.candidates[b]));
+return {scores,quality,performance,comparisons};
+}
+const pessimistic=evaluate(false),optimistic=evaluate(true);
+for(const model of models){
+const score=pessimistic.scores.get(model.physical_model_id),upper=optimistic.scores.get(model.physical_model_id);
+model.accepted=score.accepted;model.accepted_rate=score.accepted_rate;
+model.accepted_rate_bounds=[score.accepted_rate,upper.accepted_rate];
+model.major_or_worse=score.major_or_worse;model.major_or_worse_rate=score.major_or_worse_rate;
+model.seconds_per_accepted=model.latency&&score.accepted_rate?model.latency.p50_seconds/score.accepted_rate:null;
+}
+result.comparisons=pessimistic.comparisons;result.quality=pessimistic.quality;result.performance=pessimistic.performance;
+result.power=result.comparisons.map(pair=>{
+const width=pair.accepted_delta_ci95?(pair.accepted_delta_ci95[1]-pair.accepted_delta_ci95[0])/2:null;
+return {a:pair.a,b:pair.b,ci_half_width:width,images_needed:width===null?null:Math.ceil(rule.images*(width/rule.delta)**2)};
+});
+const sensitive=pessimistic.quality.winner!==optimistic.quality.winner||pessimistic.performance.winner!==optimistic.performance.winner;
+result.status=sensitive?'coverage_sensitive':result.quality.winner?'decided':'undecided';
+if(missing.length)notes.push('Missing decision cells are bounded by pessimistic and optimistic imputation; reported rates use pessimistic imputation.');
+if(sensitive)notes.push('Quality or performance winner changes under the missing-cell imputations.');
+return result;
+}
+const api={summarize,decisionCells,decisionReviewed,accepted,decide,ci};if(typeof module==='object'&&module.exports)module.exports=api;else root.OperatorMetrics=api;
+})(typeof globalThis!=='undefined'?globalThis:this);

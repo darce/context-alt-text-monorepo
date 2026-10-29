@@ -1,0 +1,42 @@
+{
+ "schema": "description-model-decision-rule/v1",
+ "registered": {"handoff_decision_id": 20175, "task_ref": "DESCPICK-1", "date": "2026-10-26", "before_any_cross_model_review": true},
+ "dataset_id": "qwen-high-precision-12-all-history-20261025",
+ "manifest_sha256": "20bec411e94963641b1882edb680240991771bcc7b350856eb293398e3aa4d0e",
+ "rubric_version": "accuracy-v1",
+ "filter": {"scope": "full120", "extraction_lexicon": false, "writing_lexicon": false, "arm": "off"},
+ "candidates": ["incumbent-f16", "qwen3-vl-8b-f16", "qwen38-bf16"],
+ "candidate_labels": {
+  "incumbent-f16": "Qwen3-VL-30B-A3B F16",
+  "qwen3-vl-8b-f16": "Qwen3-VL-8B F16",
+  "qwen38-bf16": "Qwen3.8-27B BF16"
+ },
+ "aliases": {
+  "Qwen3-VL-30B-A3B": "incumbent-f16",
+  "Qwen3-VL-8B": "qwen3-vl-8b-f16",
+  "Qwen3.8-27B": "qwen38-bf16"
+ },
+ "decision_reviewed": {"requires_valid_review": true, "severity_not": ["not_assessed"], "ocr_not": ["not_assessed"]},
+ "accepted": {
+  "severity_in": ["none", "minor"],
+  "ocr_not_in": ["not_assessed", "wrong", "uncertain"],
+  "factual_issues": ["unsupported", "subject_object", "attribute_count", "action_relation", "ocr_wrong", "context_identity"]
+ },
+ "major_or_worse": ["major", "critical"],
+ "generation_error": "not_accepted",
+ "missing_policy": "bounds",
+ "unit": "image",
+ "images": 29,
+ "delta": 0.10,
+ "bootstrap": {"protocol": "paired-image-xorshift32-v1", "seed": 5370206, "seed_hex": "0x51f15e", "resamples": 2000, "ci": 0.95},
+ "quality": "max accepted_rate whose paired accepted_delta CI95 lower bound > 0 against every other candidate; else undecided",
+ "performance": "fastest candidate with paired CI95 lower(accepted_delta vs leader) > -delta and CI95 upper(major_delta vs leader) < delta; leader = quality winner, else max accepted_rate point estimate",
+ "latency": {"metric": "summed_stage_seconds", "statistic": "p50", "profile": "profile_sha256 with the most joined decision rows; tie -> slower p50", "pool_profiles": false},
+ "seal": "panel sealed until every decision cell is decision-reviewed; then an explicit in-memory unseal (never persisted)",
+ "deploy_gate": "30B-A3B and 27B candidates need a Q4 rerun plus a quality gate before serving on the A10 24GB",
+ "canon": {
+  "release": "v0.26.2",
+  "link": "https://github.com/darce/heuristics-canon",
+  "ids": {"EXP-03": "pre-registered OEC", "EXP-23": "image is the unit", "EXP-12": "power + practical delta", "EXP-24": "interval on the delta", "EXP-09": "no peeking: sealed panel", "EVAL-14": "counterbalanced candidate order", "EXP-05": "latency guardrail", "COST-04": "seconds per accepted output", "COST-15": "goodput not raw throughput", "SERVE-07": "quantization needs a quality gate"}
+ }
+}

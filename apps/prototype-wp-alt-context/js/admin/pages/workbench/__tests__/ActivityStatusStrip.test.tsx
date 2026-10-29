@@ -74,8 +74,76 @@ const hookResult = (overrides: Partial<UseActivityStatusResult> = {}): UseActivi
 });
 
 describe('ActivityStatusStrip', () => {
+  it('shows an enabled Cancel run before cancelling when an onCancel action is available', () => {
+    useActivityStatusMock.mockReturnValue(
+      hookResult({
+        status: idleStatus({ kind: ACTIVITY_KIND.DESCRIBING, canCancel: true, runId: 'run-1' }),
+        actions: { onCancel: vi.fn(), onRetry: null, reviewDraftsHref: null, backToRunHref: null },
+        isCancelling: false,
+      }),
+    );
+    render(<ActivityStatusStrip />);
+    expect(screen.getByRole('button', { name: 'Cancel run' })).toBeEnabled();
+  });
+
+  it.each([ACTIVITY_KIND.DESCRIBING, ACTIVITY_KIND.SCANNING, ACTIVITY_KIND.WARMING])(
+    'keeps a single disabled Cancel visible while %s cancellation is pending',
+    async (kind) => {
+      const onCancel = vi.fn();
+      const active = hookResult({
+        status: idleStatus({ kind, canCancel: true, runId: 'run-1' }),
+        actions: { onCancel, onRetry: null, reviewDraftsHref: null, backToRunHref: null },
+      });
+      useActivityStatusMock.mockReturnValue(active);
+      const { rerender } = render(<ActivityStatusStrip />);
+      expect(screen.getAllByRole('button', { name: 'Cancel run' })).toHaveLength(1);
+
+      useActivityStatusMock.mockReturnValue({
+        ...active,
+        status: { ...active.status, canCancel: kind !== ACTIVITY_KIND.SCANNING },
+        actions: { ...active.actions, onCancel: null },
+        isCancelling: true,
+      });
+      rerender(<ActivityStatusStrip />);
+
+      const buttons = screen.getAllByRole('button', { name: /Cancel/ });
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0]).toHaveAccessibleName('Cancelling…');
+      expect(buttons[0]).toBeDisabled();
+      await userEvent.click(buttons[0]);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(onCancel).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([ACTIVITY_KIND.WARMING, ACTIVITY_KIND.DESCRIBING, ACTIVITY_KIND.SCANNING])(
+    'renders no Cancel for active %s without an onCancel action when cancellation is not pending',
+    (kind) => {
+      useActivityStatusMock.mockReturnValue(
+        hookResult({
+          status: idleStatus({ kind, runId: 'run-1' }),
+          actions: { onCancel: null, onRetry: null, reviewDraftsHref: null, backToRunHref: null },
+          isCancelling: false,
+        }),
+      );
+      render(<ActivityStatusStrip />);
+      expect(screen.queryByRole('button', { name: /Cancel/ })).toBeNull();
+    },
+  );
+
+  it.each([ACTIVITY_KIND.IDLE, ACTIVITY_KIND.DONE, ACTIVITY_KIND.FAILED])(
+    'renders no Cancel for %s even while cancellation settles',
+    (kind) => {
+      useActivityStatusMock.mockReturnValue(
+        hookResult({ status: idleStatus({ kind }), isCancelling: true }),
+      );
+      render(<ActivityStatusStrip />);
+      expect(screen.queryByRole('button', { name: /Cancel/ })).toBeNull();
+    },
+  );
+
   it.each([
-    ['unknown', 'Description service status unavailable'],
+    ['unknown', 'Description service status not confirmed yet'],
     ['overdue', 'Description service is taking longer than expected'],
   ] as const)(
     'explains %s startup evidence and checks status without promising warm-up',
@@ -121,7 +189,7 @@ describe('ActivityStatusStrip', () => {
 
     const region = screen.getByRole('status');
     expect(region).toHaveAttribute('aria-live', 'polite');
-    expect(screen.getByText('Description service status unavailable')).toBeTruthy();
+    expect(screen.getByText('Description service status not confirmed yet')).toBeTruthy();
     expect(screen.getByText('~3m 0s remaining')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Cancel run' })).toBeEnabled();
     expect(screen.getByRole('link', { name: 'Back to run' })).toHaveAttribute('href', '#/workbench');

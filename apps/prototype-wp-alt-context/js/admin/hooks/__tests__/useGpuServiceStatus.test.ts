@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { QueryClient } from '@tanstack/react-query';
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GPU_STATE } from '../../api/describeApi';
@@ -67,6 +67,28 @@ describe('useGpuServiceStatus', () => {
     await queryClient?.cancelQueries();
     queryClient?.clear();
     cleanup();
+    vi.useRealTimers();
+  });
+
+  it('maps stale snapshots to unknown', async () => {
+    fetchGpuStatusMock.mockResolvedValue(statusResponse({ snapshot_fresh: false }));
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useGpuServiceStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.gpuState).toBe(GPU_STATE.UNKNOWN);
+  });
+
+  it.each([false, true])('confirms an outage only after the retry budget (outage=%s)', async (outage) => {
+    vi.useFakeTimers();
+    fetchGpuStatusMock.mockRejectedValue(new Error('offline'));
+    if (!outage) fetchGpuStatusMock.mockRejectedValueOnce(new Error('transient')).mockResolvedValue(statusResponse());
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useGpuServiceStatus(), { wrapper: createQueryWrapper(queryClient) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(result.current.isError).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
+    expect(result.current.isError).toBe(outage);
+    expect(fetchGpuStatusMock).toHaveBeenCalledTimes(outage ? 3 : 2);
   });
 
   it('uses the Settings cadence and backs off after a failed poll', () => {

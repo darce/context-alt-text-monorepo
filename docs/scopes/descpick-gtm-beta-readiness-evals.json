@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "suite_id": "descpick-gtm-beta-readiness",
+  "owner": "MAINT-descpick-gtm-scope-20261028",
+  "description": "PROVISIONAL DATA ONLY. Local scope manifest for docs/scopes/descpick-gtm-beta-readiness-scope.md, not registered in the absent packages/workbay-system eval registry. Making the suite runnable needs a suite file in packages/workbay-system/config/evals/ plus an executor entry in EXECUTOR_BY_SUITE_ID (packages/workbay-system/scripts/workbay_evals/registry.py), owned by a separate lane. make eval-list (mk/evals.mk) is the model-eval harness, not this registry. The command runs the deterministic group from the repo root; operator and blocked cases close with the named artifact.",
+  "command": "set -e; (cd apps/prototype-wp-alt-context && ./node_modules/.bin/vitest run js/public/__tests__/demo-describe.test.ts js/public/__tests__/coldStartWaitParity.test.ts js/admin/pages/workbench/__tests__/BetaExpectationsNotice.test.tsx js/admin/pages/__tests__/WorkbenchPage.control-composition.test.tsx js/admin/pages/workbench/__tests__/gpuStatePresentation.test.ts js/admin/pages/settings/__tests__/GpuControlCard.test.tsx js/admin/pages/settings/__tests__/testConnectionBanner.test.ts); env OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s composer --working-dir=apps/prototype-wp-alt-context test -- --filter 'PublicDemoUserFacingMessagesTranslatableTest' tests/Unit; make lint-ux-maps; uv run --directory apps/prototype-description-service python -m pytest scene/tests/test_description_profiles.py scene/tests/test_settings.py scene/tests/test_describe_route.py::test_gpu_unavailable_does_not_consume_demo_quota scene/tests/test_describe_run_quota.py::test_cancelling_a_demo_run_keeps_its_charge recognition/tests/scripts/test_gtmr_gpu_runtime_receipts.py -q; LC_ALL=C bash infra/oci/demo/tests/test-describe-gate.sh; LC_ALL=C bash scripts/deploy/tests/test-smoke-gate.sh; LC_ALL=C uv run --no-project --with pytest --with pyyaml python -m pytest scripts/deploy/tests/test_preflight_gpu_env.py scripts/test_vlm3_oci_gpu_infra.py -q; make env-check; LC_ALL=C uv run --no-project --with pytest python -m pytest benchmarks/tests/test_decision_extension.py benchmarks/tests/test_extend_operator_report.py benchmarks/tests/test_build_decision_report.py benchmarks/tests/test_drv_four_candidate_js.py -q -p no:cacheprovider",
+  "threshold": {
+    "kind": "max_failures",
+    "max_failures": 0
+  },
+  "evidence_sink": ".task-state/evals/results.jsonl",
+  "tags": [
+    "descpick",
+    "e15",
+    "beta",
+    "description-model",
+    "honest-wait",
+    "i18n",
+    "serve-07",
+    "cost-per-accepted"
+  ],
+  "cases": [
+    {
+      "id": "GTM-SC-01",
+      "plan": "E15-38",
+      "group": "deterministic",
+      "criterion": "Every user-facing public demo message in the describe controller and the shortcode goes through gettext with text domain alt-context, the demo image title fallback is a translatable sprintf, and the demo script depends on wp-i18n and loads alt-context translations.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/tests/Unit/PublicDemoUserFacingMessagesTranslatableTest.php::PublicDemoUserFacingMessagesTranslatableTest"
+    },
+    {
+      "id": "GTM-SC-02",
+      "plan": "E15-38",
+      "group": "deterministic",
+      "criterion": "While a demo run is in flight, a Stop waiting button outside the form stops client polling without sending a request, shows the stopped copy, returns focus to Describe, and keeps the idempotency key for the next Describe of the same image.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/js/public/__tests__/demo-describe.test.ts::Stop waiting"
+    },
+    {
+      "id": "GTM-SC-03",
+      "plan": "E15-38",
+      "group": "deterministic",
+      "criterion": "The demo retry key resets after a server-terminal failure or a 403 acx_public_demo_run_not_available and survives a client timeout; the timeout copy tells the user to choose Describe again with the same image instead of refreshing.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/js/public/__tests__/demo-describe.test.ts::retry key lifecycle"
+    },
+    {
+      "id": "GTM-SC-04",
+      "plan": "E15-38",
+      "group": "deterministic",
+      "criterion": "Every demo client string routes through wp.i18n with text domain alt-context, and the describing percent is formatted for the page locale.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/js/public/__tests__/demo-describe.test.ts::demo copy is translatable"
+    },
+    {
+      "id": "GTM-SC-05",
+      "plan": "E15-38",
+      "group": "deterministic",
+      "criterion": "The cold-start wait sentence is identical on the public demo and the admin surfaces, and no fixed two-minute wait promise remains in wait copy.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/js/public/__tests__/coldStartWaitParity.test.ts"
+    },
+    {
+      "id": "GTM-SC-06",
+      "plan": "E15-38",
+      "group": "deterministic",
+      "criterion": "The Review Queue shows the beta expectations notice (stage, AI-drafted disclosure, qualitative capability, cold-start wait, model tradeoff) between the page heading and the panels, with no new heading.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BetaExpectationsNotice.test.tsx::BetaExpectationsNotice",
+      "additional_tests": [
+        "apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.control-composition.test.tsx::renders the beta expectations notice between the heading and the panels"
+      ]
+    },
+    {
+      "id": "GTM-SC-07",
+      "plan": "E15-38",
+      "group": "deterministic",
+      "criterion": "The public-demo-describe and gpu-operator-control ux-maps describe the shipped Stop waiting control and wait copy, and the ux-map lint passes.",
+      "status": "planned",
+      "test": "Makefile::lint-ux-maps"
+    },
+    {
+      "id": "GTM-SC-08",
+      "plan": "E15-39",
+      "group": "deterministic",
+      "criterion": "With ACX_DESCRIPTION_ADAPTER unset, the description settings and the API profile resolver both default to the seeded profile from one constant.",
+      "status": "planned",
+      "test": "apps/prototype-description-service/scene/tests/test_description_profiles.py::test_settings_default_profile_is_seeded"
+    },
+    {
+      "id": "GTM-SC-09",
+      "plan": "E15-39",
+      "group": "deterministic",
+      "criterion": "florence_small is benchmark-only: the describe gate, deploy preflight and smoke gate refuse it as a live demo adapter.",
+      "status": "planned",
+      "test": "infra/oci/demo/tests/test-describe-gate.sh::is_trusted florence_small (benchmark-only)",
+      "additional_tests": [
+        "scripts/deploy/tests/test_preflight_gpu_env.py::test_01_rejects_empty_seeded_and_unknown_adapters",
+        "scripts/deploy/tests/test-smoke-gate.sh::alt provenance florence_small is benchmark-only (untrusted)"
+      ]
+    },
+    {
+      "id": "GTM-SC-10",
+      "plan": "E15-39",
+      "group": "deterministic",
+      "criterion": "GPU cloud-init serves the llama.cpp runtime image pinned by sha256 digest at all three sites, with explicit --parallel 1, --image-max-tokens 1536, --n-gpu-layers all and f16 KV cache, and without --kv-unified.",
+      "status": "planned",
+      "test": "scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_runtime_image_by_digest_and_explicit_flags"
+    },
+    {
+      "id": "GTM-SC-11",
+      "plan": "E15-39",
+      "group": "operator",
+      "criterion": "One STOPPED to ready cold start is measured end to end on the served build after #10035 is reconciled; wait copy keeps 'several minutes' until a p95 with its n exists.",
+      "status": "planned",
+      "artifact": "docs/runbooks/evidence/e15-39-cold-start-receipt.json",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "GTM-SC-12",
+      "plan": "E15-40",
+      "group": "operator",
+      "criterion": "ADR-017 and the DESCAUTH-1 plan carry the outcome-telemetry amendment (reported event, report_reason, edit_ratio, request_key), and the operator accepts ADR-017.",
+      "status": "planned",
+      "artifact": "docs/adrs/ADR-017-description-authority-wordpress-curation-service-generation.md",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "GTM-SC-13",
+      "plan": "E15-40",
+      "group": "blocked",
+      "blocked_by": "DESCAUTH-1 S3, S7",
+      "criterion": "Each presented generation is classified into exactly one outcome class: applied_unchanged, applied_light_edit, applied_heavy_edit, discarded, superseded_by_regeneration or no_outcome.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeClassifierTest.php::testClassifiesEveryOutcomeClass"
+    },
+    {
+      "id": "GTM-SC-14",
+      "plan": "E15-40",
+      "group": "blocked",
+      "blocked_by": "DESCAUTH-1 S3, S7",
+      "criterion": "Report a problem stores one reported event per request_key; a replayed request creates no second event.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/tests/Unit/DescriptionReportControllerTest.php::testReportIsIdempotentByRequestKey"
+    },
+    {
+      "id": "GTM-SC-15",
+      "plan": "E15-40",
+      "group": "blocked",
+      "blocked_by": "E15-40 S2 export format",
+      "criterion": "The cost-per-accepted report divides GPU cost by accepted drafts under the sealed definition and exits 2 on missing or inconsistent inputs.",
+      "status": "planned",
+      "test": "scripts/test_cost_per_accepted_report.py::test_exit_2_on_missing_or_inconsistent_inputs"
+    },
+    {
+      "id": "GTM-SC-16",
+      "plan": "E15-40",
+      "group": "operator",
+      "blocked_by": "DESCAUTH-1 S8",
+      "criterion": "The acceptance analysis plan (estimand, window, floor, sample, interval basis) is sealed by sha256 in a handoff decision before the first counted draft.",
+      "status": "planned",
+      "artifact": "handoff decision on E15-40 carrying the analysis-plan sha256",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "GTM-SC-17",
+      "plan": "DESCPICK-5",
+      "group": "deterministic",
+      "criterion": "The decision extension plans exactly 58 incumbent-q4km cells in 2 operations under the shared decision profile, with argv parity to GPU cloud-init and a deterministic seal.",
+      "status": "planned",
+      "test": "benchmarks/tests/test_decision_extension.py"
+    },
+    {
+      "id": "GTM-SC-18",
+      "plan": "DESCPICK-5",
+      "group": "deterministic",
+      "criterion": "The extended operator report has 706 review hosts and 115 decision cells, keeps all 192 prior reviews, derives candidate labels from the rule, and the decision builder refuses a rule and manifest mismatch.",
+      "status": "planned",
+      "test": "benchmarks/tests/test_extend_operator_report.py",
+      "additional_tests": [
+        "benchmarks/tests/test_drv_four_candidate_js.py",
+        "benchmarks/tests/test_build_decision_report.py"
+      ]
+    },
+    {
+      "id": "GTM-SC-19",
+      "plan": "DESCPICK-5",
+      "group": "operator",
+      "criterion": "58 of 58 Q4 cells are generated on the A10, performance rows are recorded and review-decision-v4 is built; no decision cell is reviewed before v4 ships.",
+      "status": "planned",
+      "artifact": "benchmarks/reports/qwen-high-precision-20261025/review-decision-v4/index.html",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "GTM-SC-20",
+      "plan": "E15-39",
+      "group": "deterministic",
+      "criterion": "A GPU-unavailable demo refusal charges no demo quota, and cancelling a demo run keeps its charge.",
+      "status": "planned",
+      "test": "apps/prototype-description-service/scene/tests/test_describe_route.py::test_gpu_unavailable_does_not_consume_demo_quota",
+      "additional_tests": [
+        "apps/prototype-description-service/scene/tests/test_describe_run_quota.py::test_cancelling_a_demo_run_keeps_its_charge"
+      ]
+    }
+  ],
+  "release_gates": {
+    "beta": {
+      "required_cases": [
+        "GTM-SC-01",
+        "GTM-SC-02",
+        "GTM-SC-03",
+        "GTM-SC-04",
+        "GTM-SC-05",
+        "GTM-SC-06",
+        "GTM-SC-07",
+        "GTM-SC-08",
+        "GTM-SC-09",
+        "GTM-SC-10",
+        "GTM-SC-11",
+        "GTM-SC-20"
+      ],
+      "require_nonempty_fresh_results": true,
+      "require_operator_evidence": true
+    },
+    "measurement": {
+      "required_cases": [
+        "GTM-SC-12",
+        "GTM-SC-13",
+        "GTM-SC-14",
+        "GTM-SC-15",
+        "GTM-SC-16"
+      ],
+      "require_nonempty_fresh_results": true,
+      "require_operator_evidence": true
+    },
+    "model_choice": {
+      "required_cases": [
+        "GTM-SC-17",
+        "GTM-SC-18",
+        "GTM-SC-19"
+      ],
+      "require_nonempty_fresh_results": true,
+      "require_operator_evidence": true
+    }
+  }
+}

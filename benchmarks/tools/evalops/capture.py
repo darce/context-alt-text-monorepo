@@ -611,6 +611,8 @@ def run_capture(db, output_dir, *, duration_seconds=604800, poll_seconds=60,
                     'clock rollback/jump against monotonic time')
             if history.events:
                 require(wall >= parsed(history.events[-1]['time']), 'wall clock rollback since last event')
+                if config['boot_id'] == boot_id():
+                    require(tick >= history.events[-1]['monotonic'], 'monotonic clock rollback since last event')
             return wall, tick
 
         try:

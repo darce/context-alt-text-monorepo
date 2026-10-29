@@ -436,3 +436,13 @@ def test_resume_uses_stored_budgets_cadence_and_duration(db, tmp_path):
     assert result['deadline'] == first['deadline']
     assert result['limits'] == first['limits']
     assert result['expected_poll_seconds'] == 1
+
+
+def test_monotonic_rollback_between_observations_fails_within_drift_tolerance(db, tmp_path):
+    def rollback(clock):
+        if clock.sleeps == 2:
+            clock.mono -= 1.5  # Behind the preceding observation, within wall drift tolerance.
+    out = tmp_path/'capture'
+    with pytest.raises(c.CaptureError, match='monotonic clock rollback'):
+        observe(db, out, duration_seconds=4, poll_seconds=1, clock=FakeClock(rollback))
+    assert any(e['payload'].get('reason') == 'clock_failure' for e in ledger(out))

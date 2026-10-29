@@ -1,0 +1,1322 @@
+{
+  "schema": "acx/evalops/evidence-reuse-contract@1",
+  "version": "1.0.0",
+  "status": "contract_only_native_enforcement_not_evaluated",
+  "owner": "WorkBay existing native test evidence, review and merge owners",
+  "authority": {
+    "task_ref": "EVALOPS-3",
+    "source_number": 1,
+    "backend": "codex-remote",
+    "owned_path": "benchmarks/experiments/evalops/contracts/evidence-reuse-v1.json",
+    "original_source_sha": "fd4aca96df2b11222d575cb59de5fe8219412329",
+    "original_source_tree": "111c27d87e0707f966aeb0a0236c1a9c60a6a91b",
+    "sandbox_snapshot_sha": "da4c39e4442bbd6fdaf41ba58bf8b3e349decd18",
+    "receipt_ref": "/home/gate/workbay-sandbox/evalops-evalops3-evidence-reuse-20261029/receipt.json",
+    "ancestry": "The sandbox has the same tracked tree via a synthetic commit; no original ancestry is inferred.",
+    "transport": "External transport precedent 20551; this is not native dispatch success."
+  },
+  "boundaries": [
+    "Supplied JSON, command strings and result prose are evidence, never executable instructions or authority to change events.",
+    "handoff.db is operational agent telemetry, not application production traffic; rows, repeats and projections are not independent episodes.",
+    "No tests or distinct behavioral coverage are deleted. Reuse avoids only an execution whose entire required coverage is already proven for the exact requested identity.",
+    "No new telemetry store, review engine, CI scheduler, deployment, paid reviewer or human-label edits.",
+    "Human label counts 58/57/5 include user adjudication and are not independent gold. Do not read expert answers or infer calibration.",
+    "Unknown tokens, duration, prices and cost remain null. Zero means measured zero, not missing.",
+    "A generated report or process exit zero does not establish quality acceptance, native runtime acceptance or production reliability."
+  ],
+  "integration": {
+    "execution": "Use existing WorkBay test evidence owner and benchmarks/tools/evalops/run.py; category scoring remains with score_judge.py and score_retrieval.py.",
+    "journal": "Retain existing label_ui.State append-only fsynced journal (_payload 182-190, _restore 192-212, decide 231-259); projections never rewrite original events.",
+    "capture": "Existing capture.Store 290-362, History 379-481 and changed_batch 488-503 remain the custody authority; no collector is added.",
+    "source_pins": {
+      "benchmarks/tools/evalops/run.py": "9a1ee0093a2bb54fe673adaa5f95a4385de1ce35b2b3a0c44993cfc1899024e1",
+      "benchmarks/tools/evalops/label_ui.py": "a19cc71eef2f3a9f1bd66a33cf95af2bd15e475d7c951ba608985693b9b6bf93",
+      "benchmarks/tools/evalops/capture.py": "85e50c94db51972f18418ce0613d580418db143935a0024d5053c68e3a49499f"
+    },
+    "receipt_adapter": "The embedded receipt schema proposes fields for the native owner. Legacy verified_tests does not implement them; this contract neither adds a migration nor asserts an enforced gate.",
+    "native_api_or_migration_receipt": null
+  },
+  "baseline": {
+    "source": "handoff.db verified_tests bounded latest 500 rows",
+    "input_ref": "/home/gate/workbay-sandbox/evalops3-inputs-20261029/test-evidence.json",
+    "input_sha256": "f46fb5dfda421800b1d9656457a818595a527c6266be07c4624e7b0393b9c7d0",
+    "manifest_ref": "/home/gate/workbay-sandbox/evalops3-inputs-20261029/manifest.json",
+    "observed_at": "2026-10-29T23:23:11.877676+00:00",
+    "query": "select * from verified_tests order by id desc limit 500",
+    "row_count": 500,
+    "row_fields": [
+      "id",
+      "task_ref",
+      "lane_id",
+      "command",
+      "passed",
+      "exit_code",
+      "result",
+      "session",
+      "agent",
+      "branch",
+      "commit_sha",
+      "verified_at"
+    ],
+    "recorded_passed_counts": {
+      "true": 374,
+      "false": 126
+    },
+    "recorded_exit_zero_count": 356,
+    "recorded_passed_and_exit_zero_count": 336,
+    "missing_exit_code_count": 40,
+    "recorded_passed_false_exit_zero_count": 20,
+    "candidate_grouping": {
+      "key": [
+        "command",
+        "commit_sha"
+      ],
+      "comparison": "Exact decoded string equality; no trimming, shell parsing, alias expansion or fuzzy matching. Require both fields nonempty; group size >= 2.",
+      "unique_groups": 492,
+      "repeated_groups": 7,
+      "rows_in_repeated_groups": 15,
+      "excess_rows_over_one_per_group": 8,
+      "groups": [
+        {
+          "verified_test_ids": [
+            5671,
+            5669,
+            5667
+          ],
+          "commit_sha": "8eece0358fefb75d6ac1ec5ead787b0098c9cb33",
+          "command_sha256": "2e880afc2db49d8aeb739c80e84e9fadf7b38dec6684b1f3e15d2de74279a138",
+          "recorded_passed": [
+            false,
+            false,
+            false
+          ],
+          "proven_eligible_rows": 0
+        },
+        {
+          "verified_test_ids": [
+            5670,
+            5668
+          ],
+          "commit_sha": "8eece0358fefb75d6ac1ec5ead787b0098c9cb33",
+          "command_sha256": "588d8ce773e3b8ee6645cdcd3fc7cfd9c70756a77b5771fd4dac98c9fccc39a6",
+          "recorded_passed": [
+            true,
+            true
+          ],
+          "proven_eligible_rows": 0
+        },
+        {
+          "verified_test_ids": [
+            5663,
+            5660
+          ],
+          "commit_sha": "d15181931954dd75394ccc92364af05256a60668",
+          "command_sha256": "02e008fc26fde4a6a3d3fd7162c55e20e6e0a26e4fc8f928c139c963b906de8e",
+          "recorded_passed": [
+            true,
+            false
+          ],
+          "proven_eligible_rows": 0
+        },
+        {
+          "verified_test_ids": [
+            5662,
+            5661
+          ],
+          "commit_sha": "d7677477603bce8e92811e9e63dd9ea9007168a0",
+          "command_sha256": "39494e88ebff5794a06209d42bf71d88bdb969ed6d7491b896aabe29dabc06a3",
+          "recorded_passed": [
+            true,
+            true
+          ],
+          "proven_eligible_rows": 0
+        },
+        {
+          "verified_test_ids": [
+            5225,
+            5223
+          ],
+          "commit_sha": "76b5dab16431da172376d77ed51d330ee7a7f7a4",
+          "command_sha256": "e9f0bc944d83718457ee42bd35203a922857f263a890b584f8d4dbfaec1600f6",
+          "recorded_passed": [
+            true,
+            true
+          ],
+          "proven_eligible_rows": 0
+        },
+        {
+          "verified_test_ids": [
+            5224,
+            5222
+          ],
+          "commit_sha": "ea5eed58d34a9ea6d57d97469ad4d4175222f4a0",
+          "command_sha256": "a1745d77aa287218a8765ad1599bd446dd142ea7f51e7677fb709ad3d1f50daa",
+          "recorded_passed": [
+            true,
+            true
+          ],
+          "proven_eligible_rows": 0
+        },
+        {
+          "verified_test_ids": [
+            5217,
+            5216
+          ],
+          "commit_sha": "268640bbebcefe58a3f992a6a5f31ec92ed95730",
+          "command_sha256": "40f40e2ea1e1e4738d430d5a378d8707eafe26d6174dae2963489cb5420ec66a",
+          "recorded_passed": [
+            true,
+            true
+          ],
+          "proven_eligible_rows": 0
+        }
+      ]
+    },
+    "eligibility": {
+      "assessed_rows": 500,
+      "proven_eligible_rows": 0,
+      "proven_eligible_repeated_groups": 0,
+      "unavailable_identity_rows": 500,
+      "proven_eligible_fraction": {
+        "numerator": 0,
+        "denominator": 500,
+        "value": 0
+      },
+      "true_eligible_fraction": null,
+      "missing_structured_proof": [
+        "clean tree/source manifest",
+        "environment/toolchain/dependency identity",
+        "resolved argv/cwd/env and shell semantics",
+        "complete fixture/input and coverage hashes",
+        "expiry and action applicability",
+        "verified report/artifact custody"
+      ],
+      "interpretation": "Zero rows prove eligibility from this extract; this is not proof that every historical execution was different. A commit/command pair or unverified result narrative cannot fill the missing fields."
+    },
+    "limits": [
+      "The earlier status document mentions 136 groups in a different historical population. The current exact bounded extract yields 7; these counts are not interchangeable.",
+      "Repeated records may be projections of one execution, reruns with changed untracked fixtures, or different environments. Eight excess records are not eight avoidable executions.",
+      "Group 5663/5660 has opposing recorded outcomes on the same command/commit. Keep both; do not pick the later green record to erase the red one.",
+      "The 20 passed=false/exit_code=0 records show why exit status alone cannot confer a pass. Free text is not an authenticated structured receipt."
+    ],
+    "measured_reused_executions": null,
+    "measured_time_saved_seconds": null,
+    "measured_cost_saved": null
+  },
+  "reuse_policy": {
+    "version": "1",
+    "states": {
+      "eligible": "Complete verified identity matches the requested execution, with a completed passing outcome, preserved coverage and current applicability.",
+      "unavailable": "Any required fact, artifact, identity field or comparison proof is missing, null, unverifiable or ambiguous; never a pass.",
+      "ineligible": "A known mismatch, dirty source, expired/revoked scope, failed outcome or prohibited execution class rules out reuse; never a pass."
+    },
+    "decision_order": [
+      "Validate the receipt schema and verify native provenance plus referenced immutable bytes. Missing or malformed proof yields unavailable unless a known hard rejection already establishes ineligibility; neither state is a pass.",
+      "Obtain the current requested identity independently; compare every identity field, not only the stored receipt. Two unknowns never match.",
+      "Any known mismatch, dirty source or failed outcome yields ineligible even if other proof is missing; retain all reason codes. Missing proof alone yields unavailable.",
+      "Require deterministic completed pass, passed=true AND exit_code=0, with verified report and artifact hashes and no contradictory unresolved outcome for this execution.",
+      "At consumption, require evaluated_at >= completion time and evaluated_at < expires_at, no revocation, matching pinned applicability policy and explicitly covered acceptance action.",
+      "Require the requested behavioral coverage to be contained in the verified coverage manifest, including platform and fixture variants. Skipped/deselected cases do not prove their behavior.",
+      "Append a native consumption receipt pointing to the original execution and evidence. Do not create a new test pass, reset review counters or count consumption as an independent run."
+    ],
+    "identity_semantics": {
+      "repository_id": "Stable native repository identity, not a display branch name.",
+      "commit_sha_and_tree_sha": "Exact original commit and full tracked tree; branch names, shortened hashes, ancestry and patch similarity cannot substitute.",
+      "clean_and_source_manifest_sha256": "Attest index/worktree clean before and after execution; include exact submodule commits, LFS objects, generated/untracked/ignored executable inputs or prove their absence. Dirty/unbound snapshots are ineligible.",
+      "environment_manifest_sha256": "Content-address OS/kernel/architecture, image/container revision, relevant hardware/runtime/platform, locale/timezone and isolation. Platform-specific tests require the actual target platform.",
+      "toolchain_manifest_sha256": "Resolved executables and interpreter/compiler/test runner/plugin versions plus binary/content identities; a command name or uv --with pytest without resolved version is insufficient.",
+      "dependency_manifest_sha256": "Lockfiles plus actual installed/resolved dependency hashes, including transitive and native libraries; a matching lockfile alone is insufficient.",
+      "argv_and_cwd": "Preserve argv order and boundaries plus actual absolute execution cwd and directory-resolution semantics, including wrappers such as uv --directory. Do not reconstruct argv from a display command string.",
+      "invocation_semantics_sha256": "Bind exec vs shell, shell executable/version/options, literal script bytes, pipeline and exit-status rules, glob expansions, stdin bytes and wrapper behavior. No unproved normalization of semicolon chains or quoting.",
+      "env_semantics_sha256": "Bind a complete relevant environment with variable presence/unset/empty distinctions, inheritance, locale, PATH resolution and a versioned relevance policy. Use secure native digest references for secret-dependent values; do not export secrets or treat redaction as equality.",
+      "fixture_input_manifest_sha256": "Hash complete test files, conftest/plugins/config, fixtures, datasets, databases/initial state, generated files and external inputs, including foreign/private fixtures. An explicit verified empty manifest means none; null means unknown.",
+      "coverage_manifest_sha256": "Hash collected case IDs, parameters/platforms, assertions or behavior inventory and actual pass/fail/skip/deselection results. A matching test count cannot substitute for distinct coverage.",
+      "manifest_encoding": "SHA-256 over stored immutable manifest bytes; each manifest enumerates inputs and their hashes with a pinned format. Native owner verifies bytes and completeness before comparing digests."
+    },
+    "applicability": [
+      "The native owner pins policy and scope before execution: affected action, required behavior, deterministic classification, expiry timestamp and dependencies on external state.",
+      "No universal TTL is invented. Missing expiry or unknown timestamp timezone yields unavailable; an owner may choose a bounded TTL but must record it.",
+      "Do not reuse stochastic judge outcomes, mutable network/provider checks, human labels, live acceptance, or side-effecting executions whose effects must occur again. Exact command identity does not make those deterministic.",
+      "External state must be frozen and hashed or explicitly absent in a verified manifest; revocation, changed applicability or changed policy invalidates reuse.",
+      "Reuse never broadens the original acceptance scope or turns a category needs_labels/unavailable/not_evaluated result into quality approval.",
+      "Validate timestamps as real RFC 3339 instants with explicit timezone and compare instants, not lexicographic strings. The schema also rejects timezone-free text even when a validator does not enable format assertions."
+    ]
+  },
+  "reject_cases": [
+    {
+      "id": "missing_identity",
+      "when": "Any required identity or artifact is absent/null, even in two identical command/commit records.",
+      "eligibility": "unavailable",
+      "action": "Obtain proof or run the affected check; never infer pass."
+    },
+    {
+      "id": "dirty_snapshot",
+      "when": "Tracked, staged, untracked executable, generated or submodule inputs differ or source is not attested clean.",
+      "eligibility": "ineligible",
+      "action": "Verify a clean fully bound snapshot before reuse."
+    },
+    {
+      "id": "source_mismatch",
+      "when": "Repository, full commit, full tree or source manifest differs.",
+      "eligibility": "ineligible",
+      "action": "Execute affected coverage on the new snapshot."
+    },
+    {
+      "id": "environment_mismatch",
+      "when": "Environment, platform, toolchain or actual dependency manifest differs.",
+      "eligibility": "ineligible",
+      "action": "Execute the required platform/environment check."
+    },
+    {
+      "id": "invocation_mismatch",
+      "when": "Argv boundaries/order, cwd, env semantics, stdin or shell/exit-status semantics differ.",
+      "eligibility": "ineligible",
+      "action": "Execute the requested invocation."
+    },
+    {
+      "id": "fixture_or_coverage_mismatch",
+      "when": "Fixture/input hashes differ or any required behavior is absent, skipped or deselected.",
+      "eligibility": "ineligible",
+      "action": "Preserve tests and execute uncovered behavior."
+    },
+    {
+      "id": "expired_revoked_or_out_of_scope",
+      "when": "Consumption is at/after expiry, policy is revoked/changed, or acceptance action is outside the proven scope.",
+      "eligibility": "ineligible",
+      "action": "Refresh only affected evidence."
+    },
+    {
+      "id": "failed_or_conflicting_outcome",
+      "when": "passed is false, exit_code is nonzero, completion failed, or the same execution has contradictory unresolved receipts.",
+      "eligibility": "ineligible",
+      "action": "Retain failures and resolve provenance/disposition; no green selection."
+    },
+    {
+      "id": "artifact_unavailable",
+      "when": "A referenced report/manifest/log is missing, truncated, unverified or hashes disagree.",
+      "eligibility": "unavailable",
+      "action": "Recover authentic evidence or rerun affected check; no trust in prose."
+    },
+    {
+      "id": "nonreusable_execution",
+      "when": "The requested evidence is stochastic, live, provider mutable or requires fresh side effects.",
+      "eligibility": "ineligible",
+      "action": "Use its existing native protocol; deterministic reuse cannot confer acceptance."
+    }
+  ],
+  "disposition": {
+    "rule": "Classify each finding with evidence and affected acceptance_action_id. Validity and action disposition are separate. A single run may yield multiple findings; never replace a real regression with fixture/provider noise.",
+    "classes": {
+      "actual_product_regression": {
+        "requires": "Reproducer tied to affected product behavior and exact source/input evidence.",
+        "effect": "Hold only the affected acceptance action until fixed and verified."
+      },
+      "infra_provider_failure": {
+        "requires": "Attempt-scoped transport, authentication, resource, host or provider evidence. Exit status alone is insufficient.",
+        "effect": "Outcome unavailable for the affected action; use existing bounded native retry policy. Do not label product defective or pass."
+      },
+      "foreign_fixture": {
+        "requires": "Fixture provenance/hash and evidence that the failed requirement lies outside the action scope. Foreign origin alone does not establish irrelevance.",
+        "effect": "Route to the fixture owner; hold only actions that require this fixture proof. Preserve the failure without blocking unrelated actions."
+      },
+      "missing_evidence": {
+        "requires": "Enumerated missing identity, labels, artifacts, applicability or attribution; unresolved classification stays here.",
+        "effect": "Affected acceptance is unavailable/held pending proof. It is neither a product defect nor a pass."
+      }
+    },
+    "no_global_hold": "A hold must name the affected action and required proof; it cannot blanket-block unrelated generic-tool merges. Unknown scope cannot justify global blocking or automatic approval."
+  },
+  "review_loops": {
+    "owner": "Existing WorkBay native review/merge engine only",
+    "canonical_identity": "Persist canonical_subject_id, original source/finding IDs, source number, parent/cycle and original subject history across branch aliases, renamed proposals, resumed sessions, transport retries and new receipt IDs.",
+    "max_automatic_reviews_on_unchanged_code": 2,
+    "unchanged_key": [
+      "canonical_subject_id",
+      "relevant_code_and_behavioral_input_hashes"
+    ],
+    "protocol_pins": [
+      "model/version",
+      "prompt hash",
+      "rubric hash",
+      "decoding settings",
+      "seed or explicit unsupported value",
+      "order handling",
+      "tool/environment/dependency pins"
+    ],
+    "budget_rule": "Count actual automatic review invocations against the durable original subject and unchanged code/input snapshot. Aliases, protocol changes, counter relabeling, crashes and unknown verdicts do not reset the two-review budget. Metadata projections of one invocation do not create independent reviews.",
+    "pre_spawn_breaker": "Before any automatic review, load canonical history. Stop if two unchanged reviews were invoked OR the next request would repeat an equivalent unresolved outcome without new material evidence. Unknown history holds this review action as unavailable. Do not spawn and inspect afterward.",
+    "equivalent_outcome_key": [
+      "canonical_subject_id",
+      "relevant_code_and_behavioral_input_hashes",
+      "normalized_finding_ids_and_dispositions",
+      "missing_evidence_or_failure_class",
+      "proposed_acceptance_action"
+    ],
+    "delta_only": "After a fix, review the changed diff and impacted behaviors against the prior reviewed snapshot, carry prior findings and evidence forward, and state why each changed finding is resolved. A real new defect or material evidence permits a relevant delta, not an alias reset or full unchanged rereview.",
+    "extension": "Beyond the cap, require an independently authorized finite extension tied to a real defect and concrete new evidence, with authorizer, reason, added limit and expiry in native history before invocation. This slice authorizes no extension.",
+    "protected_history": [
+      {
+        "finding_id": 19998,
+        "original_route": "source2 claude-remote Opus 5.5 xhigh",
+        "action_id": 171,
+        "rule": "Retain original identity and counters; no fix or fresh source1 dispatch.",
+        "subject_label": "UI19998",
+        "canonical_subject_id": null,
+        "current_counter_value": null
+      },
+      {
+        "finding_id": 19999,
+        "original_route": "source4 projected Opus xhigh; source1/source2/source3 custody retained",
+        "rule": "Retain original identity and counters; read actual ledger/custody before further authorship. No fix or fresh source1 dispatch.",
+        "subject_label": "capture19999",
+        "canonical_subject_id": null,
+        "current_counter_value": null
+      }
+    ],
+    "required_native_fields": [
+      "canonical_subject_id",
+      "original_subject_ref",
+      "original_source_number",
+      "source_history_ref",
+      "parent_review_run_id",
+      "cycle_id",
+      "execution_id",
+      "review_protocol_sha256",
+      "base_snapshot",
+      "current_snapshot",
+      "delta_sha256",
+      "finding_ids_and_dispositions",
+      "equivalent_outcome_key",
+      "unchanged_automatic_review_count",
+      "breaker_decision",
+      "authorization_ref_or_null",
+      "lifetime_automatic_review_count"
+    ],
+    "current_counter_values": null,
+    "runtime_enforcement_verified": null,
+    "comparability_key": [
+      "canonical_subject_id",
+      "relevant_code_and_behavioral_input_hashes",
+      "review_protocol_sha256"
+    ],
+    "count_atomicity": "The existing native owner must atomically check and reserve the review invocation against durable canonical history before spawn, counting in-flight attempts. Concurrent requests cannot each consume the same remaining budget. This contract adds no scheduler.",
+    "unchanged_definition": "Unchanged means no material change in the code or behavioral inputs relevant to the review finding. New commits, report/proposal wording, branch aliases, metadata-only changes and unrelated fixture edits do not renew the budget. Pin full source snapshots separately for exact test reuse; a different commit alone is not a new review subject.",
+    "history_counters": "Maintain original lifetime invocation counters monotonically in native history. Derive the unchanged-snapshot count from all matching historical and in-flight invocations across aliases; never overwrite counters with zero or hide earlier source rounds. A material fix creates a reviewable delta while retaining lifetime history and the pre-spawn equivalence check.",
+    "observed_telemetry_limits": {
+      "input_ref": "/home/gate/workbay-sandbox/evalops3-inputs-20261029/review-runs.json",
+      "sha256": "57411987d58e0ccb706a1d490808049d05eec10acb5f18ab264042477145f6d5",
+      "bounded_rows": 240,
+      "absent_structured_fields": [
+        "canonical_subject_id",
+        "parent_review_run_id",
+        "cycle_id",
+        "review_protocol_sha256",
+        "unchanged_automatic_review_count",
+        "breaker_decision"
+      ],
+      "conclusion": "Recorded subject paths and verdicts cannot reconstruct canonical counters or prove runtime breaker enforcement. Unknown history is not a zero counter."
+    }
+  },
+  "native_receipt_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Proposed WorkBay native evidence reuse receipt v1",
+    "description": "Structural validation only. Eligibility additionally requires every semantic comparison and artifact verification in this contract. Null records an unknown fact; it never matches another null.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schema",
+      "receipt_id",
+      "execution_id",
+      "verified_test_id",
+      "task_ref",
+      "canonical_subject_id",
+      "source_history_ref",
+      "recorded_verified_at",
+      "identity",
+      "applicability",
+      "outcome",
+      "eligibility",
+      "reason_codes",
+      "usage"
+    ],
+    "properties": {
+      "schema": {
+        "const": "workbay/evidence-reuse-receipt@1"
+      },
+      "receipt_id": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
+      },
+      "execution_id": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
+      },
+      "verified_test_id": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "task_ref": {
+        "type": "string",
+        "minLength": 1
+      },
+      "canonical_subject_id": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
+      },
+      "source_history_ref": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
+      },
+      "recorded_verified_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
+      },
+      "identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repository_id",
+          "commit_sha",
+          "tree_sha",
+          "clean",
+          "source_manifest_sha256",
+          "environment_manifest_sha256",
+          "toolchain_manifest_sha256",
+          "dependency_manifest_sha256",
+          "argv",
+          "cwd",
+          "invocation_semantics_sha256",
+          "env_semantics_sha256",
+          "fixture_input_manifest_sha256",
+          "coverage_manifest_sha256"
+        ],
+        "properties": {
+          "repository_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "tree_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "clean": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "source_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "environment_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "toolchain_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "dependency_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "argv": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "invocation_semantics_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "env_semantics_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "fixture_input_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "coverage_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      },
+      "applicability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "policy_sha256",
+          "expires_at",
+          "evaluated_at",
+          "acceptance_action_id",
+          "scope_sha256",
+          "deterministic",
+          "external_state_manifest_sha256",
+          "revoked"
+        ],
+        "properties": {
+          "policy_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+          },
+          "evaluated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+          },
+          "acceptance_action_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "scope_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "deterministic": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "external_state_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "revoked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "outcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "passed",
+          "exit_code",
+          "completed",
+          "report_sha256",
+          "artifact_manifest_sha256",
+          "completed_at"
+        ],
+        "properties": {
+          "passed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "completed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "report_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "artifact_manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+          }
+        }
+      },
+      "eligibility": {
+        "enum": [
+          "eligible",
+          "ineligible",
+          "unavailable"
+        ]
+      },
+      "reason_codes": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cached_input_tokens",
+          "reasoning_output_tokens",
+          "duration_seconds",
+          "paid_cost",
+          "currency",
+          "usage_source",
+          "price_version"
+        ],
+        "properties": {
+          "input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cached_input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "reasoning_output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "paid_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "usage_source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "price_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "eligibility": {
+              "const": "eligible"
+            }
+          },
+          "required": [
+            "eligibility"
+          ]
+        },
+        "then": {
+          "properties": {
+            "receipt_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "execution_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "canonical_subject_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source_history_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "identity": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "repository_id",
+                "commit_sha",
+                "tree_sha",
+                "clean",
+                "source_manifest_sha256",
+                "environment_manifest_sha256",
+                "toolchain_manifest_sha256",
+                "dependency_manifest_sha256",
+                "argv",
+                "cwd",
+                "invocation_semantics_sha256",
+                "env_semantics_sha256",
+                "fixture_input_manifest_sha256",
+                "coverage_manifest_sha256"
+              ],
+              "properties": {
+                "repository_id": {
+                  "type": [
+                    "string"
+                  ],
+                  "minLength": 1
+                },
+                "commit_sha": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{40}$"
+                },
+                "tree_sha": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{40}$"
+                },
+                "clean": {
+                  "const": true
+                },
+                "source_manifest_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "environment_manifest_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "toolchain_manifest_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "dependency_manifest_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "argv": {
+                  "type": [
+                    "array"
+                  ],
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "cwd": {
+                  "type": [
+                    "string"
+                  ],
+                  "minLength": 1
+                },
+                "invocation_semantics_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "env_semantics_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "fixture_input_manifest_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "coverage_manifest_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              }
+            },
+            "applicability": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "policy_sha256",
+                "expires_at",
+                "evaluated_at",
+                "acceptance_action_id",
+                "scope_sha256",
+                "deterministic",
+                "external_state_manifest_sha256",
+                "revoked"
+              ],
+              "properties": {
+                "policy_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "expires_at": {
+                  "type": [
+                    "string"
+                  ],
+                  "format": "date-time",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+                },
+                "evaluated_at": {
+                  "type": [
+                    "string"
+                  ],
+                  "format": "date-time",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+                },
+                "acceptance_action_id": {
+                  "type": [
+                    "string"
+                  ],
+                  "minLength": 1
+                },
+                "scope_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "deterministic": {
+                  "const": true
+                },
+                "external_state_manifest_sha256": {
+                  "type": [
+                    "string"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "revoked": {
+                  "const": false
+                }
+              }
+            },
+            "outcome": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "passed",
+                "exit_code",
+                "completed",
+                "report_sha256",
+                "artifact_manifest_sha256",
+                "completed_at"
+              ],
+              "properties": {
+                "passed": {
+                  "const": true
+                },
+                "exit_code": {
+                  "const": 0
+                },
+                "completed": {
+                  "const": true
+                },
+                "report_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "artifact_manifest_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "completed_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+                }
+              }
+            },
+            "reason_codes": {
+              "const": [
+                "identity_and_applicability_proven"
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  "examples": [
+    {
+      "kind": "actual_row_projection_not_a_native_receipt",
+      "source_ref": "test-evidence.json#/id=5710",
+      "known_recorded_command": "LC_ALL=C uv run --no-project --with pytest python -m pytest benchmarks/tests/test_evalops_capture.py -q -p no:cacheprovider",
+      "note": "Recorded capture suite pass includes a native Darwin skip. It cannot prove Darwin behavior or current reuse eligibility.",
+      "receipt": {
+        "schema": "workbay/evidence-reuse-receipt@1",
+        "receipt_id": null,
+        "execution_id": null,
+        "verified_test_id": 5710,
+        "task_ref": "EVALOPS-2-CAPTURE",
+        "canonical_subject_id": null,
+        "source_history_ref": null,
+        "recorded_verified_at": "2026-10-29 20:15:59",
+        "identity": {
+          "repository_id": null,
+          "commit_sha": "33004592ef0d5b729cf0b308ecffad79dfaa0749",
+          "tree_sha": null,
+          "clean": null,
+          "source_manifest_sha256": null,
+          "environment_manifest_sha256": null,
+          "toolchain_manifest_sha256": null,
+          "dependency_manifest_sha256": null,
+          "argv": null,
+          "cwd": null,
+          "invocation_semantics_sha256": null,
+          "env_semantics_sha256": null,
+          "fixture_input_manifest_sha256": null,
+          "coverage_manifest_sha256": null
+        },
+        "applicability": {
+          "policy_sha256": null,
+          "expires_at": null,
+          "evaluated_at": null,
+          "acceptance_action_id": null,
+          "scope_sha256": null,
+          "deterministic": null,
+          "external_state_manifest_sha256": null,
+          "revoked": null
+        },
+        "outcome": {
+          "passed": true,
+          "exit_code": 0,
+          "completed": null,
+          "report_sha256": null,
+          "artifact_manifest_sha256": null,
+          "completed_at": null
+        },
+        "eligibility": "unavailable",
+        "reason_codes": [
+          "missing_identity",
+          "artifact_unavailable"
+        ],
+        "usage": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cached_input_tokens": null,
+          "reasoning_output_tokens": null,
+          "duration_seconds": null,
+          "paid_cost": null,
+          "currency": null,
+          "usage_source": null,
+          "price_version": null
+        }
+      },
+      "expected_reuse": "unavailable; not a pass",
+      "unknowns": "All nulls are unknown in this extract; no prose-derived toolchain, fixture, completion, timezone, execution identity or canonical history is invented."
+    },
+    {
+      "kind": "actual_row_projection_not_a_native_receipt",
+      "source_ref": "test-evidence.json#/id=5660",
+      "known_recorded_command": "uv run --directory apps/prototype-description-service --locked --extra dev pytest --noconftest ../../.task-state/facegroup-docs-validation/test_docs_composition.py -q",
+      "note": "Recorded failure is retained alongside later 5663 on the same command/commit. The private fixture context is not silently relabeled product regression or unrelated noise.",
+      "receipt": {
+        "schema": "workbay/evidence-reuse-receipt@1",
+        "receipt_id": null,
+        "execution_id": null,
+        "verified_test_id": 5660,
+        "task_ref": "FACEGROUP-0",
+        "canonical_subject_id": null,
+        "source_history_ref": null,
+        "recorded_verified_at": "2026-10-28 18:40:09",
+        "identity": {
+          "repository_id": null,
+          "commit_sha": "d15181931954dd75394ccc92364af05256a60668",
+          "tree_sha": null,
+          "clean": null,
+          "source_manifest_sha256": null,
+          "environment_manifest_sha256": null,
+          "toolchain_manifest_sha256": null,
+          "dependency_manifest_sha256": null,
+          "argv": null,
+          "cwd": null,
+          "invocation_semantics_sha256": null,
+          "env_semantics_sha256": null,
+          "fixture_input_manifest_sha256": null,
+          "coverage_manifest_sha256": null
+        },
+        "applicability": {
+          "policy_sha256": null,
+          "expires_at": null,
+          "evaluated_at": null,
+          "acceptance_action_id": null,
+          "scope_sha256": null,
+          "deterministic": null,
+          "external_state_manifest_sha256": null,
+          "revoked": null
+        },
+        "outcome": {
+          "passed": false,
+          "exit_code": 1,
+          "completed": null,
+          "report_sha256": null,
+          "artifact_manifest_sha256": null,
+          "completed_at": null
+        },
+        "eligibility": "ineligible",
+        "reason_codes": [
+          "failed_or_conflicting_outcome",
+          "missing_identity",
+          "artifact_unavailable"
+        ],
+        "usage": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "cached_input_tokens": null,
+          "reasoning_output_tokens": null,
+          "duration_seconds": null,
+          "paid_cost": null,
+          "currency": null,
+          "usage_source": null,
+          "price_version": null
+        }
+      },
+      "expected_reuse": "ineligible because the recorded outcome failed; identity and artifact proof are also unavailable",
+      "unknowns": "All nulls are unknown in this extract; no prose-derived toolchain, fixture, completion, timezone, execution identity or canonical history is invented."
+    }
+  ],
+  "heuristics": {
+    "release": "Canon v0.26.2",
+    "rows_ref": "/home/gate/workbay-sandbox/evalops3-inputs-20261029/resume-canon-rows.txt",
+    "trusted_copy": "/home/gate/workbay-sandbox/evalops-1-assets-20261029/canon",
+    "verified_manifest_files": {
+      "PRINCIPLES.md": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+      "lexicons/ml-systems.md": "1dfbd751c2d52d223b0ae617da7f709dd29970f37ddd9bcdc0eb09a7e839cf20",
+      "lexicons/planning.md": "82d13ac75270c354613fcaad8d7269a7ff6dfce4e08d2a8ba2f19b1207419a48",
+      "lexicons/graph-theory.md": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c"
+    },
+    "decisions": [
+      {
+        "rules": [
+          "EVAL-12 Validate the judge against humans (AI Engineering)",
+          "HITL-05 Agreement is a diagnostic, not the truth (Human-in-the-Loop ML)"
+        ],
+        "application": "Assisted 58/57/5 labels and historical verdict consistency cannot calibrate a gating judge or establish independent gold."
+      },
+      {
+        "rules": [
+          "EVAL-13 Pin the judging protocol (AI Engineering)"
+        ],
+        "application": "Pin native review protocol and preserve canonical history; missing pins cannot prove comparable outcomes."
+      },
+      {
+        "rules": [
+          "EVAL-24 Retrieval needs a test collection (Introduction to Information Retrieval, ch. 8)",
+          "EVAL-25 Pool judgments; disclose incompleteness (Introduction to Information Retrieval, ch. 8)"
+        ],
+        "application": "Deterministic runner success cannot substitute for heldout ranked runs, query/corpus/qrel identity and disclosed incomplete pooling; unjudged stays unknown."
+      },
+      {
+        "rules": [
+          "OPS-05 Eliminate before automate/delegate (The 4-Hour Workweek (Ferriss), ch. 8; Business Analysis Methodology Book (Yayici), ch. 2)"
+        ],
+        "application": "Remove only proven redundant execution; preserve distinct coverage and avoid a second scheduler."
+      },
+      {
+        "rules": [
+          "GRPH-31 Critical-path schedule the task DAG (The Algorithm Design Manual, ch. 17; Scheduling: Theory, Algorithms, and Systems, ch. 5 and §D.4)"
+        ],
+        "application": "Logical independence does not establish launch capacity. No new parallel workers; this lane validates in one process."
+      }
+    ],
+    "principles_applied": [
+      2,
+      3,
+      7,
+      13,
+      15,
+      16
+    ],
+    "principle_application": "Explicit reject cases disconfirm reuse; narrow action holds bound risk; native append-only provenance survives resume; proof precedes acceptance; fixed input rows and denominators prevent selection of green records; missing evidence remains visible."
+  },
+  "acceptance": {
+    "bounded_baseline_command": "LC_ALL=C uv run --no-project --with pytest python -m pytest --noconftest -q benchmarks/tests/test_evalops_seed_files.py",
+    "contract_checks": [
+      "JSON parses without duplicate keys/nonfinite values",
+      "Embedded Draft 2020-12 receipt schema validates",
+      "Baseline hash, counts and candidate members reproduce from supplied rows",
+      "Actual-row examples validate structurally and cannot be promoted to eligible with missing proof",
+      "Reject cases cover each identity component, scope, outcome and coverage"
+    ],
+    "unknown_conditions": [
+      "Native owner adoption/migration and pre-spawn breaker enforcement",
+      "Any complete eligible execution pair and authenticated consumption receipt",
+      "Independent human gold and judge calibration",
+      "Retrieval pooling/ranking and quality acceptance",
+      "Live target/runtime acceptance, production reliability and measured reuse savings"
+    ],
+    "quality_acceptance": "not_evaluated",
+    "runtime_acceptance": null
+  },
+  "native_consumption_receipt": {
+    "status": "proposed fields for the existing native evidence owner; not a second journal",
+    "required_fields": [
+      "receipt_id",
+      "contract_version",
+      "canonical_subject_id",
+      "original_source_history_ref",
+      "original_execution_id",
+      "original_evidence_receipt_ref_and_sha256",
+      "target_request_id",
+      "acceptance_action_id",
+      "evaluated_at",
+      "requested_identity_manifest_ref_and_sha256",
+      "per_component_comparison_results",
+      "coverage_requirement_ref_and_sha256",
+      "applicability_policy_sha256",
+      "expiry_and_revocation_check",
+      "eligibility",
+      "reason_codes",
+      "actor"
+    ],
+    "rules": [
+      "Every comparison is proven_equal, known_mismatch or unknown with evidence references. Only all proven_equal plus current applicability and full required coverage can authorize reuse.",
+      "Append consumption to existing native history and reference the original result. Do not insert an independent successful execution or overwrite the original verified_tests record.",
+      "For unavailable/ineligible evidence, retain the decision and missing/rejected components with the affected acceptance action. No usage or cost is imputed from the original execution.",
+      "Schema validity of a stored evidence receipt alone cannot authorize reuse; the current requested identity and comparisons must be attested by the native owner."
+    ],
+    "observed_consumption_receipt": null
+  }
+}

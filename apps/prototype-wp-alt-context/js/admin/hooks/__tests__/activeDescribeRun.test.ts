@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache } from '../../api/config';
@@ -6,6 +7,7 @@ import {
   _resetActiveDescribeRunForTests,
   setActiveDescribeRunId,
   setDescribeProgressMounted,
+  useActiveDescribeRun,
 } from '../activeDescribeRun';
 import {
   _resetDescribeOperationStoreForTests,
@@ -21,6 +23,20 @@ import {
   settleRun,
   type DescribeOperationContextInput,
 } from '../describeOperationStore';
+
+import { GPU_STATE } from '../../api/describeApi';
+import { ACTIVITY_KIND } from '../useActivityStatus';
+import { useGpuStateToasts } from '../useGpuStateToasts';
+
+const toastState = vi.hoisted(() => ({
+  info: vi.fn(), success: vi.fn(), error: vi.fn(), activity: vi.fn(),
+}));
+vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('../../context/ToastContext', () => ({ useToast: () => toastState }));
+vi.mock('../useActivityStatus', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../useActivityStatus')>(),
+  useActivityStatus: () => toastState.activity(),
+}));
 
 const TENANT = 'tenant-a';
 const FOREIGN_TENANT = 'tenant-b';
@@ -117,17 +133,68 @@ describe('activeDescribeRun', () => {
     expect(getDescribeRunContext()?.id).toBe('new');
   });
 
+  it('counts overlapping mounts and floors extra unmounts at zero', () => {
+    const { result } = renderHook(() => useActiveDescribeRun());
+    act(() => {
+      setDescribeProgressMounted(true);
+      setDescribeProgressMounted(true);
+      setDescribeProgressMounted(false);
+    });
+    expect(result.current.progressMounted).toBe(true);
+    act(() => setDescribeProgressMounted(false));
+    expect(result.current.progressMounted).toBe(false);
+    act(() => {
+      setDescribeProgressMounted(false);
+      setDescribeProgressMounted(true);
+    });
+    expect(result.current.progressMounted).toBe(true);
+  });
+
+  it('reload preserves the run without restoring a legacy mounted view', () => {
+    sessionStorage.setItem(describeOperationRunStorageKey(TENANT), JSON.stringify({
+      ...runContext(), progress_mounted: true,
+    }));
+    _resetActiveDescribeRunForTests();
+    _resetDescribeOperationStoreForTests();
+    const { result } = renderHook(() => useActiveDescribeRun());
+    expect(result.current).toEqual({ runId: 'run-1', progressMounted: false });
+  });
+
+  it.each([
+    [ACTIVITY_KIND.DONE, 'success', DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED],
+    [ACTIVITY_KIND.FAILED, 'error', DESCRIBE_RUN_SETTLE_OUTCOME.FAILED],
+  ] as const)('rehydrated run emits warm-up and %s outcome without a progress view', (kind, toast, outcome) => {
+    sessionStorage.setItem(describeOperationRunStorageKey(TENANT), JSON.stringify({
+      ...runContext(), progress_mounted: true,
+    }));
+    _resetDescribeOperationStoreForTests();
+    _resetActiveDescribeRunForTests();
+    toastState.info.mockClear();
+    toastState.success.mockClear();
+    toastState.error.mockClear();
+    let status = { kind: ACTIVITY_KIND.IDLE, runId: getDescribeRunContext()!.id, gpuState: GPU_STATE.STOPPED };
+    toastState.activity.mockImplementation(() => ({ status, actions: {} }));
+    const { rerender } = renderHook(() => useGpuStateToasts());
+    status = { ...status, kind: ACTIVITY_KIND.WARMING as typeof status.kind, gpuState: GPU_STATE.STARTING as typeof status.gpuState };
+    rerender();
+    expect(toastState.info).toHaveBeenCalled();
+    act(() => settleRun('run-1', outcome));
+    status = { ...status, kind: kind as typeof status.kind };
+    rerender();
+    expect(toastState[toast]).toHaveBeenCalled();
+  });
+
   it('does not copy tenant A progress_mounted onto tenant B live run', () => {
     setActiveDescribeRunId('a-run');
     setDescribeProgressMounted(true);
-    expect(getDescribeRunContext()?.progress_mounted).toBe(true);
+    expect(getDescribeRunContext()).not.toHaveProperty('progress_mounted');
 
     installTenant(FOREIGN_TENANT);
     setActiveDescribeRunId('b-run');
 
     const live = getDescribeRunContext();
     expect(live?.id).toBe('b-run');
-    expect(live?.progress_mounted).toBeUndefined();
+    expect(live).not.toHaveProperty('progress_mounted');
 
     const persisted = sessionStorage.getItem(describeOperationRunStorageKey(FOREIGN_TENANT));
     expect(persisted).not.toBeNull();

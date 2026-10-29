@@ -1,0 +1,639 @@
+{
+  "group": "g02-recog-src",
+  "base_sha": "f51c0ba2f7ff3fa26d7642095f2ce53483be08b0",
+  "verdicts": [
+    {
+      "db_id": 18525,
+      "finding_id": "C82R-FACEG2ADJ1-F1-02",
+      "verdict": "duplicate_of",
+      "duplicate_of_db_id": 18538,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/application/health.py",
+          "line": 187,
+          "excerpt": "    except Exception as exc:"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/application/health.py",
+          "line": 194,
+          "excerpt": "    diagnostics = encode_face_runtime_observation({"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/application/health.py",
+          "line": 173,
+          "excerpt": "    return encode_face_runtime_observation(vars(value))"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Defect persists: the try ends at :187 and encoding at :194/:199 runs unguarded. 18538 is the r2 re-finding of the same unguarded encoder plus the NaN gap; track the fix there."
+    },
+    {
+      "db_id": 18538,
+      "finding_id": "C82R-HFACEG2R2-F1",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/application/health.py",
+          "line": 173,
+          "excerpt": "    return encode_face_runtime_observation(vars(value))"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/application/health.py",
+          "line": 199,
+          "excerpt": "                   detail=f\"{result.detail}; face_runtime={json.dumps(diagnostics, sort_keys=True)}\")"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/application/health.py",
+          "line": null,
+          "excerpt": "lane .venv python: encode({'x': b'ab'}) -> TypeError vars() argument must have __dict__ attribute; json.dumps(encode({'x': nan})) -> {\"x\": NaN}"
+        }
+      ],
+      "fix_size": "s",
+      "fix_hint": "Move encode_face_runtime_observation + json.dumps inside the observation try (degrade to UNHEALTHY on failure); make the encoder total (repr fallback), map non-finite floats to null, dump with allow_nan=False.",
+      "confidence": "high",
+      "note": "The encoder falls back to vars() for bytes, sets, and slotted objects, which raises TypeError outside the try (:181-187). float passes through unchecked, so NaN reaches the detail JSON. Also covers 18525."
+    },
+    {
+      "db_id": 18542,
+      "finding_id": "C82R-HFACEG2R2-F5",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/application/health.py",
+          "line": 183,
+          "excerpt": "        observer = getattr(runtime, \"loaded_runtime_record\", None)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/infrastructure/embeddings/face_pipeline_adapter.py",
+          "line": 868,
+          "excerpt": "    def loaded_runtime_record(self, *, expected_config, active_generation_id, captured_at):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 377,
+          "excerpt": "    assert probe.get(\"status\") == \"not_observed\", \"CAUSAL_RED: real runtime has no supported probe observer\""
+        }
+      ],
+      "fix_size": "m",
+      "fix_hint": "Add a loaded_runtime_record(expected_config, active_generation_id, captured_at) seam on FacePipelineRuntime (:298) built from runtime_generation_id/session_receipts; flip the test at :377 to require an observed probe.",
+      "confidence": "high",
+      "note": "The only loaded_runtime_record def lives on FacePipelineFaceDetector (class at :788). FacePipelineRuntime has none, so the getattr returns None and health reports not_observed. A test currently pins that gap."
+    },
+    {
+      "db_id": 18547,
+      "finding_id": "GTMSMOKE-FIR-DETECT-CONFIDENCE",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/_common.py",
+          "line": 21,
+          "excerpt": "DEFAULT_SCORE_THRESHOLD: Final[float] = 0.9"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/config/settings.py",
+          "line": 285,
+          "excerpt": "    return _env_or_default_unit(\"RECOGNITION_FACE_SCORE_THRESHOLD\", DEFAULT_SCORE_THRESHOLD)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/ort_adapters.py",
+          "line": 461,
+          "excerpt": "RETRY_SCALE_MAX_SIDE: Final = 640"
+        }
+      ],
+      "fix_size": "m",
+      "fix_hint": "Run the FIRDV-2 S3a detector-only eval on independent-lineage GT across score_threshold {0.85,0.9} x retry_max_side {0,640,1024} at a frozen FPPI; set DEFAULT_SCORE_THRESHOLD and the retry default from that operating point.",
+      "confidence": "medium",
+      "note": "Cutoff is still 0.9, and the scale retry is opt-in (off by default) and capped at 640, not the measured 1024. docs/scopes/workbench-curation-trust-scope.md:59 still lists 18547 as an open measurement. Live scores need re-measuring."
+    },
+    {
+      "db_id": 18679,
+      "finding_id": "C82R-FIRDETECTORR2-F3",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/infrastructure/face_pipeline/ort_adapters.py",
+          "line": 513,
+          "excerpt": "    room = len(scaled) if top_k <= 0 else max(0, top_k - len(original))"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_scale_retry_contract.py",
+          "line": 167,
+          "excerpt": "        top_k=5000,"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit",
+          "line": null,
+          "excerpt": "grep -n 'top_k\\|_merge_scaled_rows' test_face_scale_retry_*.py -> only top_k=5000 rows (contract:167,385,395; composition:69; provenance:102)"
+        }
+      ],
+      "fix_size": "xs",
+      "fix_hint": "Add a retry test with small top_k (e.g. top_k=3, 2 original rows, 3 non-overlapping scaled rows) asserting exactly 1 scaled row merged, plus a full-first-pass control (room=0) so the room=len(scaled) mutant dies.",
+      "confidence": "high",
+      "note": "Production room logic is correct. The gap is in tests: every retry test uses top_k=5000, and nothing calls _merge_scaled_rows with a cap close to the first-pass count."
+    },
+    {
+      "db_id": 18928,
+      "finding_id": "WB4BACK-C148-PIPELINE-ALIAS",
+      "verdict": "obsolete_superseded",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service",
+          "line": null,
+          "excerpt": "grep -rn get_many --include=*.py . -> no matches (collection repository method from candidate 99d27e19 is absent on main)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py",
+          "line": 111,
+          "excerpt": "    async def get_followup_clustering_job(self, scan_job_id: str) -> Job | None:"
+        },
+        {
+          "file": "docs/tasks/v0.5.0/WBTRUST-4-request-budget-task-plan.md",
+          "line": 133,
+          "excerpt": "### Slice S6: batch-jobs-status (optional)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Reviews an unmerged batch-collection candidate (WBTRUST-4 optional S6, GET recognition/jobs?ids=). Main has only the scalar followup lookup and no pre-resolved collection path. If S6 is revived, re-check this against that branch."
+    },
+    {
+      "db_id": 18932,
+      "finding_id": "WB4BACK-C148-UNBOUNDED-FOLLOWUPS",
+      "verdict": "obsolete_superseded",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py",
+          "line": 118,
+          "excerpt": "            .limit(1)"
+        },
+        {
+          "file": "apps/prototype-description-service",
+          "line": null,
+          "excerpt": "grep -rn get_many --include=*.py . -> no matches (no batch followup fetch of 100 rows exists on main)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "On main the only followup query is scalar, newest first, with .limit(1). The 100-row batch followup fetch lived in the unmerged S6 candidate (99d27e19). If S6 is revived, re-check this there."
+    },
+    {
+      "db_id": 18933,
+      "finding_id": "WB4BACK-C148-REPOSITORY-TENANT-RECHECK",
+      "verdict": "obsolete_superseded",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service",
+          "line": null,
+          "excerpt": "grep -rn get_many --include=*.py . -> no matches (collection row-ingestion path under review is absent on main)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py",
+          "line": 250,
+          "excerpt": "        if clustering is None or clustering.tenant_id != tenant_uuid:"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "F7 targets row ingestion in the unmerged collection repo method (candidate 99d27e19, WBTRUST-4 S6). That method does not exist on main. The existing scalar projection reads already recheck tenant (:250, :279). Re-check if S6 is revived."
+    },
+    {
+      "db_id": 18927,
+      "finding_id": "WB4BACK-C148-DEFAULT-PORT",
+      "verdict": "obsolete_superseded",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/interface_adapters/http/deps/stores.py",
+          "line": 67,
+          "excerpt": "class InMemoryJobRepository:"
+        },
+        {
+          "file": "apps/prototype-description-service",
+          "line": null,
+          "excerpt": "grep -rn get_many --include=*.py . -> no matches (no service call requires a get_many port on main)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "The missing-port 500 needs the S6 collection service call that invokes get_many. Neither the call nor the port exists on main; InMemoryJobRepository only has save/get/update for the scalar route. Re-check if S6 is revived."
+    },
+    {
+      "db_id": 18929,
+      "finding_id": "WB4BACK-C148-FAILURE-BOUNDARY",
+      "verdict": "obsolete_superseded",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py",
+          "line": 891,
+          "excerpt": "@router.get(\"/jobs/{job_id}\", response_model=JobStatusResponse)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py",
+          "line": null,
+          "excerpt": "grep -n '@router.get\\|job_ids\\|ConnectionError' analyze.py -> only /jobs/{job_id}, /jobs/{job_id}/stream GETs; no collection route, no ConnectionError handling"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "The batch-abort and per-ID conversion boundary belong to the unmerged GET recognition/jobs?ids= collection route (WBTRUST-4 optional S6, candidate 99d27e19). analyze.py on main serves scalar job reads only. Re-check if S6 is revived."
+    },
+    {
+      "db_id": 18930,
+      "finding_id": "WB4BACK-C148-DIAGNOSTIC-SANITIZATION",
+      "verdict": "obsolete_superseded",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py",
+          "line": null,
+          "excerpt": "grep -n 'collection\\|batch\\|512\\|sanitiz' analyze.py -> no collection snapshot/512-clip code (hits are comments at :646, :830 only)"
+        },
+        {
+          "file": "docs/tasks/v0.5.0/WBTRUST-4-request-budget-task-plan.md",
+          "line": 137,
+          "excerpt": "Design decision (binding): `GET recognition/jobs?ids=` returns the same envelope per id; PHP proxy passes it through verbatim;"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "The finding is explicitly collection-only ('scalar behavior unchanged'). The 512-clip collection snapshot code does not exist on main. Re-check against the S6 branch if it is revived."
+    },
+    {
+      "db_id": 18931,
+      "finding_id": "WB4BACK-C148-NUMERIC-PARITY",
+      "verdict": "obsolete_superseded",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/interface_adapters/http/schemas/responses.py",
+          "line": 464,
+          "excerpt": "    current_chunk_size: int | None = None"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/interface_adapters/http/schemas/responses.py",
+          "line": null,
+          "excerpt": "grep -n '^class ' responses.py -> no collection/batch job-status model (only JobProgressResponse:451, JobStatusResponse:467, ClusteringJobStatusResponse:489)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "No collection response model exists on main. Aside: the scalar JobProgressResponse fields also lack ge= bounds, but the finding asked not to touch the G1/scalar path. Re-check against S6 if it is revived."
+    },
+    {
+      "db_id": 18526,
+      "finding_id": "C82R-FACEG2ADJ1-F1-03",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+          "line": 347,
+          "excerpt": "    async def __aenter__(self) -> ScanWorker:"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/worker/scan_worker.py",
+          "line": 719,
+          "excerpt": "            snapshot = encode_face_runtime_observation(record)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 334,
+          "excerpt": "            sessions={\"yunet\": receipt}, frozen_preprocessing_spec=spec, execution_receipt=None,"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/api/test_loaded_face_session_health.py",
+          "line": 410,
+          "excerpt": "    asyncio.run(worker._heartbeat_embedding_runtime_capability())"
+        }
+      ],
+      "fix_size": "s",
+      "fix_hint": "In test_loaded_face_session_health.py, add a sessions={} variant of canonical_record and a test that drives ScanWorker.__aenter__ with the canonical record and asserts the published loaded_runtime JSON.",
+      "confidence": "medium",
+      "note": "Done: (a) serving row test at :342; worker asdict replaced by the shared encoder (:719). Still missing: (b) empty-sessions case, since canonical_record only builds the yunet receipt; (c) no test enters ScanWorker.__aenter__."
+    },
+    {
+      "db_id": 18598,
+      "finding_id": "C82R-FIRCURATIONR2-F2",
+      "verdict": "env_stale",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/roster/application/curation_sync_service.py",
+          "line": 110,
+          "excerpt": "        cached = await self._load_replay_result(tenant_uuid, idempotency_key)"
+        },
+        {
+          "file": "apps/prototype-description-service/roster/application/curation_sync_service.py",
+          "line": 118,
+          "excerpt": "            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result)"
+        },
+        {
+          "file": "apps/prototype-description-service/roster/application/curation_sync_service.py",
+          "line": null,
+          "excerpt": "grep -n 'with_for_update\\|FOR UPDATE\\|lock\\|rollback\\|savepoint' curation_sync_service.py -> no matches"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Verification gap, not a source defect: native PG/MySQL concurrency and WP rollback/E2E never ran. Source shows an unlocked replay check-then-store (:110/:118). Re-measure: concurrent duplicate-key replay on live PostgreSQL + WP E2E."
+    },
+    {
+      "db_id": 18836,
+      "finding_id": "WBTRUST7-NAMING-SOURCE-BULK-NOBASE-02",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py",
+          "line": 285,
+          "excerpt": "    return generic if generic is not None else response.alt_text_draft"
+        },
+        {
+          "file": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py",
+          "line": 297,
+          "excerpt": "    return status == NamingStatus.APPLIED"
+        },
+        {
+          "file": "apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py",
+          "line": 365,
+          "excerpt": "        provenance = {"
+        },
+        {
+          "file": "apps/prototype-description-service/scene/application/describe_run_worker.py",
+          "line": 836,
+          "excerpt": "    if outcome.draft_is_final:"
+        }
+      ],
+      "fix_size": "m",
+      "fix_hint": "When generic_draft is None, don't pass alt_text_draft to the worker: return a no-base outcome with draft_is_final=True and keep response.naming_provenance in the outcome. Add paired GPU/seeded no-base + valid-base regressions.",
+      "confidence": "medium",
+      "note": "Code at :281-297 and :365-385 matches the cited ranges (+2 lines). With no unnamed base, historical named text reaches the worker; only APPLIED short-circuits (worker:836); naming_provenance is dropped. Repro not re-run."
+    },
+    {
+      "db_id": 18788,
+      "finding_id": "WBTRUST7-NAMING-GATE-F1",
+      "verdict": "obsolete_file_removed",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scene/tests/test_fixture_naming_boundary.py",
+          "line": null,
+          "excerpt": "ls scene/tests/test_fixture_naming_boundary.py -> No such file or directory; grep -rln 'naming_boundary\\|fixture_naming' --include=*.py . -> no matches"
+        },
+        {
+          "file": "apps/prototype-description-service/scene/application/identity_merge/policy.py",
+          "line": 31,
+          "excerpt": "    MERGE_ERROR = \"merge_error\""
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Module existed only on the unmerged WBTRUST-7 candidate; main has no successor or producer-origin vocab (NamingSkipReason ends at MERGE_ERROR). Naming source defect tracked by 18836/18751. Re-attach if WBTRUST-7 lands."
+    },
+    {
+      "db_id": 18837,
+      "finding_id": "WBTRUST7-NAMING-SOURCE-PYTHON-CONTRACT-02",
+      "verdict": "obsolete_file_removed",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scene/tests/test_fixture_naming_boundary.py",
+          "line": null,
+          "excerpt": "ls scene/tests/test_fixture_naming_boundary.py -> No such file or directory"
+        },
+        {
+          "file": "apps/prototype-description-service",
+          "line": null,
+          "excerpt": "grep -rn unnamed_base_unavailable --include=*.py . -> no matches (the frozen no-base priority the failures conflict with is absent on main)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "The 15 failures were seen on the WBTRUST-7 candidate, whose unnamed_base_unavailable contract and naming_boundary module are not on main. Nothing on main carries those fixtures. Re-check against the branch if WBTRUST-7 is revived."
+    },
+    {
+      "db_id": 18320,
+      "finding_id": "GTMC-C80A-G2S-M01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 83,
+          "excerpt": "    if not isinstance(value, datetime) or value.utcoffset() != timedelta(0):"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 110,
+          "excerpt": "        _capture_time(self.captured_at)"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 135,
+          "excerpt": "        _capture_time(self.captured_at)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 911,
+          "excerpt": "def test_pending_parent_invalid_capture_time_is_never_complete(subject, captured_at):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "_capture_time requires a UTC-aware datetime. Both FaceRoleRecordV1 and RepairIdentityRecordV1 call it in __post_init__ (and build_face_role_record at :200). The test parametrizes None/str/int/naive inputs for both subjects."
+    },
+    {
+      "db_id": 18527,
+      "finding_id": "C82R-FACEG2ADJ1-F3-1",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 28,
+          "excerpt": "_MODEL_ID = re.compile("
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 15,
+          "excerpt": "from shared.source_identity import SourceIdentityV1"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 1029,
+          "excerpt": "def test_canonical_manifest_model_id_survives_publication(tmp_path, complete):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 925,
+          "excerpt": "@pytest.mark.parametrize(\"source\", ['import recognition.config as forbidden',"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "model_id grammar is a literal regex in shared/ (only import: shared.source_identity). The PUB test runs the production manifest factory (:1009) and round-trips the real id via build+write; an import guard forbids recognition.config."
+    },
+    {
+      "db_id": 18528,
+      "finding_id": "C82R-FACEG2ADJ1-F3-2",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 45,
+          "excerpt": "            unsafe = (_MODEL_ID.fullmatch(value) is None if chr(64) in value else"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 1076,
+          "excerpt": "        'control': model_id + chr(0), 'newline': model_id + chr(10),"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 1078,
+          "excerpt": "        'traversal': '../' + model_id, 'extra_component': model_id + '/extra',"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "model_id/model_ids now use an anchored fullmatch grammar with RED tests for NUL, newline, '../' (probe: _copy({'model_id':'../x'}) -> unsafe_record_string). Residual: non-model fields still accept NUL/newline/'../'; only '@' refused."
+    },
+    {
+      "db_id": 18529,
+      "finding_id": "C82R-FACEG2ADJ1-F3-3",
+      "verdict": "duplicate_of",
+      "duplicate_of_db_id": 18540,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 43,
+          "excerpt": "        if field in MODEL_LINEAGE_FIELDS:"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": null,
+          "excerpt": "lane .venv: _copy({'serving_catalog_extra': {'deep': {'model_id': 'auraface-x@512d/a/b'}}}) -> accepted unchanged (no ValueError)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Still present: the '@' exemption keys on the field name, so a model_id at any nested path passes. 18540 is the r2 re-finding of this same F3-3 ask and adds the non-string case; track the fix there."
+    },
+    {
+      "db_id": 18530,
+      "finding_id": "C82R-FACEG2ADJ1-F3-4",
+      "verdict": "duplicate_of",
+      "duplicate_of_db_id": 18540,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 1083,
+          "excerpt": "        'mail_shape': 'fixture' + chr(64) + 'invalid.example',"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 1084,
+          "excerpt": "        'long_string': 'x' * 16385,"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/unit/test_face_role_attestation_publisher.py",
+          "line": 1093,
+          "excerpt": "def test_non_model_fields_keep_at_sign_refusal(field):"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 39,
+          "excerpt": "    if value is None or type(value) in (bool, int):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "5 of 6 asks present: email-shaped id, wrong suffix (@0d/@widthd/@@), >16384 id, round-trip at :1029, non-forbidden-key '@' negatives at :1093. Missing: a non-string id case; source accepts an int model_id (:39). Tracked by 18540."
+    },
+    {
+      "db_id": 18540,
+      "finding_id": "C82R-HFACEG2R2-F3",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 27,
+          "excerpt": "MODEL_LINEAGE_FIELDS = frozenset({\"model_id\", \"model_ids\"})"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 43,
+          "excerpt": "        if field in MODEL_LINEAGE_FIELDS:"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": null,
+          "excerpt": "lane .venv: _copy({'model_id': 5}) -> {'model_id': 5}; nested _copy({'x': {'deep': {'model_id': 'auraface-x@512d/a/b'}}}) -> accepted"
+        }
+      ],
+      "fix_size": "s",
+      "fix_hint": "Thread a path tuple through _copy; exempt '@' only at adapter_observations[*].runtime_record.model_id and serving_catalog.columns[*].model_ids[*]; require str there (TypeError otherwise). Add nested-path '@' and int model_id refusal tests.",
+      "confidence": "high",
+      "note": "The exemption keys on the field name (any depth), and an int/bool model_id passes the (bool, int) branch before the string checks. Also covers 18529 and 18530's remaining non-string case."
+    },
+    {
+      "db_id": 18543,
+      "finding_id": "C82R-HFACEG2R2-F6",
+      "verdict": "still_valid",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 255,
+          "excerpt": "            os.fsync(stream.fileno())"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 257,
+          "excerpt": "        os.replace(temporary, target)"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 100,
+          "excerpt": "    effective_settings: dict"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/face_role_snapshot.py",
+          "line": 260,
+          "excerpt": "            temporary.unlink(missing_ok=True)"
+        }
+      ],
+      "fix_size": "s",
+      "fix_hint": "After os.replace, fsync evidence_dir (os.open O_RDONLY|O_DIRECTORY). Freeze nested containers (MappingProxyType/tuples) in effective_settings, adapter_observations, serving_catalog. Hash identity document bytes vs its sha256.",
+      "confidence": "medium",
+      "note": "Partly fixed: temp cleanup in finally (:258-260), tested at :864. Still missing: directory fsync after replace; nested fields stay mutable dicts in the frozen dataclass; the digest check compares hashes (:161), never hashes content."
+    }
+  ]
+}

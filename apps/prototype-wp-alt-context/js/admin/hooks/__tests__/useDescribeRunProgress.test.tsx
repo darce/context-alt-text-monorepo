@@ -45,7 +45,7 @@ const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
 const adminRoot = join(__dirname, '..', '..');
 const appRoot = join(adminRoot, '..', '..');
 const mediaSelectionStyles = readFileSync(join(adminRoot, 'styles', 'components', '_media-selection.scss'), 'utf8');
-const gpuUxMapMarkdown = readFileSync(join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.notes.md'), 'utf8');
+const gpuUxMapMarkdown = readFileSync(join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.md'), 'utf8');
 const gpuUxMap = JSON.parse(readFileSync(join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.uxmap.json'), 'utf8')) as {
   screens: { id: string; zones: { id: string; label: string; states: string[] }[] }[];
 };
@@ -135,9 +135,7 @@ describe('isFrozenPollFailure (FEBT2-LA-NEW-02 policy seam)', () => {
   // one to deliberate aborts is exactly the FEBT1-W2A-05 regression, so it has
   // to fail here rather than silently un-freezing the progress bar.
   it('freezes on an elapsed deadline', () => {
-    expect(isFrozenPollFailure(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))).toBe(
-      true,
-    );
+    expect(isFrozenPollFailure(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))).toBe(true);
   });
 
   it('freezes on a deliberate cancel', () => {
@@ -377,8 +375,8 @@ describe('useDescribeRunProgress', () => {
     expect(gpuZone?.label).toMatch(/\bunknown\b[^;]*=\s*default/);
     expect(gpuZone?.label).not.toContain('hidden-unknown');
     expect(gpuZone?.states).toEqual(expect.arrayContaining(['default', 'empty']));
-    expect(gpuUxMapMarkdown).toContain('explicit `unknown` telemetry renders the calm `GPU tier: not reported` state');
-    expect(gpuUxMapMarkdown).toContain('the zone is hidden only when there is no relevant run');
+    expect(gpuUxMapMarkdown).toContain('unknown stays quiet with neutral copy');
+    expect(gpuUxMapMarkdown).toContain('hidden-no-run = empty');
   });
 
   it('consumes backend eta_seconds verbatim and derives progressFraction', async () => {
@@ -577,9 +575,7 @@ describe('useDescribeRunProgress', () => {
       expect(result.current.warmingObservation?.status).toBe(WARMING_OBSERVATION_STATUS.UNKNOWN);
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(
-          WARMING_OBSERVATION_LIMIT_MS + WARMING_OBSERVATION_GRACE_MS,
-        );
+        await vi.advanceTimersByTimeAsync(WARMING_OBSERVATION_LIMIT_MS + WARMING_OBSERVATION_GRACE_MS);
       });
       expect(result.current.warmingObservation?.firstObservedAt).toBe(firstObservedAt);
       expect(result.current.warmingObservation?.status).toBe(WARMING_OBSERVATION_STATUS.OVERDUE);

@@ -15,9 +15,11 @@ import {
   type ActivityKind,
   type ActivityStatus,
   type ActivityStatusActions,
+  type ActivityWarmingObservation,
   type UseActivityStatusResult,
 } from '../useActivityStatus';
-import { useGpuStateToasts } from '../useGpuStateToasts';
+import { GPU_STATUS_UNAVAILABLE_TOAST_MS, useGpuStateToasts } from '../useGpuStateToasts';
+import { WARMING_OBSERVATION_EVIDENCE, WARMING_OBSERVATION_STATUS } from '../../utils/warmingDeadline';
 
 const infoMock = vi.fn<(message: string, options?: ToastOptions) => void>();
 const errorMock = vi.fn<(message: string, options?: ToastOptions) => void>();
@@ -308,14 +310,14 @@ describe('useGpuStateToasts edge policy', () => {
     }
   });
 
-  it('does not toast a GPU status poll failure with no active run', () => {
+  it('does not toast a GPU status poll failure with only a persisted run id', () => {
     observeSequence([
-      hookResult({ status: idleStatus() }),
+      hookResult({ status: idleStatus({ runId: 'persisted-run' }) }),
       hookResult({
         status: idleStatus({
           kind: ACTIVITY_KIND.FAILED,
           reason: ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE,
-          runId: null,
+          runId: 'persisted-run',
           retryable: true,
         }),
       }),
@@ -330,13 +332,14 @@ describe('useGpuStateToasts edge policy', () => {
       hookResult({
         status: runStatus(ACTIVITY_KIND.FAILED, {
           reason: ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE,
+          isLiveRun: true,
           retryable: true,
         }),
       }),
     ]);
 
-    const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.failedToastGpuUnavailable);
-    expect(options.durationMs).toBeNull();
+    const options = expectOnlyErrorToast('Description service status unavailable — this run is waiting on status.');
+    expect(options.durationMs).toBe(5_000);
   });
 
   it('toasts unknown failed reasons with generic copy and no Retry', () => {
@@ -670,6 +673,83 @@ describe('useGpuStateToasts edge policy', () => {
         view.unmount();
         vi.clearAllMocks();
       }
+    });
+  });
+
+  describe('DEMO-09 status-unavailable toast on the live warming state', () => {
+    const STATUS_UNAVAILABLE_TOAST = 'Description service status unavailable — this run is waiting on status.';
+
+    const observation = (
+      overrides: Partial<ActivityWarmingObservation> = {},
+    ): ActivityWarmingObservation => ({
+      status: WARMING_OBSERVATION_STATUS.UNKNOWN,
+      evidence: WARMING_OBSERVATION_EVIDENCE.UNKNOWN,
+      firstObservedAt: 1,
+      deadlineAt: 2,
+      ...overrides,
+    });
+
+    const describing = (runId = 'run-1'): UseActivityStatusResult =>
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { runId, canCancel: true, isLiveRun: true }) });
+
+    const warming = (
+      warmingObservation: ActivityWarmingObservation,
+      runId = 'run-1',
+    ): UseActivityStatusResult =>
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, {
+          runId,
+          gpuState: GPU_STATE.STOPPED,
+          canCancel: true,
+          isLiveRun: true,
+          retryable: true,
+          warmingObservation,
+        }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      });
+
+    it('never error-toasts a dormant warming run with a persisted run id whose status is unconfirmed', () => {
+      observeSequence([
+        describing('persisted-run'),
+        warming(observation(), 'persisted-run'),
+        warming(observation(), 'persisted-run'),
+        warming(observation({ statusOutage: false }), 'persisted-run'),
+      ]);
+      expect(expectOnlyInfoToast(GPU_STATE_VOCABULARY.warmingToast)).toBeUndefined();
+    });
+
+    it('error-toasts a confirmed status outage once, self-clearing, while away from progress', () => {
+      observeSequence([
+        describing(),
+        warming(observation({ statusOutage: true })),
+        warming(observation({ statusOutage: true })),
+        warming(observation({ statusOutage: true, firstObservedAt: 3 })),
+      ]);
+      const options = expectOnlyErrorToast(STATUS_UNAVAILABLE_TOAST);
+      expect(options.durationMs).toBe(GPU_STATUS_UNAVAILABLE_TOAST_MS);
+      expect(options.durationMs).not.toBeNull();
+      expect(options.action).toBeUndefined();
+    });
+
+    it('escalates an unconfirmed warm-up to one outage toast and does not re-toast after recovery', () => {
+      observeSequence([
+        describing(),
+        warming(observation()),
+        warming(observation({ statusOutage: true })),
+        warming(observation({ status: WARMING_OBSERVATION_STATUS.WAITING, evidence: WARMING_OBSERVATION_EVIDENCE.STOPPED })),
+        warming(observation({ statusOutage: true })),
+      ]);
+      expect(infoMock).toHaveBeenCalledOnce();
+      expect(infoMock.mock.calls[0]?.[0]).toBe(GPU_STATE_VOCABULARY.warmingToast);
+      expect(errorMock).toHaveBeenCalledOnce();
+      expect(errorMock.mock.calls[0]?.[0]).toBe(STATUS_UNAVAILABLE_TOAST);
+      expect(errorMock.mock.calls[0]?.[1]?.durationMs).toBe(GPU_STATUS_UNAVAILABLE_TOAST_MS);
+      expect(successMock).not.toHaveBeenCalled();
+    });
+
+    it('leaves a confirmed status outage to the mounted progress strip', () => {
+      observeSequence([describing(), warming(observation({ statusOutage: true }))], { mounted: true });
+      expectNoToasts();
     });
   });
 

@@ -74,7 +74,6 @@ export interface DescribeOperationContext {
   /** Whether this snapshot was written to sessionStorage or only kept in memory. */
   persistence: DescribeOperationPersistence;
   status?: DescribeRunResumeStatus;
-  progress_mounted?: boolean;
 }
 
 /** Input accepted by the store before it attaches the persistence outcome. */
@@ -400,15 +399,6 @@ const parseContext = (value: unknown): DescribeOperationContextData | null => {
       status = record.status;
     }
   }
-  let progressMounted: true | undefined;
-  if (record.progress_mounted !== undefined) {
-    if (typeof record.progress_mounted !== 'boolean') {
-      return null;
-    }
-    if (record.progress_mounted) {
-      progressMounted = true;
-    }
-  }
   return {
     version: DESCRIBE_OPERATION_CONTEXT_VERSION,
     kind: record.kind,
@@ -420,7 +410,6 @@ const parseContext = (value: unknown): DescribeOperationContextData | null => {
     ...(startupBudgetSeconds !== undefined ? { startup_budget_seconds: startupBudgetSeconds } : {}),
     request,
     ...(status !== undefined ? { status } : {}),
-    ...(progressMounted !== undefined ? { progress_mounted: progressMounted } : {}),
   };
 };
 
@@ -535,7 +524,6 @@ const serializeContext = (context: DescribeOperationContextData): string =>
     ...(context.status === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK
       ? { status: context.status }
       : {}),
-    ...(context.progress_mounted === true ? { progress_mounted: true } : {}),
   });
 
 const isPendingTerminalRun = (context: DescribeOperationContext): boolean =>

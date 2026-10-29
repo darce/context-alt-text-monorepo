@@ -1,0 +1,131 @@
+{
+  "acceptance": {
+    "independent_gold": "needs_labels",
+    "judge_calibration": "unavailable",
+    "meaning": "schema/hash/behavior checks establish deterministic candidate custody only; not expert truth, readiness or native acceptance",
+    "native_runtime_acceptance": "unavailable",
+    "production_rates": "unavailable",
+    "quality_acceptance": "not_evaluated",
+    "sealed_splits": "withheld"
+  },
+  "authority": {
+    "execution_backend": "codex-remote",
+    "label_authority": "existing append-only label_ui.State journal; no journal reads or writes here",
+    "model_dispatch_performed": false,
+    "native_owner": "existing WorkBay evidence/review owner",
+    "original_source_slices": {
+      "error_analysis": "6a89d9ad",
+      "evidence_reuse": "4169927b",
+      "retrieval": "cc728cf3",
+      "rubric": "f5997481",
+      "trajectory": "6e20b870"
+    },
+    "owned_path": "benchmarks/experiments/evalops/dataset-v1/",
+    "requested_lane": "Sol high FAST",
+    "retained_routes": [
+      "UI19998 remains original source2/action171",
+      "capture19999 remains original source4; counters and custody unchanged"
+    ],
+    "slice_identity_evidence": "user-supplied original slice IDs; not asserted reachable Git ancestors",
+    "snapshot_ancestry": "synthetic snapshot ancestry is not original ancestry",
+    "source_number": 1,
+    "transport": "external VM transport precedent bootstrap20551; no native success claim"
+  },
+  "canon": {
+    "cards": [
+      "evidence-before-commitment",
+      "measurement-integrity",
+      "durable-decision-memory",
+      "correction-at-source"
+    ],
+    "release": "0.26.2",
+    "rules": [
+      "EVAL-12",
+      "EVAL-13",
+      "HITL-05",
+      "EVAL-24",
+      "EVAL-25",
+      "GRPH-14",
+      "DATA-14"
+    ],
+    "verification": "all 53 release-manifest digests verified on VM"
+  },
+  "current_import": {
+    "coding": "copy original free-text open_codes byte for byte; map axial separately; no new coding or gold inference",
+    "promotion": "no automatic failure-to-case promotion; this importer has no admission or split command",
+    "quarantine": "all candidates; missing replay input/context, root/repeat linkage, exposure, independent labels and execution pins",
+    "sealed_assignments": "withheld: sealed_split is null for every row, never hash-split unresolved records",
+    "sort": "ascending original source_id; candidate_id = agent_errors:<source_id>",
+    "source": "analysis-v1/open-coded.jsonl joined by exact source_id to pinned agent-errors.json",
+    "unit": "aggregated agent_error record reference, not independently replayable episode"
+  },
+  "desired": {
+    "independent_cases": 200,
+    "meaning": "proposal, not obtained data; group allocation may prevent exact case ratios; counts are not population weights",
+    "nominal_case_counts": {
+      "dev": 40,
+      "test": 40,
+      "train": 120
+    },
+    "split_fractions": {
+      "dev": 0.2,
+      "test": 0.2,
+      "train": 0.6
+    },
+    "strata": {
+      "healthy_control": 40,
+      "rare_critical": 40,
+      "representative": 120
+    }
+  },
+  "group_before_split": {
+    "allocation": "after admission and closure freeze, SHA-256 UTF-8(protocol version + NUL + seed + NUL + group_id); interpret first 8 bytes as unsigned big-endian modulo 10000: <6000 train, <8000 dev, otherwise test. Every member inherits its group assignment across tracks. Pin full algorithm/seed/input membership/ledger/protocol hashes before running; do not reroll for balance",
+    "balance": "60/20/20 is by group allocation, approximate by cases; 120/40/40 strata are acquisition targets. Report achieved strata by split, group and case denominators, deficits, missingness and null weights. Never silently move groups or drop failures to meet a target",
+    "closure": "build an undirected linkage graph over original source references across all tracks; union every substantiated task/root/repeat/shared-content edge, transitively. Check exact content duplicates and investigate likely semantic duplicates. Missing context, unresolved alias/link, independent label or exposure quarantines the affected connected component and potentially linked unresolved members before allocation",
+    "evidence": "every edge carries type, original endpoint refs/hashes, rationale, adjudicator and attestation; every no-link/not_applicable decision has source evidence; freeze membership and edge ledger hashes",
+    "future_group_id": "SHA-256 of canonical JSON object {members: sorted original identity objects, linkage_ledger_sha256: frozen ledger digest}, using hash_contract.canonical_rows. Each original identity has system, independently attested source namespace, table and original source_id; sort by canonical identity bytes. Namespace must identify the original DB/repository instance, never an invented ID. Unknown namespace/membership withholds the group. These future group IDs are not assigned in candidate v1.",
+    "identity": "evidence-resolved original task aliases, root incidents, repeats/retries, shared replay/source content and cross-track reuse; record placeholders and textual similarity never establish independent groups",
+    "implementation": "protocol only; no runnable split or admission is implemented in candidate v1",
+    "limits": "group membership evidence reduces known leakage; it cannot prove unknown links absent. No leakage guarantee or accepted/balanced dataset is claimed. Zero current sealed assignments is an evidence hold, not a split-quality result",
+    "proposed_seed": "acx-operational-gold-v1-grouped-1",
+    "sealed_test": "separate steward custody/access ledger; freeze before any tuning, hide test inputs/answers from developers/optimizers, never tune on reported test needs; exposed seed/dev queries cannot become untouched test needs. If test exposure or linkage changes, invalidate affected claims and version the cohort; no silent reassignment"
+  },
+  "hash_contract": {
+    "candidate_content": "canonical row hash after removing only content_sha256",
+    "canonical_rows": "SHA-256 UTF-8 json.dumps(ensure_ascii=False, sort_keys=True, separators=(comma,colon), allow_nan=False), no newline",
+    "files": "SHA-256 of exact file bytes",
+    "manifest": "input-lock pins originals and source contracts; rows pin protocol and lock; artifacts/manifest pins schema, producer and generated outputs; no self-hash cycle",
+    "source_summary": "analysis-v1 convention: SHA-256 UTF-8 original summary, null as empty bytes; summary hash is not replay-input hash"
+  },
+  "manual_admission": [
+    "A designated dataset steward freezes a consented sampling frame/query/time, source custody and authorized redactions. Obtain representative episodes and separately observed healthy controls including successful operations; error absence is not a control. Preserve unselected records and unknown sampling weights.",
+    "An expert inspects the authorized original source outside this repo, supplies minimal replay input/context refs and hashes, intent/difficulty/segment/track/criticality/stratum plus task/version and prompt/model/config/decoding/seed/environment/order pins. Never copy raw restricted summaries. Root cause is evidence-based, not the axial code.",
+    "Steward records task aliases, root incident, retry/repeat and duplicate relationships with original IDs, exact evidence refs/hashes and rationale; not_applicable needs affirmative evidence (e.g. healthy control root incident). Unknown absence is not no linkage. Hold unresolved members and their possibly linked groups.",
+    "Experts annotate independently before seeing model/user/post-review answers. Use existing authorized journal with separate validity and disposition, provenance.kind/exposure/attestation_ref/original_ref/protocol_version, annotation_schema/original_event_id and append-only supersedes. A new independent annotation never relabels assisted history. Do not read or rewrite real expert answers/journals in this task.",
+    "Require unexposed attestation and scoped author authorization, versioned expected-output/rubric and original event/evidence refs before accepting an independent label. Conflicts/unclear evidence remain quarantined or abstained; no majority/agreement-only promotion.",
+    "Run the predeclared QC design separately for validity and disposition: at least 20 gold decisions and 20 repeat decisions per field; gold and repeat shares each >=10%; separate accuracy/consistency floors >=0.90. Repeat presentations are not independent cases. Gold reference decisions need authorized expert evidence first; no QC reference set exists here. Agreement around 0.80 is diagnostic, never truth or an admission threshold by itself.",
+    "An authorized human records an append-only admission decision with reviewer, time, protocol hash, evidence hashes, reasons, original source/event IDs and supersedes. This directory is a reproducible candidate projection, never a second label authority. Publish a new dataset release for admissions; do not hand-edit generated candidates.",
+    "Before sealing, the steward independently audits linkage closure, cross-track shared sources, exposure and per-class heldout denominators. Collect more data for insufficient cells; hold affected quality claims instead of fabricating balance. Current independent gold remains needs_labels and calibration unavailable."
+  ],
+  "schema": "evalops.grouped-real-case-protocol.v1",
+  "status": "proposed_collection_and_admission_protocol",
+  "tracks": {
+    "description-generation": {
+      "expected": "human-authored output or rubric for support/faithfulness, required content, contradictions, stale/missing context and abstention",
+      "input": "authorized original media/context refs and hashes, user intent, constraints and context availability",
+      "requirements": "separate from ranked retrieval relevance and review-policy validity; no description cases supplied"
+    },
+    "retrieval": {
+      "expected": "independent relevance judgments with pinned multi-strategy pool depth/contributors and unjudged unknown",
+      "input": "realistic information need plus immutable corpus/query IDs and hashes",
+      "requirements": "use retrieval-v1 observed seed/dev evidence only as exposed diagnostics, never untouched test needs; full corpus custody and fresh heldout needs still required"
+    },
+    "review-policy": {
+      "expected": "independently attested validity and separate disposition/affected_action/blocking_reason, written rubric",
+      "input": "authorized replay context and finding; evidence critique before validity; disposition is action scoped",
+      "prohibited": "reuse partly post-review/user-adjudicated 58/57/5 as independent gold"
+    }
+  },
+  "unknowns": "all required keys present; null unknown, unknown enum explicit, [] provided evidence/links only (not proof none exist); unsupported major versions rejected; no null-to-zero or borrowed model/config pins",
+  "version": "1.0.0"
+}

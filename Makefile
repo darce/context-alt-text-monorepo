@@ -294,7 +294,7 @@ help:
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
 	@echo "  make handoff-inbox TASK=<task-ref> [LANE=<lane>]"
 	@echo "    Poll open worker-to-orchestrator handoff messages and the latest worker reports from root."
-	@echo "  make maint-start TASK=MAINT-<slug>-<YYYYMMDD> OBJECTIVE=\"...\""
+	@echo "  make maint-start TASK=MAINT-<SLUG>-<YYYYMMDD> OBJECTIVE=\"...\""
 	@echo "    Register a MAINT-* task on main/master for permitted ad-hoc docs/config work."
 	@echo "  make review-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Backward-compatible alias for handoff-dispatch."
@@ -302,7 +302,7 @@ help:
 	@echo "    Agent-assisted planning triage entry point; prints the constitution + skill surfaces for the document."
 	@echo "  make plan-review DOC=<path>"
 	@echo "    Agent-assisted planning review entry point; prints the planning-review surfaces for the document."
-	@echo "  make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<kind> VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>"
+	@echo "  make handoff-review-run LIFECYCLE_ARGS=\"--task-ref <task-ref> --subject-path <path-or-.> --subject-kind <kind> --verdict <verdict> --verdict-decision <decision-id> --session <session> --review-run-id <run-id>\""
 	@echo "    Repo-local fallback for recording a review run via the Python API when the MCP review_runs tool is unavailable."
 	@echo "  make slice-start TASK=<task-ref> TEST_CMD='...'"
 	@echo "    Record the failing-test TDD gate before implementation begins."
@@ -649,7 +649,7 @@ test-scripts:
 		scripts/test_backend_env_file_refs.py scripts/test_secrets_inventory_doc.py \
 		scripts/test_deploy_workflow_gate.py \
 		scripts/test_ocirv1_vault_readiness.py \
-		scripts/test_shell_parses_under_system_bash.py \
+		scripts/test_shell_parses_under_system_bash.py scripts/test_documented_make_commands.py \
 		scripts/test_worktree_reap.py \
 		scripts/test_gpu_burst_evidence.py \
 		scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py; \
@@ -1073,7 +1073,7 @@ maint-archive-stale:
 	@$(MCP_PYTHON) scripts/maint_archive_stale.py $(MAINT_ARCHIVE_ARGS)
 
 # maint-start is owned by the canonical Makefile.d/lifecycle.mk, which overrides
-# this file and takes TASK=MAINT-<slug>-<YYYYMMDD>, not SLUG=. The repo-local
+# this file and takes TASK=MAINT-<SLUG>-<YYYYMMDD>, not SLUG=. The repo-local
 # scripts/maint-start.sh wrapper was already unreachable through make.
 
 task-plan-audit:

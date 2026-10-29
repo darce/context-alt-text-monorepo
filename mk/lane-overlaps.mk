@@ -2,13 +2,14 @@
 # Live lane manifest owned-path overlap check
 # =============================================================================
 
-.PHONY: lane-overlaps-check lane-overlaps-tests
+.PHONY: lane-overlaps-check lane-overlaps-tests lane-manifest-rules
 
 LANE_OVERLAPS_MANIFEST_DIR ?= $(ROOT_MAKEFILE_DIR)/config/lane-orchestration
 LANE_OVERLAPS_STATUS_JSON ?=
 LANE_STATUS_JSON ?= $(LANE_OVERLAPS_STATUS_JSON)
 LANE_OVERLAPS_PAGE_SIZE ?= 200
 LANE_OVERLAPS_EXPORTER ?=
+LANE_MANIFEST_RULES_TASKS = $(if $(filter command line,$(origin TASK)),$(TASK))
 
 # Linked worktrees do not carry their own .venv, so fall back to the main
 # worktree's interpreter before bare python3.
@@ -71,11 +72,19 @@ lane-overlaps-check:
 	 "$$resolved_python" "$$checker_script" --manifest-dir "$$manifest_dir" \
 	  --lane-status-json "$$status_json"
 
+lane-manifest-rules:
+	@set -eu; \
+	 $(LANE_OVERLAPS_RESOLVE_PYTHON); \
+	 set -- --manifest-dir "$(LANE_OVERLAPS_MANIFEST_DIR)"; \
+	 for ref in $(LANE_MANIFEST_RULES_TASKS); do set -- "$$@" --task-ref "$$ref"; done; \
+	 "$$resolved_python" "$$lane_root/scripts/check_lane_manifest_rules.py" "$$@"
+
 lane-overlaps-tests:
 	@set -eu; \
 	 $(LANE_OVERLAPS_RESOLVE_PYTHON); \
 	 "$$resolved_python" -m pytest \
 	  "$$lane_root/scripts/test_check_lane_manifest_overlaps.py" \
+	  "$$lane_root/scripts/test_check_lane_manifest_rules.py" \
 	  "$$lane_root/scripts/test_export_lane_status.py" -q -p no:cacheprovider
 
 test-scripts: lane-overlaps-tests

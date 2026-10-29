@@ -76,7 +76,7 @@ plugin `composer test:unit` + `npm test`.
 
 ## Branch-lifecycle abstractions (exact recipes)
 
-- Ad-hoc main work: `make maint-start TASK=MAINT-<slug>-<YYYYMMDD> OBJECTIVE="..."` (TASK=,
+- Ad-hoc main work: `make maint-start TASK=MAINT-<SLUG>-<YYYYMMDD> OBJECTIVE="..."` (TASK=,
   not SLUG=). Planning docs are hook-BLOCKED on main → `git worktree add
   ../context-alt-text-monorepo-<task-id> -b feature/<task-id>` then re-target:
   `mcp-workbay-handoff set --task-ref <ref> --target-branch feature/<...>

@@ -10,6 +10,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS = ("CLAUDE.md", ".github/copilot-instructions.md", "Makefile")
+MAINT_DOCS = DOCS + ("docs/workbay/instructions.md", "NEXT_SESSION_PROMPT.md")
 OVERLAY = REPO_ROOT / "Makefile.d"
 
 
@@ -117,12 +118,12 @@ def test_documented_review_run_forwards_every_placeholder():
 
 def test_maint_placeholders_are_uppercase():
     occurrences = []
-    for document in DOCS:
+    for document in MAINT_DOCS:
         text = (REPO_ROOT / document).read_text(encoding="utf-8")
         for match in re.finditer(r"MAINT-((?:<[^<>]+>-?)+)", text):
             number = text.count("\n", 0, match.start()) + 1
             occurrences.append((document, number, match.group(1)))
-    assert occurrences, f"{', '.join(f'{doc}:1' for doc in DOCS)}: no MAINT placeholders found"
+    assert occurrences, f"{', '.join(f'{doc}:1' for doc in MAINT_DOCS)}: no MAINT placeholders found"
     violations = [
         f"{document}:{number}: MAINT placeholder must be uppercase: {placeholder}"
         for document, number, suffix in occurrences

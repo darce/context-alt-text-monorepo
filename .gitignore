@@ -186,6 +186,8 @@ local/*-worktrees.txt
 !/benchmarks/*.sh
 !/benchmarks/tools/
 !/benchmarks/tools/*.py
+!/benchmarks/tools/evalops/
+!/benchmarks/tools/evalops/error_recurrence.py
 # Superseded local builder; use build_corpus_manifest.py.
 /benchmarks/tools/build_manifest.py
 !/benchmarks/tools/*.sh

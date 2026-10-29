@@ -452,15 +452,15 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 
 ### Checklist for Slice 1: Payload symlinks
 
-- [ ] RED tests 1–4 committed; tests 1–2 fail on main.
-- [ ] `_plan_overlay` handles payload symlinks; containment is otherwise unchanged.
+- [x] RED tests 1–4 committed; tests 1–2 fail on main.
+- [x] `_plan_overlay` handles payload symlinks; containment is otherwise unchanged.
 - [ ] Live: the provisioner exits 0 and `offload_preflight` is clean on the errfix-1 worktree.
 
 ### Checklist for Slice 2: Documented commands
 
-- [ ] RED tests 1–5 committed; tests 2–4 fail on main.
-- [ ] Doc lines fixed in `CLAUDE.md`, the copilot file and the `Makefile` help; the test is in `test-scripts`.
-- [ ] `docs/workbay/instructions.md` and `NEXT_SESSION_PROMPT.md` placeholders uppercase (`errfix-1-docfix`).
+- [x] RED tests 1–5 committed; tests 2–4 fail on main.
+- [x] Doc lines fixed in `CLAUDE.md`, the copilot file and the `Makefile` help; the test is in `test-scripts`.
+- [x] `docs/workbay/instructions.md` and `NEXT_SESSION_PROMPT.md` placeholders uppercase (`errfix-1-docfix`).
 
 ### Checklist for Operator S3: Rows and cursors
 
@@ -469,8 +469,8 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 
 ### Checklist for Slice 4: Manifest rules
 
-- [ ] One RED fixture per rule committed.
-- [ ] Checker and `lane-manifest-rules TASK=<ref>` target in place; not chained to `check-all`.
+- [x] One RED fixture per rule committed.
+- [x] Checker and `lane-manifest-rules TASK=<ref>` target in place; not chained to `check-all`.
 
 ### Checklist for Operator S5: Storage
 
@@ -478,7 +478,7 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 
 ### Checklist for Slice 6: Labels and qrels
 
-- [ ] Samples exported; terra pre-labels, open codes and qrels committed in the `errfix-1-lbl` base; the seed-file test passes.
+- [x] Samples exported; terra pre-labels, open codes and qrels committed in the `errfix-1-lbl` base; the seed-file test passes.
 - [ ] 100 human labels recorded.
 
 ### Checklist for Operator S7: Replay
@@ -487,13 +487,13 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 
 ## Review Readiness
 
-- [ ] One planning review. A finding blocks only if it can be checked:
+- [x] One planning review. A finding blocks only if it can be checked:
   - a contradiction with code at a cited `path:line`;
   - a missing required section;
   - a documented command that does not run.
 
   Round 3 goes to the operator [FM-08, AGT-12, TEST-33].
-- [ ] A handoff decision records each slice, its verification and any contract implications.
+- [x] A handoff decision records each slice, its verification and any contract implications.
 
 ## Stretch Goals
 

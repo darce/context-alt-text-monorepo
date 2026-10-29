@@ -207,6 +207,50 @@ def test_stale_tip_prevents_remote_and_post_remote_gate(lane):
     assert not (lane["tmp"] / "remote-count").exists()
 
 
+@pytest.mark.parametrize("dirty", ["tracked", "staged", "untracked"])
+def test_dirty_review_checkout_stops_before_first_remote_and_can_resume(lane, dirty):
+    assert invoke(lane).returncode == 0
+    wt = Path(receipt(lane)["stage"]["worktree"])
+    path = wt / ("notes.txt" if dirty == "untracked" else "code.txt")
+    original = path.read_bytes() if path.exists() else None
+    user_bytes = b"user work must survive\x00\n"
+    path.write_bytes(user_bytes)
+    if dirty == "staged":
+        git(wt, "add", "code.txt")
+    status = git(wt, "status", "--porcelain", "--untracked-files=all")
+
+    result = invoke(lane, "resume")
+
+    assert path.read_bytes() == user_bytes
+    assert git(wt, "status", "--porcelain", "--untracked-files=all") == status
+    assert not (lane["tmp"] / "remote-count").exists(), result.stderr
+    assert result.returncode != 0 and "clean" in result.stderr.lower()
+    assert calls(lane) == ["review-stage"]
+    assert not any(step["name"] == "remote" for step in receipt(lane)["steps"])
+    assert receipt(lane)["status"] == "failed"
+
+    # Reconcile only fixture-owned dirt, then reuse the prepared packet.
+    if original is None:
+        path.unlink()
+    else:
+        path.write_bytes(original)
+        if dirty == "staged":
+            git(wt, "add", "code.txt")
+    result = invoke(lane, "resume")
+    assert result.returncode == 0, result.stderr
+    assert (lane["tmp"] / "remote-count").read_text() == "1"
+
+
+@pytest.mark.parametrize("mode", ["check", "execute"])
+@pytest.mark.parametrize("doc", ["docs/reviews/./foo-r1.md", "docs/reviews//foo-r1.md"])
+def test_noncanonical_doc_is_rejected_before_stage_or_remote(lane, mode, doc):
+    result = invoke(lane, mode, extra=("--doc", doc))
+
+    assert not (lane["tmp"] / "remote-count").exists(), result.stderr
+    assert result.returncode != 0 and "DOC" in result.stderr
+    assert not (lane["root"] / ".task-state").exists()
+
+
 def test_tip_moves_during_remote_refuses_harvest(lane):
     result = invoke(lane, "execute", env={"MOVE_TIP": "1"})
     assert result.returncode != 0 and "stale" in result.stderr.lower()

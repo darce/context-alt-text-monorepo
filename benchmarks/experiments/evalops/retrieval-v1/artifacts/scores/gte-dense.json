@@ -1,0 +1,3812 @@
+{
+  "acceptance": "not_evaluated",
+  "independent_gold": false,
+  "payload": {
+    "counts": {
+      "evaluable_query_count": 27,
+      "excluded_query_count": 0,
+      "judgment_count": 41,
+      "missing_result_query_count": 0,
+      "query_count": 27,
+      "result_query_count": 27,
+      "unknown_qrel_count": 205
+    },
+    "estimate": "conditional_pooled",
+    "ks": [
+      1,
+      5,
+      8
+    ],
+    "limitations": "Conditional pooled estimates, not exhaustive collection recall. Unpooled documents and null/missing relevance are UNKNOWN, not judged nonrelevant. Unknowns retain rank and contribute no observed DCG gain or recall hit. Pool depth and contributors are unknown unless supplied; supplied metadata does not establish completeness. Incomplete or single-strategy pools can bias system comparisons.",
+    "macro": {
+      "1": {
+        "coverage": {
+          "judgment_coverage": {
+            "denominator": 27,
+            "numerator": 4,
+            "status": "ok",
+            "value": 0.14814814814814814
+          },
+          "unjudged_at_k": {
+            "denominator": 27,
+            "numerator": 23,
+            "status": "ok",
+            "value": 0.8518518518518519
+          }
+        },
+        "ndcg_at_k": {
+          "denominator": 27,
+          "numerator": 4.0,
+          "status": "ok",
+          "value": 0.14814814814814814
+        },
+        "recall_at_k": {
+          "denominator": 27,
+          "numerator": 2.5,
+          "status": "ok",
+          "value": 0.09259259259259259
+        }
+      },
+      "5": {
+        "coverage": {
+          "judgment_coverage": {
+            "denominator": 135,
+            "numerator": 6,
+            "status": "ok",
+            "value": 0.044444444444444446
+          },
+          "unjudged_at_k": {
+            "denominator": 135,
+            "numerator": 129,
+            "status": "ok",
+            "value": 0.9555555555555556
+          }
+        },
+        "ndcg_at_k": {
+          "denominator": 27,
+          "numerator": 3.539064089034864,
+          "status": "ok",
+          "value": 0.131076447742032
+        },
+        "recall_at_k": {
+          "denominator": 27,
+          "numerator": 3.3333333333333335,
+          "status": "ok",
+          "value": 0.1234567901234568
+        }
+      },
+      "8": {
+        "coverage": {
+          "judgment_coverage": {
+            "denominator": 212,
+            "numerator": 7,
+            "status": "ok",
+            "value": 0.0330188679245283
+          },
+          "unjudged_at_k": {
+            "denominator": 212,
+            "numerator": 205,
+            "status": "ok",
+            "value": 0.9669811320754716
+          }
+        },
+        "ndcg_at_k": {
+          "denominator": 27,
+          "numerator": 3.8333748121417894,
+          "status": "ok",
+          "value": 0.14197684489414034
+        },
+        "recall_at_k": {
+          "denominator": 27,
+          "numerator": 3.8333333333333335,
+          "status": "ok",
+          "value": 0.1419753086419753
+        }
+      }
+    },
+    "per_query": [
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 1.0,
+              "retrieved": 1,
+              "unjudged": 0,
+              "unjudged_at_k": 0.0,
+              "unjudged_doc_ids": []
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 2,
+              "judgment_coverage": 0.4,
+              "retrieved": 5,
+              "unjudged": 3,
+              "unjudged_at_k": 0.6,
+              "unjudged_doc_ids": [
+                "finding-2055",
+                "finding-2698",
+                "dec-2469"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 4.892789260714372,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 2,
+              "status": "ok",
+              "value": 1.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 2,
+              "judgment_coverage": 0.25,
+              "retrieved": 8,
+              "unjudged": 6,
+              "unjudged_at_k": 0.75,
+              "unjudged_doc_ids": [
+                "finding-2055",
+                "finding-2698",
+                "dec-2469",
+                "finding-3420",
+                "finding-2921",
+                "dec-2917"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 4.892789260714372,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 2,
+              "status": "ok",
+              "value": 1.0
+            }
+          }
+        },
+        "query": "make plan-done says task_row_missing for a MAINT task I registered in lowercase",
+        "query_id": "q-000",
+        "ranked_results": [
+          {
+            "doc_id": "dec-20507",
+            "judgment": "judged",
+            "relevance": 2
+          },
+          {
+            "doc_id": "dec-19034",
+            "judgment": "judged",
+            "relevance": 2
+          },
+          {
+            "doc_id": "finding-2055",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-2698",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-2469",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-3420",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-2921",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-2917",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 6
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-4272"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-4272",
+                "finding-4287",
+                "finding-1380",
+                "finding-1400",
+                "finding-17672"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-4272",
+                "finding-4287",
+                "finding-1380",
+                "finding-1400",
+                "finding-17672",
+                "dec-11090",
+                "dec-610",
+                "finding-215"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "A commit accidentally included a reviewer's temporary test mutation; how can I prevent that?",
+        "query_id": "q-001",
+        "ranked_results": [
+          {
+            "doc_id": "finding-4272",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-4287",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1380",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1400",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-17672",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-11090",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-610",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-215",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-102"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-102",
+                "finding-91",
+                "finding-1236",
+                "dec-9261",
+                "finding-5773"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 6,
+              "unjudged": 6,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-102",
+                "finding-91",
+                "finding-1236",
+                "dec-9261",
+                "finding-5773",
+                "finding-5774"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Close check reports an open finding that didn't appear in my list results",
+        "query_id": "q-002",
+        "ranked_results": [
+          {
+            "doc_id": "finding-102",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-91",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1236",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9261",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-5773",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-5774",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 6,
+        "status": "ok",
+        "unknown_qrel_count": 6
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-16462"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-16462",
+                "finding-507",
+                "finding-3525",
+                "finding-15357",
+                "finding-16485"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.6309297535714575,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-16462",
+                "finding-507",
+                "finding-3525",
+                "finding-15357",
+                "finding-16485",
+                "finding-5751",
+                "dec-42",
+                "finding-6042"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.6309297535714575,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "My findings query returned nine rows even though more exist; how do I get the rest?",
+        "query_id": "q-003",
+        "ranked_results": [
+          {
+            "doc_id": "finding-16462",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-507",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-3525",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-15357",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-16485",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-5751",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-42",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-6042",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-10716"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-10716",
+                "finding-4499",
+                "finding-2760",
+                "finding-2762",
+                "finding-16932"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-10716",
+                "finding-4499",
+                "finding-2760",
+                "finding-2762",
+                "finding-16932",
+                "finding-9255",
+                "finding-2637",
+                "finding-2641"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Tests pass separately but collecting two directories together imports the wrong conftest",
+        "query_id": "q-004",
+        "ranked_results": [
+          {
+            "doc_id": "finding-10716",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-4499",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-2760",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-2762",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-16932",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9255",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-2637",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-2641",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "handoff-MAINT-php-autoload-parity-20260904"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "handoff-MAINT-php-autoload-parity-20260904",
+                "dec-3383",
+                "finding-11344",
+                "finding-1259",
+                "finding-19897"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "handoff-MAINT-php-autoload-parity-20260904",
+                "dec-3383",
+                "finding-11344",
+                "finding-1259",
+                "finding-19897",
+                "finding-9580",
+                "finding-9615",
+                "finding-9617"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "A lane's focused tests passed but the full PHP suite now has order-dependent failures",
+        "query_id": "q-005",
+        "ranked_results": [
+          {
+            "doc_id": "handoff-MAINT-php-autoload-parity-20260904",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-3383",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-11344",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1259",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-19897",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9580",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9615",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9617",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-7009"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-7009",
+                "finding-10399",
+                "finding-10400",
+                "finding-18083",
+                "finding-9143"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-7009",
+                "finding-10399",
+                "finding-10400",
+                "finding-18083",
+                "finding-9143",
+                "finding-9190",
+                "finding-9291",
+                "finding-9391"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Two simultaneous red-proof runs left a mutant in the sandbox after both restored their backups",
+        "query_id": "q-006",
+        "ranked_results": [
+          {
+            "doc_id": "finding-7009",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10399",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10400",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-18083",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9143",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9190",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9291",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9391",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-62"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-62",
+                "finding-18794",
+                "finding-1945",
+                "finding-10656",
+                "finding-10999"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.6309297535714575,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-62",
+                "finding-18794",
+                "finding-1945",
+                "finding-10656",
+                "finding-10999",
+                "finding-1353",
+                "finding-1374",
+                "finding-9254"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.6309297535714575,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "A shared Python function changed and dozens of tests outside the lane's selected directories failed",
+        "query_id": "q-007",
+        "ranked_results": [
+          {
+            "doc_id": "finding-62",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-18794",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1945",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10656",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10999",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1353",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1374",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9254",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7463"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7463",
+                "dec-5726",
+                "dec-2365",
+                "dec-16798",
+                "finding-7417"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7463",
+                "dec-5726",
+                "dec-2365",
+                "dec-16798",
+                "finding-7417",
+                "dec-2948",
+                "dec-10561",
+                "dec-18638"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Several green lane gates missed failures in sibling modules and downstream callers",
+        "query_id": "q-008",
+        "ranked_results": [
+          {
+            "doc_id": "dec-7463",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-5726",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-2365",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-16798",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-7417",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-2948",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10561",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18638",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-16783"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-16783",
+                "dec-16454",
+                "finding-10169",
+                "finding-2922",
+                "dec-20664"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-16783",
+                "dec-16454",
+                "finding-10169",
+                "finding-2922",
+                "dec-20664",
+                "dec-2372",
+                "finding-1553",
+                "dec-1086"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Both branches pass their own tests but the combined merge fails on stale fakes and vocabulary",
+        "query_id": "q-009",
+        "ranked_results": [
+          {
+            "doc_id": "dec-16783",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-16454",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10169",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-2922",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-20664",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-2372",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1553",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-1086",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-14915"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-14915",
+                "dec-7529",
+                "dec-17576",
+                "dec-14407",
+                "finding-5722"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-14915",
+                "dec-7529",
+                "dec-17576",
+                "dec-14407",
+                "finding-5722",
+                "finding-5733",
+                "dec-2496",
+                "dec-16783"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "A review done outside the standard pipeline passed, but git merge still demands an adjudication artifact",
+        "query_id": "q-010",
+        "ranked_results": [
+          {
+            "doc_id": "dec-14915",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7529",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-17576",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-14407",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-5722",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-5733",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-2496",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-16783",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 1.0,
+              "retrieved": 1,
+              "unjudged": 0,
+              "unjudged_at_k": 0.0,
+              "unjudged_doc_ids": []
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.2,
+              "retrieved": 5,
+              "unjudged": 4,
+              "unjudged_at_k": 0.8,
+              "unjudged_doc_ids": [
+                "dec-16262",
+                "dec-15141",
+                "dec-19993",
+                "dec-19617"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 0.6131471927654584
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.125,
+              "retrieved": 8,
+              "unjudged": 7,
+              "unjudged_at_k": 0.875,
+              "unjudged_doc_ids": [
+                "dec-16262",
+                "dec-15141",
+                "dec-19993",
+                "dec-19617",
+                "finding-305",
+                "dec-9219",
+                "dec-2780"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 0.6131471927654584
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          }
+        },
+        "query": "The task row disappeared while its new worktree was still active and the feature branch had no commits",
+        "query_id": "q-011",
+        "ranked_results": [
+          {
+            "doc_id": "dec-17571",
+            "judgment": "judged",
+            "relevance": 2
+          },
+          {
+            "doc_id": "dec-16262",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-15141",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19993",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19617",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-305",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9219",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-2780",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 7
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-18111"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-18111",
+                "dec-19915",
+                "handoff-MAINT-DISK-REAP-20261022",
+                "dec-18505",
+                "dec-19033"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-18111",
+                "dec-19915",
+                "handoff-MAINT-DISK-REAP-20261022",
+                "dec-18505",
+                "dec-19033",
+                "dec-19185",
+                "dec-18113",
+                "dec-18545"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Disk filled again with orphaned tmp_pack and tmp_idx files under .git/objects/pack",
+        "query_id": "q-012",
+        "ranked_results": [
+          {
+            "doc_id": "dec-18111",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19915",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "handoff-MAINT-DISK-REAP-20261022",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18505",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19033",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19185",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18113",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18545",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 3,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "handoff-MAINT-DISK-REAP-20261022"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 3,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.2,
+              "retrieved": 5,
+              "unjudged": 4,
+              "unjudged_at_k": 0.8,
+              "unjudged_doc_ids": [
+                "handoff-MAINT-DISK-REAP-20261022",
+                "dec-18589",
+                "finding-10772",
+                "finding-9503"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.130929753571458,
+              "numerator": 1.2920296742201793,
+              "status": "ok",
+              "value": 0.3127697035039474
+            },
+            "recall_at_k": {
+              "denominator": 3,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.3333333333333333
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.14285714285714285,
+              "retrieved": 7,
+              "unjudged": 6,
+              "unjudged_at_k": 0.8571428571428571,
+              "unjudged_doc_ids": [
+                "handoff-MAINT-DISK-REAP-20261022",
+                "dec-18589",
+                "finding-10772",
+                "finding-9503",
+                "dec-5764",
+                "finding-10766"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.130929753571458,
+              "numerator": 1.2920296742201793,
+              "status": "ok",
+              "value": 0.3127697035039474
+            },
+            "recall_at_k": {
+              "denominator": 3,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.3333333333333333
+            }
+          }
+        },
+        "query": "Worktree retirement keeps leaking large temporary Git packs onto the full local disk",
+        "query_id": "q-013",
+        "ranked_results": [
+          {
+            "doc_id": "handoff-MAINT-DISK-REAP-20261022",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18589",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10772",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19036",
+            "judgment": "judged",
+            "relevance": 2
+          },
+          {
+            "doc_id": "finding-9503",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-5764",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10766",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 3,
+        "results_status": "present",
+        "retrieved_doc_count": 7,
+        "status": "ok",
+        "unknown_qrel_count": 6
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20280"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20280",
+                "dec-15516",
+                "dec-12601",
+                "dec-20027",
+                "dec-12603"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20280",
+                "dec-15516",
+                "dec-12601",
+                "dec-20027",
+                "dec-12603",
+                "dec-7847",
+                "dec-7447",
+                "dec-20034"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "A new lane off main was assigned another task's review rounds and hit the cycle budget",
+        "query_id": "q-014",
+        "ranked_results": [
+          {
+            "doc_id": "dec-20280",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-15516",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-12601",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-20027",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-12603",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7847",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7447",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-20034",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-10145"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-10145",
+                "finding-10146",
+                "dec-11373",
+                "dec-11367",
+                "dec-7291"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-10145",
+                "finding-10146",
+                "dec-11373",
+                "dec-11367",
+                "dec-7291",
+                "dec-8643",
+                "dec-11118",
+                "dec-19826"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Fresh UX lanes report review_cycle_subject_ambiguous even though each has its own branch",
+        "query_id": "q-015",
+        "ranked_results": [
+          {
+            "doc_id": "finding-10145",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10146",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-11373",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-11367",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7291",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-8643",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-11118",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19826",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-19913"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-19913",
+                "finding-18987",
+                "dec-17871",
+                "dec-18997",
+                "finding-18584"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "finding-19913",
+                "finding-18987",
+                "dec-17871",
+                "dec-18997",
+                "finding-18584",
+                "dec-19522",
+                "finding-1913",
+                "dec-10329"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Sibling dispatches share the wrong ledger subject even when launched one at a time",
+        "query_id": "q-016",
+        "ranked_results": [
+          {
+            "doc_id": "finding-19913",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-18987",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-17871",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18997",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-18584",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19522",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1913",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10329",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7551"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7551",
+                "dec-1172",
+                "dec-5716",
+                "finding-19324",
+                "dec-18035"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7551",
+                "dec-1172",
+                "dec-5716",
+                "finding-19324",
+                "dec-18035",
+                "finding-19916",
+                "finding-6912",
+                "dec-4671"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "The review bridge exits 76 when a remote pass starts from a driver shell",
+        "query_id": "q-017",
+        "ranked_results": [
+          {
+            "doc_id": "dec-7551",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-1172",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-5716",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-19324",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18035",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-19916",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-6912",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-4671",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-8626"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-8626",
+                "dec-10639",
+                "dec-9438",
+                "finding-10939",
+                "finding-9503"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-8626",
+                "dec-10639",
+                "dec-9438",
+                "finding-10939",
+                "finding-9503",
+                "finding-10241",
+                "dec-9260",
+                "dec-18712"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "All open lane briefs are reported missing after projection_budget_exceeded",
+        "query_id": "q-018",
+        "ranked_results": [
+          {
+            "doc_id": "dec-8626",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10639",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9438",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10939",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-9503",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10241",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9260",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18712",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7472"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7472",
+                "dec-13391",
+                "finding-1208",
+                "finding-1219",
+                "dec-4321"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 7,
+              "unjudged": 7,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-7472",
+                "dec-13391",
+                "finding-1208",
+                "finding-1219",
+                "dec-4321",
+                "blocker-1247",
+                "finding-13751"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "Remote JavaScript tests cannot find jsdom and the lane has no node_modules",
+        "query_id": "q-019",
+        "ranked_results": [
+          {
+            "doc_id": "dec-7472",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-13391",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1208",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-1219",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-4321",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "blocker-1247",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-13751",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 7,
+        "status": "ok",
+        "unknown_qrel_count": 7
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-17728"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-17728",
+                "dec-9224",
+                "dec-7458",
+                "dec-19630",
+                "dec-18037"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-17728",
+                "dec-9224",
+                "dec-7458",
+                "dec-19630",
+                "dec-18037",
+                "dec-7523",
+                "dec-10631",
+                "dec-10468"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "A deleted lane still seems to block every remote implementation dispatch",
+        "query_id": "q-020",
+        "ranked_results": [
+          {
+            "doc_id": "dec-17728",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9224",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7458",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19630",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18037",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7523",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10631",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10468",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20294"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20294",
+                "dec-13360",
+                "dec-20519",
+                "dec-19478",
+                "finding-15944"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20294",
+                "dec-13360",
+                "dec-20519",
+                "dec-19478",
+                "finding-15944",
+                "dec-19511",
+                "dec-18360",
+                "dec-16377"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "The installed ledger requires a route that conflicts with the newer operator policy",
+        "query_id": "q-021",
+        "ranked_results": [
+          {
+            "doc_id": "dec-20294",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-13360",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-20519",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19478",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-15944",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-19511",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18360",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-16377",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-19006"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-19006",
+                "dec-9201",
+                "finding-192",
+                "dec-20418",
+                "dec-33"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-19006",
+                "dec-9201",
+                "finding-192",
+                "dec-20418",
+                "dec-33",
+                "finding-297",
+                "finding-298",
+                "finding-299"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 1.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "A plan was committed to a feature branch, but task-finish archived the row before the document reached main",
+        "query_id": "q-022",
+        "ranked_results": [
+          {
+            "doc_id": "dec-19006",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9201",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-192",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-20418",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-33",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-297",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-298",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-299",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-10429"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-10429",
+                "dec-7523",
+                "dec-16024",
+                "dec-9490",
+                "dec-9451"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 8,
+              "unjudged": 8,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-10429",
+                "dec-7523",
+                "dec-16024",
+                "dec-9490",
+                "dec-9451",
+                "dec-10944",
+                "dec-8557",
+                "dec-6296"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          }
+        },
+        "query": "I need the full main tree, but a fresh lane is refused as belonging to another review-cycle subject",
+        "query_id": "q-023",
+        "ranked_results": [
+          {
+            "doc_id": "dec-10429",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7523",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-16024",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9490",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9451",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10944",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-8557",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-6296",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 8
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 1,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 1.0,
+              "retrieved": 1,
+              "unjudged": 0,
+              "unjudged_at_k": 0.0,
+              "unjudged_doc_ids": []
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 1,
+              "status": "ok",
+              "value": 1.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.2,
+              "retrieved": 5,
+              "unjudged": 4,
+              "unjudged_at_k": 0.8,
+              "unjudged_doc_ids": [
+                "finding-7061",
+                "dec-20451",
+                "dec-16262",
+                "dec-17724"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 1,
+              "status": "ok",
+              "value": 1.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.125,
+              "retrieved": 8,
+              "unjudged": 7,
+              "unjudged_at_k": 0.875,
+              "unjudged_doc_ids": [
+                "finding-7061",
+                "dec-20451",
+                "dec-16262",
+                "dec-17724",
+                "finding-10646",
+                "finding-13712",
+                "dec-20549"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 1,
+              "numerator": 1,
+              "status": "ok",
+              "value": 1.0
+            }
+          }
+        },
+        "query": "Retrying task-start fails because a virtual environment already exists in the worktree",
+        "query_id": "q-024",
+        "ranked_results": [
+          {
+            "doc_id": "dec-18996",
+            "judgment": "judged",
+            "relevance": 2
+          },
+          {
+            "doc_id": "finding-7061",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-20451",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-16262",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-17724",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-10646",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-13712",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-20549",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 1,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 7
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 1,
+              "unjudged": 1,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20520"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 0,
+              "judgment_coverage": 0.0,
+              "retrieved": 5,
+              "unjudged": 5,
+              "unjudged_at_k": 1.0,
+              "unjudged_doc_ids": [
+                "dec-20520",
+                "dec-9613",
+                "dec-4155",
+                "dec-5039",
+                "dec-10525"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 0.0,
+              "status": "ok",
+              "value": 0.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 0,
+              "status": "ok",
+              "value": 0.0
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.125,
+              "retrieved": 8,
+              "unjudged": 7,
+              "unjudged_at_k": 0.875,
+              "unjudged_doc_ids": [
+                "dec-20520",
+                "dec-9613",
+                "dec-4155",
+                "dec-5039",
+                "dec-10525",
+                "dec-13285",
+                "dec-16022"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 3.6309297535714578,
+              "numerator": 1.0686215613240666,
+              "status": "ok",
+              "value": 0.2943107231069255
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          }
+        },
+        "query": "A remote pass says review failed with provider_transport_error, but it also says commit_landed and tests passed",
+        "query_id": "q-025",
+        "ranked_results": [
+          {
+            "doc_id": "dec-20520",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-9613",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-4155",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-5039",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10525",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-7827",
+            "judgment": "judged",
+            "relevance": 2
+          },
+          {
+            "doc_id": "dec-13285",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-16022",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 7
+      },
+      {
+        "duplicate_doc_count": 0,
+        "judged_doc_count": 2,
+        "metrics": {
+          "1": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 1.0,
+              "retrieved": 1,
+              "unjudged": 0,
+              "unjudged_at_k": 0.0,
+              "unjudged_doc_ids": []
+            },
+            "ndcg_at_k": {
+              "denominator": 3.0,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 1.0
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          },
+          "5": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.2,
+              "retrieved": 5,
+              "unjudged": 4,
+              "unjudged_at_k": 0.8,
+              "unjudged_doc_ids": [
+                "dec-8040",
+                "finding-7708",
+                "finding-7709",
+                "finding-7710"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 0.6131471927654584
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          },
+          "8": {
+            "coverage": {
+              "judged": 1,
+              "judgment_coverage": 0.125,
+              "retrieved": 8,
+              "unjudged": 7,
+              "unjudged_at_k": 0.875,
+              "unjudged_doc_ids": [
+                "dec-8040",
+                "finding-7708",
+                "finding-7709",
+                "finding-7710",
+                "dec-18836",
+                "dec-10857",
+                "dec-8297"
+              ]
+            },
+            "ndcg_at_k": {
+              "denominator": 4.892789260714372,
+              "numerator": 3.0,
+              "status": "ok",
+              "value": 0.6131471927654584
+            },
+            "recall_at_k": {
+              "denominator": 2,
+              "numerator": 1,
+              "status": "ok",
+              "value": 0.5
+            }
+          }
+        },
+        "query": "Several wave results are red at review with provider transport errors, although their commits and self-verification succeeded",
+        "query_id": "q-026",
+        "ranked_results": [
+          {
+            "doc_id": "dec-20520",
+            "judgment": "judged",
+            "relevance": 2
+          },
+          {
+            "doc_id": "dec-8040",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-7708",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-7709",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "finding-7710",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-18836",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-10857",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          },
+          {
+            "doc_id": "dec-8297",
+            "judgment": "UNKNOWN",
+            "relevance": null
+          }
+        ],
+        "relevant_doc_count": 2,
+        "results_status": "present",
+        "retrieved_doc_count": 8,
+        "status": "ok",
+        "unknown_qrel_count": 7
+      }
+    ],
+    "pool": {
+      "completeness": "unknown",
+      "contributors": [
+        "gte-dense"
+      ],
+      "depth": 8,
+      "metadata_status": "supplied"
+    },
+    "schema_version": "evalops.retrieval.v1",
+    "semantics": {
+      "coverage": "Judged or unjudged / actual unique retrieved docs at k; null for no retrieval. Aggregate coverage pools document counts across all qrel queries.",
+      "macro": "Equal query weights; null metrics excluded, missing results score zero for evaluable queries.",
+      "macro_numerator": "Sum of defined per-query metric values; denominator is evaluable query count.",
+      "ndcg_at_k": "DCG / ideal DCG from judged grades; gain=(2^rel-1), discount=log2(rank+1).",
+      "recall_at_k": "Positive judged hits / positive judgments for that query.",
+      "undefined": "No positive judgments: recall and nDCG null, query excluded from both macro denominators."
+    },
+    "status": "ok"
+  },
+  "pool_depth_unit": "provider_field_slots_before_record_deduplication",
+  "purpose": "qualified_seed_diagnostic_only",
+  "unavailable_query_ids": []
+}

@@ -1,6 +1,9 @@
+import { HTTPError } from '../../../../utils/http';
+import { createAppQueryClient } from '../../../../utils/appQueryClient';
+import { useSuggestionReviewQueries } from '../useSuggestionReviewQueries';
 import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1238,6 +1241,7 @@ describe('useWorkbenchFindings', () => {
   });
 
   afterEach(() => {
+    onlineManager.setOnline(true);
     void queryClient?.cancelQueries();
     queryClient?.clear();
     cleanup();
@@ -1393,6 +1397,62 @@ describe('useWorkbenchFindings', () => {
     expect(result.current.isError).toBe(true);
     expect(result.current.hasFindings).toBe(false);
     expect(result.current.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
+  });
+
+  it.each([false, true])('holds a top-unlabeled outage through refetch (offline: %s)', async (offline) => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [], limit: 25, offset: 0, data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [], limit: 10, offset: 0, data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [], limit: 25, offset: 0, data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    const topMock = vi.mocked(fetchTopUnlabeledClusters);
+    topMock.mockRejectedValue(new HTTPError({
+      status: 500, retryAfterSeconds: undefined,
+      endpoint: '/acx/v1/recognition/clusters/top-unlabeled',
+      bodyPreview: 'acx_projection_query_failed', message: 'projection query failed',
+    }));
+    const client = createAppQueryClient();
+    client.setDefaultOptions({
+      queries: { ...client.getDefaultOptions().queries, retryDelay: 0 },
+    });
+    queryClient = client;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => ({
+      model: useWorkbenchFindings(),
+      queries: useSuggestionReviewQueries(),
+    }), { wrapper });
+    await waitFor(() => expect(result.current.model.isTopUnlabeledError).toBe(true));
+    expect(result.current.model.isError).toBe(true);
+
+    let resolve!: (value: Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>) => void;
+    const response = new Promise<Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>>((done) => { resolve = done; });
+    topMock.mockReturnValue(response);
+    if (offline) onlineManager.setOnline(false);
+    act(() => { void result.current.queries.topUnlabeledQuery.refetch(); });
+    await waitFor(() => expect(result.current.queries.topUnlabeledQuery.fetchStatus).toBe(offline ? 'paused' : 'fetching'));
+    expect(result.current.queries.topUnlabeledQuery.isError).toBe(false);
+    // TEST-15: each variant fails here when the hook reads raw RQ v5 isError.
+    expect(result.current.model.isTopUnlabeledError).toBe(true);
+    expect(result.current.model.isError).toBe(true);
+    expect(result.current.model.queueSettled).toBe(true);
+    expect(result.current.model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.ERROR });
+
+    await act(async () => {
+      onlineManager.setOnline(true);
+      resolve({
+        clusters: [makeCluster()], limit: 20, total: 1, truncated: false,
+        singleton_count: 0, has_clusters: true, data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+    });
+    await waitFor(() => expect(result.current.model.counts.unlabeledClusters).toBe(1));
+    expect(result.current.model.isTopUnlabeledError).toBe(false);
+    expect(result.current.model.isError).toBe(false);
   });
 
   // REV-A-03 (isError): Locks the !hasAnyData guard — BOTH primary queries

@@ -189,6 +189,18 @@ local/*-worktrees.txt
 # Superseded local builder; use build_corpus_manifest.py.
 /benchmarks/tools/build_manifest.py
 !/benchmarks/tools/*.sh
+!/benchmarks/tools/description-review/
+!/benchmarks/tools/description-review/*.js
+!/benchmarks/tools/description-review/*.css
+!/benchmarks/tools/description-review/*.json
+!/benchmarks/tools/description-review/*.md
+!/benchmarks/tools/description-review/test/
+!/benchmarks/tools/description-review/test/*.js
+!/benchmarks/tools/description-review/fixtures/
+!/benchmarks/tools/description-review/fixtures/qwen-high-precision-20261025/
+!/benchmarks/tools/description-review/fixtures/qwen-high-precision-20261025/index.v2.html
+!/benchmarks/tools/description-review/fixtures/qwen-high-precision-20261025/gpu-performance.json
+!/benchmarks/tools/description-review/fixtures/qwen-high-precision-20261025/decision-performance.json
 !/benchmarks/tests/
 !/benchmarks/tests/*.py
 !/benchmarks/plans/
@@ -243,6 +255,12 @@ local/*-worktrees.txt
 !/benchmarks/experiments/rounds-20261017/accepted-packet.md
 !/benchmarks/experiments/rounds-20261017/model-comparison.csv
 !/benchmarks/experiments/rounds-20261017/model-comparison.html
+!/benchmarks/experiments/evalops/
+!/benchmarks/experiments/evalops/findings-v0.jsonl
+!/benchmarks/experiments/evalops/findings-v0-prelabels.jsonl
+!/benchmarks/experiments/evalops/errors-v0.jsonl
+!/benchmarks/experiments/evalops/lessons-v0.jsonl
+!/benchmarks/experiments/evalops/qrels-v0.jsonl
 
 # Offload lane manifests — regenerated per task by materialize_offload_lane_manifest;
 # embed absolute local worktree paths, so machine-specific (never in repo)

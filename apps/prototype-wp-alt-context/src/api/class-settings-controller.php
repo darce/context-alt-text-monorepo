@@ -80,6 +80,29 @@ class SettingsController {
 	/** Aggregate statuses from /health/detailed that count as connected. */
 	private const READY_HEALTH_STATUSES = array( 'ok', 'degraded' );
 
+	/** GET /usage upstream timeout; on expiry the workbench shows the balance as unavailable [RES-13]. */
+	private const USAGE_TIMEOUT_SECONDS = 10;
+	/** Upstream statuses GET /usage keeps; every other non-2xx becomes 502. */
+	private const USAGE_PASSTHROUGH_STATUSES = array( 403, 503 );
+	/** Frozen GET /recognition/tenant/usage keys; any other key set is a 502 [rg-015]. */
+	private const USAGE_KEYS = array(
+		'tenant_id',
+		'used',
+		'reserved',
+		'remaining',
+		'allowance',
+		'period_start',
+		'period_end',
+		'period',
+		'as_of',
+		'status',
+		'data_source',
+	);
+	private const USAGE_COUNT_KEYS       = array( 'used', 'reserved', 'remaining', 'allowance' );
+	private const USAGE_ACCOUNT_STATUSES = array( 'beta_active', 'paid_active', 'past_due', 'expired', 'revoked' );
+	/** Usage date-time fields: YYYY-MM-DDTHH:MM:SS[.fraction] then Z or ±HH:MM. */
+	private const USAGE_DATE_TIME_PATTERN = '/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/D';
+
 	private RecognitionEndpointResolver $endpoint_resolver;
 
 	private DescriptionBudgetService $description_budget_service;
@@ -119,6 +142,16 @@ class SettingsController {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'test_connection' ),
+				'permission_callback' => array( $this, 'can_manage_settings' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/usage',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_usage' ),
 				'permission_callback' => array( $this, 'can_manage_settings' ),
 			)
 		);
@@ -697,6 +730,162 @@ class SettingsController {
 		}
 
 		return array( 'enabled' => $decoded['enabled'] );
+	}
+
+	/**
+	 * GET /acx/v1/usage — read-only passthrough of the tenant account balance.
+	 *
+	 * The recognition service is the one accounting authority [DATA-14], so
+	 * nothing is cached here and every read reaches the service. This is not
+	 * the local description budget, which stays the site safety cap.
+	 */
+	public function get_usage( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$usage = $this->request_tenant_usage();
+		if ( is_wp_error( $usage ) ) {
+			return $usage;
+		}
+
+		$response = new WP_REST_Response( $usage, 200 );
+		$response->header( 'Cache-Control', 'no-store' );
+
+		return $response;
+	}
+
+	/**
+	 * Proxy GET /recognition/tenant/usage and return the decoded body verbatim.
+	 *
+	 * Failures [RES-13]: upstream 403 and 503 keep their status and typed
+	 * detail.code; every other non-2xx, a transport error without a status and
+	 * a body outside the frozen contract are 502 [rg-015].
+	 *
+	 * @return array<string, mixed>|WP_Error
+	 */
+	private function request_tenant_usage(): array|WP_Error {
+		$snapshot = $this->endpoint_resolver->resolve_settings_snapshot();
+		$base_url = rtrim( (string) $snapshot['effective_target_url'], '/' );
+		if ( '' === $base_url ) {
+			return new WP_Error(
+				'acx_usage_service_error',
+				'Recognition service URL is missing.',
+				array( 'status' => 502 )
+			);
+		}
+
+		$response = RecognitionTransport::request(
+			$base_url . '/recognition/tenant/usage',
+			array(
+				'method'  => 'GET',
+				'headers' => array(
+					'X-Tenant-ID' => TenantIdentity::resolve()['value'],
+					'X-API-Key'   => $this->resolve_key_source()['value'],
+				),
+				'timeout' => self::USAGE_TIMEOUT_SECONDS,
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			$data = $response->get_error_data();
+			if ( is_array( $data ) && isset( $data['status'] ) ) {
+				return $response;
+			}
+
+			return new WP_Error(
+				(string) $response->get_error_code(),
+				$response->get_error_message(),
+				array_merge( is_array( $data ) ? $data : array(), array( 'status' => 502 ) )
+			);
+		}
+
+		$response_status = (int) wp_remote_retrieve_response_code( $response );
+		if ( $response_status < 200 || $response_status >= 300 ) {
+			$passthrough = in_array( $response_status, self::USAGE_PASSTHROUGH_STATUSES, true );
+			$code        = 'acx_usage_service_error';
+			$message     = sprintf( 'Recognition service returned HTTP %d.', $response_status );
+			$decoded     = json_decode( wp_remote_retrieve_body( $response ), true );
+			if ( $passthrough && is_array( $decoded ) && is_array( $decoded['detail'] ?? null ) ) {
+				$detail_code = $decoded['detail']['code'] ?? null;
+				if ( is_string( $detail_code ) && '' !== trim( $detail_code ) ) {
+					$code = $detail_code;
+				}
+				$detail_message = $decoded['detail']['message'] ?? null;
+				if ( is_string( $detail_message ) && '' !== $detail_message ) {
+					$message = $detail_message;
+				}
+			}
+
+			return new WP_Error(
+				$code,
+				$message,
+				array(
+					'status'          => $passthrough ? $response_status : 502,
+					'upstream_status' => $response_status,
+				)
+			);
+		}
+
+		$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! $this->is_usage_contract_body( $decoded ) ) {
+			return new WP_Error(
+				'acx_usage_invalid_response',
+				'Recognition service returned an invalid usage response.',
+				array( 'status' => 502 )
+			);
+		}
+
+		return $decoded;
+	}
+
+	/**
+	 * True when the decoded body has exactly the frozen usage keys and types.
+	 *
+	 * @param mixed $decoded JSON-decoded upstream body.
+	 */
+	private function is_usage_contract_body( mixed $decoded ): bool {
+		if ( ! is_array( $decoded ) || count( $decoded ) !== count( self::USAGE_KEYS ) ) {
+			return false;
+		}
+		foreach ( self::USAGE_KEYS as $key ) {
+			if ( ! array_key_exists( $key, $decoded ) ) {
+				return false;
+			}
+		}
+
+		foreach ( self::USAGE_COUNT_KEYS as $key ) {
+			if ( null !== $decoded[ $key ] && ! ( is_int( $decoded[ $key ] ) && $decoded[ $key ] >= 0 ) ) {
+				return false;
+			}
+		}
+
+		$period = $decoded['period'];
+
+		return is_string( $decoded['tenant_id'] ) && wp_is_uuid( $decoded['tenant_id'] )
+			&& $this->is_usage_date_time( $decoded['period_start'] )
+			&& $this->is_usage_date_time( $decoded['period_end'] )
+			&& is_array( $period )
+			&& 2 === count( $period )
+			&& $this->is_usage_date_time( $period['start'] ?? null )
+			&& $this->is_usage_date_time( $period['end'] ?? null )
+			&& ( null === $decoded['as_of'] || $this->is_usage_date_time( $decoded['as_of'] ) )
+			&& ( null === $decoded['status'] || in_array( $decoded['status'], self::USAGE_ACCOUNT_STATUSES, true ) )
+			&& is_string( $decoded['data_source'] );
+	}
+
+	/**
+	 * True for an ISO-8601 date-time with an explicit offset and a real calendar
+	 * date and time; usageApi.ts readDateTime applies the same rule.
+	 *
+	 * @param mixed $value Decoded usage field.
+	 */
+	private function is_usage_date_time( mixed $value ): bool {
+		if ( ! is_string( $value ) || 1 !== preg_match( self::USAGE_DATE_TIME_PATTERN, $value, $parts ) ) {
+			return false;
+		}
+
+		return checkdate( (int) $parts[2], (int) $parts[3], (int) $parts[1] )
+			&& (int) $parts[4] <= 23
+			&& (int) $parts[5] <= 59
+			&& (int) $parts[6] <= 59
+			&& (int) ( $parts[7] ?? 0 ) <= 23
+			&& (int) ( $parts[8] ?? 0 ) <= 59;
 	}
 
 	public function test_connection( WP_REST_Request $request ): WP_REST_Response {

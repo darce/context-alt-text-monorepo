@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import io
 import http.client
+import shutil
+import subprocess
 
 import pytest
 
@@ -365,3 +367,127 @@ def test_annotation_replay_rejects_tampering(paths, change):
     if change == 'disposition': event['disposition'] = 'blocks'
     (paths[1] / 'events.jsonl').write_text(json.dumps(event) + '\n')
     with pytest.raises(ValueError): ui.State(*paths, 'reviewer')
+
+
+# Drives the shipped app.js in a Node VM. Element ids, required flags and
+# select options come from index.html; the decision response is the event the
+# real State returned for the exact payload the page posts.
+DOM_HARNESS = r'''
+'use strict';
+const fs = require('fs'), vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const elements = new Map(), radios = [];
+let form = null, select = null;
+for (const [, close, tag, rawAttrs] of fs.readFileSync(input.html, 'utf8').matchAll(/<(\/?)(\w+)([^>]*)>/g)) {
+  if (close) { if (tag === 'form') form = null; if (tag === 'select') select = null; continue; }
+  const attrs = Object.fromEntries([...rawAttrs.matchAll(/([\w-]+)(?:="([^"]*)")?/g)].map(([, k, v]) => [k, v ?? '']));
+  if (tag === 'option' && select) { select.options.push(attrs.value); continue; }
+  if (!attrs.id && attrs.name !== 'label') continue;
+  const el = {id: attrs.id, form, value: attrs.value ?? '', hidden: 'hidden' in attrs, disabled: 'disabled' in attrs,
+    required: 'required' in attrs, checked: false, textContent: '', className: '', listeners: {}, options: tag === 'select' ? [] : null,
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
+    dispatch(type) { return (this.listeners[type] || []).map(fn => fn(event())); },
+    focus() {},
+    reportValidity() {
+      const owned = [...elements.values(), ...radios].filter(e => e.form === this.id && e.required && !e.disabled);
+      return owned.every(e => radios.includes(e) ? radios.some(r => r.checked) : e.value !== '');
+    }};
+  if (tag === 'form') form = attrs.id;
+  if (tag === 'select') select = el;
+  if (attrs.name === 'label') radios.push(el); else elements.set(attrs.id, el);
+}
+const $ = id => { if (!elements.has(id)) throw new Error(`index.html has no #${id}`); return elements.get(id); };
+function event() { const e = {defaultPrevented: false, returnValue: undefined, preventDefault() { e.defaultPrevented = true; }}; return e; }
+const windowListeners = {}, requests = [], replies = [...input.decision_replies];
+let release = null, ids = 0;
+const respond = reply => ({ok: reply.status < 400, status: reply.status, json: async () => JSON.parse(JSON.stringify(reply.body))});
+function fetch(path, options) {
+  const method = options.method || 'GET';
+  requests.push({path, method, headers: options.headers || {}, body: options.body === undefined ? null : JSON.parse(options.body)});
+  if (method === 'GET' && path === '/api/session') return Promise.resolve(respond({status: 200, body: input.session}));
+  if (method === 'POST' && path === '/api/decision' && replies.length) {
+    const reply = replies.shift();
+    if (!reply.deferred) return Promise.resolve(respond(reply));
+    return new Promise(resolve => { release = () => resolve(respond(reply)); });
+  }
+  return Promise.reject(new Error(`unexpected ${method} ${path}`));
+}
+const context = vm.createContext({
+  document: {getElementById: id => elements.get(id) || null,
+    querySelectorAll: selector => { if (selector !== '[name=label]') throw new Error(selector); return radios; },
+    querySelector: selector => { if (selector !== '[name=label]:checked') throw new Error(selector); return radios.find(r => r.checked) || null; }},
+  window: {addEventListener(type, fn) { (windowListeners[type] ||= []).push(fn); }},
+  history: {replaceState() {}}, fetch, crypto: {randomUUID: () => `node-client-${++ids}`}});
+const flush = () => new Promise(resolve => setImmediate(resolve));
+function observe(step) {
+  const unload = event(); for (const fn of windowListeners.beforeunload) fn(unload);
+  return {step, screens: ['session', 'finding', 'complete'].filter(id => !$(id).hidden), unload_prevented: unload.defaultPrevented,
+    summary: $('summary').textContent, decision_error: $('decision-error').hidden ? null : $('decision-error').textContent,
+    save: $('save').textContent, save_disabled: $('save').disabled};
+}
+async function main() {
+  vm.runInContext(fs.readFileSync(input.app, 'utf8'), context, {filename: input.app});
+  await flush();
+  const observations = [observe('loaded')];
+  for (const [id, value] of Object.entries(input.fields)) {
+    if (id === 'label') for (const radio of radios) radio.checked = radio.value === value;
+    else { if ($(id).options && !$(id).options.includes(value)) throw new Error(`#${id} has no option ${value}`); $(id).value = value; }
+    await Promise.all($('fields').dispatch('input'));
+  }
+  observations.push(observe('drafted'));
+  for (let attempt = 0; attempt < input.decision_replies.length; attempt++) {
+    if ($('save').disabled) throw new Error('Save is disabled');
+    const handled = Promise.all($('decision-form').dispatch('submit'));
+    await flush();
+    if (release) { observations.push(observe('in_flight')); release(); release = null; }
+    await handled;
+    observations.push(observe(`reply_${attempt}`));
+  }
+  process.stdout.write(JSON.stringify({observations, requests}));
+}
+main().catch(error => { console.error(error.stack); process.exit(1); });
+'''
+
+
+@pytest.mark.parametrize('scenario', ['acknowledged', 'in_flight', 'failed_then_retry'])
+def test_one_item_completion_unload_warning_tracks_unacknowledged_saves(paths, scenario):
+    node = shutil.which('node')
+    if node is None: pytest.skip('node is required to run label-ui/app.js against the DOM harness')
+    s = ui.State(*paths, 'reviewer')
+    try:
+        session = s.start({'annotator': 'DEMO human'})
+        expected = dict(presentation_id='opaque-a', label='defect', note='DEMO synthetic completion check',
+                        client_id='node-client-1', disposition='nonblocking',
+                        affected_action='DEMO merge label UI follow-up', blocking_reason=None,
+                        provenance=dict(kind='blind_human', exposure='unexposed', attestation_ref=None,
+                                        original_ref=None, protocol_version='evalops-annotation-v2'))
+        saved = s.decide(expected)
+    finally: s.close()
+    acknowledged = dict(status=200, body=saved)
+    replies = {'acknowledged': [acknowledged], 'in_flight': [dict(acknowledged, deferred=True)],
+               'failed_then_retry': [dict(status=503, body={'error': 'DEMO storage unavailable.'}), acknowledged]}[scenario]
+    fields = {'label': 'defect', 'disposition': 'nonblocking', 'affected-action': expected['affected_action'],
+              'provenance-kind': 'blind_human', 'exposure': 'unexposed', 'note': expected['note']}
+    assets = SOURCE.parent / 'label-ui'
+    run = subprocess.run([node, '-e', DOM_HARNESS], capture_output=True, text=True, timeout=60, check=False,
+                         input=json.dumps(dict(app=str(assets / 'app.js'), html=str(assets / 'index.html'),
+                                               session=session, decision_replies=replies, fields=fields)))
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    posts = [r for r in result['requests'] if r['path'] == '/api/decision']
+    assert [p['body'] for p in posts] == [expected] * len(replies), 'page must post (and retry) the payload State accepted'
+    assert all(p['headers']['X-CSRF-Token'] == session['csrf_token'] for p in posts)
+    steps = {o['step']: o for o in result['observations']}
+    assert steps['loaded']['screens'] == ['finding'] and not steps['loaded']['unload_prevented']
+    assert steps['drafted']['unload_prevented'], 'an unsaved draft must still warn'
+    if scenario == 'in_flight':
+        assert steps['in_flight']['screens'] == ['finding'] and steps['in_flight']['save_disabled']
+        assert steps['in_flight']['unload_prevented'], 'a save without acknowledgment must still warn'
+    if scenario == 'failed_then_retry':
+        failed = steps['reply_0']
+        assert failed['screens'] == ['finding'] and 'DEMO storage unavailable.' in failed['decision_error']
+        assert failed['unload_prevented'], 'a failed save awaiting retry must still warn'
+    final = steps[f'reply_{len(replies) - 1}']
+    assert final['screens'] == ['complete']
+    assert final['summary'].startswith('1 of 1 findings answered · 0 unanswered.')
+    assert not final['unload_prevented'], 'acknowledged final save must not leave a pending unload warning'

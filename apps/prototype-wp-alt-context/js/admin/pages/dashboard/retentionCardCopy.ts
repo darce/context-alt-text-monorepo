@@ -3,7 +3,9 @@
  * Human-facing strings; banned-vocabulary tests assert these stay jargon-free.
  * __() at declaration sites so gettext extraction can see literals.
  */
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
+
+import { unavailableSummary, unavailableNeedsSettings, type ServiceUnavailable } from '../../utils/serviceUnavailable';
 
 import { toRetention } from '../../navigation/appLinks';
 
@@ -30,3 +32,8 @@ export const RETENTION_CARD_ACTION_BODY = __(
   'Review policy, run exports, and inspect recent audit events.',
   'alt-context',
 );
+
+export const retentionFailureCopy = (failure: ServiceUnavailable | null): string =>
+  failure && !unavailableNeedsSettings(failure)
+    ? sprintf(__('%s Retention status cannot load right now.', 'alt-context'), unavailableSummary(failure))
+    : RETENTION_CARD_ERROR_BODY;

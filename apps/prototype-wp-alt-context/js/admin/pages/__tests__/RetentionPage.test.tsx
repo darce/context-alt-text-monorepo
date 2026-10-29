@@ -1,7 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AuthExpiredError, HTTPError } from '../../utils/http';
+import * as retentionApi from '../../api/recognition/retentionApi';
+import { queryKeys } from '../../api/queryKeys';
 import { RetentionSection } from '../RetentionPage';
 import { retentionReducer, type RetentionDialogState } from '../retention/useRetentionPageState';
 import {
@@ -528,6 +531,94 @@ describe('RetentionSection', () => {
     },
   });
 
+  it.each(['unavailable response', 'query error'] as const)(
+    'supersedes a successful Retry after Save refetch returns %s',
+    async (outcome) => {
+      // Exercise the real query and mutation invalidation; only the API boundary is controlled.
+      const hooks = await vi.importActual<typeof import('../../hooks/useRetentionStatus')>(
+        '../../hooks/useRetentionStatus',
+      );
+      mockedUseRetentionStatus.mockImplementation(hooks.useRetentionStatus);
+      mockedUseUpdateRetentionPolicy.mockImplementation(hooks.useUpdateRetentionPolicy);
+      const policy = {
+        retention_mode: 'dispose_after_ack' as const,
+        last_export_at: null,
+        last_purge_at: null,
+        retention_updated_at: '2026-10-29T10:00:00Z',
+      };
+      const recovered: RetentionStatusResponse = { available: true, policy, recent_audit_events: [] };
+      const unavailable = typedUnavailable('2026-10-29T10:01:00Z', {
+        reason: 'upstream_5xx', http_status: 500, retry_after_seconds: null,
+      });
+      let resolveRefresh!: (data: RetentionStatusResponse) => void;
+      let rejectRefresh!: (error: Error) => void;
+      const refresh = new Promise<RetentionStatusResponse>((resolve, reject) => {
+        resolveRefresh = resolve;
+        rejectRefresh = reject;
+      });
+      const fetchStatus = vi.spyOn(retentionApi, 'fetchRetentionStatus')
+        .mockResolvedValueOnce(unavailable)
+        .mockResolvedValueOnce(recovered)
+        .mockReturnValueOnce(refresh)
+        .mockResolvedValue(recovered);
+      const savePolicy = vi.spyOn(retentionApi, 'updateRetentionPolicy').mockResolvedValue({
+        ...policy, retention_mode: 'purge_on_demand',
+      });
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const user = userEvent.setup();
+      const view = render(<QueryClientProvider client={client}><RetentionSection /></QueryClientProvider>);
+
+      try {
+        const retryButton = await screen.findByRole('button', { name: 'Retry' });
+        const announcement = () => within(screen.getByRole('region', { name: 'Data & retention' }))
+          .getAllByRole('status')[0];
+        expect(announcement()).toHaveAttribute('aria-live', 'polite');
+        await user.click(retryButton);
+        await waitFor(() => expect(announcement()).toHaveTextContent(/retention status is available/));
+        expect(fetchStatus).toHaveBeenCalledTimes(2);
+
+        await user.click(screen.getByRole('radio', { name: /Purge on demand/ }));
+        await user.click(screen.getByRole('button', { name: 'Save policy' }));
+        await waitFor(() => expect(announcement()).toHaveTextContent('Fetching retention status…'));
+        expect(savePolicy).toHaveBeenCalledWith({ retention_mode: 'purge_on_demand' });
+        expect(fetchStatus).toHaveBeenCalledTimes(3);
+        expect(announcement()).not.toHaveTextContent('retention status is available');
+        expect(client.getQueryData(queryKeys.retention.status())).toEqual(recovered);
+
+        await act(async () => {
+          if (outcome === 'query error') {
+            rejectRefresh(new HTTPError({
+              status: 503, endpoint: '/retention', retryAfterSeconds: undefined,
+              bodyPreview: 'private response body', message: 'Service error',
+            }));
+          } else {
+            resolveRefresh(unavailable);
+          }
+          await refresh.catch(() => undefined);
+        });
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled());
+        expect(announcement()).toHaveTextContent(/still unavailable/);
+        expect(announcement()).not.toHaveTextContent('retention status is available');
+        expect(announcement()).toHaveTextContent(outcome === 'query error'
+          ? 'HTTP 503' : 'Recognition service: server error (HTTP 500).');
+        expect(screen.getByRole('heading', { name: 'Recognition service unavailable' })).toBeInTheDocument();
+        expect(view.container).not.toHaveTextContent(/private response body|\/retention/);
+        expect(client.getQueryData(queryKeys.retention.status())).toEqual(
+          outcome === 'query error' ? recovered : unavailable,
+        );
+
+        await user.click(screen.getByRole('button', { name: 'Retry' }));
+        await waitFor(() => expect(announcement()).toHaveTextContent(/retention status is available/));
+        expect(fetchStatus).toHaveBeenCalledTimes(4);
+      } finally {
+        view.unmount();
+        client.clear();
+        fetchStatus.mockRestore();
+        savePolicy.mockRestore();
+      }
+    },
+  );
+
   it('names the service, reason, fix, last checked, and retry countdown from unavailable', () => {
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({
@@ -585,6 +676,39 @@ describe('RetentionSection', () => {
     expect(screen.getByText('Last checked 14:04:05')).toBeInTheDocument();
     expect(screen.queryByText('Last checked 14:03:22')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  });
+
+  it('names the HTTP failure and announces the last retry outcome', async () => {
+    const data = typedUnavailable('2026-10-27T02:58:00Z', {
+      reason: 'upstream_5xx', http_status: 500, retry_after_seconds: null,
+    });
+    refetch.mockResolvedValue({ data, isError: false });
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ data, refetch }));
+    render(<RetentionSection />);
+    expect(screen.getByText('Recognition service: server error (HTTP 500).')).toBeInTheDocument();
+    // Settle refetch inside async act: the act-wrapped waitFor defers commits until it returns
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await Promise.resolve();
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /Checked again at .*still unavailable.*Recognition service: server error \(HTTP 500\)/,
+    );
+  });
+
+  it('reads the current HTTP error envelope instead of stale query data', () => {
+    const data = typedUnavailable('2026-10-27T02:58:00Z', {
+      reason: 'upstream_5xx', http_status: 500, retry_after_seconds: null,
+    });
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({
+      isError: true,
+      error: new HTTPError({ status: 500, endpoint: '/retention',
+        bodyPreview: JSON.stringify(data), message: 'Service error', retryAfterSeconds: undefined }),
+      refetch,
+    }));
+    render(<RetentionSection />);
+    expect(screen.getByText('Recognition service: server error (HTTP 500).')).toBeInTheDocument();
   });
 
   it('omits a retry countdown when retry_after_seconds is absent', () => {

@@ -673,6 +673,18 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute('href', RETENTION_CARD_LINK_HREF);
   });
 
+  it('shows the failing service and links to retention for a server failure', () => {
+    mockedUseRetentionStatus.mockReturnValue(createMockQuery({ data: {
+      available: false, policy: null, recent_audit_events: [],
+      unavailable: { service: 'recognition', reason: 'upstream_5xx', http_status: 500,
+        retry_after_seconds: null, checked_at: '2026-10-27T02:58:00Z' },
+    } }));
+    render(<DashboardPage />);
+    expect(screen.getByText(/Recognition service: server error \(HTTP 500\)/)).toBeInTheDocument();
+    expect(screen.queryByText(RETENTION_CARD_ERROR_BODY)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute('href', RETENTION_CARD_LINK_HREF);
+  });
+
   it('does not render the retention panel while retention status is loading', () => {
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({

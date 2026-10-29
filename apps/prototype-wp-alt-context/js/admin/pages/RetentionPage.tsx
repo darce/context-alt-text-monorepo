@@ -79,23 +79,16 @@ export const RetentionSection = (): React.JSX.Element => {
       ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
       : '';
 
-  // In-progress copy derives from retentionQuery.isFetching; this holds only the settled outcome.
-  const [retryOutcome, setRetryOutcome] = React.useState('');
+  // Remember that Retry completed; the current query owns the outcome, including later refreshes.
+  const [retryCheckedAt, setRetryCheckedAt] = React.useState<string | null>(null);
   const retry = async () => {
-    setRetryOutcome('');
+    setRetryCheckedAt(null);
     try {
       const result = await retentionQuery.refetch();
       if (!result) { return; }
-      const failure = result.isError ? readUnavailable(result.error) : readUnavailable(result.data);
-      const time = checkedAgainAt();
-      const recovered = !result.isError && result.data?.available && result.data.policy;
-      setRetryOutcome(recovered
-        ? sprintf(__('Checked again at %s: retention status is available.', 'alt-context'), time)
-        : sprintf(__('Checked again at %s: still unavailable (%s).', 'alt-context'), time,
-          failure ? unavailableSummary(failure) : untypedQueryErrorCause(result.error)));
-    } catch (error) {
-      setRetryOutcome(sprintf(__('Checked again at %s: still unavailable (%s).', 'alt-context'),
-        checkedAgainAt(), untypedQueryErrorCause(error)));
+      setRetryCheckedAt(checkedAgainAt());
+    } catch {
+      setRetryCheckedAt(checkedAgainAt());
     }
   };
   const unavailable = retentionQuery.isError ? readUnavailable(retentionQuery.error) : readUnavailable(status);
@@ -115,6 +108,12 @@ export const RetentionSection = (): React.JSX.Element => {
     : !status?.available
       ? __('The service reported it is unavailable.', 'alt-context')
       : __('The service returned no retention policy.', 'alt-context');
+  const retryOutcome = retryCheckedAt === null ? ''
+    : !retentionQuery.isError && status?.available && policy
+      ? sprintf(__('Checked again at %s: retention status is available.', 'alt-context'),
+        fallbackLastChecked ?? retryCheckedAt)
+      : sprintf(__('Checked again at %s: still unavailable (%s).', 'alt-context'),
+        fallbackLastChecked ?? retryCheckedAt, unavailable ? unavailableSummary(unavailable) : fallbackCause);
 
   const body = retentionQuery.isLoading ? (
     <p>{__('Loading retention status\u2026', 'alt-context')}</p>

@@ -1,0 +1,24 @@
+{
+  "canon_manifest_digest_check": "53 files verified",
+  "canon_release": "0.26.2",
+  "coding": "ordered symptom substring rules then source-class fallback; no human or independent judge validation",
+  "coding_counts": {
+    "pattern-supported": 197,
+    "uncertain": 43
+  },
+  "earliest_created_at": "2026-10-20 21:30:32",
+  "grouping": "record IDs are frozen placeholders only, not independent incidents; incident group and links unknown without evidence",
+  "input_file": "agent-errors.json",
+  "input_manifest_observed_at": "2026-10-29T23:23:11.877676+00:00",
+  "input_sha256": "b8ccc6fa3090eded1bbfeddd893a9434d6738eb7ccf8850255eb8a900fbc9873",
+  "latest_last_seen_at": "2026-10-29 22:27:01",
+  "occurrence_count": 400,
+  "query": "select id,task_ref,harness,error_class,summary,tool_name,package_name,package_version,occurrence_count,created_at,last_seen_at from agent_errors order by last_seen_at desc,id desc limit 240",
+  "record_count": 240,
+  "row_hash": "SHA-256 of UTF-8 json.dumps(source row, ensure_ascii=False, sort_keys=True, separators=(comma,colon)); no newline",
+  "sampling": "latest 240 records by last_seen_at desc, id desc; nonprobability bounded snapshot",
+  "schema": "evalops-analysis-manifest/1",
+  "source": "handoff.db operational agent_errors; not application production traffic",
+  "summary_hash": "SHA-256 of UTF-8 original summary; null encoded as empty bytes",
+  "usage": null
+}

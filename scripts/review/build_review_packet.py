@@ -132,6 +132,7 @@ def safe_relative(value):
         "DOC must be a safe relative .md path",
     )
     require(value.startswith("docs/reviews/"), "DOC must be under docs/reviews/")
+    require(value == path.as_posix(), "DOC must use a canonical relative .md path")
     return value
 
 
@@ -337,6 +338,10 @@ class Runner:
         remote_steps = [s for s in r["steps"] if s["name"] == "remote"]
         if not remote_steps:
             require(not doc.exists(), "review document already exists before dispatch; use a new doc path")
+            require(
+                not git(wt, "status", "--porcelain", "-z", "--untracked-files=all"),
+                "review worktree must be clean before dispatch",
+            )
             self.step("remote", r["remote_argv"], wt, args.timeout)
         elif not self.passed("remote"):
             require(

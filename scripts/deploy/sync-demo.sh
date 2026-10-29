@@ -193,7 +193,8 @@ unknown() { echo "ERROR: shared edge probe could not $1 (rc $2); edge state UNKN
 # group, but edge_bounded_run starts every Docker read under a nested `timeout`
 # that leads a new group, so a stalled read would outlive the deadline and keep
 # this session open. Each helper operation gets only what is left, and the
-# reaper kills those nested groups 2 s before the outer deadline.
+# reaper starts killing those nested groups 2 s before the outer deadline and
+# keeps scanning until cleanup, including groups born after a slow helper read.
 stop_at=$((SECONDS + budget - 2))
 spend() {
   EDGE_OP_DEADLINE=$((stop_at - SECONDS))
@@ -219,7 +220,10 @@ reap_nested() {
 }
 (
   while ((SECONDS < stop_at)); do sleep 0.2; done
-  reap_nested
+  while :; do
+    reap_nested
+    sleep 0.1
+  done
 ) </dev/null >/dev/null 2>&1 &
 reaper=$!
 cleanup() {
@@ -253,7 +257,7 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/sync-demo-edge.XXXXXX")"
 printf '%s' "$3" | base64 -d >"$scratch/Caddyfile.repo" || unknown "decode the repository Caddyfile" "$?"
 printf '%s' "$4" | base64 -d >"$scratch/compose.repo.yml" || unknown "decode the repository Compose file" "$?"
 
-edge_effective_caddyfile "$scratch/Caddyfile.repo" "$live" >"$scratch/Caddyfile" || refuse caddyfile
+TMPDIR="$scratch" edge_effective_caddyfile "$scratch/Caddyfile.repo" "$live" >"$scratch/Caddyfile" || refuse caddyfile
 cmp -s -- "$scratch/Caddyfile" "$live" || refuse caddyfile
 
 # The writer (recognition-service.sh edge_desired) installs the canonical JSON

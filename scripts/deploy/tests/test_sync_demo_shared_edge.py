@@ -185,6 +185,7 @@ stall() {{ printf '%s\\n' "$$" >> "$STALLED_PIDS"; exec sleep 300; }}
 if [[ "$1" == compose && " $* " == *' config '* ]]; then
   if [[ "$STALL" == repo-model && " $* " == *'/compose.repo.yml '* ]]; then stall; fi
   if [[ "$STALL" == helper-chain && " $* " != *' --project-directory '* ]]; then sleep 6; fi
+  if [[ "$STALL" == late-helper && " $* " != *' --project-directory '* ]]; then stall; fi
   exec {shlex.quote(docker)} "$@"
 fi
 if [[ "$1" == compose && " $* " == *' ps '* ]]; then printf '%s\\n' {CADDY_CID}; exit 0; fi
@@ -256,11 +257,16 @@ edge_lock_release "$handle" 5
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env=self.env(tmpdir, stall), start_new_session=True)
         try:
-            _, stderr = proc.communicate(program, timeout=budget + 5 + 5)
+            _, stderr = proc.communicate(program, timeout=budget + 5)
         except subprocess.TimeoutExpired:
+            # Nested timeout groups escape the outer process group. Record
+            # liveness before test cleanup and kill only this fixture's groups
+            # before draining pipes, so a failing regression cannot hang pytest.
+            alive = _alive(self.stalled())
+            _kill_groups(alive)
             os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            pytest.fail(f"probe streams still open {budget + 10}s after start (deadline {budget}s + 5s kill grace)")
+            proc.communicate(timeout=5)
+            pytest.fail(f"probe streams still open after deadline {budget}s + 5s kill grace; live stalled pids: {alive}")
         finally:
             self.stalled_alive = _alive(self.stalled())
             _kill_groups(self.stalled_alive)
@@ -362,3 +368,63 @@ def test_stalled_helper_read_ends_within_the_probe_budget(edge, streamed, stall,
     assert "edge state UNKNOWN" in stderr
     assert edge.leftovers == []
     assert subprocess.run(["flock", "-n", str(edge.dir / "app" / "activation.journal.lock"), "true"]).returncode == 0
+
+
+def test_late_nested_docker_read_is_contained_after_marker_crosses_deadline(edge, streamed):
+    # TEST-15 / RES-31: the old one-shot scan runs while grep is still reading
+    # the optional-network marker. Only afterwards does the frozen helper start
+    # a new timeout group for Docker, using its earlier EDGE_OP_DEADLINE.
+    edge.converge()
+    (edge.dir / "docker-compose.caddy.yml").write_bytes((SERVICE / "docker-compose.caddy.yml").read_bytes())
+    real_grep = shlex.quote(shutil.which("grep"))
+    grep = edge.bin / "grep"
+    grep.write_text(f"""#!/usr/bin/env bash
+if [[ "$*" == *optional-auraface-networks* ]]; then sleep 10.3; fi
+exec {real_grep} "$@"
+""")
+    grep.chmod(0o755)
+    # A separate process group that is not descended from the probe must live.
+    canary = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    budget = 12
+    try:
+        rc, stderr, elapsed, calls = edge.probe(streamed, budget, "late-helper")
+        canary_alive = canary.poll() is None
+    finally:
+        canary.kill()
+        canary.wait()
+    assert edge.stalled(), "the delayed marker never reached the subsequent stalled Docker read"
+    assert any(call.startswith("compose -f ") and " config " in call for call in calls)
+    assert elapsed >= budget - 2, "the marker did not cross stop_at"
+    assert elapsed < budget + 5, f"probe streams stayed open {elapsed:.2f}s beyond deadline + grace"
+    assert not edge.stalled_alive, "late-born Docker child survived the probe"
+    assert canary_alive, "the reaper killed a process outside the probe's descendants"
+    assert rc == 3, stderr
+    assert "edge state UNKNOWN" in stderr
+    assert edge.leftovers == []
+    assert subprocess.run(["flock", "-n", str(edge.dir / "app" / "activation.journal.lock"), "true"]).returncode == 0
+
+
+def test_interrupted_caddy_parser_cleans_helper_scratch(edge, streamed):
+    edge.converge()
+    real_python = shlex.quote(shutil.which("python3"))
+    parser_live = edge.root / "parser-live"
+    python = edge.bin / "python3"
+    python.write_text(f"""#!/usr/bin/env bash
+if [[ "$1" == - && "$2" == */shared-edge-caddy.*/live ]]; then
+  [[ -s "$2" && -s "${{2%/live}}/base" ]] || exit 98
+  printf '%s\\n' "$2" > {shlex.quote(str(parser_live))}
+  printf '%s\\n' "$$" >> "$STALLED_PIDS"
+  exec sleep 300
+fi
+exec {real_python} "$@"
+""")
+    python.chmod(0o755)
+    budget = 4
+    rc, stderr, elapsed, calls = edge.probe(streamed, budget)
+    assert parser_live.exists() and edge.stalled(), "the parser never stalled with both helper copies present"
+    assert rc == 124, stderr
+    assert elapsed < budget + 5, f"parser kept probe streams open {elapsed:.2f}s"
+    assert not edge.stalled_alive, "interrupted parser survived the probe"
+    assert calls == [], "the parser should time out before Docker reads"
+    assert subprocess.run(["flock", "-n", str(edge.dir / "app" / "activation.journal.lock"), "true"]).returncode == 0
+    assert edge.leftovers == [], "interrupted Caddy parsing left helper scratch outside the owned probe scratch"

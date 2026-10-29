@@ -62,7 +62,6 @@ def test_documented_make_targets_exist():
     assert not missing, "\n".join(missing)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-doc")
 def test_review_run_lines_use_lifecycle_args():
     violations = []
     for document in DOCS:
@@ -80,7 +79,6 @@ def test_review_run_lines_use_lifecycle_args():
     assert not violations, "\n".join(violations)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-doc")
 def test_documented_review_run_forwards_every_placeholder():
     if not OVERLAY.is_dir():
         pytest.skip("Makefile.d:1: lifecycle overlay is not installed")
@@ -117,7 +115,6 @@ def test_documented_review_run_forwards_every_placeholder():
     assert not missing, f"CLAUDE.md:{number}: placeholders not forwarded: {missing}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ERRFIX-1 RED errfix-1-doc")
 def test_maint_placeholders_are_uppercase():
     occurrences = []
     for document in DOCS:

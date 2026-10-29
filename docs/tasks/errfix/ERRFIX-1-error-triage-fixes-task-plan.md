@@ -186,7 +186,7 @@ Signals outside the 441, all owned by WorkBay (see Contract and Boundary Impact)
 | 1 | `python3 -m pytest scripts/tests/test_provision_lane_worktree.py -q` | The provisioner exits 0 on the errfix-1 worktree, and `offload_preflight` there reports no `transport_missing` |
 | 2 | `python3 -m pytest scripts/test_documented_make_commands.py -q`, also run in `make test-scripts` | `make handoff-review-run LIFECYCLE_ARGS=…` records against the named task |
 | S3 | `list_handoff_rows` | ≤ 2 main-target rows; Ambiguous share < 20% over the 7 days after S3 |
-| 4 | `python3 -m pytest scripts/test_check_lane_manifest_rules.py -q` | `make lane-manifest-rules` exits 0 on the live manifests |
+| 4 | `python3 -m pytest scripts/test_check_lane_manifest_rules.py -q` | `make lane-manifest-rules TASK=<ref>` exits 0 on each new task's manifest before dispatch |
 | S5 | `du -sh .task-state` | ≤ 1.1 GB, with the export taken before retention |
 | 6 | `python3 -m pytest benchmarks/tests/test_evalops_seed_files.py -q` | 100 human labels recorded; disagreement with the pre-labels reported |
 | S7 | Replay output | Per-class weekly counts against the baseline, with a lane-clustered 95% CI |
@@ -280,7 +280,7 @@ Files:
 - RED: `scripts/test_check_lane_manifest_rules.py`.
 - Implementation: `scripts/check_lane_manifest_rules.py:main` and `mk/lane-overlaps.mk`.
 
-The rules apply to live lanes in `config/lane-orchestration/*.json`. Skip `*.golden.json` and retired lanes.
+The rules apply to non-terminal lanes in `config/lane-orchestration/*.json`. Skip `*.golden.json`, and lanes with a `terminal` object or a merged, closed, closed_stale or retired status.
 
 | Rule | Level |
 |---|---|
@@ -291,13 +291,13 @@ The rules apply to live lanes in `config/lane-orchestration/*.json`. Skip `*.gol
 | More than 3 owned paths | warning |
 | Malformed JSON, or no `lanes` mapping | error (fail closed) [RLSE-02] |
 
-RED: one violating fixture per rule, plus one clean fixture. Each asserts the expected exit code and message. Golden and retired lanes are skipped.
+RED: one violating fixture per rule, plus one clean fixture. Each asserts the expected exit code and message. Golden and terminal lanes are skipped, and `--task-ref` scopes the check.
 
 Implementation:
 - The checker exits 1 on any error and prints warnings.
-- `mk/lane-overlaps.mk` gains a `lane-manifest-rules` target that runs before `lane-overlaps-check`.
+- `mk/lane-overlaps.mk` gains `make lane-manifest-rules TASK=<ref>` (several: `TASK="<ref> <ref>"`), which checks only the named manifests. `TASK` counts only on the command line (the Makefile defaults it to the resolved task); without it the target reports every manifest. Coordinators run it before dispatch.
+- It is not chained to `lane-overlaps-check` or `check-all`. On 2026-10-29, 156 of 398 manifests failed: 1,388 errors over 2,106 non-terminal lanes, mostly historical lanes never marked terminal. Historical manifests are not edited.
 - The test joins `lane-overlaps-tests`, which is already in `test-scripts`.
-- The lane reports violations in live manifests to the coordinator instead of editing them. The coordinator fixes them before merge.
 
 Proof: RED fails (module missing) and passes after `errfix-1-rul`.
 
@@ -409,7 +409,7 @@ Pins on every lane:
 ### Orchestration Mode
 
 - **Codex remote**: lanes dispatch through the orchestrator MCP, from freshly provisioned lane worktrees. One lane per dispatch. Each launch prints the reaper command.
-- **Terra check**: before `errfix-1-lbl`, `list_available_backends` must list `gpt-6.1-terra`. If it is refused, record a blocker and ask the operator. There is no fallback model.
+- **Terra check**: `list_available_backends` has no per-model catalogue, so after the sol wave is admitted, `offload_preflight` on the `errfix-1-lbl` worktree with model `gpt-6.1-terra`, effort high, speed fast must pass. If it is refused, record a blocker and ask the operator. There is no fallback model.
 - **Reviews**: remote Claude Opus 5.5, xhigh effort, standard speed (Opus fast tier is org-disabled). The WorkBay review-cycle ledger admits gate passes only on `gpt-6.1-sol` xhigh, so the Opus reviews run read-only on the VM outside the ledger, and the merge is an operator step.
 - **Shell fallback**: use the repo lane helpers with the same owned paths and tests.
 
@@ -462,7 +462,7 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 ### Checklist for Slice 4: Manifest rules
 
 - [ ] One RED fixture per rule committed.
-- [ ] Checker and `lane-manifest-rules` target in place; live manifests clean.
+- [ ] Checker and `lane-manifest-rules TASK=<ref>` target in place; not chained to `check-all`.
 
 ### Checklist for Operator S5: Storage
 
@@ -499,7 +499,7 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 | ERRFIX-SC-1 | Task-start worktrees bootstrap and pass preflight | Slice 1 tests; live provisioner run and `offload_preflight` |
 | ERRFIX-SC-2 | Documented commands run as written | Slice 2 test passes in `make test-scripts` |
 | ERRFIX-SC-3 | Ambiguous noise falls | ≤ 2 main-target rows; Ambiguous share < 20% over 7 days (baseline 94%) |
-| ERRFIX-SC-4 | Bad manifests are refused before dispatch | Slice 4 tests; `make lane-manifest-rules` exits 0 |
+| ERRFIX-SC-4 | Bad manifests are refused before dispatch | Slice 4 tests; `make lane-manifest-rules TASK=<ref>` exits 0 on new manifests |
 | ERRFIX-SC-5 | Disk headroom without data loss | `.task-state` ≤ 1.1 GB; export taken before retention |
 | ERRFIX-SC-6 | The judge and retrieval seed exists | 100 human labels, 100 open codes and qrels; the seed-file test passes |
 | ERRFIX-SC-7 | The fixes show in the numbers | Replay per class against the baseline, with a lane-clustered CI |

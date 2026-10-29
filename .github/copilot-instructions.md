@@ -50,7 +50,7 @@ On every session start, context switch, or worktree change:
 
 0. **Identify the task first.** Before `make context` or any MCP read that resolves the active task by cwd, decide which task owns this scope:
    - Existing feature-branch task → proceed to step 1 from inside the task's `target_worktree_path`.
-   - Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches) → run `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress")` FIRST, then pass `task_ref` explicitly to subsequent reads. Do not rely on cwd-based resolution on `main` — two or more active main-branch tasks trigger `Ambiguous active task` errors.
+   - Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches) → run `set_handoff_state(task_ref="MAINT-<SLUG>-<YYYYMMDD>", objective="...", status="in_progress")` FIRST, then pass `task_ref` explicitly to subsequent reads. Do not rely on cwd-based resolution on `main` — two or more active main-branch tasks trigger `Ambiguous active task` errors.
    - `Ambiguous active task. Known task_refs: ...` on startup means step 0 was skipped: create/select the task_ref and pass it explicitly, or archive stale MAINT-* rows.
 1. Run `make context` to verify your shell is in the correct worktree on the correct branch.
 2. Query MCP state: `get_handoff_state(sections="identity")` to learn the active task, target branch, and target worktree path.
@@ -108,7 +108,7 @@ print(get_handoff_state(sections='identity'))
 
 This fallback resolves the standalone `workbay-handoff-mcp` package through `uvx` without depending on an IDE-managed interpreter. Use a scratch venv instead when you need a persistent installed environment.
 
-When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<task_plan|epic|branch|adr|roadmap|other> VERDICT=<pass|pass_with_findings|fail|conditional_pass> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
+When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run LIFECYCLE_ARGS="--task-ref <task-ref> --subject-path <path-or-.> --subject-kind <task_plan|epic|branch|adr|roadmap|other> --verdict <pass|pass_with_findings|fail|conditional_pass> --verdict-decision <decision-id> --session <session> --review-run-id <run-id>"`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
 
 ---
 

@@ -66,11 +66,12 @@ for (const [TZ, instant, expected] of [
  });
 }
 
-test('both export click handlers compute their filename at export time', () => {
- for (const base of bases) {
-  assert.ok(!source.includes("'"+base+".json'"), 'old filename: '+base);
-  assert.match(source, new RegExp("download:\\s*exportFileName\\(\\s*'"+base+"'\\s*,\\s*new Date\\(\\)\\s*\\)"));
- }
+test('raw, ranking and unmatched-preference exports compute their filename at export time', () => {
+ for (const base of bases) assert.ok(!source.includes("'"+base+".json'"), 'old filename: '+base);
+ assert.match(source, /download:\s*exportFileName\(base,\s*new Date\(\)\)/);
+ assert.match(source, /button\('Export JSON',\(\)=>downloadJSON\(state,'operator-reviews'\)\)/);
+ assert.match(source, /downloadJSON\(root\.OperatorCrossModel\.rankingExport\(manifest,rule,state\),'description-ranking'\)/);
+ assert.match(source, /download:\s*exportFileName\('unmatched-prior-preferences',\s*new Date\(\)\)/);
 });
 
 test('operator-review.js passes node --check', () => {

@@ -34,3 +34,11 @@ main>:not(.image-card){max-width:1308px}
 .operator-blind .historical-review-image,.operator-blind .review-history-status{display:none!important}
 .operator-crossmodel .description-table :is(.state,.model-meta,.timing,.run-accounting,.provenance-details),.operator-crossmodel .description-table a,.operator-crossmodel .operator-pairs{display:none!important}
 .operator-crossmodel .description-table .operator-crossmodel-neutral{--model-hue:0!important;--model-saturation:0%!important;background:#f5f7fa!important;color:#182534!important;border-color:#8395a7!important}
+
+/* Model-choice controls remain visible in A/B/C mode; lexicon pair controls stay separate. */
+.operator-model-preferences{padding:10px;border:1px solid #8395a7;display:flex;gap:12px;flex-wrap:wrap;background:light-dark(#edf2f7,#202d3b);color:light-dark(#182534,#f2f5f8)}
+.operator-model-preferences label{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.operator-model-preferences p{width:100%;margin:0;font-size:13px}
+.operator-blind .image-card>.operator-model-preferences{position:sticky;left:12px;box-sizing:border-box;width:calc(100vw - 90px)}
+.operator-model-preferences select{max-width:100%}
+@media(max-width:600px){.operator-blind .image-card>.operator-model-preferences{width:calc(100vw - 54px)}}

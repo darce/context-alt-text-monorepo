@@ -160,6 +160,12 @@ def build(args: argparse.Namespace) -> None:
         filenames[name] = hashed
         outputs[hashed] = data
 
+    # Self-contained research guidance travels with offline report snapshots.
+    for guide in ("evaluation-method.html", "evaluation-research.json", "ranking-verification.json"):
+        path = args.assets / guide
+        if path.is_file():
+            outputs[guide] = path.read_bytes()
+
     html = source
     for name in ("operator-metrics.js", "operator-review.js", "operator-review.css"):
         stem, extension = name.rsplit(".", 1)

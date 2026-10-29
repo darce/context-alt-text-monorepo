@@ -62,7 +62,7 @@ def blocks(path: Path) -> dict[str, bytes]:
 def assets(tmp_path: Path) -> Path:
     directory = tmp_path / "assets"
     directory.mkdir()
-    for name in ("operator-metrics.js", "operator-review.js", "operator-review.css"):
+    for name in ("operator-metrics.js", "operator-review.js", "operator-review.css", "evaluation-method.html", "evaluation-research.json", "ranking-verification.json"):
         shutil.copyfile(ASSETS / name, directory / name)
     for name in ("operator-crossmodel.js", "operator-decision.js"):
         (directory / name).write_text("'use strict';\n", encoding="utf-8")
@@ -96,6 +96,9 @@ def test_build_preserves_blocks_hashes_assets_and_is_deterministic(tmp_path, ass
     assert actual["operator-decision-performance"].replace(b"<\\/", b"</") == (
         FIXTURE / "decision-performance.json"
     ).read_bytes()
+
+    for guide in ("evaluation-method.html", "evaluation-research.json", "ranking-verification.json"):
+        assert (out / guide).read_bytes() == (assets / guide).read_bytes()
 
     html = (out / "index.html").read_text(encoding="utf-8")
     filenames = {}

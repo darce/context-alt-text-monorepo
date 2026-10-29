@@ -88,7 +88,7 @@ test('progress uses OperatorMetrics.decisionReviewed when supplied by the host',
 
 test('review source wires blind ordering, progress, assessment gate, and sealed decision mount', () => {
  for (const text of ['OperatorCrossModel.order', 'OperatorCrossModel.progress', 'OperatorDecision.render',
-  'Cross-model blind review', 'Candidate 1', 'Candidate 2', 'Candidate 3', 'Decision reviewed',
+  'Cross-model blind review', 'Candidate A', 'Candidate B', 'Candidate C', 'Decision reviewed',
   'Decision panel unavailable', 'operator-decision-rule', 'operator-decision-performance',
   'operator-decision', 'onUnseal', 'unsealed', 'clone(state)']) assert.ok(source.includes(text), text);
  for (const selector of ['.state', '.model-meta', '.timing', '.run-accounting', '.provenance-details', '.operator-pairs']) {

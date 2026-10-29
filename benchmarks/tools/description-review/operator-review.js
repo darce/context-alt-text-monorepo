@@ -2,10 +2,10 @@
 (function (root) {
 'use strict';
 const TEXT = {
- crossModel:'Cross-model blind review',
- exitCrossModel:'Exit cross-model blind review (reveal labels)',
+ crossModel:'Three-model blind review (A/B/C)',
+ exitCrossModel:'Exit three-model blind review (reveal labels)',
  crossModelUnavailable:'Cross-model blind review unavailable: decision rule or operator-crossmodel.js missing.',
- candidates:['Candidate 1','Candidate 2','Candidate 3'],
+ candidates:['Candidate A','Candidate B','Candidate C'],
  decisionReviewed:'Decision reviewed',
  progressUnavailable:'Decision progress unavailable',
  decisionTitle:'Description-model decision',
@@ -39,7 +39,7 @@ function validate(manifest, contract, s) {
  const exact=(o,keys)=>{if(!o||typeof o!=='object'||Array.isArray(o)||!same(Object.keys(o).sort(),keys.slice().sort())) fail('Unexpected or missing fields');};
  const str=x=>typeof x==='string'; const enums=(x,allowed)=>str(x)&&allowed.includes(x);
  const arr=(x,p)=>Array.isArray(x)&&x.every(p); const unique=x=>new Set(x).size===x.length;
- exact(s,['schema','dataset_id','manifest_sha256','rubric_version','reviewer_id','blind_seed','blind_orders','gold','reviews','pairs']);
+ exact(s,['schema','dataset_id','manifest_sha256','rubric_version','reviewer_id','blind_seed','blind_orders','gold','reviews','pairs',...(Object.hasOwn(s,'model_preferences')?['model_preferences']:[])]);
  if(s.schema!==SCHEMA || s.dataset_id!==manifest.dataset_id || s.manifest_sha256!==manifest.manifest_sha256 || s.rubric_version!==manifest.rubric_version) fail('Schema/dataset/manifest/rubric mismatch');
  if(!str(s.reviewer_id)||!str(s.blind_seed)||!s.blind_seed.length||!same(s.blind_orders,orders(manifest,s.blind_seed))) fail('Invalid reviewer or blind mapping');
  const images=new Map(manifest.images.map(i=>[i.image_id,i])); const cells=new Map(manifest.cells.map(c=>[c.key,c]));
@@ -69,8 +69,10 @@ function validate(manifest, contract, s) {
   if(!Object.hasOwn(s.reviews,l.key)||!Object.hasOwn(s.reviews,r.key)) fail('Pair judgment lacks hash-bound output records for both candidates');
   const pk=p.image_id+':'+p.model_key; if(pairKeys.has(pk)) fail('Duplicate pair'); pairKeys.add(pk);
  }
+ if(s.model_preferences!==undefined)crossModelAPI().validatePreferences(manifest,s);
  return s;
 }
+function crossModelAPI() {const api=root.OperatorCrossModel||(typeof require==='function'?require('./operator-crossmodel.js'):null);if(!api)throw Error('Cross-model preference module unavailable');return api;}
 function setPair(state,left,right,choice) {
  state.pairs=state.pairs.filter(p=>!(p.image_id===left.image_id&&p.model_key===left.model_key)); if(!choice) return;
  // Bind both judged outputs with unscored drafts; existing reviews stay unchanged and nothing becomes Reviewed.
@@ -78,11 +80,13 @@ function setPair(state,left,right,choice) {
  state.pairs.push({image_id:left.image_id,model_key:left.model_key,scope:'full120',left_key:left.key,right_key:right.key,choice,reviewer_id:state.reviewer_id,seed:state.blind_seed,updated_at:new Date().toISOString()});
 }
 function importState(manifest,contract,current,incoming) {
+ if(incoming.schema==='description-review-ranking/v1'){if(!same(incoming.manifest,manifest))throw Error('Ranking manifest mismatch');incoming=incoming.annotations;}
  validate(manifest,contract,incoming);
  let conflicts=0;
  for(const field of ['gold','reviews']) for(const [k,v] of Object.entries(current[field])) if(!Object.hasOwn(incoming[field],k)||!same(v,incoming[field][k])) conflicts++;
  for(const p of current.pairs) if(!incoming.pairs.some(q=>same(p,q))) conflicts++;
- if((Object.keys(current.reviews).length||Object.keys(current.gold).length||current.pairs.length) && (current.blind_seed!==incoming.blind_seed||current.reviewer_id!==incoming.reviewer_id)) conflicts++;
+ for(const p of (current.model_preferences?.ballots||[]))if(!(incoming.model_preferences?.ballots||[]).some(q=>same(p,q)))conflicts++;
+ if((Object.keys(current.reviews).length||Object.keys(current.gold).length||current.pairs.length||(current.model_preferences?.ballots.length||0)) && (current.blind_seed!==incoming.blind_seed||current.reviewer_id!==incoming.reviewer_id)) conflicts++;
  if(conflicts) throw Error('Import refused: '+conflicts+' conflicting existing records. Use a fresh report session to restore this file.');
  return clone(incoming);
 }
@@ -169,11 +173,58 @@ const toolbar=document.getElementById('operator-toolbar'); toolbar.append(el('st
 const reviewer=field(toolbar,'Reviewer name',el('input',undefined,{type:'text',autocomplete:'name'})); reviewer.value=state.reviewer_id;
 const status=el('p',startup,{'aria-live':'polite',role:'status'}), count=el('span');
 const seed=field(toolbar,'Blind order seed',el('input',undefined,{type:'text'}));seed.value=state.blind_seed;
-const blindButton=button('Enter blind A/B',()=>{blind=!blind;crossBlind=false;applyBlind();});toolbar.append(blindButton);
+const blindButton=button('Lexicon A/B preference',()=>{blind=!blind;crossBlind=false;applyBlind();});toolbar.append(blindButton);
 const crossButton=button(TEXT.crossModel,()=>{crossBlind=!crossBlind;blind=false;applyBlind();});toolbar.append(crossButton);
 crossButton.disabled=!rule||!root.OperatorCrossModel;
 if(crossButton.disabled)crossButton.title=TEXT.crossModelUnavailable;
-toolbar.append(button('Export JSON',()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const a=el('a',undefined,{download:exportFileName('operator-reviews',new Date()),href:URL.createObjectURL(blob)});a.click();setTimeout(()=>URL.revokeObjectURL(a.href),0);}));
+const modeHelp=el('p');toolbar.append(modeHelp);
+const evaluationGuide=el('details',undefined,{id:'operator-evaluation-guide'});
+evaluationGuide.append(el('summary','How to evaluate each model'));
+for(const text of [
+ 'Inspect the image first: hide descriptions with Shared image-first ground truth. Record essential visible facts and relevant literal text before reading candidates. Keep uncertain details uncertain; adjudicate disputed facts.',
+ 'Factual support: assess every present title, alt and caption against the image and attributed context. Flag unsupported or contradicted subjects, attributes, actions and identities; fluent wording is not evidence.',
+ 'Essential coverage: check the facts needed to understand this image and its purpose. Flag missing essential facts separately from invented facts. Extra decorative detail earns no accuracy credit.',
+ 'OCR: assess relevant text explicitly as accurate, wrong, omitted, not applicable or uncertain. Not assessed stays unknown. Compare literal text, not the wording of a model-generated reference.',
+ 'Purpose and effort: judge whether the alt conveys essential information for its intended use; titles identify and captions add grounded context. Prefer clear useful information over length. Without page context, assess descriptive adequacy and leave full accessibility effectiveness unestablished.',
+ 'Record severity and issues, then Reviewed after all present surfaces are assessed. Use notes, claims and fact coverage for evidence. A single reviewer is a provisional assessment; use independent human review and adjudication for a validated evaluation.',
+ 'Lexicon A/B is a within-model preference about OFF versus ON, with the same image and extraction arm. A/B/C records a preferred description among the current models using the per-image dropdown. Factual scores remain separate from preference.',
+ 'Historical comparisons: Show historical reviews retains earlier model outputs and saved judgments. Compare matched images, surfaces and run conditions; pilot, diagnostic and caption-only results remain separate. Previously seen outputs cannot become a fresh blinded confirmation.',
+ 'Read per-model metrics with reviewed and total counts. Unreviewed, unknown and failed generation states stay explicit. The existing decision rule is frozen; this research guide does not rescore old judgments or declare a new winner.'
+])evaluationGuide.append(el('p',text));
+evaluationGuide.append(el('a','Evaluation method and research',{href:'evaluation-method.html',target:'_blank',rel:'noopener'}));
+toolbar.append(evaluationGuide);
+
+const historyButton=button('Show historical reviews',()=>{
+ blind=false;crossBlind=false;applyBlind();
+ const cell=document.querySelector('.historical-cell');
+ if(!cell){status.textContent='No historical descriptions are available in this report.';return;}
+ const table=cell.closest('table'),heading=table.tHead.rows[0].children[cell.cellIndex];
+ heading.scrollIntoView({block:'start',inline:'end'});
+ heading.setAttribute('tabindex','-1');heading.focus({preventScroll:true});
+ status.textContent='Historical descriptions and saved assessments are visible. Scroll across for the other historical models, or down for more images.';
+});toolbar.append(historyButton);
+
+function downloadJSON(value,base) {const blob=new Blob([JSON.stringify(value,null,2)],{type:'application/json'}),link=el('a',undefined,{download:exportFileName(base,new Date()),href:URL.createObjectURL(blob)});link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);}
+toolbar.append(button('Export JSON',()=>downloadJSON(state,'operator-reviews')));
+const rankingButton=button('Export ranking JSON',()=>{try{validate(manifest,contract,state);downloadJSON(root.OperatorCrossModel.rankingExport(manifest,rule,state),'description-ranking');}catch(e){status.textContent='Ranking export unavailable: '+e.message;}});
+rankingButton.disabled=!rule||!root.OperatorCrossModel;toolbar.append(rankingButton);
+const preferencePanel=el('details'),preferenceHost=el('div');preferencePanel.append(el('summary','Description preference ranking'),preferenceHost);toolbar.append(preferencePanel);
+function renderPreferenceRanking() {
+ preferencePanel.hidden=blind||crossBlind;preferenceHost.replaceChildren();
+ if(blind||crossBlind)return;
+ if(!rule||!root.OperatorCrossModel?.summarizePreferences){preferenceHost.append(el('p','Model preference ranking unavailable.'));return;}
+ try {
+  const result=root.OperatorCrossModel.summarizePreferences(manifest,rule,state);
+  if(result.status==='no_preferences')preferenceHost.append(el('p','No model preferences recorded. Enter three-model blind review and choose preferred A, B or C for each image.'));
+  for(const group of result.groups) {
+   preferenceHost.append(el('h3',group.models.length+'-candidate comparisons: '+group.recorded+' / '+group.available_images+' images scored'));
+   preferenceHost.append(metricTable(['Rank','Model','Chosen','Selection rate'],group.models.map(m=>[m.rank===null?'N/A':String(m.rank),m.label,String(m.wins),pct(m.selection_rate)])));
+   preferenceHost.append(el('p','Ties '+group.ties+'; all unusable '+group.all_unusable+'; cannot judge '+group.unjudgeable+'; unscored '+group.unscored+'. Selection rate includes judgeable ties and all-unusable ballots in its denominator.'));
+  }
+  result.notes.forEach(note=>preferenceHost.append(el('p',note)));
+ }catch(e){preferenceHost.append(el('p','Model preference ranking unavailable: '+e.message));}
+}
+
 if(unmatchedPriorPairs.length)toolbar.append(button('Export unmatched prior preferences ('+unmatchedPriorPairs.length+')',()=>{const blob=new Blob([JSON.stringify({schema:'operator-review-unmatched-prior-preferences/v1',source_custody:'Original browser saves retained unchanged',records:unmatchedPriorPairs},null,2)],{type:'application/json'});const link=el('a',undefined,{download:exportFileName('unmatched-prior-preferences',new Date()),href:URL.createObjectURL(blob)});link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);}));
 const file=field(toolbar,'Import JSON',el('input',undefined,{type:'file',accept:'.json,application/json'}));
 const metrics=el('details');metrics.append(el('summary','Accuracy and paired lexicon metrics')); const metricBody=el('div');metrics.append(metricBody);toolbar.append(count,status,metrics);
@@ -191,11 +242,11 @@ function persist(message='') {
  let saved=false;
  try {if(storageDisabled)throw Error('Persistence disabled after invalid or inaccessible stored data');root.localStorage.setItem(storageKey,JSON.stringify(state));saved=true;storageOK=true;} catch(e) {storageOK=false;}
  status.textContent=(message?message+'. ':'')+(saved?'Saved locally. Export JSON for a portable copy.':'In-memory only: local persistence unavailable. Export JSON before closing.');
- updateCounts();renderMetrics();cellFeedback.forEach(update=>update());renderDecision();
+ updateCounts();renderMetrics();cellFeedback.forEach(update=>update());renderDecision();renderPreferenceRanking();
 }
 function updateCounts() {
  if(crossBlind) {
-  try {const progress=root.OperatorCrossModel.progress(manifest,rule,state,contract);count.textContent=TEXT.decisionReviewed+' '+progress.done+' / '+progress.total;}
+  try {const progress=root.OperatorCrossModel.progress(manifest,rule,state,contract);count.textContent='Model preferences '+(state.model_preferences?.ballots.length||0)+' / '+Object.values(root.OperatorCrossModel.order(manifest,rule,state.blind_seed)).filter(keys=>keys.length>=2).length+' · '+TEXT.decisionReviewed+' '+progress.done+' / '+progress.total;}
   catch(e) {count.textContent=TEXT.progressUnavailable;}
   return;
  }
@@ -232,8 +283,8 @@ function renderMetrics() {
  } (result.notes||[]).forEach(note=>metricBody.append(el('p',String(note))));
  } catch(e) {metricBody.append(el('p','Metrics unavailable: '+e.message));}
 }
-reviewer.addEventListener('change',()=>{if(Object.values(state.reviews).some(r=>r.reviewed)||state.pairs.length){reviewer.value=state.reviewer_id;status.textContent='Reviewer is bound to recorded judgments. Export and use a fresh session for another reviewer.';return;}state.reviewer_id=reviewer.value.trim();persist();});
-seed.addEventListener('change',()=>{if(state.pairs.length){seed.value=state.blind_seed;status.textContent='Seed is bound to pair judgments; use a fresh session to change it.';return;}state.blind_seed=seed.value.trim()||'review-1';seed.value=state.blind_seed;state.blind_orders=orders(manifest,state.blind_seed);applyBlind();persist();});
+reviewer.addEventListener('change',()=>{if(Object.values(state.reviews).some(r=>r.reviewed)||state.pairs.length||(state.model_preferences?.ballots.length||0)){reviewer.value=state.reviewer_id;status.textContent='Reviewer is bound to recorded judgments. Export and use a fresh session for another reviewer.';return;}state.reviewer_id=reviewer.value.trim();persist();});
+seed.addEventListener('change',()=>{if(state.pairs.length||(state.model_preferences?.ballots.length||0)){seed.value=state.blind_seed;status.textContent='Seed is bound to pair judgments; use a fresh session to change it.';return;}state.blind_seed=seed.value.trim()||'review-1';seed.value=state.blind_seed;state.blind_orders=orders(manifest,state.blind_seed);applyBlind();persist();});
 file.addEventListener('change',async()=>{try {const incoming=JSON.parse(await file.files[0].text());const next=importState(manifest,contract,state,incoming);state=next;reviewer.value=state.reviewer_id;seed.value=state.blind_seed;build();applyBlind();persist('Import restored');}catch(e){status.textContent='Import refused: '+e.message;}file.value='';});
 const issueLabels=['Invented / unsupported','Wrong subject / object','Attributes / counts','Action / relation','Wrong OCR','Omitted relevant text','Missing essential fact','Wrong context / identity'];
 function buildCell(c,host) {
@@ -328,13 +379,15 @@ function applyBlind() {
  if(blind||crossBlind)unsealed=false;
  document.body.classList.toggle('operator-blind',blind||crossBlind);
  document.body.classList.toggle('operator-crossmodel',crossBlind);
- blindButton.textContent=blind?'Exit blind A/B (reveal labels)':'Enter blind A/B';
+ blindButton.textContent=blind?'Exit lexicon A/B (reveal labels)':'Lexicon A/B preference';
  crossButton.textContent=crossBlind?TEXT.exitCrossModel:TEXT.crossModel;
+ modeHelp.textContent=blind?'Lexicon A/B: each group compares the same model and image with writing lexicon OFF versus ON. Record A, B, Tie, Both unusable or Cannot judge using the group preference selectors above each image.':crossBlind?'Three-model A/B/C: choose the preferred description above each image, or record Tie, All unusable or Cannot judge. Export ranking JSON includes the mapped choices and descriptive model ranking. Factual assessments remain separate; Show historical reviews reveals earlier models.':'Lexicon A/B records off/on preferences within each model. Three-model A/B/C records your preferred model description per image. Show historical reviews reveals the earlier models and their saved assessments.';
+
  const crossOrders=crossBlind?root.OperatorCrossModel.order(manifest,rule,state.blind_seed):{};
  manifest.images.forEach(image=>{
   const card=cardNodes.get(image.image_id),table=card.querySelector('.description-table'),hr=table.tHead.rows[0],tr=table.tBodies[0].rows[0];
   if(!originals.has(image.image_id))originals.set(image.image_id,{heads:[...hr.children],cells:[...tr.children],headNodes:[...hr.childNodes],cellNodes:[...tr.childNodes],contents:[...hr.children].map(n=>[...n.childNodes]),attributes:[card,...hr.children,...tr.children].map(n=>[n,n.getAttribute('hidden'),n.getAttribute('class')]),identifiers:[...table.querySelectorAll(CROSS_MODEL_IDENTIFIERS)].map(n=>[n,n.getAttribute('hidden')])});
-  const original=originals.get(image.image_id);for(const added of ['.operator-pairs','.operator-blind-hint'])card.querySelectorAll(added).forEach(n=>n.remove());
+  const original=originals.get(image.image_id);for(const added of ['.operator-pairs','.operator-model-preferences','.operator-blind-hint'])card.querySelectorAll(added).forEach(n=>n.remove());
   original.heads.forEach((h,i)=>h.replaceChildren(...original.contents[i]));
   hr.replaceChildren(...original.headNodes);tr.replaceChildren(...original.cellNodes);
   original.attributes.forEach(([n,hidden,classes])=>{restoreAttribute(n,'hidden',hidden);if(n!==card)restoreAttribute(n,'class',classes);});
@@ -352,6 +405,17 @@ function applyBlind() {
     hr.append(h);tr.append(td);
    });
    if(keys.length)(card.querySelector('.comparison-row')||card.querySelector('.description-scroll')).before(el('p',TEXT.crossModelHint,{class:'operator-blind-hint'}));
+   if(keys.length>=2) {
+    const panel=el('div',undefined,{class:'operator-model-preferences'});
+    const existing=state.model_preferences?.ballots.find(p=>p.image_id===image.image_id);
+    const prior=existing?(existing.choice==='preferred'?existing.selected_key:existing.choice):'';
+    const choice=select(['',...keys,'tie','all_unusable','unjudgeable'],prior);
+    [...choice.options].forEach(o=>{const index=keys.indexOf(o.value);o.textContent=index>=0?TEXT.candidates[index]:({'':'Unscored',tie:'Tie / no preference among all',all_unusable:'All unusable',unjudgeable:'Cannot judge'})[o.value];});
+    const preferenceLabel='Preferred description ('+keys.map((_,i)=>String.fromCharCode(65+i)).join('/')+')';choice.setAttribute('aria-label',preferenceLabel);field(panel,preferenceLabel,choice);
+    panel.append(el('p','Choose the best complete description for this image. This records a model preference; it does not mark factual reviews complete.'));
+    choice.addEventListener('change',()=>{try{root.OperatorCrossModel.setPreference(manifest,rule,state,image.image_id,choice.value);persist('Model preference recorded');}catch(e){const saved=state.model_preferences?.ballots.find(p=>p.image_id===image.image_id);choice.value=saved?(saved.choice==='preferred'?saved.selected_key:saved.choice):'';status.textContent=e.message;}});
+    (card.querySelector('.comparison-row')||card.querySelector('.description-scroll')).before(panel);
+   }
    return;
   }
   const keys=state.blind_orders[image.image_id]||[];const panel=el('div',undefined,{class:'operator-pairs'});
@@ -368,7 +432,7 @@ function applyBlind() {
    choice.addEventListener('change',()=>{if(choice.value&&!state.reviewer_id.trim()){choice.value=existing?existing.choice:'';status.textContent='Enter reviewer name before recording a pair judgment.';return;}setPair(state,left,right,choice.value);persist();});
   }// Outside the two-column image/description grid, so the panel cannot displace the description strip.
   (card.querySelector('.comparison-row')||card.querySelector('.description-scroll')).before(hint,panel);
- });updateCounts();renderMetrics();cellFeedback.forEach(update=>update());renderDecision();
+ });updateCounts();renderMetrics();cellFeedback.forEach(update=>update());renderDecision();renderPreferenceRanking();
 }
 build();updateCounts();renderMetrics();
 if(!startup)status.textContent='Blank reviews are unscored. Local persistence is best effort; export JSON to keep work.';

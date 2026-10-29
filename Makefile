@@ -150,6 +150,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/deploy.mk
 include $(ROOT_MAKEFILE_DIR)/mk/demo-auth.mk
 include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 include $(ROOT_MAKEFILE_DIR)/mk/evals.mk
+include $(ROOT_MAKEFILE_DIR)/mk/evalops.mk
 include $(ROOT_MAKEFILE_DIR)/mk/env.mk
 include $(ROOT_MAKEFILE_DIR)/mk/worktree-bootstrap.mk
 # Wave-1 lane-owned modules (EVID-1, GATETOPO-1); optional until the lanes land.

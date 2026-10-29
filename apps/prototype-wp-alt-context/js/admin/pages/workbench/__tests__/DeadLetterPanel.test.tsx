@@ -898,11 +898,13 @@ describe('DeadLetterPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     const timeline = within(getTimelinePanel());
-    expect(timeline.getByText('Status: acknowledged')).toBeInTheDocument();
-    expect(timeline.queryByText(/Attempts:/)).not.toBeInTheDocument();
-    expect(timeline.queryByText(/^Error:/)).not.toBeInTheDocument();
-    expect(timeline.queryByRole('button', { name: /^Retry Cluster/ })).not.toBeInTheDocument();
-    expect(timeline.queryByRole('button', { name: /^Discard Cluster/ })).not.toBeInTheDocument();
+    const row = within(timeline.getByRole('listitem'));
+    expect(row.getByText('Cluster label update: “Renamed”', { selector: 'strong' })).toBeInTheDocument();
+    expect(row.getByText('Status: acknowledged')).toBeInTheDocument();
+    expect(row.queryByText(/Attempts:/)).not.toBeInTheDocument();
+    expect(row.queryByText(/^Error:/)).not.toBeInTheDocument();
+    expect(row.queryByRole('button', { name: /^Retry(?:\s|$)/ })).not.toBeInTheDocument();
+    expect(row.queryByRole('button', { name: /^Discard(?:\s|$)/ })).not.toBeInTheDocument();
   });
 
   it('shows error code, attempts, and Retry/Discard on failed timeline rows', () => {

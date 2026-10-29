@@ -280,9 +280,9 @@ Proof: RED fails; after `descpick-5-x4`, both wrapper tests pass and the frozen 
   - `--source` set to the v3 report;
   - `--rule` set to `decision-rule.v2.json`;
   - `--gpu-performance` and `--assets` as for v2;
-  - `--out` set to `benchmarks/reports/qwen-high-precision-20261025/review-decision-v4/index.html`.
+  - `--out` set to the directory `benchmarks/reports/qwen-high-precision-20261025/review-decision-v4`.
 
-  It exits 2 on a rule/manifest mismatch.
+  `--out` is a directory: `build` creates it and writes `index.html` and `decision-build-receipt.json` inside it (`build_decision_report.py`, `args.out / name`). Do not append `index.html`, or the page lands at `review-decision-v4/index.html/index.html`. The directory must not exist beforehand, because `build` overwrites files in an existing one. The published artifact is `review-decision-v4/index.html`. It exits 2 on a rule/manifest mismatch.
 - **S6**: review v4, export the reviews, and record the model decision.
 
 ## Not Doing

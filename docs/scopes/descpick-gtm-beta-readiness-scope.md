@@ -29,13 +29,15 @@ The export filename already shipped in DESCPICK-4 (`43366e5d25`); no plan. No se
 | Report-a-problem: linked to in-house FIR curriculum? | "i think this is linked to the curriculum cnn for inhouse FIR . confirm if so, and pick best option according to heuristics canon research & semantic embeddings + adrs" | Not confirmed: prior art #16800 defines `curriculum_t` as a per-identity threshold, not a training feed. One report action per draft, optional concept-id reasons, no free text; identity reason deep-links to People (D12). Copy says reports inform model choice and do not retrain (D14, accurate). | #20470 |
 | Wait and cancel behaviour | "Honest wait + Cancel (Recommended)" | Shared cold-start sentence everywhere; demo **Stop waiting** is client-only; the retry key survives a client stop and resets only on a server-terminal outcome. | #20471, #20474 |
 
+Planning review E15-38-G1-001 extended the #20467 amendment after intake. It adds a `presented` event kind: one WordPress row per `generation_id` at the server time of first display, unique by `(event_type, request_key)`, with no text and no user id. Generation, projection and curation history cannot say a person saw a draft, so the denominator and the window start come only from this event (E15-40 Slice 0 and Slice 1b; MEAS-09).
+
 ## MVP scope and completion signals
 
 | Plan | MVP | Completion signal |
 |---|---|---|
 | E15-38 | Translatable demo (PHP and JS); Stop waiting; truthful timeout copy; retry-key lifecycle; C1 shared by demo and admin; beta notice under the Review Queue heading; ux-maps in sync | GTM-SC-01 … GTM-SC-07 green |
 | E15-39 | Default `seeded` from one constant; `florence_small` untrusted at the gate; quota refusal and cancel pinned; runtime image pinned by digest with explicit flags; one measured cold start | GTM-SC-08 … GTM-SC-11, GTM-SC-20 |
-| E15-40 | ADR-017 and DESCAUTH-1 amended now; outcome classes, Report a problem, cost per accepted and sealed plan after DESCAUTH-1 S3, S5–S8 | GTM-SC-12 now; GTM-SC-13 … GTM-SC-16 when unblocked |
+| E15-40 | ADR-017 and DESCAUTH-1 amended now; first-presentation record, outcome classes, Report a problem, billed cost per accepted and sealed plan after DESCAUTH-1 S3, S5–S8 (S11 for the presentation hook) | GTM-SC-12 now; GTM-SC-13 … GTM-SC-16 and GTM-SC-21 when unblocked |
 | DESCPICK-5 | Q4 cells generated under the shared decision profile; panel extended to four candidates with 192 reviews kept; rule v2 | GTM-SC-17 … GTM-SC-19 |
 
 ## Assumptions
@@ -46,7 +48,7 @@ The export filename already shipped in DESCPICK-4 (`43366e5d25`); no plan. No se
 | #10035 is fixed only on `feature/defwave-2` (`016789be8d`) | E15-39 S4 reconciles before any wait figure is quoted |
 | "Several minutes" stays the wait copy until a p95 with its n exists (PERF-01) | Copy changes only through a new copy decision |
 | ADR-017 stays Proposed until operator acceptance (`ADR-017…md:3`); DESCAUTH-1 Wave Order (:1111) bars S1+ | E15-40 S1+ stay blocked |
-| A10 price USD 2.00 per GPU-hour, per-second billing, 1-minute minimum (#20472 W1) | E15-40 cost report takes the rate as a flag |
+| A10 price USD 2.00 per GPU-hour, per-second billing, 1-minute minimum (#20472 W1) | The always-on and scale-to-zero estimates here change. E15-40's cost report does not: it sums billed Usage API amounts and applies no rate. |
 | `packages/workbay-system` is absent here | Evals JSON stays provisional data |
 
 ## Proposed non-functional envelope
@@ -55,11 +57,11 @@ The export filename already shipped in DESCPICK-4 (`43366e5d25`); no plan. No se
 |---|---|---|
 | Wait | Quote p95, never the mean; no number until a re-measure; Cancel offered (Stop waiting) | PERF-01, INT-08 |
 | Demo deadline | Client ceiling 120 s kept (`PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS`) | #20474 |
-| Idempotency | Same key replays free; client stop keeps key; server-terminal outcome or 403 `acx_public_demo_run_not_available` resets it; reports unique by `request_key` | #20474, #20467 |
+| Idempotency | Same key replays free; client stop keeps key; server-terminal outcome or 403 `acx_public_demo_run_not_available` resets it; reports unique by `request_key`; one `presented` row per `generation_id`, repeats insert nothing | #20474, #20467, E15-40 Slice 1b |
 | Failure | No unscored fallback; GPU unavailable refuses before the quota charge | C5, `engineering/release-it.md:602` |
-| Cost | Always-on ≈ USD 1,400–1,460/month vs scale-to-zero; cost per accepted replaces the F7 estimate | COST-04, #20472 |
+| Cost | Always-on ≈ USD 1,400–1,460/month vs scale-to-zero. Billed cost per accepted (Usage API `computedAmount` over the sealed cohort period) replaces the F7 estimate; it is an internal measurement, not a price (ADR-014) | COST-04, #20472 |
 | Durability | Events append-only; a failed history write never loses the applied outcome | DESCAUTH-1 S7 |
-| Privacy | Report reasons are concept ids, no free text; text retention follows ADR-017 (180 days) | C10 (contested), D3 |
+| Privacy | Report reasons are concept ids, no free text; presentation rows hold no text and no user id; event retention follows ADR-017 (180 days) | C10 (contested), D3 |
 
 ## Not doing
 
@@ -135,7 +137,7 @@ Current research, FIR report v16 (2026-10-27, on main `8eece0358f`): `benchmarks
 
 ## Evals
 
-[`descpick-gtm-beta-readiness-evals.json`](descpick-gtm-beta-readiness-evals.json): one case per criterion, GTM-SC-01 … GTM-SC-20. **Provisional data:** `packages/workbay-system` is absent from this repo, so the suite is not runnable through the suite registry; registration needs an executor in `EXECUTOR_BY_SUITE_ID` (`packages/workbay-system/scripts/workbay_evals/registry.py`), owned by a separate lane. `make eval-list` (`mk/evals.mk`) is the model-eval harness, not that registry.
+[`descpick-gtm-beta-readiness-evals.json`](descpick-gtm-beta-readiness-evals.json): one case per criterion, GTM-SC-01 … GTM-SC-21. **Provisional data:** `packages/workbay-system` is absent from this repo, so the suite is not runnable through the suite registry; registration needs an executor in `EXECUTOR_BY_SUITE_ID` (`packages/workbay-system/scripts/workbay_evals/registry.py`), owned by a separate lane. `make eval-list` (`mk/evals.mk`) is the model-eval harness, not that registry.
 
 ## Dispatch decomposition
 

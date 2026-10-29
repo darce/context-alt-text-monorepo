@@ -120,7 +120,7 @@
       "id": "GTM-SC-12",
       "plan": "E15-40",
       "group": "operator",
-      "criterion": "ADR-017 and the DESCAUTH-1 plan carry the outcome-telemetry amendment (reported event, report_reason, edit_ratio, request_key), and the operator accepts ADR-017.",
+      "criterion": "ADR-017 and the DESCAUTH-1 plan carry the outcome-telemetry amendment (presented and reported events, report_reason, edit_ratio, request_key unique with event_type), and the operator accepts ADR-017.",
       "status": "planned",
       "artifact": "docs/adrs/ADR-017-description-authority-wordpress-curation-service-generation.md",
       "additional_evidence_required": true
@@ -130,7 +130,7 @@
       "plan": "E15-40",
       "group": "blocked",
       "blocked_by": "DESCAUTH-1 S3, S7",
-      "criterion": "Each presented generation is classified into exactly one outcome class: applied_unchanged, applied_light_edit, applied_heavy_edit, discarded, superseded_by_regeneration or no_outcome.",
+      "criterion": "Each generation with a presented event is classified into exactly one outcome class: applied_unchanged, applied_light_edit, applied_heavy_edit, discarded, superseded_by_regeneration or no_outcome; supersession needs another generation for the same attachment first presented later within the window.",
       "status": "planned",
       "test": "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeClassifierTest.php::testClassifiesEveryOutcomeClass"
     },
@@ -148,7 +148,7 @@
       "plan": "E15-40",
       "group": "blocked",
       "blocked_by": "E15-40 S2 export format",
-      "criterion": "The cost-per-accepted report divides GPU cost by accepted drafts under the sealed definition and exits 2 on missing or inconsistent inputs.",
+      "criterion": "The cost-per-accepted report divides the billed Usage API computedAmount for the sealed GPU resources over the sealed cohort period by accepted drafts first presented in that period, applies no rate, and exits 2 on missing or inconsistent inputs.",
       "status": "planned",
       "test": "scripts/test_cost_per_accepted_report.py::test_exit_2_on_missing_or_inconsistent_inputs"
     },
@@ -157,7 +157,7 @@
       "plan": "E15-40",
       "group": "operator",
       "blocked_by": "DESCAUTH-1 S8",
-      "criterion": "The acceptance analysis plan (estimand, window, floor, sample, interval basis) is sealed by sha256 in a handoff decision before the first counted draft.",
+      "criterion": "The acceptance analysis plan (estimand, window, floor, sample, interval basis, cohort period, GPU resource ids) is sealed by sha256 in a handoff decision before the first counted draft.",
       "status": "planned",
       "artifact": "handoff decision on E15-40 carrying the analysis-plan sha256",
       "additional_evidence_required": true
@@ -201,6 +201,19 @@
       "additional_tests": [
         "apps/prototype-description-service/scene/tests/test_describe_run_quota.py::test_cancelling_a_demo_run_keeps_its_charge"
       ]
+    },
+    {
+      "id": "GTM-SC-21",
+      "plan": "E15-40",
+      "group": "blocked",
+      "blocked_by": "DESCAUTH-1 S3, S7, S11",
+      "criterion": "WordPress records one presented event per generation_id at the server time of the first display, repeat displays insert nothing, and the outcome export counts only generations with a presented event: a displayed untouched draft is no_outcome and a never-displayed draft is absent.",
+      "status": "planned",
+      "test": "apps/prototype-wp-alt-context/tests/Unit/DescriptionPresentationControllerTest.php::testFirstPresentationIsRecordedOnce",
+      "additional_tests": [
+        "apps/prototype-wp-alt-context/tests/Unit/DescriptionOutcomeExportTest.php::testCohortIsFirstPresentation",
+        "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useRecordDraftPresentation.test.tsx"
+      ]
     }
   ],
   "release_gates": {
@@ -228,7 +241,8 @@
         "GTM-SC-13",
         "GTM-SC-14",
         "GTM-SC-15",
-        "GTM-SC-16"
+        "GTM-SC-16",
+        "GTM-SC-21"
       ],
       "require_nonempty_fresh_results": true,
       "require_operator_evidence": true

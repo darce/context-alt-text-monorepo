@@ -1,0 +1,19 @@
+{
+  "FIR_path": "/Users/daniel/Development/context-alt-text-monorepo/benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html",
+  "FIR_sha256": "e09706cfd1aa1c253bf821547f231432f2b6cd2cd882bd6e6e9fd7454f2a6807",
+  "Qwen_unchanged": true,
+  "Qwen_sha256": "8ba00da0674e88d62d9d7e9c1dc392ef1ebfd2bf4fa68c25573726412f5d7400",
+  "Flint_excluded": true,
+  "benchmark_inference_calls": 0,
+  "GPU_actions": 0,
+  "remote_checks": {
+    "original_recovered_exactly": true,
+    "scripts_identical": true,
+    "styles_identical": true,
+    "html_parses": true,
+    "new_v15_ids_unique": true,
+    "new_v15_anchors_resolve": true,
+    "unwanted_optional_study_removed": true,
+    "paired_study_anchor_removed": true
+  }
+}

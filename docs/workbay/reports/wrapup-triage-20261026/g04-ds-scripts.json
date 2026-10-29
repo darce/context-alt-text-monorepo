@@ -1,0 +1,1025 @@
+{
+  "group": "g04-ds-scripts",
+  "base_sha": "f51c0ba2f7ff3fa26d7642095f2ce53483be08b0",
+  "verdicts": [
+    {
+      "db_id": 18318,
+      "finding_id": "GTMC-C80A-G2S-H01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/Dockerfile",
+          "line": 211,
+          "excerpt": "FROM runtime-base AS runtime-vlm"
+        },
+        {
+          "file": "apps/prototype-description-service/Dockerfile",
+          "line": 212,
+          "excerpt": "ARG GIT_COMMIT_SHA"
+        },
+        {
+          "file": "apps/prototype-description-service/Dockerfile",
+          "line": 213,
+          "excerpt": "ARG SOURCE_TREE"
+        },
+        {
+          "file": "apps/prototype-description-service/Dockerfile",
+          "line": 253,
+          "excerpt": "ARG GIT_COMMIT_SHA"
+        },
+        {
+          "file": "apps/prototype-description-service/Dockerfile",
+          "line": 266,
+          "excerpt": "RUN python /app/shared/source_identity.py --output /app/.source-identity.json --source-git-sha \"$GIT_COMMIT_SHA\" --source-tree \"$SOURCE_TREE\""
+        },
+        {
+          "file": "scripts/tests/test_face_build_identity.py",
+          "line": 574,
+          "excerpt": "\"\"\"H01 / C-11: ARG names used by the real writer must be declared per stage.\"\"\""
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Both child stages (runtime-vlm :212-216, runtime :253-257) now re-declare every ARG the identity RUN reads, and a per-stage ARG scope oracle closes the C-11 test gap."
+    },
+    {
+      "db_id": 18319,
+      "finding_id": "GTMC-C80A-G2S-H02",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/shared/source_identity.py",
+          "line": 118,
+          "excerpt": "\"\"\"Require only the source SHA; absent optional arguments remain null."
+        },
+        {
+          "file": "apps/prototype-description-service/shared/source_identity.py",
+          "line": 131,
+          "excerpt": "if document[name] == \"\":"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/source_identity.py",
+          "line": 154,
+          "excerpt": "document[\"collection_status\"] = \"incomplete\""
+        },
+        {
+          "file": "apps/prototype-description-service/shared/source_identity.py",
+          "line": 168,
+          "excerpt": "parser.add_argument(\"--\" + field.replace(\"_\", \"-\"), required=field == \"source_git_sha\")"
+        },
+        {
+          "file": "apps/prototype-description-service/shared/source_identity.py",
+          "line": 82,
+          "excerpt": "raise ValueError(\"incomplete_source_identity\")"
+        },
+        {
+          "file": "scripts/deploy/lib/bounded-remote-build.sh",
+          "line": 359,
+          "excerpt": "--build-arg \"GIT_COMMIT_SHA=$acx_sha\""
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Writer now requires only GIT_COMMIT_SHA; empty optional ARGs become null and are recorded collection_status=incomplete, which the runtime loader refuses (fail-closed at run time, per the coordinator ruling)."
+    },
+    {
+      "db_id": 18239,
+      "finding_id": "GTMC-C78G3J-01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 577,
+          "excerpt": "('embedder_input', ('sha256', 'channel_samples', 'mean', 'scale'))):"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 579,
+          "excerpt": "tensor_contracts[tensor_key] = dict(_canonical_tensor_contract(tensor['shape'], tensor['dtype']),"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 585,
+          "excerpt": "alignment=execution['alignment'],"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 620,
+          "excerpt": "if raw_norms and _raw_norm_span_exceeds_tolerance(raw_norms):"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 572,
+          "excerpt": "if identifier in owners and owners[identifier] != key:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 311,
+          "excerpt": "if sessions['auraface']['graph_analysis']['output_l2_normalized'] and abs(value['raw_output']['norm'] - 1) > 1e-5:"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Executed receipt values (mean/scale/channel samples, alignment incl. template_sha256, shapes/dtypes, raw norm, graph-L2 vs raw norm) are compared across roles; execution_id/adapter_instance_id reuse across processes is refused."
+    },
+    {
+      "db_id": 18242,
+      "finding_id": "GTMC-C78G3J-04",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 612,
+          "excerpt": "entry['reason_code'] = None"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 630,
+          "excerpt": "aggregate_gaps = gaps - {'GAP-V1-REPAIR', 'GAP-BRANCH-ARTIFACTS'}"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 635,
+          "excerpt": "if aggregate_gaps:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 638,
+          "excerpt": "entry['status'] = 'joined'"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 259,
+          "excerpt": "assert all(item['status'] != 'joined' for item in result['acquisition_ledger'])"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Rows start status='incomplete'; 'joined' is only assigned in the post-loop pass after all aggregate fingerprint/source/image checks, and only when aggregate_gaps is empty."
+    },
+    {
+      "db_id": 18243,
+      "finding_id": "GTMC-C78G3J-05",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 426,
+          "excerpt": "_closed(item, 'role process_instance_id container_id registry_manifest_digest digest_type platform image_config_digest identity_document_sha256 source_identity"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 49,
+          "excerpt": "if not isinstance(value, dict):"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 159,
+          "excerpt": "if value is None:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 160,
+          "excerpt": "_fail('incomplete')"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 233,
+          "excerpt": "def test_nondict_image_is_sanitized():"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 241,
+          "excerpt": "def test_absent_source_is_incomplete():"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "image_records items pass through _closed (non-dict -> RecordError 'malformed') before any .get; _source(None) now yields 'incomplete'. Both behaviours are pinned by tests."
+    },
+    {
+      "db_id": 18327,
+      "finding_id": "GTMC-C80A-G3J-F1",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 581,
+          "excerpt": "executed_contracts.add(record_digest(dict("
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 586,
+          "excerpt": "raw_output_sha256=execution['raw_output']['sha256'],"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 588,
+          "excerpt": "input_lineage=execution['input_lineage'])))"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 618,
+          "excerpt": "if len(executed_contracts) > 1 or len(censuses) > 1:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 620,
+          "excerpt": "if raw_norms and _raw_norm_span_exceeds_tolerance(raw_norms):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 644,
+          "excerpt": "def test_r3_interpolation_crop_receipt_probe(both_roles):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Executed tensor, alignment (crop/affine/template), output digests and fixture lineage are digested per execution and must be identical across roles; raw-norm span is bounded. 294 join tests pass at HEAD."
+    },
+    {
+      "db_id": 18328,
+      "finding_id": "GTMC-C80A-G3J-F2",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 201,
+          "excerpt": "\"\"\"Normalize ORT's float dtype; only metadata may contain symbolic dims.\"\"\""
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 207,
+          "excerpt": "return dict(shape=dimensions, dtype='float32' if dtype == 'tensor(float)' else dtype)"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 280,
+          "excerpt": "declared = _canonical_tensor_contract(metadata[0]['shape'], metadata[0]['dtype'], allow_symbolic=True)"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 282,
+          "excerpt": "or any(not isinstance(expected, str) and observed != expected"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 671,
+          "excerpt": "def test_r3_e10_metadata_vocabulary_control(model, case):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 689,
+          "excerpt": "def test_r3_metadata_dtype_aliases_share_one_contract(model, api_dtype, worker_dtype):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Local binding no longer uses literal equality: a shared canonicalizer maps ORT 'tensor(float)' to float32 and symbolic metadata dims match any concrete executed dim (rank still enforced). Real model metadata still unexecuted."
+    },
+    {
+      "db_id": 18371,
+      "finding_id": "C82R-G3J3-01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 32,
+          "excerpt": "\"\"\"Compare exact int/float ratios without rounding integers to binary64.\"\"\""
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 33,
+          "excerpt": "low_num, low_den = min(values).as_integer_ratio()"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 36,
+          "excerpt": "return ((high_num * low_den - low_num * high_den) * tolerance_den"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 745,
+          "excerpt": "(2**53, 2**53 + 1), (float(2**53), 2**53 + 1),"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 748,
+          "excerpt": "def test_c82_exact_norm_boundary(api_norm, worker_norm):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 905,
+          "excerpt": "def test_c82_identical_large_norm_control(norm):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "math.isclose replaced by exact rational span comparison via as_integer_ratio; 2**53 vs 2**53+1 and mixed float/int cases refuse, with identical-large-norm controls joining (pins kill the M22-style mutant)."
+    },
+    {
+      "db_id": 18373,
+      "finding_id": "C82R-G3J3-03",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 766,
+          "excerpt": "@pytest.mark.parametrize('component', ['input_name', 'model_id', 'preprocessing_id', 'config', 'output_metadata', 'shape_union'])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 785,
+          "excerpt": "# The receipt remains valid locally; this must exercise the aggregate guard."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 787,
+          "excerpt": "assert_gap(records, inputs, 'contradictory_binding', row=1)"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 609,
+          "excerpt": "fingerprints.add((rt['compatibility_sha256'], rt['model_id'],"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 610,
+          "excerpt": "rt['preprocessing_id'], rt['config_sha256'],"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Per-component fingerprint oracle now covers input name, model_id, preprocessing_id, config, output metadata and shape union, and asserts each receipt is locally valid so only the aggregate fingerprint guard can refuse."
+    },
+    {
+      "db_id": 18374,
+      "finding_id": "C82R-G3J3-04",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 468,
+          "excerpt": "if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 790,
+          "excerpt": "def test_c82_caller_none_offset():"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 793,
+          "excerpt": "def utcoffset(self, dt):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 797,
+          "excerpt": "with pytest.raises(ValueError, match='now must be timezone-aware'):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "A tzinfo whose utcoffset() returns None is now pinned: deleting the utcoffset() check would surface a TypeError and fail the ValueError match in test_c82_caller_none_offset."
+    },
+    {
+      "db_id": 18375,
+      "finding_id": "C82R-G3J3-05",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 543,
+          "excerpt": "key = (record['role'],record['process_instance_id'])"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 572,
+          "excerpt": "if identifier in owners and owners[identifier] != key:"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 808,
+          "excerpt": "def test_c82_same_role_process_identifier_reuse(identifier):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 811,
+          "excerpt": "extra['process_instance_id'] = 'api-second-process'"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 838,
+          "excerpt": "assert_gap(records, inputs, 'contradictory_binding', row=2)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Identifier ownership is keyed on (role, process_instance_id), not role; a second API process reusing the first API's execution_id or adapter_instance_id refuses, with a unique-ID control that joins."
+    },
+    {
+      "db_id": 18376,
+      "finding_id": "C82R-G3J3-06",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 298,
+          "excerpt": "metadata = sessions['auraface']['actual_output_metadata']"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 302,
+          "excerpt": "if (declared['dtype'] != 'float32' or len(declared['shape']) != 2"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 304,
+          "excerpt": "for observed, expected in zip((1, value['raw_output']['dimension']), declared['shape']))):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 841,
+          "excerpt": "@pytest.mark.parametrize('shape', [[1, 128], [512], [2, 512], [1, 512, 1]])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 842,
+          "excerpt": "def test_c82_output_metadata_dimension_binding(shape):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Embedder session output metadata is now bound to the executed raw_output dimension (batch 1 x 512, rank 2, float32); [1,128] declared metadata refuses with contradictory_binding."
+    },
+    {
+      "db_id": 18377,
+      "finding_id": "C82R-G3J3-07",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 138,
+          "excerpt": "_text(key)"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/auraface_acceptance_join.py",
+          "line": 67,
+          "excerpt": "if '@' in value or '://' in value or any(ord(c) < 32 for c in value):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 886,
+          "excerpt": "def test_c82_invalid_string_key_is_malformed():"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 888,
+          "excerpt": "with pytest.raises(module.RecordError, match='^malformed$'):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_auraface_acceptance_join.py",
+          "line": 889,
+          "excerpt": "module._bounded_json({'bad@key': 0})"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Dict keys go through _text, which rejects '@' as malformed; an exact-match invalid-string-key oracle (^malformed$) now pins L08."
+    },
+    {
+      "db_id": 18262,
+      "finding_id": "GTMC-C78INT-02",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/bench/score_report.py",
+          "line": 1350,
+          "excerpt": "if not os.path.isdir(root):"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/score_report.py",
+          "line": 1351,
+          "excerpt": "return"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/score_report.py",
+          "line": 1355,
+          "excerpt": "score_dir.mkdir(parents=False, exist_ok=True)"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/tests/test_gtmc_refusal_absent_root.py",
+          "line": 57,
+          "excerpt": "def test_absent_run_root_never_creates_refusal_artifacts("
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/tests/test_gtmc_refusal_absent_root.py",
+          "line": 65,
+          "excerpt": "assert all(not path.exists() for path in absent)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Refusal publication returns early when the run root is not an existing directory, and the score dir is created with parents=False; absent-root (root-only and nested) cases are pinned to create nothing."
+    },
+    {
+      "db_id": 18340,
+      "finding_id": "GTMC-C81R-SAR-M1",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/bench/score_report.py",
+          "line": 1350,
+          "excerpt": "if not os.path.isdir(root):"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/score_report.py",
+          "line": 1348,
+          "excerpt": "original scorer exception as a note; this function never replaces or re-raises it."
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/tests/test_gtmc_refusal_absent_root.py",
+          "line": 164,
+          "excerpt": "@pytest.mark.parametrize(\"kind\", [\"long-component\", \"no-search-parent\"])"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/tests/test_gtmc_refusal_absent_root.py",
+          "line": 178,
+          "excerpt": "assert stat_error.value.errno == (errno.ENAMETOOLONG if kind == \"long-component\" else errno.EACCES)"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/bench/tests/test_gtmc_refusal_absent_root.py",
+          "line": 193,
+          "excerpt": "assert cross_stack_bench.main([\"score\", \"--run-dir\", os.fspath(root)]) == 2"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Guard uses os.path.isdir (swallows OSError) as the finding's fix proposed; ENAMETOOLONG and unsearchable-parent roots are pinned to preserve the original refusal and CLI exit 2."
+    },
+    {
+      "db_id": 18185,
+      "finding_id": "GTMR-AURA-TENANT-CLI-01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_api_keys.py",
+          "line": 94,
+          "excerpt": "if env in AURA_LABELS:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_api_keys.py",
+          "line": 95,
+          "excerpt": "return _validate_aura_runtime(env)"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/_aura_target_guard.py",
+          "line": 110,
+          "excerpt": "if compose_project != f\"acx-{label}\":"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/_aura_target_guard.py",
+          "line": 135,
+          "excerpt": "if url.username != role or url.database != database:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/_aura_target_guard.py",
+          "line": 25,
+          "excerpt": "ACX_ENV and COMPOSE_PROJECT_NAME are environment-consistency signals. They do not prove which container,"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Both CLIs now accept Aura labels only with matching ACX_ENV, COMPOSE_PROJECT_NAME=acx-<label> and dedicated role+database in the DSN. Execution identity is a documented scope limit, verified separately by the collector."
+    },
+    {
+      "db_id": 18272,
+      "finding_id": "GTMC-I77-GATE1-F5",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_api_keys.py",
+          "line": 28,
+          "excerpt": "the dedicated role and database (see scripts/_aura_target_guard.py). Query"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_api_keys.py",
+          "line": 29,
+          "excerpt": "overrides of the user, database, host, port, dsn, options or service are refused."
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/_aura_target_guard.py",
+          "line": 55,
+          "excerpt": "{\"user\", \"username\", \"database\", \"dbname\", \"host\", \"hostaddr\", \"port\", \"service\", \"servicefile\", \"options\", \"dsn\"}"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The manage_api_keys docstring now lists the nested dsn key among the refused overrides, matching the guard's key set."
+    },
+    {
+      "db_id": 18253,
+      "finding_id": "GTMC-C78CLI-01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 347,
+          "excerpt": "revoke_not_pending = False"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 353,
+          "excerpt": "sys.stderr.write(\"error: invitation operation failed or refused\\n\")"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 382,
+          "excerpt": "elif args.command == \"revoke\" and revoke_not_pending:"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 54,
+          "excerpt": "def test_revoke_precommit_failure_never_claims_not_pending(monkeypatch, capsys, factory, failure):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The exception path clears revoke_not_pending, so a pre-commit failure/timeout prints only the generic failure line, never 'not found or not pending'; pinned across exception/timeout/reset-failure variants."
+    },
+    {
+      "db_id": 18254,
+      "finding_id": "GTMC-C78CLI-02",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 307,
+          "excerpt": "invitation_id = args.invitation_id if args.command == \"revoke\" else None"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 349,
+          "excerpt": "target = \"invitation list\" if args.command == \"list\" else f\"invitation_id={invitation_id}\""
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 350,
+          "excerpt": "recovery = \" before reissue\" if args.command == \"create\" else \"\""
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 98,
+          "excerpt": "def test_noncreate_commit_ambiguity_names_the_operation(monkeypatch, capsys, factory, command, failure):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Commit-ambiguity text is now operation-specific: list names 'invitation list', revoke names its real invitation_id, and 'before reissue' appears only for create."
+    },
+    {
+      "db_id": 18256,
+      "finding_id": "GTMC-C78CLI-04",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 148,
+          "excerpt": "@pytest.mark.parametrize(\"form\", [\"upper\", \"mixed\", \"encoded\", \"repeated\"])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 183,
+          "excerpt": "def test_fir_port_allowlist(monkeypatch, capsys, factory, port, admitted):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 194,
+          "excerpt": "def test_fir_driver_allowlist(monkeypatch, capsys, factory, driver, admitted):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 254,
+          "excerpt": "def test_rollback_cap_is_absolute_after_late_transaction_settlement(monkeypatch, capsys, factory):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 289,
+          "excerpt": "def test_synchronous_precommit_overrun_blocks_commit(monkeypatch, capsys, factory, stage):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 311,
+          "excerpt": "def test_external_cancellation_reraises_after_bounded_cleanup(monkeypatch, capsys, factory, stage, owned):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The c79 edge module exists and pins each listed category (casefold override keys, port/driver allowlists, absolute rollback/close caps, commit boundary, cancel re-raise); 98 pass. R1/R2 are 18358/18362, both fixed."
+    },
+    {
+      "db_id": 18268,
+      "finding_id": "GTMC-I77-GATE1-F1",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 45,
+          "excerpt": "from scripts._aura_target_guard import dsn_host as _dsn_host"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 46,
+          "excerpt": "from scripts._aura_target_guard import is_local_host as _is_local_host"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/_aura_target_guard.py",
+          "line": 73,
+          "excerpt": "if has_connection_overrides([*url.query, *query_keys]):"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/_aura_target_guard.py",
+          "line": 161,
+          "excerpt": "if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/_aura_target_guard.py",
+          "line": 164,
+          "excerpt": "return address.is_loopback or address.is_unspecified"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_generic_dsn_locality.py",
+          "line": 13,
+          "excerpt": "pytest.param(\"127.0.0.2\", id=\"loopback-v4\"),"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Both CLIs' generic prod/dev/local paths now use the guard's dsn_host (refuses query identity overrides) and ipaddress locality (127/8, unspecified, IPv4-mapped, *.localhost); pinned in test_gtmc_generic_dsn_locality."
+    },
+    {
+      "db_id": 18358,
+      "finding_id": "C82R-CLI2-01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 210,
+          "excerpt": "func.lower(func.btrim(PortalIdentity.email, _EMAIL_STRIP_CHARACTERS)).label(\"email\") == args.email,"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 53,
+          "excerpt": "_EMAIL_STRIP_CHARACTERS = \"\".join("
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 81,
+          "excerpt": "normalized = _normalize_email(value)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_target_labels.py",
+          "line": 75,
+          "excerpt": "@pytest.mark.parametrize(\"variant\", [\"upper\", \"padded\", \"both\", \"normalized\", \"unrelated\"])"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_target_labels.py",
+          "line": 76,
+          "excerpt": "def test_foreign_legacy_email_binding_refused(monkeypatch, capsys, factory, variant):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Cross-tenant conflict query now compares lower(btrim(email, strip-set)) to the normalized arg; upper/padded legacy rows refuse. Tests use a fake SQL evaluator; collation-dependent PG lower() on non-ASCII not executed."
+    },
+    {
+      "db_id": 18362,
+      "finding_id": "C82R-CLI2-05",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 357,
+          "excerpt": "if not opened_session and not rolled_back:"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 359,
+          "excerpt": "await session.invalidate()"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 279,
+          "excerpt": "whose rollback fails is invalidated within the remaining cleanup budget."
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 280,
+          "excerpt": "Callers must discard it if that recovery also fails or times out."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 353,
+          "excerpt": "def test_injected_session_invalidated_after_failed_rollback(monkeypatch, capsys, factory):"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "An injected session whose rollback fails/hangs is now invalidated (stateful fake pins bypass flag cleared). If invalidation also fails, a documented caller-discard contract applies. Live PG not executed."
+    },
+    {
+      "db_id": 18363,
+      "finding_id": "C82R-CLI2-06",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 274,
+          "excerpt": "\"\"\"Run with cooperative deadlines, not a universal wall-clock ceiling."
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 277,
+          "excerpt": "have absolute caps of +12s and +14s. Cancellation-resistant operations can"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/manage_portal_invitations.py",
+          "line": 278,
+          "excerpt": "settle after those caps; expired cleanup is skipped. An injected session"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 377,
+          "excerpt": "def test_resistant_rollback_guarantee_is_cooperative(monkeypatch, capsys, factory):"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_portal_invitation_deadline_edges.py",
+          "line": 384,
+          "excerpt": "assert clock.now == 16"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "The overclaimed 14s ceiling was withdrawn: run() now documents cooperative deadlines and pins the reviewer's 15s/16s settlement cases. A hard ceiling stays unenforceable under asyncio, by design and by documentation."
+    },
+    {
+      "db_id": 18186,
+      "finding_id": "GTMR-AURA-ACCEPTANCE-01",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/validate_fir_dev_runtime.py",
+          "line": 1050,
+          "excerpt": "if aura_acceptance and contract != \"candidate512\":"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/validate_fir_dev_runtime.py",
+          "line": 1060,
+          "excerpt": "allow_missing_store_evidence=aura_acceptance,"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/validate_auraface_runtime.py",
+          "line": 66,
+          "excerpt": "aura_acceptance=True,"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/validate_auraface_runtime.py",
+          "line": 73,
+          "excerpt": "target = aura_target_store_gate.validate_target_store("
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/aura_target_store_gate.py",
+          "line": 3,
+          "excerpt": "``validate_target_store`` checks the rungs the Aura target owns: the operator-selected label, the six"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/aura_target_store_gate.py",
+          "line": 4,
+          "excerpt": "required isolation categories, the observed target identities, the persisted-model census, the vector"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "medium",
+      "note": "Aura acceptance is now additive: the FIR verifier keeps strict defaults (aura_acceptance=False), and the Aura facade layers an exact-label target/store gate (isolation, identities, provenance, persisted/vector census). Not live-run."
+    },
+    {
+      "db_id": 18351,
+      "finding_id": "GTMC-C82R-V1-F2",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_aura_v1_r3_pins.py",
+          "line": 304,
+          "excerpt": "# C82 F2: the missing-member exemption belongs exclusively to Aura acceptance."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_aura_v1_r3_pins.py",
+          "line": 306,
+          "excerpt": "@pytest.mark.parametrize(\"path\", IDENTITY_PATHS + (STORE_PATHS[2][0],), ids=lambda path: \".\".join(path))"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_aura_v1_r3_pins.py",
+          "line": 308,
+          "excerpt": "def test_strict_missing_wrapper_is_invalid(contract: str, path: tuple[str, ...], member: str) -> None:"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_aura_v1_r3_pins.py",
+          "line": 313,
+          "excerpt": "_assert_outcome(_shared(case, contract=contract, aura=False), \"invalid\", \"malformed_observation_wrapper\")"
+        },
+        {
+          "file": "apps/prototype-description-service/scripts/validate_fir_dev_runtime.py",
+          "line": 547,
+          "excerpt": "allow_missing and isinstance(value, Mapping)"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "Strict-default (aura=False) rows for missing identity, storage and vector-inventory members now expect invalid malformed_observation_wrapper under both contracts, pinning the allow_missing fence (X3B)."
+    },
+    {
+      "db_id": 18352,
+      "finding_id": "GTMC-C82R-V1-F3",
+      "verdict": "fixed_on_main",
+      "duplicate_of_db_id": null,
+      "evidence": [
+        {
+          "file": "apps/prototype-description-service/scripts/validate_fir_dev_runtime.py",
+          "line": 548,
+          "excerpt": "and set(value) <= expected_keys and not _ROLE_WRAPPER_KEYS.issubset(value)"
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_aura_v1_r3_pins.py",
+          "line": 316,
+          "excerpt": "# C82 F3: missing evidence does not admit unknown wrapper keys."
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_aura_v1_r3_pins.py",
+          "line": 323,
+          "excerpt": "wrapper[\"unknown_evidence_key\"] = \"constructed\""
+        },
+        {
+          "file": "apps/prototype-description-service/recognition/tests/scripts/test_gtmc_aura_v1_r3_pins.py",
+          "line": 324,
+          "excerpt": "_assert_outcome(_facade(case), \"invalid\", \"malformed_observation_wrapper\")"
+        }
+      ],
+      "fix_size": null,
+      "fix_hint": null,
+      "confidence": "high",
+      "note": "An extra-key-plus-missing-member row over every MISSING_PATH in Aura mode expects invalid malformed_observation_wrapper, so dropping the subset bound at :548 (X2) would turn it incomplete and fail."
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "status": "PASS",
+  "report_sha256": "e09706cfd1aa1c253bf821547f231432f2b6cd2cd882bd6e6e9fd7454f2a6807",
+  "baseline_sha256": "c56bd223da2179985bbcbbde2fd2d08cde48b20767607c287d624db00daf05a9",
+  "new_links_checked": [
+    "#v15-canon",
+    "#v15-capacity",
+    "#v15-flint-evaluation",
+    "#v15-prior-art",
+    "../../docs/assessments/current/embeddinggemma2-repo-fit-assessment-2026-10-07.md",
+    "../../evidence/quant_sizes.json",
+    "../../evidence/verification.json",
+    "https://github.com/darce/heuristics-canon",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/SOURCES.md#src-ai-engineering",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/SOURCES.md#src-bruch-vector-retrieval",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/SOURCES.md#src-model-cards",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#emb-01",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#prov-02",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#rag-01",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#serve-05",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/lexicons/ml-systems.md#serve-07",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/context-obedience-is-a-separate-capability.md",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/evidence-before-commitment.md",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/margin-and-design-effect-before-the-run.md",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/proxy-outcome-integrity.md",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/quantization-delta-on-the-failure-metric.md",
+    "https://github.com/darce/heuristics-canon/blob/v0.26.2/reasoning/runtime-fork-is-part-of-provenance.md",
+    "https://huggingface.co/RecursiveSI/flint/blob/2a247be0c0aec895ccb0ac7ca92229ec6df37288/README.md",
+    "https://huggingface.co/RecursiveSI/flint/blob/2a247be0c0aec895ccb0ac7ca92229ec6df37288/README.md#model-specifications",
+    "https://huggingface.co/RecursiveSI/flint/blob/2a247be0c0aec895ccb0ac7ca92229ec6df37288/config.json",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/BF16/flint-BF16-00001-of-00003.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/BF16/flint-BF16-00002-of-00003.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/BF16/flint-BF16-00003-of-00003.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/README.md",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-Q8_0.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-IQ1_M.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-IQ2_XXS.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-IQ3_XXS.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-Q2_K_XL.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-Q3_K_XL.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-Q4_K_XL.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-Q5_K_XL.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/blob/20468edfc38ab43d6914cc88b08cbecb05d0fc62/flint-UD-Q6_K_XL.gguf",
+    "https://huggingface.co/unsloth/flint-GGUF/tree/20468edfc38ab43d6914cc88b08cbecb05d0fc62",
+    "https://unsloth.ai/docs/models/flint",
+    "qwen-high-precision-20261025/review-all-history-v2/index.html"
+  ],
+  "new_missing_links": [],
+  "local_layout_context_links": "docs assessment and qwen review paths checked by coordinator against complete repository, not copied into scratch",
+  "unique_ids": true,
+  "scripts_styles_preserved": true,
+  "historical_lines_preserved_except_title_and_h1_versions": true,
+  "version_deltas": [
+    {
+      "old": [
+        "<title>FIR — Decision, Task &amp; Benchmark Registers + Research Q&amp;A (2026-10-23, v14)</title>"
+      ],
+      "new": [
+        "<title>FIR — Decision, Task &amp; Benchmark Registers + Research Q&amp;A (2026-10-26, v15)</title>"
+      ]
+    },
+    {
+      "old": [
+        "<h1>FIR — decision, task &amp; benchmark registers, over the operator Q&amp;A <span class=\"tag wr\">v14</span></h1>"
+      ],
+      "new": [
+        "<h1>FIR — decision, task &amp; benchmark registers, over the operator Q&amp;A <span class=\"tag wr\">v15</span></h1>"
+      ]
+    }
+  ],
+  "inserted_lines": 51,
+  "upstream_snapshot_note": "verification.json describes upstream variant87e374f; publication-receipt.json identifies the published e09706c variant. This receipt validates the published variant.",
+  "quant_sizes_sha256": "7ff00632b2ba76f6792d5402d9b1991b7e608e99fa3242c805ec41da869f9945",
+  "inference_calls": 0,
+  "gpu_actions": 0
+}

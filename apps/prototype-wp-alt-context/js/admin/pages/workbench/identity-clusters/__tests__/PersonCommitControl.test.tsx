@@ -98,7 +98,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
 
     // Wait for the roster typeahead to load before typing.
     const input = await openNamingList();
-    await screen.findByText('Alex Carter');
+    await screen.findByRole('option', { name: 'Confirm match with Alex Carter' });
     await user.type(input, 'Alex Carter{Enter}');
 
     expect(onCommit).toHaveBeenCalledWith({
@@ -112,7 +112,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     const user = userEvent.setup();
 
     const input = await openNamingList();
-    await screen.findByText('Alex Carter');
+    await screen.findByRole('option', { name: 'Confirm match with Alex Carter' });
     await user.type(input, '  alex carter {Enter}');
 
     expect(onCommit).toHaveBeenCalledWith({

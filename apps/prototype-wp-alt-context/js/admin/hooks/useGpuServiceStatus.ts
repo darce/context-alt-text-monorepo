@@ -23,6 +23,10 @@ export const GPU_SERVICE_STATUS_WARMUP_POLL_INTERVAL_MS = 5_000;
 /** Backoff after a failed idle poll; never a client-invented warmup ceiling. */
 export const GPU_SERVICE_STATUS_ERROR_BACKOFF_MS = 30_000;
 
+/** Two retries confirm an outage after three consecutive failed requests. */
+export const GPU_SERVICE_STATUS_RETRY_COUNT = 2;
+export const GPU_SERVICE_STATUS_RETRY_DELAY_MS = 1_000;
+
 export interface UseGpuServiceStatusOptions {
   /** True while a describe run or Suggest is in flight — pause idle polls. */
   isRunPending?: boolean;
@@ -62,7 +66,8 @@ export const useGpuServiceStatus = ({
     queryFn: fetchGpuStatus,
     enabled: !isRunPending,
     refetchOnWindowFocus: false,
-    retry: false,
+    retry: GPU_SERVICE_STATUS_RETRY_COUNT,
+    retryDelay: (attempt) => Math.min(GPU_SERVICE_STATUS_RETRY_DELAY_MS * 2 ** attempt, 30_000),
     refetchInterval: gateRefetchInterval((query: { state: { data: GpuStatusResponse | undefined; status: string } }) => {
       if (isRunPending) {
         return false;
@@ -72,7 +77,9 @@ export const useGpuServiceStatus = ({
   });
 
   const data = statusQuery.data;
-  const gpuState = data?.gpu_state.state ?? GPU_STATE.UNKNOWN;
+  const gpuState = data?.snapshot_fresh === false
+    ? GPU_STATE.UNKNOWN
+    : data?.gpu_state.state ?? GPU_STATE.UNKNOWN;
 
   return {
     data,

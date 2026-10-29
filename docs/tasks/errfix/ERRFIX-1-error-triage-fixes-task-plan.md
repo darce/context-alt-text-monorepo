@@ -207,19 +207,19 @@ Lanes: `errfix-1-envr` (RED), then `errfix-1-env`.
 
 Files/functions:
 - RED: `scripts/tests/test_provision_lane_worktree.py`.
-- Implementation: `scripts/workstate/provision_lane_worktree.py:_plan_overlay` and `:_require_inside`.
+- Implementation: `scripts/workstate/provision_lane_worktree.py:_plan_overlay` and a new `_is_payload_symlink` helper.
 
 RED tests use a temp primary, a temp worktree, and a fake `<tmp>/workbay_system/payload/` that holds the same relative files.
 
 1. A `scripts/workbay*` overlay entry that is a symlink resolving to `…/workbay_system/payload/<same relative path>` counts as provisioned. The run exits 0 and the entry is untouched.
 2. A `scripts/remote_agent.sh` symlink into the payload is replaced by a regular file with the primary's bytes and the executable bit.
-3. A symlink to any other path outside the worktree still raises the current `_require_inside` error.
-4. A payload symlink whose relative path differs from the entry's still raises.
+3. A symlink to any other path outside the worktree still fails with `refusing overlay copy`.
+4. A payload symlink whose relative path differs from the entry's still fails the same way.
 
-Implementation: in `_plan_overlay`, recognise the payload symlink before the containment check.
-- For `scripts/workbay*` entries, skip it.
-- For `scripts/remote_agent.sh`, plan a `file` op that writes a regular copy.
-- Containment rules stay the same for every other path.
+Implementation: `_is_payload_symlink(worktree, rel)` is true when `os.path.realpath` of the link ends with `/workbay_system/payload/<rel>`.
+- `_plan_overlay` skips such an op, and drops `entries` items at or below one, before the plain-directory validators run.
+- `scripts/remote_agent.sh` is never skipped: its existing `file` op replaces the symlink with a regular copy once the refusal is gone.
+- Validators, containment and `_rsync_overlay` are unchanged, and the whole plan is still validated before the first write.
 
 Proof:
 - Tests 1–2 fail on main and pass after `errfix-1-env`. Tests 3–4 pass throughout.
@@ -235,23 +235,24 @@ Lanes: `errfix-1-docr` (RED), then `errfix-1-doc`.
 
 Files:
 - RED: `scripts/test_documented_make_commands.py`.
-- Implementation: `CLAUDE.md:15`, `CLAUDE.md:46`, `.github/copilot-instructions.md:111` and `Makefile:test-scripts`.
+- Implementation: `CLAUDE.md:15/46/98`, `.github/copilot-instructions.md:53/111`, `Makefile:297/305/1076` and `Makefile:test-scripts`.
 
 RED tests:
 
-1. Every `make <target>` documented in either doc exists in the `make -pq` database. Nothing runs.
-2. `make -n handoff-review-run <documented variables, with sentinels>` prints every sentinel, with a 10 s timeout [RES-02]. This fails today, because only `LIFECYCLE_ARGS` is forwarded.
-3. The documented `maint-start` ref is uppercase: `MAINT-<SLUG>-<YYYYMMDD>`.
-4. The `handoff-review-run` line is identical in both docs.
+1. Every `make <target>` documented in either doc is a target in `Makefile`, `Makefile.d/*.mk` or `mk/*.mk`. Nothing runs; skipped where `Makefile.d` is absent.
+2. Every `make handoff-review-run` line in the docs and the Makefile help uses `LIFECYCLE_ARGS=` and none of the dropped variables.
+3. `make -n` on the documented `handoff-review-run` line, with sentinels, prints every sentinel, with a 60 s timeout [RES-02]. This fails today, because only `LIFECYCLE_ARGS` is forwarded. Skipped where `Makefile.d` is absent.
+4. Every documented `MAINT-<…>` placeholder is uppercase: `MAINT-<SLUG>-<YYYYMMDD>`.
+5. The `handoff-review-run` line is identical in both docs.
 
 Implementation:
 
-- `CLAUDE.md:15` → `make maint-start TASK=MAINT-<SLUG>-<YYYYMMDD> OBJECTIVE="..."`.
-- `CLAUDE.md:46` and `.github/copilot-instructions.md:111` → `make handoff-review-run LIFECYCLE_ARGS="--task-ref <task-ref> --subject-path <path> --subject-kind <task_plan|other> --verdict <pass|pass_with_findings|fail|conditional_pass>"`.
+- `CLAUDE.md:15` → `make maint-start TASK=MAINT-<SLUG>-<YYYYMMDD> OBJECTIVE="..."`; the same uppercase at `CLAUDE.md:98`, copilot `:53` and `Makefile:297/1076`.
+- `CLAUDE.md:46` and `.github/copilot-instructions.md:111` → `make handoff-review-run LIFECYCLE_ARGS="--task-ref <task-ref> --subject-path <path-or-.> --subject-kind <task_plan|epic|branch|adr|roadmap|other> --verdict <pass|pass_with_findings|fail|conditional_pass> --verdict-decision <decision-id> --session <session> --review-run-id <run-id>"`, and the same form in the `Makefile:305` help echo.
 - Add the test to `test-scripts`.
 - If `make check-agent-workflows` reports either line as generated, edit the generator source it names instead.
 
-Proof: tests 2–3 fail on main and pass after `errfix-1-doc`.
+Proof: tests 2–4 are strict-xfail on the RED branch and pass after `errfix-1-doc`.
 
 ### Operator S3: Close stale main-target rows and dead cursors (P0)
 
@@ -451,8 +452,8 @@ These are bottlenecks already hit in this repo, taken from handoff lessons and t
 
 ### Checklist for Slice 2: Documented commands
 
-- [ ] RED tests 1–4 committed; tests 2–3 fail on main.
-- [ ] Three doc lines fixed; the test is in `test-scripts`.
+- [ ] RED tests 1–5 committed; tests 2–4 fail on main.
+- [ ] Doc lines fixed in `CLAUDE.md`, the copilot file and the `Makefile` help; the test is in `test-scripts`.
 
 ### Checklist for Operator S3: Rows and cursors
 

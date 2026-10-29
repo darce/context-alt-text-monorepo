@@ -357,6 +357,12 @@ def _normalize_overlay_paths(paths: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(_normalize_overlay_path(value) for value in paths))
 
 
+def _is_payload_symlink(worktree: Path, rel: str) -> bool:
+    """Return whether a link resolves to its matching installed payload path."""
+    path = worktree / rel
+    return path.is_symlink() and os.path.realpath(path).endswith(f"/workbay_system/payload/{rel}")
+
+
 def _plan_overlay(primary: Path, worktree: Path, overlay_paths: list[str], *, fixture_mode: bool) -> list[_OverlayOp]:
     plan: list[_OverlayOp] = []
     for rel in overlay_paths:
@@ -366,6 +372,8 @@ def _plan_overlay(primary: Path, worktree: Path, overlay_paths: list[str], *, fi
         # the plugin's overlay link itself even when its target is provisioned
         # separately on the host.
         if not src.exists() and not src.is_symlink():
+            continue
+        if rel != "scripts/remote_agent.sh" and _is_payload_symlink(worktree, rel):
             continue
         if dest.resolve(strict=False) == src.resolve(strict=False):
             continue
@@ -391,6 +399,18 @@ def _plan_overlay(primary: Path, worktree: Path, overlay_paths: list[str], *, fi
             # leaving the linked worktree's branch-owned version untouched.
             for entry in ignored_entries:
                 _require_contained_overlay_entry(src, entry)
+            # Payload links are already provisioned. Never replace a leaf link
+            # or copy through a directory link into the installed payload.
+            ignored_entries = [
+                entry
+                for entry in ignored_entries
+                if not any(
+                    _is_payload_symlink(worktree, PurePosixPath(rel, *PurePosixPath(entry).parts[:depth]).as_posix())
+                    for depth in range(1, len(PurePosixPath(entry).parts) + 1)
+                )
+            ]
+            if not ignored_entries:
+                continue
             plan.append(_OverlayOp(rel, src, dest, "entries", ignored_entries))
         elif "" in ignored_entries:
             plan.append(_OverlayOp(rel, src, dest, "file"))

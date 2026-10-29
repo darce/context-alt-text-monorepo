@@ -1432,3 +1432,94 @@ def test_overlay_copy_helpers_recheck_parents_before_mkdir(tmp_path: Path) -> No
         module._rsync_overlay(src, escaped / ".workbay/generated/new", root=escaped)
 
     assert _tree_snapshot(outside) == {"x.txt": OUTSIDE_WORK}
+
+
+def _native_payload_layout(tmp_path: Path, wb_target: Path | None = None) -> tuple[Path, Path, Path]:
+    primary = _git_primary(
+        tmp_path / "primary",
+        gitignore="Makefile.d/\nscripts/workbay/\nscripts/remote_agent.sh\n",
+        ignored={
+            "scripts/workbay/wb/cli.py": "PRIMARY WB\n",
+            "scripts/workbay/update.sh": "PRIMARY UPDATE\n",
+            "scripts/remote_agent.sh": "#!/bin/sh\necho primary transport\n",
+            "Makefile.d/ace.mk": "# primary ace\n",
+        },
+    )
+    (primary / "scripts/remote_agent.sh").chmod(0o755)
+    payload = tmp_path / "uv/workbay_system/payload"
+    _write_file(payload / "scripts/workbay/wb/cli.py", "PAYLOAD WB\n")
+    _write_file(payload / "Makefile.d/ace.mk", "# payload ace\n")
+    _write_file(payload / "scripts/remote_agent.sh", "#!/bin/sh\necho payload transport\n")
+    (payload / "scripts/remote_agent.sh").chmod(0o755)
+    worktree = _linked_worktree(primary, tmp_path / "lane")
+    for rel, target, is_directory in (
+        ("scripts/workbay/wb", wb_target if wb_target is not None else payload / "scripts/workbay/wb", True),
+        ("Makefile.d/ace.mk", payload / "Makefile.d/ace.mk", False),
+        ("scripts/remote_agent.sh", payload / "scripts/remote_agent.sh", False),
+    ):
+        link = worktree / rel
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=is_directory)
+    _write_file(worktree / "scripts/workbay/update.sh", "STALE\n")
+    return primary, worktree, payload
+
+
+def test_provision_accepts_payload_symlinks(tmp_path: Path, isolated_git: None) -> None:
+    primary, worktree, payload = _native_payload_layout(tmp_path)
+    links_before = {rel: os.readlink(worktree / rel) for rel in ("scripts/workbay/wb", "Makefile.d/ace.mk")}
+    payload_before = _tree_snapshot(payload)
+
+    completed = _run_provision(worktree, primary)
+
+    assert completed.returncode == 0, completed.stderr
+    for rel, link_text in links_before.items():
+        assert os.readlink(worktree / rel) == link_text
+    assert (worktree / "scripts/workbay/update.sh").read_text(encoding="utf-8") == "PRIMARY UPDATE\n"
+    assert _tree_snapshot(payload) == payload_before
+
+
+def test_provision_materialises_symlinked_transport(tmp_path: Path, isolated_git: None) -> None:
+    primary, worktree, payload = _native_payload_layout(tmp_path)
+    payload_before = _tree_snapshot(payload)
+    transport_before = (payload / "scripts/remote_agent.sh").read_bytes()
+
+    completed = _run_provision(worktree, primary)
+
+    assert completed.returncode == 0, completed.stderr
+    transport = worktree / "scripts/remote_agent.sh"
+    assert not transport.is_symlink()
+    assert transport.is_file()
+    assert transport.read_bytes() == (primary / "scripts/remote_agent.sh").read_bytes()
+    assert os.access(transport, os.X_OK)
+    assert (payload / "scripts/remote_agent.sh").read_bytes() == transport_before
+    assert _tree_snapshot(payload) == payload_before
+
+
+def test_provision_refuses_foreign_outside_symlink(tmp_path: Path, isolated_git: None) -> None:
+    wb_target = tmp_path / "elsewhere/wb"
+    _write_file(wb_target / "cli.py", "ELSEWHERE\n")
+    primary, worktree, payload = _native_payload_layout(tmp_path, wb_target=wb_target)
+    payload_before = _tree_snapshot(payload)
+    outside_before = _tree_snapshot(wb_target)
+
+    completed = _run_provision(worktree, primary)
+
+    assert completed.returncode == 1, completed.stderr
+    assert "refusing overlay copy" in completed.stderr
+    assert _tree_snapshot(wb_target) == outside_before
+    assert _tree_snapshot(payload) == payload_before
+
+
+def test_provision_refuses_payload_symlink_to_other_path(tmp_path: Path, isolated_git: None) -> None:
+    wb_target = tmp_path / "uv/workbay_system/payload/scripts/workbay/other"
+    _write_file(wb_target / "cli.py", "OTHER\n")
+    primary, worktree, payload = _native_payload_layout(tmp_path, wb_target=wb_target)
+    payload_before = _tree_snapshot(payload)
+    target_before = _tree_snapshot(wb_target)
+
+    completed = _run_provision(worktree, primary)
+
+    assert completed.returncode == 1, completed.stderr
+    assert "refusing overlay copy" in completed.stderr
+    assert _tree_snapshot(payload) == payload_before
+    assert _tree_snapshot(wb_target) == target_before

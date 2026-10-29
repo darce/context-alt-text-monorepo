@@ -1,0 +1,264 @@
+{
+  "schema_version": 1,
+  "map_ref": "evalops-labeler",
+  "product": "Private finding review",
+  "goals": [
+    "Complete independent human judgments with source evidence and durable progress",
+    "Curate independent expert reference answers in a separate session"
+  ],
+  "jobs": [
+    {
+      "id": "review",
+      "label": "Review findings independently"
+    }
+  ],
+  "screens": [
+    {
+      "id": "session",
+      "kind": "screen",
+      "title": "Start a review",
+      "purpose": "Identify reviewer; explain the rubric and independent review",
+      "route": "/#session",
+      "job_entry": true,
+      "deep_link": false,
+      "url_params": [],
+      "primary_action_id": "start",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "offline",
+        "first_time",
+        "edge_input",
+        "degraded"
+      ],
+      "zones": [
+        {
+          "id": "identity",
+          "label": "Reviewer identity (required)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "rubric",
+          "label": "Rubric and session purpose",
+          "role": "content",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "finding",
+      "kind": "screen",
+      "title": "Review finding",
+      "purpose": "Compare the claim with frozen source context; record a judgment",
+      "route": "/#finding",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "primary_action_id": "save",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "offline",
+        "first_time",
+        "edge_input",
+        "degraded"
+      ],
+      "zones": [
+        {
+          "id": "claim",
+          "label": "Finding claim and frozen source evidence",
+          "role": "ai_review",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ],
+          "evidence_linked": true
+        },
+        {
+          "id": "judgment",
+          "label": "Defect / Not a defect / Need more context",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "notes",
+          "label": "Notes (optional)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "progress",
+          "label": "Item progress and saved status",
+          "role": "status",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "complete",
+      "kind": "screen",
+      "title": "Review progress",
+      "purpose": "See unanswered items and export your judgments",
+      "route": "/#complete",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "primary_action_id": "export",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "offline",
+        "first_time",
+        "edge_input",
+        "degraded"
+      ],
+      "zones": [
+        {
+          "id": "summary",
+          "label": "Completed and unanswered items",
+          "role": "status",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        },
+        {
+          "id": "qc",
+          "label": "Expert reference and QC remain pending",
+          "role": "content",
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "offline",
+            "edge_input"
+          ]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "start",
+      "verb": "Start review",
+      "target": "finding",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "session"
+    },
+    {
+      "id": "save",
+      "verb": "Save judgment and continue",
+      "target": "finding",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "finding"
+    },
+    {
+      "id": "export",
+      "verb": "Export my judgments",
+      "target": "local JSONL download",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "complete"
+    },
+    {
+      "id": "previous",
+      "verb": "Previous finding",
+      "target": "finding",
+      "hierarchy": "secondary",
+      "screen_id": "finding"
+    },
+    {
+      "id": "skip",
+      "verb": "Skip this finding",
+      "target": "finding",
+      "hierarchy": "secondary",
+      "screen_id": "finding"
+    }
+  ],
+  "flows": [
+    {
+      "id": "label-findings",
+      "job": "review",
+      "label": "Start → review evidence → save labels → export",
+      "steps": [
+        {
+          "screen_id": "session"
+        },
+        {
+          "screen_id": "finding"
+        },
+        {
+          "screen_id": "complete"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Human reviewer and expert curator identities must be supplied by the actual people; no AI labels are human evidence."
+  ],
+  "not_doing": [
+    "Public publication",
+    "Model-generated gold",
+    "Quality approval without human QC",
+    "Retrieval relevance labeling in this finding-labeling flow"
+  ]
+}

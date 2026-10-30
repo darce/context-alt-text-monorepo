@@ -355,16 +355,16 @@ section = "Image description"
 example = "gpu_qwen30b"
 doc = 'domain: infra | source: service operator | consumer: scene description adapter selection'
 required = false
-values = { dev = "gpu_qwen30b", staging = "gpu_qwen30b", prod = "gpu_qwen30b", demo = "gpu_qwen30b" }
+values = { dev = "gpu_qwen30b", staging = "gpu_qwen30b", prod = "gpu_qwen30b", demo = "gpu_qwen30b", fir = "gpu_qwen30b" }
 
 [[var]]
 name = "ACX_GPU_ENDPOINT_URL"
 class = "config"
-targets = ["svc-vm", "demo"]
+targets = ["svc-vm", "demo", "svc-fir"]
 section = "GPU lifecycle"
 example = "http://acx-gpu-burst.compute.oraclevcn.com:8000"
 doc = 'domain: infra | source: service operator | consumer: remote GPU description adapter'
-values = { dev = "http://10.0.1.9:8000", staging = "http://10.0.1.9:8000", prod = "http://10.0.1.9:8000", demo = "http://10.0.1.9:8000" }
+values = { dev = "http://10.0.1.9:8000", staging = "http://10.0.1.9:8000", prod = "http://10.0.1.9:8000", demo = "http://10.0.1.9:8000", fir = "http://10.0.1.9:8000" }
 
 [[var]]
 name = "ACX_GPU_SNAPSHOT_DIR"

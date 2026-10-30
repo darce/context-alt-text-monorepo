@@ -166,4 +166,22 @@ section = "Operator /admin surface"
 [[override]]
 name = "ACX_DESCRIPTION_ADAPTER"
 target = "svc-fir"
-example = "seeded"
+example = "gpu_qwen30b"
+required = true
+doc = "FIR descriptions use the private GPU endpoint; seeded and Florence are not fallback defaults.\nThe operator must supply ACX_GPU_ENDPOINT_API_KEY in dev-fir's runtime .env before materialization.\ndomain: infra | source: service operator | consumer: scene description adapter selection"
+
+[[override]]
+name = "ACX_GPU_ENDPOINT_URL"
+target = "svc-fir"
+example = "http://10.0.1.9:8000"
+required = true
+
+[[override]]
+name = "ACX_GPU_ENDPOINT_ALLOWLIST"
+target = "svc-fir"
+example = ""
+
+[[override]]
+name = "ACX_GPU_ENDPOINT_API_KEY"
+target = "svc-fir"
+doc = "Operator-managed host secret for the FIR GPU producer. Supply the existing endpoint credential\nin /opt/acx-backend/dev-fir/.env; host: preserves that line without resolving OCI refs.\nRequired with the env secret backend and a non-empty GPU endpoint URL.\nThe blank example is not deployable until the operator supplies the key; never commit its value.\ndomain: service secret | source: FIR operator host .env | consumer: remote GPU description adapter"

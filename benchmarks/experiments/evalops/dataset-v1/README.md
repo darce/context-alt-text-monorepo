@@ -31,6 +31,9 @@ restricted source files are not committed. Tests use that VM path by default;
 `EVALOPS_DATASET_INPUT_DIR` may point to a byte-identical retained snapshot.
 Unknown or changed hashes, duplicate IDs, changed row membership, altered source
 projections, malformed schema or modified generated artifacts fail closed.
+A changed pinned repository input, such as a re-pinned retrieval manifest,
+requires a lock update and producer regeneration; the tests rebuild the
+committed artifacts from the default repository inputs and name the stale pin.
 Diagnostic failures omit source content. No expert answers, real journals,
 review-run contents or live databases are opened.
 

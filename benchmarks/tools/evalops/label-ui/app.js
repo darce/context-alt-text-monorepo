@@ -119,7 +119,8 @@ $('decision-form').addEventListener('submit', async event => {
     const saved = await api('/api/decision', d.retry); session.answers[item.presentation_id] = saved;
     d.retry = null;
     if (!sameAnnotation(annotation(d), saved)) { status('Earlier save confirmed. Your edited draft is retained; save again to record the correction.'); busy(false); return; }
-    d.dirty = false; index++; render(true); status('Judgment saved durably.');
+    // Clear pending while the item is valid; the completion screen skips busy().
+    d.dirty = false; busy(false); index++; render(true); status('Judgment saved durably.');
   } catch (error) { busy(false); decisionError(`${error.message} Draft retained. Save again to retry the same request.`); }
 });
 $('previous').addEventListener('click', () => { if (!pending && index > 0) { index--; render(true); status('Drafts are preserved while navigating.'); } });

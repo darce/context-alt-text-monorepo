@@ -10,10 +10,42 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("import_pool", HERE / "import_pool.py")
 pool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pool)
+# Generated observation lineage, with foreign values a provider hit must not substitute.
+LINEAGE = {"strategy_id": "foreign", "query_id": "q-foreign", "provider_rank": 99,
+           "snapshot_sha256": "0" * 64, "json_pointer": "/wrong", "hit_sha256": "f" * 64}
 
 
 def rows(data):
     return [json.loads(line) for line in data.splitlines()]
+
+
+def assert_lineage(built, base):
+    """Walk pool contributor hits to pinned raw hits; corpus observations must match both."""
+    protocol = json.loads((base / "protocol.json").read_bytes())
+    pins = {s["strategy_id"]: s["snapshot"]["sha256"] for s in protocol["strategies"] if s["snapshot"]}
+    raw = {s["snapshot"]["sha256"]: json.loads((base / s["snapshot"]["path"]).read_bytes())
+           for s in protocol["strategies"] if s["snapshot"]}
+    expected = []
+    for r in rows(built["pool.jsonl"]):
+        for c in r["contributors"]:
+            for h in c["provider_hits"]:
+                _, _, qi, _, hi = h["json_pointer"].split("/")
+                provider = raw[pins[c["strategy_id"]]]["results"][int(qi)]
+                hit = provider["results"][int(hi)]
+                assert (provider["query_id"], int(hi) + 1, pool.doc_id(hit), h["snapshot_sha256"]) == (
+                    r["query_id"], h["provider_rank"], r["doc_id"], pins[c["strategy_id"]])
+                expected.append((r["doc_id"], {
+                    "strategy_id": c["strategy_id"], "query_id": r["query_id"], "provider_rank": h["provider_rank"],
+                    "snapshot_sha256": h["snapshot_sha256"], "json_pointer": h["json_pointer"],
+                    "hit_sha256": pool.digest(pool.encoded(hit))}, hit))
+    observed = [(d["doc_id"], {k: o[k] for k in LINEAGE}, {k: v for k, v in o.items() if k not in LINEAGE})
+                for d in rows(built["corpus.jsonl"]) for o in d["observations"]]
+
+    def canonical(item):
+        return json.dumps(item, sort_keys=True)
+
+    # One observation per contributor hit: generated lineage agrees, every raw field (null included) survives.
+    assert sorted(observed, key=canonical) == sorted(expected, key=canonical)
 
 
 def fixture(tmp_path, mutate=None, second=False):
@@ -60,6 +92,7 @@ def test_frozen_artifacts_trace_to_provider_and_matched_corpus():
             assert pool.doc_id(hit) == d["doc_id"]
             assert obs["hit_sha256"] == pool.digest(pool.encoded(hit))
             assert all(obs[k] == v for k, v in hit.items())
+    assert_lineage(built, HERE)
 
 
 def test_pool_is_not_gold_and_seed_provenance_is_preserved():
@@ -101,6 +134,7 @@ def test_multistrategy_union_preserves_contributors_and_first_record_rank(tmp_pa
             assert c["first_provider_rank"] == c["provider_hits"][0]["provider_rank"]
     added = next(r for r in pooled if r["doc_id"].endswith("synthetic-unjudged"))
     assert added["relevance"] is None and added["independent_relevance"] is None
+    assert_lineage(built, base)
     # Strategy declaration order cannot affect pool/rank artifact bytes.
     protocol = json.loads((base / "protocol.json").read_bytes())
     protocol["strategies"].reverse()
@@ -151,6 +185,17 @@ def test_provider_failure_is_unknown_not_missing_result_penalty(tmp_path, all_qu
 def test_semantic_mismatches_rejected_even_with_valid_hash(tmp_path, mutate, message):
     with pytest.raises(ValueError, match=message):
         pool.build(fixture(tmp_path, mutate))
+
+
+@pytest.mark.parametrize("null", [False, True], ids=["foreign", "null"])
+@pytest.mark.parametrize("key", LINEAGE)
+def test_provider_hit_cannot_replace_generated_lineage(tmp_path, key, null):
+    def collide(raw):
+        raw["results"][0]["results"][0][key] = None if null else LINEAGE[key]
+    base = fixture(tmp_path, collide)
+    # Fail closed; were the build accepted, the lineage walk names the replaced field.
+    with pytest.raises(ValueError, match=f"collides with generated lineage: {key}"):
+        assert_lineage(pool.build(base), base)
 
 
 def test_unpinned_input_rejected_before_artifact_generation(tmp_path):

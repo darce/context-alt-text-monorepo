@@ -451,3 +451,345 @@ def test_make_end_to_end_with_explicit_evidence(tmp_path, evidence):
     assert report["scorers"]["judge"]["status"] == "scored"
     assert report["scorers"]["retrieval"]["payload"]["counts"]["result_query_count"] == 1
     assert len(list((tmp_path / "make-reports").glob("*.json"))) == 1
+
+
+def scorer_fixtures():
+    """Reuse externally supplied scorer fixtures; never gold or product trials."""
+    modules = []
+    for name in ("reliability", "faithfulness"):
+        path = ROOT / f"benchmarks/tests/test_evalops_score_{name}.py"
+        spec = importlib.util.spec_from_file_location(f"runner_synthetic_{name}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        modules.append(module)
+    return modules
+
+
+def test_category_defaults_do_not_fail_tooling_or_invent_scores(tmp_path):
+    report = successful(invoke(tmp_path))
+    for name in ("reliability", "faithfulness"):
+        category = report["categories"][name]
+        assert category["status"] == "unavailable"
+        assert category["reason_codes"] == ["input_not_supplied"]
+        assert category["quality_acceptance"] == "not_evaluated"
+        assert category["product_regression"] == "unknown"
+        assert category["gate"]["status"] == "not_requested"
+        assert category["gate"]["disposition"] == "none"
+        assert report["scorers"][name]["payload"] is None
+    assert report["execution_status"] == "ok"
+    assert report["statistical_acceptance"]["status"] == "not_evaluated"
+
+
+def test_runner_uses_native_reliability_api_and_retains_failed_attempts(tmp_path):
+    reliability, _ = scorer_fixtures()
+    fixture = reliability.Synthetic([(["pass", "pass"], ["fail", "pass"])])
+    path = dump(tmp_path / "matched-trials.json", fixture.request())
+    report = successful(invoke(tmp_path, None, "--reliability", str(path)))
+    payload = report["scorers"]["reliability"]["payload"]
+    assert payload == fixture.score()
+    assert payload["paired"][0]["metrics"]["2"]["pass_pow_k"]["delta"] == -1
+    assert len(payload["attempts"]) == 4
+    assert payload["dispatch_infrastructure"]["counts"]["executed"] == 4
+    category = report["categories"]["reliability"]
+    assert category["product_regression"] == "unknown"  # synthetic negative delta is no product verdict
+    assert category["pins"]["input"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert category["pins"]["scorer_payload"] == "/scorers/reliability/payload"
+    assert (
+        report["code"]["executed_files"]["benchmarks/tools/evalops/score_reliability.py"]["sha256"]
+        == hashlib.sha256(reliability.SCORER.read_bytes()).hexdigest()
+    )
+
+
+def test_generation_judgments_and_pairwise_orders_are_native_diagnostics(tmp_path):
+    _, faithfulness = scorer_fixtures()
+    a, b = faithfulness.entry("synthetic-A"), faithfulness.entry("synthetic-B")
+    supplied = faithfulness.payload(a, b, pairs=[faithfulness.pair(a, b, winners=("first", "first"))])
+    path = dump(tmp_path / "generation.json", supplied)
+    report = successful(invoke(tmp_path, None, "--faithfulness", str(path)))
+    payload = report["scorers"]["faithfulness"]["payload"]
+    assert payload == faithfulness.scorer.score(supplied)
+    assert payload["pairwise"]["counts"]["inconsistent"] == 1
+    assert payload["semantic_rates"]["supported"]["value"] is None
+    assert report["categories"]["faithfulness"]["product_regression"] == "unknown"
+    assert (
+        report["code"]["executed_files"]["benchmarks/tools/evalops/score_faithfulness.py"]["sha256"]
+        == hashlib.sha256(faithfulness.SCORER.read_bytes()).hexdigest()
+    )
+
+
+def category_protocol(*, complete=False):
+    """Invented threshold request, never an accepted bar or baseline."""
+    ref = {"ref": "synthetic-only:untrusted", "sha256": "0" * 64, "version": "synthetic-v1"}
+    return {
+        "schema_version": "evalops.category-protocol.v1",
+        "categories": {
+            "reliability": {
+                "affected_action": {"kind": "promotion", "id": "synthetic-only:model-B"},
+                "thresholds": [{"metric": "/arms/B/2/pass_pow_k/value", "operator": "gte", "value": 0.9}],
+                "provenance": dict.fromkeys(
+                    (
+                        "independent_labels",
+                        "qc",
+                        "protocol",
+                        "accepted_baseline",
+                        "subject",
+                        "environment",
+                        "command",
+                        "inputs",
+                    ),
+                    ref if complete else None,
+                ),
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize("complete", [False, True])
+def test_threshold_request_cannot_certify_itself_or_block_generic_merge(tmp_path, complete):
+    request = category_protocol(complete=complete)
+    path = dump(tmp_path / "proposed-protocol.json", request)
+    report = successful(invoke(tmp_path, None, "--category-protocol", str(path)))
+    gate = report["categories"]["reliability"]["gate"]
+    assert gate["status"] == "unavailable"
+    assert gate["disposition"] == "hold_affected_promotion"
+    assert gate["affected_action"] == request["categories"]["reliability"]["affected_action"]
+    assert gate["validity"] == "unknown"  # a hold does not invent a valid defect
+    assert gate["request"] == request["categories"]["reliability"]
+    assert "external_verifier_unavailable" in gate["reason_codes"]
+    assert ("accepted_quality_provenance_missing" in gate["reason_codes"]) is (not complete)
+    assert report["categories"]["faithfulness"]["gate"]["status"] == "not_requested"
+    assert report["categories"]["reliability"]["product_regression"] == "unknown"
+    assert report["execution_status"] == "ok"
+    assert report["statistical_acceptance"]["status"] == "not_evaluated"
+
+
+def test_synthetic_negative_delta_and_dispatch_refusal_remain_distinct(tmp_path):
+    reliability, _ = scorer_fixtures()
+    fixture = reliability.Synthetic([(["pass", "pass"], ["fail", "pass"])])
+    trial = fixture.trials[-1]
+    fixture.bind_trial(trial, fixture.candidates[0], "unknown", status="dispatch_refused")
+    path = dump(tmp_path / "dispatch-refused.json", fixture.request())
+    proposed = dump(tmp_path / "proposed.json", category_protocol(complete=True))
+    report = successful(invoke(tmp_path, None, "--reliability", str(path), "--category-protocol", str(proposed)))
+    payload = report["scorers"]["reliability"]["payload"]
+    assert payload == fixture.score()
+    assert payload["dispatch_infrastructure"]["counts"]["dispatch_refused"] == 1
+    assert payload["arms"]["B"]["2"]["pass_pow_k"]["value"] is None
+    assert report["categories"]["reliability"]["product_regression"] == "unknown"
+    assert report["categories"]["reliability"]["gate"]["status"] == "unavailable"
+
+
+def test_actual_quarantined_dataset_cannot_become_trials_or_zero_rate(tmp_path):
+    candidates = [
+        json.loads(line) for line in (SEEDS / "dataset-v1/artifacts/candidates.jsonl").read_text().splitlines()
+    ]
+    assert len(candidates) == 240
+    path = dump(tmp_path / "candidates-only.json", {"candidates": candidates})
+    report = successful(invoke(tmp_path, None, "--reliability", str(path)))
+    payload = report["scorers"]["reliability"]["payload"]
+    assert payload["candidate_coverage"] == {"records": 240, "needs_labels": 240, "unavailable": 240}
+    assert payload["cohort"] is None and payload["arms"] == {}
+    assert payload["runtime_task_reliability"]["status"] == "unavailable"
+    assert "matched_trials_unavailable" in report["categories"]["reliability"]["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    "name,empty",
+    [
+        ("reliability", {"candidates": []}),
+        ("faithfulness", {"schema_version": "evalops.faithfulness-input.v1", "cases": []}),
+    ],
+)
+def test_empty_native_input_is_supplied_but_quality_stays_unavailable(tmp_path, name, empty):
+    path = dump(tmp_path / "empty.json", empty)
+    report = successful(invoke(tmp_path, None, f"--{name}", str(path)))
+    assert report["inputs"][name]["status"] == "supplied"
+    assert report["scorers"][name]["payload"] is not None
+    assert report["categories"][name]["quality_acceptance"] == "not_evaluated"
+
+
+def test_native_reliability_optional_nulls_remain_compatible(tmp_path):
+    reliability, _ = scorer_fixtures()
+    request = {"candidates": [], "trials": None, "design": None, "artifacts": None}
+    path = dump(tmp_path / "native-nulls.json", request)
+    report = successful(invoke(tmp_path, None, "--reliability", str(path)))
+    assert report["scorers"]["reliability"]["payload"] == reliability.MODULE.score(**request)
+
+
+@pytest.mark.parametrize("name", ["reliability", "faithfulness", "category-protocol"])
+@pytest.mark.parametrize("bad", ['{"a":', '{"a":1,"a":2}', '{"a":NaN}', '{"a":1e999}', "null", "{}"])
+def test_new_input_malformed_json_and_shapes_refuse_without_report(tmp_path, name, bad):
+    path = tmp_path / "bad.json"
+    path.write_text(bad)
+    result = invoke(tmp_path, None, f"--{name}", str(path))
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["execution_status"] == "error"
+    assert not list((tmp_path / "reports").glob("*.json"))
+
+
+@pytest.mark.parametrize("name", ["reliability", "faithfulness", "category-protocol"])
+def test_new_input_missing_fifo_and_protected_output(tmp_path, name):
+    path = tmp_path / "new-input.json"
+    assert invoke(tmp_path, None, f"--{name}", str(path)).returncode == 2
+    os.mkfifo(path)
+    result = invoke(tmp_path, None, f"--{name}", str(path))
+    assert result.returncode == 2 and "regular file" in result.stderr
+    path.unlink()
+    supplied = {
+        "reliability": {"candidates": []},
+        "faithfulness": {"schema_version": "evalops.faithfulness-input.v1", "cases": []},
+        "category-protocol": category_protocol(),
+    }[name]
+    dump(path, supplied)
+    before = path.read_bytes()
+    result = invoke(tmp_path, None, f"--{name}", str(path), "--output", str(path))
+    assert result.returncode == 2 and "overwrite input" in result.stderr
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("name", ["reliability", "faithfulness"])
+def test_native_arrays_honor_lower_runner_limits(tmp_path, name):
+    reliability, faithfulness = scorer_fixtures()
+    value = (
+        reliability.Synthetic([(["pass", "fail"], ["fail", "pass"])]).request()
+        if name == "reliability"
+        else faithfulness.payload(faithfulness.entry("A"), faithfulness.entry("B"))
+    )
+    path = dump(tmp_path / "oversized.json", value)
+    # Empty old inputs isolate the new array limit from the 100-row defaults.
+    empty = dump(tmp_path / "empty.jsonl", [], lines=True)
+    evidence = dict.fromkeys(("findings", "qrels", "errors", "lessons"), empty)
+    result = invoke(tmp_path, evidence, f"--{name}", str(path), "--max-rows", "1")
+    assert result.returncode == 2 and "bounded array" in result.stderr
+    assert not list((tmp_path / "reports").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "mutation", ["version", "category", "action", "boolean", "operator", "nonfinite", "pointer", "extra"]
+)
+def test_category_config_rejects_invalid_or_self_attested_authority(tmp_path, mutation):
+    request = category_protocol()
+    category = request["categories"]["reliability"]
+    if mutation == "version":
+        request["schema_version"] = "evalops.category-protocol.v2"
+    elif mutation == "category":
+        request["categories"]["judge"] = category
+    elif mutation == "action":
+        category["affected_action"]["kind"] = "merge"
+    elif mutation == "boolean":
+        category["provenance"]["independent_labels"] = True
+    elif mutation == "operator":
+        category["thresholds"][0]["operator"] = "execute"
+    elif mutation == "nonfinite":
+        category["thresholds"][0]["value"] = float("inf")
+    elif mutation == "pointer":
+        category["thresholds"][0]["metric"] = "/bad~pointer"
+    else:
+        category["gold_certified"] = True
+    path = dump(tmp_path / "invalid-protocol.json", request)
+    result = invoke(tmp_path, None, "--category-protocol", str(path))
+    assert result.returncode == 2
+    assert not list((tmp_path / "reports").glob("*.json"))
+
+
+def test_root_vm_target_and_remote_forwarding_preserve_environment_defaults(tmp_path):
+    reliability = dump(tmp_path / "matched-trials.json", {"candidates": []})
+    faithfulness = dump(tmp_path / "generation.json", {"schema_version": "evalops.faithfulness-input.v1", "cases": []})
+    protocol = dump(tmp_path / "proposed-protocol.json", category_protocol())
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-s",
+            "-C",
+            str(ROOT),
+            "evalops-vm",
+            f"EVALOPS_PYTHON={sys.executable}",
+            f"EVALOPS_RELIABILITY={reliability}",
+            f"EVALOPS_FAITHFULNESS={faithfulness}",
+            f"EVALOPS_CATEGORY_PROTOCOL={protocol}",
+            "EVALOPS_ARGS=--output-dir " + str(tmp_path / "vm-reports"),
+        ],
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    report = successful(result)
+    assert report["categories"]["reliability"]["gate"]["status"] == "unavailable"
+    for name in ("reliability", "faithfulness", "category_protocol"):
+        assert report["inputs"][name]["status"] == "supplied"
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith("WORKBAY_REMOTE_GATE_") or key in ("GATE_ENV", "GATE_WORKDIR", "GATE_TARGETS", "TARGETS"):
+            del env[key]
+    env["WORKBAY_REMOTE_GATE_WORKDIR"] = "."
+    result = subprocess.run(
+        ["make", "-n", "-C", str(ROOT), "check-remote", "TARGETS=evalops-vm"],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "bash scripts/remote_gate.sh run evalops-vm" in result.stdout
+    assert "OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 ACX_STRICT_GATE=1" in result.stdout
+    assert 'w="${WORKBAY_REMOTE_GATE_WORKDIR:-apps/prototype-description-service}"' in result.stdout
+
+
+@pytest.mark.parametrize("name", ["reliability", "faithfulness", "category-protocol"])
+def test_new_inputs_honor_byte_limits_before_parsing(tmp_path, name):
+    # Valid JSON preceded by whitespace: the byte reader must refuse this,
+    # even though parsing would produce a small, otherwise valid request.
+    supplied = {
+        "reliability": {"candidates": []},
+        "faithfulness": {"schema_version": "evalops.faithfulness-input.v1", "cases": []},
+        "category-protocol": category_protocol(),
+    }[name]
+    path = tmp_path / "large.json"
+    path.write_text(" " * 1024 + json.dumps(supplied))
+    empty = dump(tmp_path / "empty.jsonl", [], lines=True)
+    evidence = dict.fromkeys(("findings", "qrels", "errors", "lessons"), empty)
+    result = invoke(tmp_path, evidence, f"--{name}", str(path), "--max-bytes", "1024")
+    assert result.returncode == 2 and "byte limit 1024 exceeded" in result.stderr
+    assert not list((tmp_path / "reports").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "changes,expected",
+    [
+        ({"WORKBAY_REMOTE_GATE_ENV": "INVALID"}, "entries must be KEY=VALUE"),
+        ({"WORKBAY_REMOTE_GATE_WORKDIR": "../wrong"}, "invalid REMOTE_GATE_WORKDIR"),
+    ],
+)
+def test_evalops_vm_remote_config_refusals_are_local(tmp_path, changes, expected):
+    # The existing transport validates these before SSH/push. Executable stubs
+    # make accidental network dispatch observable without touching a service.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    sentinel = tmp_path / "unexpected-network"
+    for command in ("ssh", "git"):
+        stub = bindir / command
+        if command == "git":
+            body = f'#!/bin/sh\nif [ "$1" = "rev-parse" ]; then printf "%s\\n" "{ROOT}/.git"; exit 0; fi\ntouch "{sentinel}"\nexit 99\n'
+        else:
+            body = f'#!/bin/sh\ntouch "{sentinel}"\nexit 99\n'
+        stub.write_text(body)
+        stub.chmod(0o700)
+    env = {key: value for key, value in os.environ.items() if not key.startswith("WORKBAY_REMOTE_GATE_")}
+    env.update(
+        PATH=str(bindir) + os.pathsep + env["PATH"],
+        WORKBAY_REMOTE_GATE_HOST="gate@synthetic.invalid",
+        WORKBAY_REMOTE_GATE_WORKDIR=".",
+        WORKBAY_REMOTE_GATE_DIR=f"src/{ROOT.name}",
+    )
+    env.update(changes)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/remote_gate.sh"), "run", "evalops-vm"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 2 and expected in result.stderr
+    assert not sentinel.exists()

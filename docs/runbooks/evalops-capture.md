@@ -175,6 +175,33 @@ active run. Missed cadence is recorded rather than hidden by moving the next
 poll relative to a slow read. Timing, source replacement/schema/read/lock
 failures and size overflows cannot produce an acceptance claim.
 
+**Missed-slot accounting (source 4 correction, finding EVALOPS2-CAPTURE-R1-01).**
+Polls follow a fixed grid anchored at the segment start (run start, or resume
+time). Each `missed_cadence` gap names a `cause` and counts each unobserved
+slot once in `missed_polls`. A slot served by an actual observation, even a late
+one, is never counted:
+
+- `late_wakeup`: the loop woke after one or more due slots. The read serves
+  the latest due slot; earlier slots are counted from `due_monotonic`. The
+  window runs from the previous observation to the wakeup.
+- `read_overrun`: slots that came due while a read ran. They are skipped, not
+  served by back-to-back reads, and counted from `due_monotonic`. The window is
+  that read's start (`since`, `read_started_monotonic`) to its end. This is
+  separate from oversleeping before the read.
+
+Before this correction, an oversleep of 3s on a 6s/1s run (observations at
+0, 4 and 5s) recorded `missed_polls` 4 + 3 = 7 for 3 actually missed slots, and
+the second gap was zero-length. In one uninterrupted segment, observations plus
+counted missed slots now equal `expected_observations`, except in one case:
+if the final sleep overshoots the deadline, the run still ends
+`duration_completed` and the slots it skipped are not counted. That
+undercount is visible as `expected_observations` minus observations minus
+`missed_polls`. Restart, operator stop and failure gaps are not slot counts.
+Ledgers written by an earlier
+collector build keep their original gap payloads, because resume refuses changed
+code. Raw observation times and per-read seconds remain the authority. The
+counts are derived and do not prove seven-day coverage.
+
 **Boot identity (source 3 correction).** Linux retains the stripped UUID from
 `/proc/sys/kernel/random/boot_id`. Darwin uses only
 `/usr/sbin/sysctl -n kern.bootsessionuuid`, which the coordinator checked on the

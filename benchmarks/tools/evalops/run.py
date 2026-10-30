@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import math
 import os
 import re
 import stat
@@ -30,9 +31,22 @@ CODE_FILES = [
     "benchmarks/tools/evalops/score_judge.py",
     "benchmarks/tools/evalops/score_retrieval.py",
     "benchmarks/tools/evalops/error_recurrence.py",
+    "benchmarks/tools/evalops/score_reliability.py",
+    "benchmarks/tools/evalops/score_faithfulness.py",
     "mk/evalops.mk",
     "Makefile",
 ]
+CATEGORY_NAMES = ("reliability", "faithfulness")
+QUALITY_PINS = {
+    "independent_labels",
+    "qc",
+    "protocol",
+    "accepted_baseline",
+    "subject",
+    "environment",
+    "command",
+    "inputs",
+}
 ERROR_FIELDS = {
     "id",
     "task_ref",
@@ -146,6 +160,117 @@ def load(path, *, lines, max_rows, max_bytes):
         except ValueError as exc:
             raise ValueError(f"{path}:{number}: {exc}") from exc
     return rows, provenance(path, data, rows=len(rows))
+
+
+def category_protocol(value, max_rows):
+    """Validate proposed requests, never authenticate or enforce supplied bars.
+
+    No external authority verifier exists at this boundary. Artifact references
+    and even complete provenance are declarations, not acceptance receipts.
+    """
+    object_fields(value, {"schema_version", "categories"}, {"schema_version", "categories"}, "category protocol")
+    require(value["schema_version"] == "evalops.category-protocol.v1", "unsupported category protocol version")
+    categories = value["categories"]
+    object_fields(categories, set(), set(CATEGORY_NAMES), "categories")
+    for request in categories.values():
+        fields = {"affected_action", "thresholds", "provenance"}
+        object_fields(request, fields, fields, "category request")
+        action = request["affected_action"]
+        object_fields(action, {"kind", "id"}, {"kind", "id"}, "affected action")
+        require(
+            action["kind"] == "promotion" and text(action["id"]) and len(action["id"]) <= 256,
+            "affected action must identify a bounded promotion",
+        )
+        thresholds = request["thresholds"]
+        require(
+            type(thresholds) is list and 0 < len(thresholds) <= min(16, max_rows), "thresholds must be bounded array"
+        )
+        for threshold in thresholds:
+            fields = {"metric", "operator", "value"}
+            object_fields(threshold, fields, fields, "threshold")
+            metric = threshold["metric"]
+            require(
+                text(metric)
+                and metric.startswith("/")
+                and len(metric) <= 256
+                and re.search(r"~(?![01])", metric) is None,
+                "threshold metric must be a bounded native payload JSON pointer",
+            )
+            require(threshold["operator"] in ("gte", "lte"), "threshold operator must be gte or lte")
+            number = threshold["value"]
+            require(
+                type(number) in (int, float) and math.isfinite(number) and 0 <= number <= 1,
+                "threshold value must be finite in 0..1",
+            )
+        pins = request["provenance"]
+        object_fields(pins, set(), QUALITY_PINS, "accepted quality provenance")
+        for pin in pins.values():
+            if pin is None:
+                continue
+            fields = {"ref", "sha256", "version"}
+            object_fields(pin, fields, fields, "quality artifact reference")
+            require(
+                text(pin["ref"])
+                and text(pin["version"])
+                and isinstance(pin["sha256"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", pin["sha256"]),
+                "invalid quality artifact reference",
+            )
+    return categories
+
+
+def score_category(name, request, max_rows):
+    """Call the public scorer with its native contract; preserve its full report."""
+    if name == "reliability":
+        object_fields(request, {"candidates"}, {"candidates", "trials", "design", "artifacts"}, "reliability request")
+        arrays = ("candidates", "trials")
+    else:
+        arrays = ("cases", "pairwise")
+        require(isinstance(request, dict), "faithfulness request: expected object")
+    for key in arrays:
+        if isinstance(request.get(key), list):
+            require(len(request[key]) <= max_rows, f"{key} must be bounded array")
+    scorer = importlib.import_module(f"benchmarks.tools.evalops.score_{name}")
+    return scorer.score(**request) if name == "reliability" else scorer.score(request)
+
+
+def category_report(name, source, payload, proposal):
+    """Keep measurement, quality, product regression and promotion separate."""
+    reasons = ["input_not_supplied"] if payload is None else ["accepted_quality_unavailable"]
+    if payload is not None and name == "reliability":
+        if payload["cohort"] is None:
+            reasons.append("matched_trials_unavailable")
+    elif payload is not None:
+        reasons.append("semantic_labels_unauthenticated")
+    gate = {
+        "status": "not_requested",
+        "disposition": "none",
+        "affected_action": None,
+        "validity": "unknown",
+        "reason_codes": [],
+        "request": None,
+    }
+    if proposal is not None:
+        gate_reasons = ["external_verifier_unavailable"]
+        if any(proposal["provenance"].get(key) is None for key in QUALITY_PINS):
+            gate_reasons.append("accepted_quality_provenance_missing")
+        # [EVAL-12/13] AI Engineering, Canon v0.26.2. No flag, role, digest or
+        # self-attested QC can establish independent gold or an accepted baseline.
+        gate.update(
+            status="unavailable",
+            disposition="hold_affected_promotion",
+            affected_action=proposal["affected_action"],
+            reason_codes=sorted(gate_reasons),
+            request=proposal,
+        )
+    return {
+        "status": "unavailable" if payload is None else payload["status"],
+        "reason_codes": sorted(reasons),
+        "quality_acceptance": "not_evaluated",
+        "product_regression": "unknown",
+        "pins": {"input": source, "scorer_payload": f"/scorers/{name}/payload"},
+        "gate": gate,
+    }
 
 
 def validate_recurrence(rows, *, lessons=False):
@@ -368,6 +493,8 @@ def main(argv=None):
     sources.add_argument("--db")
     for name in ("lessons", "predictions", "qc", "results", "coverage"):
         parser.add_argument(f"--{name}", type=Path)
+    for name in (*CATEGORY_NAMES, "category-protocol"):
+        parser.add_argument(f"--{name}", type=Path, help="optional offline JSON; never establishes quality acceptance")
     for name in ("since", "until", "now"):
         parser.add_argument(f"--{name}")
     parser.add_argument("--k", type=int, action="append")
@@ -402,6 +529,9 @@ def main(argv=None):
             "qc": args.qc,
             "results": args.results,
             "coverage": args.coverage,
+            "reliability": args.reliability,
+            "faithfulness": args.faithfulness,
+            "category_protocol": args.category_protocol,
         }
         paths["lessons"] = (
             args.lessons if args.lessons else (None if args.db or args.errors else SEEDS / "lessons-v0.jsonl")
@@ -412,10 +542,24 @@ def main(argv=None):
                 inputs[name] = {"status": "unavailable", "reason": f"{name} not supplied"}
                 rows[name] = None
                 continue
+            input_limits = dict(limits)
+            if name in CATEGORY_NAMES:
+                scorer = importlib.import_module(f"benchmarks.tools.evalops.score_{name}")
+                input_limits["max_bytes"] = min(args.max_bytes, scorer.MAX_BYTES)
             rows[name], inputs[name] = load(
-                path, lines=name in ("findings", "qrels", "errors", "lessons", "results"), **limits
+                path, lines=name in ("findings", "qrels", "errors", "lessons", "results"), **input_limits
             )
             protected.append(path)
+        proposals = category_protocol(rows["category_protocol"], args.max_rows) if args.category_protocol else {}
+        category_scorers, categories = {}, {}
+        for name in CATEGORY_NAMES:
+            payload = score_category(name, rows[name], args.max_rows) if paths[name] is not None else None
+            category_scorers[name] = {
+                "status": "unavailable" if payload is None else payload["status"],
+                "reason": f"{name} not supplied" if payload is None else None,
+                "payload": payload,
+            }
+            categories[name] = category_report(name, inputs[name], payload, proposals.get(name))
         if args.db:
             rows["errors"], inputs["errors"], db_paths = database(args.db, recurrence, limits)
             protected.extend(db_paths)
@@ -484,7 +628,13 @@ def main(argv=None):
             },
             "inputs": inputs,
             "limits": limits,
-            "scorers": {"judge": judge_report, "retrieval": retrieval_report, "recurrence": recurrence_report},
+            "scorers": {
+                "judge": judge_report,
+                "retrieval": retrieval_report,
+                "recurrence": recurrence_report,
+                **category_scorers,
+            },
+            "categories": categories,
             "replay": replay,
             "statistical_acceptance": {
                 "status": "not_evaluated",
@@ -508,7 +658,16 @@ def main(argv=None):
         sys.stdout.write(payload)
         return 0
     # [AGT-10] Degrade loudly, The Art of UNIX Programming, ch. 1; Canon v0.26.2.
-    except (OSError, UnicodeError, ValueError, TypeError, RuntimeError, ImportError, subprocess.SubprocessError) as exc:
+    except (
+        OSError,
+        UnicodeError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        ImportError,
+        OverflowError,
+        subprocess.SubprocessError,
+    ) as exc:
         print(json.dumps({"schema_version": SCHEMA, "execution_status": "error", "error": str(exc)}), file=sys.stderr)
         return 2
     except Exception as exc:

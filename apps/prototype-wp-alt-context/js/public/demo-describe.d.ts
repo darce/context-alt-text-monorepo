@@ -1,4 +1,3 @@
-export const POLL_TIMEOUT_MESSAGE: string;
 export const PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS: 120;
 
 export const PUBLIC_DEMO_ERROR_CODE: Readonly<{
@@ -7,6 +6,7 @@ export const PUBLIC_DEMO_ERROR_CODE: Readonly<{
   INVALID_RESPONSE: 'acx_public_demo_invalid_response';
   INCOMPLETE_RESULT: 'acx_public_demo_incomplete_result';
   PIPELINE_FAILED: 'acx_public_demo_pipeline_failed';
+  RUN_NOT_AVAILABLE: 'acx_public_demo_run_not_available';
 }>;
 
 export type PublicDemoStatus = 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed' | 'cancelled';
@@ -27,9 +27,10 @@ export interface PublicDemoEnvelope {
 }
 
 export class PublicDemoClientError extends Error {
-  constructor(code: string, message: string, status?: number);
+  constructor(code: string, message: string, status?: number, terminal?: boolean);
   code: string;
   status: number;
+  terminal: boolean;
 }
 
 export interface PollRunOptions {

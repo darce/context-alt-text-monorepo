@@ -1,5 +1,6 @@
-export const POLL_TIMEOUT_MESSAGE =
-  'This description is taking longer than expected. Please wait a moment, then refresh the page before trying again.';
+// Read WordPress translations at call time, including when loaded as a module.
+const __ = (text, domain) => globalThis.wp?.i18n?.__?.(text, domain) ?? text;
+const sprintf = (format, value) => globalThis.wp?.i18n?.sprintf?.(format, value) ?? format.replace('%s', String(value));
 
 // The public browser contract ceiling is 120 seconds, not a default derived
 // from the server's GPU warm-up or inference budget.
@@ -11,6 +12,7 @@ export const PUBLIC_DEMO_ERROR_CODE = Object.freeze({
   INVALID_RESPONSE: 'acx_public_demo_invalid_response',
   INCOMPLETE_RESULT: 'acx_public_demo_incomplete_result',
   PIPELINE_FAILED: 'acx_public_demo_pipeline_failed',
+  RUN_NOT_AVAILABLE: 'acx_public_demo_run_not_available',
 });
 
 const STATUSES = new Set(['pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled']);
@@ -19,22 +21,23 @@ const GPU_STATES = new Set(['unknown', 'stopped', 'starting', 'warming', 'ready'
 const DESCRIPTION_RESULT_TIERS = new Set(['provisional_cpu', 'final_gpu']);
 
 export class PublicDemoClientError extends Error {
-  constructor(code, message, status = 0) {
+  constructor(code, message, status = 0, terminal = false) {
     super(message);
     this.name = 'PublicDemoClientError';
     this.code = code;
     this.status = status;
+    this.terminal = terminal;
   }
 }
 
 const invalidResponse = () => new PublicDemoClientError(
   PUBLIC_DEMO_ERROR_CODE.INVALID_RESPONSE,
-  'The demo returned an invalid response. Please refresh the page and try again.',
+  __('The demo returned an invalid response. Please refresh the page and try again.', 'alt-context'),
 );
-const timeoutError = () => new PublicDemoClientError(PUBLIC_DEMO_ERROR_CODE.POLL_TIMEOUT, POLL_TIMEOUT_MESSAGE);
+const timeoutError = () => new PublicDemoClientError(PUBLIC_DEMO_ERROR_CODE.POLL_TIMEOUT, __('This is taking longer than expected. The description may still finish: choose Describe again with the same image to check on it.', 'alt-context'));
 const requestAbortedError = () => new PublicDemoClientError(
   PUBLIC_DEMO_ERROR_CODE.REQUEST_ABORTED,
-  'The demo request was stopped because the page is closing.',
+  __('The demo request was stopped because the page is closing.', 'alt-context'),
 );
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -203,7 +206,7 @@ const requestJson = async (url, options, fetchImpl, { deadlineAt, now, navigatio
     if (!response.ok) {
       throw new PublicDemoClientError(
         typeof body?.code === 'string' ? body.code : PUBLIC_DEMO_ERROR_CODE.INVALID_RESPONSE,
-        typeof body?.message === 'string' ? body.message : 'The demo request could not be completed.',
+        typeof body?.message === 'string' ? body.message : __('The demo request could not be completed.', 'alt-context'),
         response.status,
       );
     }
@@ -224,11 +227,13 @@ const requestJson = async (url, options, fetchImpl, { deadlineAt, now, navigatio
 
 const terminalFailure = (body) => {
   if (body.error) {
-    return new PublicDemoClientError(body.error.code, body.error.message);
+    return new PublicDemoClientError(body.error.code, body.error.message, 0, true);
   }
   return new PublicDemoClientError(
     PUBLIC_DEMO_ERROR_CODE.PIPELINE_FAILED,
-    'The image could not be described. Please try again later.',
+    __('The image could not be described. Please try again later.', 'alt-context'),
+    0,
+    true,
   );
 };
 
@@ -263,7 +268,9 @@ export const pollRun = async ({
       if (!body.description) {
         throw new PublicDemoClientError(
           PUBLIC_DEMO_ERROR_CODE.INCOMPLETE_RESULT,
-          'The description finished without a usable result. Please try another image.',
+          __('The description finished without a usable result. Please try another image.', 'alt-context'),
+          0,
+          true,
         );
       }
       return body;
@@ -281,25 +288,37 @@ export const pollRun = async ({
 
 export const statusPresentation = (body) => {
   if (body.phase === 'warming') {
-    return { state: 'warming', message: 'The description service is warming up. A cold start can take several minutes…' };
+    return { state: 'warming', message: __('The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.', 'alt-context') };
   }
   if (body.phase === 'queued') {
-    return { state: 'queued', message: 'Your image is queued for description…' };
+    return { state: 'queued', message: __('Your image is queued for description…', 'alt-context') };
   }
   if (body.phase === 'describing') {
-    const progress = body.progress.total > 0 ? Math.round((body.progress.done / body.progress.total) * 100) : null;
-    return { state: 'describing', message: progress === null ? 'Describing the image…' : `Describing the image… ${progress}%` };
+    if (body.progress.total === 0) {
+      return { state: 'describing', message: __('Describing the image…', 'alt-context') };
+    }
+    const percent = new Intl.NumberFormat(globalThis.document?.documentElement?.lang || undefined, {
+      style: 'percent', maximumFractionDigits: 0,
+    }).format(body.progress.done / body.progress.total);
+    return {
+      state: 'describing',
+      message: sprintf(
+        /* translators: %s: share of the image description already done, formatted for the page locale (for example 50%). */
+        __('Describing the image… %s', 'alt-context'),
+        percent,
+      ),
+    };
   }
   if (body.phase === 'complete' && body.status === 'completed') {
     if (body.description_tier === 'final_gpu') {
-      return { state: 'completed', message: 'GPU description complete.' };
+      return { state: 'completed', message: __('GPU description complete.', 'alt-context') };
     }
     if (body.description_tier === 'provisional_cpu') {
-      return { state: 'degraded', message: 'CPU fallback draft (not GPU final).' };
+      return { state: 'degraded', message: __('CPU fallback draft (not GPU final).', 'alt-context') };
     }
-    return { state: 'degraded', message: 'Description available, processing tier unavailable.' };
+    return { state: 'degraded', message: __('Description available, processing tier unavailable.', 'alt-context') };
   }
-  return { state: 'failed', message: body.error?.message ?? 'The image could not be described. Please try again later.' };
+  return { state: 'failed', message: body.error?.message ?? __('The image could not be described. Please try again later.', 'alt-context') };
 };
 
 export const initializeDemo = (root) => {
@@ -309,6 +328,13 @@ export const initializeDemo = (root) => {
   const result = root.querySelector('[data-acx-demo-result]');
   if (!(form instanceof HTMLFormElement) || !(statusMessage instanceof HTMLElement) || !(result instanceof HTMLElement)) return;
 
+  const stop = document.createElement('button');
+  stop.type = 'button';
+  stop.className = 'acx-demo__stop';
+  stop.hidden = true;
+  stop.textContent = __('Stop waiting', 'alt-context');
+  (root.querySelector('[data-acx-demo-status]') ?? statusMessage).after(stop);
+
   let retryKey = null;
   let retryMedia = null;
 
@@ -316,7 +342,7 @@ export const initializeDemo = (root) => {
     root.dataset.state = state;
     statusMessage.textContent = message;
     if (statusIcon instanceof HTMLElement) {
-      statusIcon.textContent = { idle: '●', queued: '◌', warming: '◌', describing: '◌', completed: '✓', degraded: '!', limited: '!', failed: '×', error: '×' }[state] ?? '●';
+      statusIcon.textContent = { idle: '●', queued: '◌', warming: '◌', describing: '◌', completed: '✓', degraded: '!', limited: '!', failed: '×', error: '×', stopped: '■' }[state] ?? '●';
     }
   };
 
@@ -326,7 +352,7 @@ export const initializeDemo = (root) => {
     const selectedRadio = form.querySelector('input[type="radio"]:checked');
     const selected = selectedRadio instanceof HTMLInputElement ? selectedRadio.value : null;
     if (typeof selected !== 'string' || !/^\d+$/.test(selected)) {
-      setState('error', 'Choose an image before requesting a description.');
+      setState('error', __('Choose an image before requesting a description.', 'alt-context'));
       return;
     }
 
@@ -339,8 +365,15 @@ export const initializeDemo = (root) => {
     controls.forEach((control) => { control.disabled = true; });
     result.hidden = true;
     result.textContent = '';
-    setState('queued', 'Starting the description…');
+    setState('queued', __('Starting the description…', 'alt-context'));
     const navigation = new AbortController();
+    let userStopped = false;
+    const stopWaiting = () => {
+      userStopped = true;
+      navigation.abort();
+    };
+    stop.addEventListener('click', stopWaiting);
+    stop.hidden = false;
     const stopForNavigation = () => navigation.abort();
     globalThis.addEventListener('pagehide', stopForNavigation, { once: true });
 
@@ -382,13 +415,28 @@ export const initializeDemo = (root) => {
       retryKey = null;
       retryMedia = null;
     } catch (error) {
-      setState(
-        error instanceof PublicDemoClientError && error.status === 429 ? 'limited' : 'failed',
-        error instanceof Error ? error.message : 'The demo request could not be completed.',
-      );
+      if (userStopped) {
+        // Stop ends local observation only. Preserve uncertain backend acceptance.
+        setState('stopped', __('Stopped waiting. The image may still be described: choose Describe again with the same image to see the result.', 'alt-context'));
+      } else {
+        if (error instanceof PublicDemoClientError && (
+          error.terminal
+          || (error.status === 403 && error.code === PUBLIC_DEMO_ERROR_CODE.RUN_NOT_AVAILABLE)
+        )) {
+          retryKey = null;
+          retryMedia = null;
+        }
+        setState(
+          error instanceof PublicDemoClientError && error.status === 429 ? 'limited' : 'failed',
+          error instanceof Error ? error.message : __('The demo request could not be completed.', 'alt-context'),
+        );
+      }
     } finally {
       globalThis.removeEventListener('pagehide', stopForNavigation);
+      stop.removeEventListener('click', stopWaiting);
+      stop.hidden = true;
       controls.forEach((control) => { control.disabled = false; });
+      if (userStopped) form.querySelector('button[type="submit"]')?.focus();
     }
   });
 };

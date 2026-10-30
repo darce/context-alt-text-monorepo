@@ -2,10 +2,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  POLL_TIMEOUT_MESSAGE,
   PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS,
   PublicDemoClientError,
   parsePublicDemoEnvelope,
@@ -13,6 +12,10 @@ import {
   statusPresentation,
   initializeDemo,
 } from '../demo-describe.js';
+
+const TIMEOUT_COPY = 'This is taking longer than expected. The description may still finish: choose Describe again with the same image to check on it.';
+const COLD_START_COPY = 'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.';
+const STOPPED_COPY = 'Stopped waiting. The image may still be described: choose Describe again with the same image to see the result.';
 
 const radioFixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures/public-demo-radio');
 const ACTUAL_SHORTCODE_TWO_INSTANCES = readFileSync(join(radioFixtureDir, 'two-instances.html'), 'utf8');
@@ -113,7 +116,7 @@ describe('public demo describe polling', () => {
           clock += milliseconds;
         },
       }),
-    ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout', message: POLL_TIMEOUT_MESSAGE });
+    ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout', message: TIMEOUT_COPY });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -132,7 +135,7 @@ describe('public demo describe polling', () => {
         timeoutMs: 1_200,
         now: () => clock,
       }),
-    ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout', message: POLL_TIMEOUT_MESSAGE });
+    ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout', message: TIMEOUT_COPY });
   });
 
   it('surfaces typed REST errors instead of polling again', async () => {
@@ -254,8 +257,14 @@ describe('public demo describe polling', () => {
   });
 
   it('renders warming and describing phases honestly', () => {
-    expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'warming', gpu_state: 'starting' }))).message).toContain('warming up');
-    expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'describing', progress: { done: 1, total: 2 } }))).message).toContain('50%');
+    expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'warming', gpu_state: 'starting' }))).message).toBe(COLD_START_COPY);
+    const previousLang = document.documentElement.lang;
+    try {
+      document.documentElement.lang = 'en-US';
+      expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'describing', progress: { done: 1, total: 2 } }))).message).toContain('50%');
+    } finally {
+      document.documentElement.lang = previousLang;
+    }
   });
 
   it('clamps a large server deadline to the browser contract ceiling', async () => {
@@ -291,7 +300,7 @@ describe('public demo describe polling', () => {
       await Promise.resolve();
 
       expect(pollSignal?.aborted).toBe(true);
-      expect(root?.querySelector('[data-acx-demo-message]')?.textContent).toBe(POLL_TIMEOUT_MESSAGE);
+      expect(root?.querySelector('[data-acx-demo-message]')?.textContent).toBe(TIMEOUT_COPY);
     } finally {
       vi.unstubAllGlobals();
       vi.useRealTimers();
@@ -406,7 +415,7 @@ describe('public demo describe polling', () => {
 
       expect(pollSignal?.aborted).toBe(true);
       expect(Array.from(form?.elements ?? []).every((control) => !(control as HTMLInputElement).disabled)).toBe(true);
-      expect(root?.querySelector('[data-acx-demo-message]')?.textContent).toBe(POLL_TIMEOUT_MESSAGE);
+      expect(root?.querySelector('[data-acx-demo-message]')?.textContent).toBe(TIMEOUT_COPY);
     } finally {
       vi.unstubAllGlobals();
       vi.useRealTimers();
@@ -923,6 +932,260 @@ describe('public demo illustrative outcome preview', () => {
     } finally {
       vi.unstubAllGlobals();
       document.body.innerHTML = '';
+    }
+  });
+});
+
+// Real shortcode DOM and public controller envelopes, including terminal replay.
+const mountRetryDemo = () => {
+  document.body.innerHTML = ACTUAL_SHORTCODE_TWO_INSTANCES.split('\n')[0];
+  const root = document.querySelector<HTMLElement>('[data-acx-demo]');
+  const form = root?.querySelector<HTMLFormElement>('form.acx-demo__form');
+  const radio = form?.querySelector<HTMLInputElement>('input[value="41"]');
+  const submitButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (!root || !form || !radio || !submitButton) throw new Error('Missing actual shortcode controls');
+  radio.checked = true;
+  initializeDemo(root);
+  return {
+    root, form, submitButton,
+    stop: () => root.querySelector<HTMLButtonElement>('.acx-demo__stop'),
+    submit: () => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    message: () => root.querySelector('[data-acx-demo-message]')?.textContent,
+  };
+};
+const submittedRun = () => response(running({ status: 'pending', phase: 'queued', gpu_state: 'stopped', deadline_seconds: 690 }));
+const completedRun = () => response(running({ status: 'completed', phase: 'complete', progress: { done: 1, total: 1 }, description: 'A lakeside path.', description_tier: 'final_gpu' }));
+const postedKey = (fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>, index: number): string => {
+  const body = fetchImpl.mock.calls[index]?.[1]?.body;
+  expect(body, `POST #${index} must have a retry key`).toBeDefined();
+  return JSON.parse(String(body)).idempotency_key;
+};
+
+describe('Stop waiting', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+  });
+
+  it('is secondary and hidden at rest, aborts a pending poll, restores focus and re-attaches on restart', async () => {
+    let finishOldPoll: ((response: Response) => void) | undefined;
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(submittedRun())
+      // Ignore abort to prove that a late response cannot overwrite stopped/restarted UI.
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finishOldPoll = resolve; }))
+      .mockResolvedValueOnce(submittedRun())
+      .mockResolvedValueOnce(completedRun());
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    expect(demo.stop()?.hidden).toBe(true);
+    expect(demo.stop()?.type).toBe('button');
+    expect(demo.form.contains(demo.stop())).toBe(false);
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(demo.stop()?.hidden).toBe(false);
+    demo.stop()?.focus();
+    demo.stop()?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchImpl.mock.calls[1]?.[1]?.signal?.aborted).toBe(true);
+    expect(demo.root.dataset.state).toBe('stopped');
+    expect(demo.message()).toBe(STOPPED_COPY);
+    expect(demo.root.querySelector('[data-acx-demo-icon]')?.textContent).toBe('■');
+    expect(demo.root.querySelector('[data-acx-demo-status]')?.getAttribute('role')).toBe('status');
+    expect(demo.stop()?.hidden).toBe(true);
+    expect(demo.submitButton.disabled).toBe(false);
+    expect(document.activeElement).toBe(demo.submitButton);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedKey(fetchImpl, 2)).toBe(postedKey(fetchImpl, 0));
+    expect(new Headers(fetchImpl.mock.calls[3]?.[1]?.headers).get('Idempotency-Key')).toBe(postedKey(fetchImpl, 0));
+    expect(demo.root.dataset.state).toBe('completed');
+    expect(demo.stop()?.hidden).toBe(true);
+    finishOldPoll?.(response(running({ phase: 'warming' })));
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(demo.root.dataset.state).toBe('completed');
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it('stops backoff without another request and supports repeated stop/restart cycles', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(response(running({ phase: 'warming' })))
+      .mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(response(running()));
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    for (const expectedCalls of [2, 4]) {
+      demo.submit();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(demo.stop()?.hidden).toBe(false);
+      demo.stop()?.click();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(demo.root.dataset.state).toBe('stopped');
+      expect(fetchImpl).toHaveBeenCalledTimes(expectedCalls);
+    }
+    expect(postedKey(fetchImpl, 2)).toBe(postedKey(fetchImpl, 0));
+  });
+
+  it.each(['fetch', 'body'] as const)('can stop during submit %s and keeps the same key despite uncertain acceptance', async (stage) => {
+    const pending = new Promise<Response>(() => {});
+    const fetchImpl = vi.fn<typeof fetch>();
+    if (stage === 'fetch') fetchImpl.mockReturnValueOnce(pending);
+    else {
+      const slowBody = submittedRun();
+      vi.spyOn(slowBody, 'json').mockImplementation(() => new Promise(() => {}));
+      fetchImpl.mockResolvedValueOnce(slowBody);
+    }
+    fetchImpl.mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(completedRun());
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(demo.stop()?.hidden).toBe(false);
+    demo.stop()?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(demo.root.dataset.state).toBe('stopped');
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedKey(fetchImpl, 1)).toBe(postedKey(fetchImpl, 0));
+    expect(demo.root.dataset.state).toBe('completed');
+  });
+});
+
+describe('retry key lifecycle', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+  });
+
+  it('keeps the key at the 120s ceiling and aborts the local poll', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(submittedRun())
+      .mockImplementationOnce(() => new Promise<Response>(() => {}))
+      .mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(completedRun());
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(demo.submitButton.disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(demo.message()).toBe(TIMEOUT_COPY);
+    expect(fetchImpl.mock.calls[1]?.[1]?.signal?.aborted).toBe(true);
+    expect(demo.submitButton.disabled).toBe(false);
+    expect(demo.stop()?.hidden).toBe(true);
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedKey(fetchImpl, 2)).toBe(postedKey(fetchImpl, 0));
+  });
+
+  // Shapes from PublicDemoDescribeController::public_envelope_response/status.
+  it.each([
+    ['failed', () => response(running({ status: 'failed', phase: 'failed', error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described. Please try again later.' } }))],
+    ['cancelled', () => response(running({ status: 'cancelled', phase: 'cancelled', error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described. Please try again later.' } }))],
+    ['completed_with_errors', () => response(running({ status: 'completed_with_errors', phase: 'complete', progress: { done: 1, total: 1 }, error: { code: 'acx_public_demo_partial_failure', message: 'The description did not complete successfully. Please try another image.' } }))],
+    ['completed without description', () => response(running({ status: 'completed', phase: 'complete', progress: { done: 1, total: 1 } }))],
+    ['run unavailable', () => response({ code: 'acx_public_demo_run_not_available', message: 'That public demo run is not available.', data: { status: 403 } }, 403)],
+  ] as const)('retires the key after %s', async (_label, terminalResponse) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(submittedRun())
+      .mockResolvedValueOnce(terminalResponse()).mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(completedRun());
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(demo.root.dataset.state).toBe('failed');
+    expect(demo.submitButton.disabled).toBe(false);
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedKey(fetchImpl, 2)).not.toBe(postedKey(fetchImpl, 0));
+  });
+
+  it.each([
+    ['network', () => Promise.reject(new TypeError('Network unavailable'))],
+    ['invalid envelope', () => Promise.resolve(response({ status: 'running' }))],
+    ['rate limit', () => Promise.resolve(response({ code: 'acx_public_demo_rate_limited', message: 'Please retry.', data: { status: 429 } }, 429))],
+    ['server busy', () => Promise.resolve(response({ code: 'acx_public_demo_state_unavailable', message: 'Please retry.', data: { status: 503 } }, 503))],
+    ['nonce forbidden', () => Promise.resolve(response({ code: 'rest_cookie_invalid_nonce', message: 'Invalid nonce.', data: { status: 403 } }, 403))],
+    ['unavailable code without 403', () => Promise.resolve(response({ code: 'acx_public_demo_run_not_available', message: 'Please retry.', data: { status: 503 } }, 503))],
+  ] as const)('preserves the key after transient %s', async (_label, failure) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(submittedRun())
+      .mockImplementationOnce(failure).mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(completedRun());
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(demo.submitButton.disabled).toBe(false);
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedKey(fetchImpl, 2)).toBe(postedKey(fetchImpl, 0));
+  });
+
+  it('keeps navigation abort distinct from Stop waiting and retains the key', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(submittedRun())
+      .mockImplementationOnce(() => new Promise<Response>(() => {}))
+      .mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(completedRun());
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    globalThis.dispatchEvent(new Event('pagehide'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(demo.root.dataset.state).toBe('failed');
+    expect(demo.message()).toBe('The demo request was stopped because the page is closing.');
+    expect(fetchImpl.mock.calls[1]?.[1]?.signal?.aborted).toBe(true);
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedKey(fetchImpl, 2)).toBe(postedKey(fetchImpl, 0));
+  });
+
+  it('mints a new key when the visitor chooses another image after Stop', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(submittedRun())
+      .mockImplementationOnce(() => new Promise<Response>(() => {}))
+      .mockResolvedValueOnce(submittedRun()).mockResolvedValueOnce(completedRun());
+    vi.stubGlobal('fetch', fetchImpl);
+    const demo = mountRetryDemo();
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    demo.stop()?.click();
+    await vi.advanceTimersByTimeAsync(0);
+    const other = demo.form.querySelector<HTMLInputElement>('input[value="42"]');
+    if (!other) throw new Error('Missing second image');
+    other.checked = true;
+    demo.submit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedKey(fetchImpl, 2)).not.toBe(postedKey(fetchImpl, 0));
+  });
+});
+
+describe('demo copy is translatable', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('uses call-time gettext and the alt-context domain for status labels', () => {
+    const translate = vi.fn((text: string) => `«${text}»`);
+    vi.stubGlobal('wp', { i18n: { __: translate, sprintf: (format: string, value: string) => format.replace('%s', value) } });
+    expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'warming' }))).message).toBe(`«${COLD_START_COPY}»`);
+    for (const payload of [
+      running({ phase: 'queued', status: 'pending' }),
+      running({ progress: { done: 0, total: 0 } }),
+      running({ status: 'completed', phase: 'complete', description: 'Draft.', description_tier: 'provisional_cpu' }),
+      running({ status: 'completed', phase: 'complete', description: 'Draft.', description_tier: null }),
+    ]) expect(statusPresentation(parsePublicDemoEnvelope(payload)).message).toMatch(/^«.*»$/);
+    expect(translate.mock.calls.every((call) => Reflect.get(call, '1') === 'alt-context')).toBe(true);
+  });
+
+  it('formats percentages with the page language before translation interpolation', () => {
+    const previousLang = document.documentElement.lang;
+    vi.stubGlobal('wp', { i18n: { __: (text: string) => `«${text}»`, sprintf: (format: string, value: string) => format.replace('%s', value) } });
+    try {
+      document.documentElement.lang = 'fr-FR';
+      const message = statusPresentation(parsePublicDemoEnvelope(running({ progress: { done: 1, total: 2 } }))).message;
+      expect(message).toBe(`«Describing the image… ${new Intl.NumberFormat('fr-FR', { style: 'percent', maximumFractionDigits: 0 }).format(0.5)}»`);
+      expect(message).not.toContain('50%');
+    } finally {
+      document.documentElement.lang = previousLang;
     }
   });
 });

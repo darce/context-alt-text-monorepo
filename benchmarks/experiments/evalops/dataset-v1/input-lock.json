@@ -27,7 +27,7 @@
     "benchmarks/experiments/evalops/analysis-v1/schema.json": "a6faa88cad19c9cde16b9a14c21096f8cd2c90d19ca1a0519efc244b02d98c88",
     "benchmarks/experiments/evalops/contracts/evidence-reuse-v1.json": "1785d68d4479d6aac9de65784de6b3367fd34cd434a78c720bfc3cf267e9fac0",
     "benchmarks/experiments/evalops/contracts/trajectory-v1.json": "9823ee58eea3416c9ef0d6ed5807799e6f29ec28165c4ad7411856bf48267361",
-    "benchmarks/experiments/evalops/retrieval-v1/artifacts/manifest.json": "9ec2ca957faa6cb34574598662458a87b62b0b9fb2e17a1f46b9ef55e960e328",
+    "benchmarks/experiments/evalops/retrieval-v1/artifacts/manifest.json": "40bf7d8abe2688844207e6c7045f26b25fdb08ad15016751a1f2fabef3ef0b51",
     "benchmarks/experiments/evalops/retrieval-v1/protocol.json": "36bf4f114763a9e2f0cc9bd2abd7c20ab2535007753f2b35071c32a2b53af695",
     "benchmarks/tools/evalops/label_ui.py": "cc4f08a7c0b1fdcfadd45edeffb2409ccb95cb72e65eb8422e1c965e58a19ab9"
   },

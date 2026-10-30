@@ -1,16 +1,16 @@
 {
   "contract_files": {
-    "README.md": "c7f045b85b7fe260b472324f6aa3d1e4979b82c3e655238b7b540f2e8669b58a",
-    "import_candidates.py": "1dbe7a99d02d1aa53bedaba8ceb16112c741d7a0b8cabd22e2aab8bd90fd1610",
-    "input-lock.json": "cdd809edea9569efd971e62e581fc1e580e1dc57924bd1b6cab3f08a6fb1dcf9",
+    "README.md": "69106b54374b69930ebdd8f3f19d04725641b96f11c94f459243ebb6f47ca4be",
+    "import_candidates.py": "eb7d85bb65b6499b3d26fb95d719ae58d6f74148976669555f73338dc20f99bf",
+    "input-lock.json": "6a78703040f9bc1bc7ec18ae8c71e5bd3c0330711b54bf55af2a806f95bbb0e1",
     "protocol.json": "7319e5befcaa2dbc6337bb4aca74e84ff78b4a7852b5ad7603abab8aba376652",
     "schema.json": "c336da85ca459e32f38d3f6cf625a250d760a6d4a5439213a6f29d943f45e7b5",
-    "test_candidates.py": "e23c1ba11b37fa96020385420c261673f011980295277378d9520bef12a3bc99"
+    "test_candidates.py": "8cb6c0fa4e32f1dfe592691691a74b097e0273a4cdaa4b5552858778d89d8425"
   },
   "files": {
     "candidates.jsonl": {
       "bytes": 676662,
-      "sha256": "e7bc9d1152aa869a6833a2cc75b42da56bafa8509b176d038502b19a0d2f27bd"
+      "sha256": "4b0fc125345f1a18bb134cbdfaa7c40a35f451e969fa7a077bab48f407f83a2b"
     },
     "coverage.json": {
       "bytes": 5218,

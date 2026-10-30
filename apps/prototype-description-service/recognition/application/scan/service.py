@@ -734,6 +734,10 @@ class ScanService:
                 MediaIdentity.tenant_id == tenant_uuid,
                 MediaIdentity.media_id == int(media_id),
             )
+            # Greedy recycling gives earlier rows first choice. Immutable UUID
+            # order makes that choice stable across database return orders;
+            # detections retain their existing producer order.
+            .order_by(MediaIdentity.id)
             .options(selectinload(MediaIdentity.face_observation))
         )
         result = await self._session.execute(stmt)

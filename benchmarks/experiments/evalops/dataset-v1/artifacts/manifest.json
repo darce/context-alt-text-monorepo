@@ -1,0 +1,27 @@
+{
+  "contract_files": {
+    "README.md": "c7f045b85b7fe260b472324f6aa3d1e4979b82c3e655238b7b540f2e8669b58a",
+    "import_candidates.py": "1dbe7a99d02d1aa53bedaba8ceb16112c741d7a0b8cabd22e2aab8bd90fd1610",
+    "input-lock.json": "cdd809edea9569efd971e62e581fc1e580e1dc57924bd1b6cab3f08a6fb1dcf9",
+    "protocol.json": "7319e5befcaa2dbc6337bb4aca74e84ff78b4a7852b5ad7603abab8aba376652",
+    "schema.json": "c336da85ca459e32f38d3f6cf625a250d760a6d4a5439213a6f29d943f45e7b5",
+    "test_candidates.py": "e23c1ba11b37fa96020385420c261673f011980295277378d9520bef12a3bc99"
+  },
+  "files": {
+    "candidates.jsonl": {
+      "bytes": 676662,
+      "sha256": "e7bc9d1152aa869a6833a2cc75b42da56bafa8509b176d038502b19a0d2f27bd"
+    },
+    "coverage.json": {
+      "bytes": 5218,
+      "sha256": "69ec6ea85ee477e4e196252f98d9f9dd763bbf9fdfc4c33851194e9e5bc5acd4"
+    }
+  },
+  "independent_gold": "needs_labels",
+  "occurrence_count": 400,
+  "record_count": 240,
+  "schema": "evalops.dataset-artifacts.v1",
+  "sealed_splits": "withheld",
+  "validation_scope": "deterministic source custody, schema and missingness; no native runtime or quality acceptance",
+  "version": "1.0.0"
+}

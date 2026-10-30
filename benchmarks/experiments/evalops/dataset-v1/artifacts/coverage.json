@@ -1,0 +1,202 @@
+{
+  "acceptance": {
+    "calibration": "unavailable",
+    "leakage_guarantee": null,
+    "quality": "not_evaluated",
+    "runtime": "unavailable"
+  },
+  "actual": {
+    "admitted_cases": 0,
+    "admitted_strata": {
+      "healthy_control": 0,
+      "rare_critical": 0,
+      "representative": 0
+    },
+    "admitted_tracks": {
+      "description-generation": 0,
+      "retrieval": 0,
+      "review-policy": 0
+    },
+    "candidate_records": 240,
+    "candidate_strata": {
+      "unknown": 240
+    },
+    "candidate_tracks": {
+      "unknown": 240
+    },
+    "distinct_observed_task_refs": 33,
+    "independent_episodes": null,
+    "independent_gold_cases": 0,
+    "independent_gold_status": "needs_labels",
+    "independent_healthy_controls": 0,
+    "known_task_ref_records": 153,
+    "quarantined_records": 240,
+    "rule_assisted_coding_certainty": {
+      "pattern-supported": 197,
+      "uncertain": 43
+    },
+    "sealed_split_assignments": {
+      "dev": 0,
+      "test": 0,
+      "train": 0
+    },
+    "split_assignment_status": "withheld",
+    "stored_occurrences": 400,
+    "stratum_acquisition_deficits": {
+      "healthy_control": 40,
+      "rare_critical": 40,
+      "representative": 120
+    },
+    "substantiated_groups": 0,
+    "task_ref_warning": "observed task_ref is not canonical task/root/repeat closure or an independent episode count",
+    "unknown_task_ref_records": 87
+  },
+  "desired": {
+    "independent_cases": 200,
+    "meaning": "proposal, not obtained data; group allocation may prevent exact case ratios; counts are not population weights",
+    "nominal_case_counts": {
+      "dev": 40,
+      "test": 40,
+      "train": 120
+    },
+    "split_fractions": {
+      "dev": 0.2,
+      "test": 0.2,
+      "train": 0.6
+    },
+    "strata": {
+      "healthy_control": 40,
+      "rare_critical": 40,
+      "representative": 120
+    }
+  },
+  "missingness": {
+    "annotation.event_ref": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "annotation.label": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "annotation.provenance.attestation_ref": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "annotation.provenance.original_ref": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "annotation.provenance.protocol_version": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "difficulty": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.config": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.decoding": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.environment": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.model": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.order_handling": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.prompt": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.seed": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "execution_pins.task_version": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "expected_output_or_rubric": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "exposure.attestation": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "grouping.canonical_task_id": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "grouping.group_id": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "grouping.repeat_id": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "grouping.root_cause_id": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "independent_label": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "input": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "intent": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "sampling.inclusion_probability": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "sampling.population_weight": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "segment": {
+      "denominator_records": 240,
+      "null_records": 240
+    },
+    "source_context": {
+      "denominator_records": 240,
+      "null_records": 240
+    }
+  },
+  "quarantine_reason_counts": {
+    "exposure_attestation_unknown": 240,
+    "independent_expected_behavior_and_labels_unavailable": 240,
+    "prompt_model_config_environment_pins_unavailable": 240,
+    "replay_input_and_source_context_unavailable": 240,
+    "sampling_probability_and_population_weights_unknown": 240,
+    "task_root_cause_repeat_linkage_unsubstantiated": 240,
+    "track_intent_difficulty_segment_criticality_unassigned": 240
+  },
+  "sampling_weights": {
+    "population_weighted_metrics": null,
+    "status": "unknown"
+  },
+  "schema": "evalops.dataset-coverage.v1",
+  "unknown_enum_records": {
+    "criticality": 240,
+    "stratum": 240,
+    "track": 240
+  }
+}

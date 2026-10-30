@@ -1,0 +1,46 @@
+{
+  "canon": {
+    "manifest_sha256": "46636aa71f2e2e0c413b6ccff1cae4959543026c6ee7e4abde2bc7f30645a260",
+    "release": "0.26.2",
+    "relevant_files": {
+      "AGENTS.md": "174d8b4dea3b440fa47fa35b0887993aa0b98235ac56852e65528f80fef40536",
+      "PRINCIPLES.md": "0bd3555fa6b97cadd02563f87ac292cb97ce34df960e6361fa82beaf9a07f205",
+      "lexicons/engineering.md": "20e2cfe911755dfbd983b48e7b93be9cb46674f0ec0bce3dfec45a75a25fce6d",
+      "lexicons/graph-theory.md": "23bdbc8262cbd3577e4fd5ef3e49c6ad1f50fdfd1472ba3990497ef57e3eb61c",
+      "lexicons/ml-systems.md": "1dfbd751c2d52d223b0ae617da7f709dd29970f37ddd9bcdc0eb09a7e839cf20",
+      "reasoning/correction-at-source.md": "4d1be28240c0f7b12ade71a0f595cffe69ffd25a53b88ba5a4c64c022d75b2b7",
+      "reasoning/durable-decision-memory.md": "4d3cfde0adbe98e8f4e07c5c6bbff5267c626ec13d0636a31810e433308547fb",
+      "reasoning/evidence-before-commitment.md": "e48acbf579002de19890e3af34e170776d59fa93d56347e48042d67652ec57d1",
+      "reasoning/measurement-integrity.md": "789a3475bc9067d2d284e464eacb047fe86518bb0b506ca71397586f43a3eca8"
+    },
+    "verified_digest_count": 53
+  },
+  "frozen_manifest": {
+    "file": "manifest.json",
+    "observed_at": "2026-10-29T23:23:11.877676+00:00",
+    "sha256": "72c4a0adf2b18873c1e2ebf420ae94fa6ff2c45415d4abf29cee385360af426f"
+  },
+  "repository_inputs": {
+    "benchmarks/experiments/evalops/analysis-v1/axial-mapping.json": "615950bab980e1edba66c7c9bc641a0b8f3a6894b873b3f5001827c0666c057d",
+    "benchmarks/experiments/evalops/analysis-v1/manifest.json": "f99b333ff2599e0e4be91f6505ed7e8969ef04a97a28a4f67b323a6bbf61b012",
+    "benchmarks/experiments/evalops/analysis-v1/open-coded.jsonl": "1e6838dd168b32aada34823811b72a4a22651441fb920d4de22c85f6de1f6a5f",
+    "benchmarks/experiments/evalops/analysis-v1/schema.json": "a6faa88cad19c9cde16b9a14c21096f8cd2c90d19ca1a0519efc244b02d98c88",
+    "benchmarks/experiments/evalops/contracts/evidence-reuse-v1.json": "1785d68d4479d6aac9de65784de6b3367fd34cd434a78c720bfc3cf267e9fac0",
+    "benchmarks/experiments/evalops/contracts/trajectory-v1.json": "9823ee58eea3416c9ef0d6ed5807799e6f29ec28165c4ad7411856bf48267361",
+    "benchmarks/experiments/evalops/retrieval-v1/artifacts/manifest.json": "40bf7d8abe2688844207e6c7045f26b25fdb08ad15016751a1f2fabef3ef0b51",
+    "benchmarks/experiments/evalops/retrieval-v1/protocol.json": "36bf4f114763a9e2f0cc9bd2abd7c20ab2535007753f2b35071c32a2b53af695",
+    "benchmarks/tools/evalops/label_ui.py": "cc4f08a7c0b1fdcfadd45edeffb2409ccb95cb72e65eb8422e1c965e58a19ab9"
+  },
+  "schema": "evalops.dataset-input-lock.v1",
+  "snapshot": {
+    "file": "agent-errors.json",
+    "limitations": "bounded latest rows; record aggregation != independent episode",
+    "query": "select id,task_ref,harness,error_class,summary,tool_name,package_name,package_version,occurrence_count,created_at,last_seen_at from agent_errors order by last_seen_at desc,id desc limit 240",
+    "rows": 240,
+    "sha256": "b8ccc6fa3090eded1bbfeddd893a9434d6738eb7ccf8850255eb8a900fbc9873"
+  },
+  "status_notes": {
+    "file": "status-and-next-steps.txt",
+    "sha256": "108cb7d42f10f71f24505e9a17dbdeaf0df7ec057b67ea92ec19b52f159da87a"
+  }
+}

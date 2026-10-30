@@ -134,12 +134,12 @@ section = "Image description"
 [[var]]
 name = "ACX_GPU_ENDPOINT_ALLOWLIST"
 class = "config"
-targets = ["svc-vm"]
+targets = ["svc-vm", "svc-fir"]
 example = "acx-gpu-burst.compute.oraclevcn.com"
 required = true
 doc = "Comma-separated hostname patterns for a hostname ACX_GPU_ENDPOINT_URL.\nAn empty value falls back to the built-in patterns localhost, acx-gpu-burst and *.oraclevcn.com in both preflight and runtime.\nAn IP-literal URL is accepted only for a private non-loopback address; preflight rejects loopback, unspecified and public addresses."
 section = "Image description"
-values = { dev = "", staging = "", prod = "" }
+values = { dev = "", staging = "", prod = "", fir = "" }
 
 [[var]]
 name = "ACX_GPU_CONNECT_TIMEOUT_SECONDS"
@@ -204,13 +204,13 @@ values = { dev = "winner", staging = "winner", prod = "winner" }
 [[var]]
 name = "ACX_GPU_ENDPOINT_API_KEY"
 class = "secret"
-targets = ["svc-vm"]
+targets = ["svc-vm", "svc-fir"]
 example = ""
 required = true
 doc = "oci_vault: after approval, mint records refs on this variable: dev oci:<ocid>,\nprod vault:<ocid> (staging ref is preserved). RECOGNITION_VAULT_SECRET_MAP derives\nautomatically; never set a value or hand-edit it.\nMint on the operator workstation using the operator OCI CLI config:\n  make gpu-key-mint GPU_KEY_MINT_ARGS=\"--approve-mint\"\nAfter mint, run make env-examples and commit the fragment and generated examples. Full procedure\nand rotation refresh: docs/runbooks/gpu-key-mint.md. Until refs are minted, GPU\npreflight blocks the enabled adapter. env: put the direct value here; never commit it.\ndomain: service secret | source: OCI Vault / service operator | consumer: remote GPU description adapter"
 section = "Image description"
 required_when = { RECOGNITION_SECRET_BACKEND = ["env"], ACX_GPU_ENDPOINT_URL = ["*"] }
-secret = { dev = "oci:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa6zegkxaqzxkshjazsmbhawpzuwmcd7lodprgz5bugqmq", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa6zegkxaqzxkshjazsmbhawpzuwmcd7lodprgz5bugqmq" }
+secret = { dev = "oci:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa6zegkxaqzxkshjazsmbhawpzuwmcd7lodprgz5bugqmq", staging = "host:", prod = "vault:ocid1.vaultsecret.oc1.iad.amaaaaaa2mcagaqa6zegkxaqzxkshjazsmbhawpzuwmcd7lodprgz5bugqmq", fir = "host:" }
 
 [[override]]
 name = "ACX_VLM_MAX_IMAGE_EDGE_PX"

@@ -55,7 +55,7 @@ remote_paths = { fir = "/opt/acx-backend/dev-fir/.env" }
 preserve = ["ACX_IMAGE_REPO"]
 lease_env = { fir = "dev-fir" }
 example = "apps/prototype-description-service/.env.fir.example"
-sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description"]
+sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description", "GPU lifecycle"]
 doc = '''
 Isolated FIR/SFace 128d benchmark stack template for OCI VM (acx-dev-fir).
 

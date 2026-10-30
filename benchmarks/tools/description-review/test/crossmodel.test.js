@@ -11,6 +11,7 @@ const decisionCells = manifest.cells.filter(c => Object.entries(rule.filter).eve
 const source = fs.readFileSync(path.join(fixture.DIR, 'operator-review.js'), 'utf8');
 const css = fs.readFileSync(path.join(fixture.DIR, 'operator-review.css'), 'utf8');
 const crossmodel = () => require('../operator-crossmodel.js');
+const review = () => require('../operator-review.js');
 
 test('order contains exactly each image\'s decision keys, including the incomplete image', () => {
  const before = JSON.stringify({manifest, rule});
@@ -86,9 +87,17 @@ test('progress uses OperatorMetrics.decisionReviewed when supplied by the host',
  }
 });
 
-test('review source wires blind ordering, progress, assessment gate, and sealed decision mount', () => {
- for (const text of ['OperatorCrossModel.order', 'OperatorCrossModel.progress', 'OperatorDecision.render',
-  'Cross-model blind review', 'Candidate A', 'Candidate B', 'Candidate C', 'Decision reviewed',
+test('review panel shows the cross-model order under rule-numbered Candidate 1..N labels', () => {
+ assert.deepEqual(review().panelCandidates(rule), rule.candidates.map((id, i) => ({id, label: 'Candidate '+(i+1)})));
+ // Saved ballots bind candidate_keys to the cross-model order, so the panel must show exactly that order.
+ for (const seed of [state.blind_seed, ...Array.from({length:40}, (_, i) => 'seed-'+i)]) {
+  assert.deepEqual(review().panelOrders(manifest, rule, seed), crossmodel().order(manifest, rule, seed), seed);
+ }
+});
+
+test('review source wires progress, assessment gate, and sealed decision mount', () => {
+ for (const text of ['OperatorCrossModel.progress', 'OperatorDecision.render',
+  'Cross-model blind review', 'Decision reviewed',
   'Decision panel unavailable', 'operator-decision-rule', 'operator-decision-performance',
   'operator-decision', 'onUnseal', 'unsealed', 'clone(state)']) assert.ok(source.includes(text), text);
  for (const selector of ['.state', '.model-meta', '.timing', '.run-accounting', '.provenance-details', '.operator-pairs']) {

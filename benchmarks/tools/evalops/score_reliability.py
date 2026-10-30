@@ -50,6 +50,8 @@ visible. Estimates are case-macro descriptive values on that intersection, not
 population rates or causal claims. No weighted Wilson or population inference.
 An unavailable case withholds its entire declared linked task/root/group
 component; exclusions cannot break the original transitive linkage closure.
+Each supplied nonempty text identity links within its type even when another
+is missing; absent/null/empty/non-text values and cross-type text never link.
 pass@k = 1 - C(n-c,k)/C(n,k); pass^k = C(c,k)/C(n,k), within each case.
 
 Bootstrap design: sha256-cluster-stratified/v1, seed integer, resamples 100..2000.
@@ -368,7 +370,11 @@ def _trial_reasons(trial, row, arm, slot, design, evidence):
 
 
 def _clusters(rows):
-    """Connected closure of declared task/root/group identities; never split a root."""
+    """Connected closure of declared task/root/group identities; never split a root.
+
+    Each nonempty text identity links within its own type, even on a case with
+    other identities missing. Absent, null, empty or non-text values never link.
+    """
     parent = {r['case_id']: r['case_id'] for r in rows}
 
     def find(x):
@@ -380,6 +386,8 @@ def _clusters(rows):
     seen = {}
     for row in rows:
         for field in ('group_id', 'root_cause_id', 'canonical_task_id'):
+            if not _text(row.get(field)):
+                continue
             key = (field, row[field])
             if key in seen:
                 a, b = sorted((find(row['case_id']), find(seen[key])))
@@ -584,11 +592,12 @@ def score(candidates, trials=None, *, design=None, artifacts=None):
                              'canonical_task_id': group['canonical_task_id'], 'stratum': row['stratum'], 'arms': per_arm})
     # Compute linkage on the entire declared cohort. A missing case can be a
     # bridge between roots, so complete-case filtering must not split closure.
+    # A case missing one identity still bridges through every identity it supplies.
     linked = []
     for cid in sorted(design['case_ids']):
         group = cases[cid].get('grouping')
-        if isinstance(group, dict) and all(_text(group.get(k)) for k in ('group_id', 'root_cause_id', 'canonical_task_id')):
-            linked.append({'case_id': cid, **{k: group[k] for k in ('group_id', 'root_cause_id', 'canonical_task_id')}})
+        group = group if isinstance(group, dict) else {}
+        linked.append({'case_id': cid, **{k: group.get(k) for k in ('group_id', 'root_cause_id', 'canonical_task_id')}})
     blocked = {r['case_id'] for r in excluded}
     propagated = set()
     for cluster in _clusters(linked):

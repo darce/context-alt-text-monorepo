@@ -128,6 +128,15 @@ describe('UXREC-1 WB_CONTROL composition', () => {
     }));
   });
 
+  it('places compact beta expectations below the title and before the existing panels', () => {
+    render(<WorkbenchPage />);
+    const h1 = screen.getByRole('heading', { level: 1, name: 'Review Queue' });
+    const notice = screen.getByTestId('beta-expectations-notice');
+    expect(h1.nextElementSibling).toBe(notice);
+    expect(notice.nextElementSibling).toHaveClass('acx-workbench__panels');
+    expect(notice.querySelector('details')).not.toHaveAttribute('open');
+  });
+
   it('removes the redundant library heading and paragraph from recognition controls', () => {
     render(<WorkbenchPage />);
     const control = screen.getByRole('region', { name: 'Control' });

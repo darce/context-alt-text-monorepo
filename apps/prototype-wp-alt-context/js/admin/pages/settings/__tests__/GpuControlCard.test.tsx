@@ -156,7 +156,7 @@ describe('GpuControlCard', () => {
     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY.stopped}`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start service' })).toBeEnabled();
     expect(screen.getByRole('button', { name: /Stop service/ })).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByText(/\$2\.00 \/ service-hour/)).toBeInTheDocument();
+    expect(screen.getByText(/\$2\.00 \/ service-hour/)).not.toHaveTextContent(/warm-up/i);
     expect(screen.getByTestId('z-gpu-state-chip')).toHaveAttribute('role', 'status');
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
@@ -183,6 +183,8 @@ describe('GpuControlCard', () => {
 
     expect(screen.getByText('Confirm start')).toBeInTheDocument();
     expect(screen.getByText(/Returns to automatic after 30 min/)).toBeInTheDocument();
+    expect(screen.getByTestId('z-start-preview')).toHaveTextContent('It can take several minutes to be ready.');
+    expect(screen.getByTestId('z-start-preview')).not.toHaveTextContent(/2 min/);
     expect(screen.getByRole('button', { name: 'Confirm start' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 
@@ -202,7 +204,9 @@ describe('GpuControlCard', () => {
 
     expect(screen.getByText(`Service: ${GPU_STATE_VOCABULARY[state]}`)).toBeInTheDocument();
     const warmup = screen.getByTestId('gpu-warmup-eta');
-    expect(warmup).toHaveTextContent('Warming up, this can take a few minutes');
+    expect(warmup).toHaveTextContent(
+      'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.',
+    );
     expect(warmup).not.toHaveTextContent(/\d/);
   });
 

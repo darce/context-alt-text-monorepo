@@ -79,7 +79,7 @@ const idleHeadline = (status: ActivityStatus): string => {
     return GPU_STATE_VOCABULARY.degradedNotice(status.draftCount);
   }
   if (status.gpuState === GPU_STATE.STOPPED) {
-    return GPU_STATE_VOCABULARY.stoppedNotice;
+    return GPU_STATE_VOCABULARY.coldStartWait;
   }
   return __('No activity', 'alt-context');
 };

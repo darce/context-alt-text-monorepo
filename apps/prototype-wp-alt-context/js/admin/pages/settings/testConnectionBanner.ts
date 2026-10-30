@@ -6,6 +6,7 @@ import {
   type TestConnectionOutcomeValue,
   type TestConnectionResponse,
 } from '../../api/settingsApi';
+import { GPU_STATE_VOCABULARY } from '../workbench/gpuStatePresentation';
 
 export type BannerTone = 'success' | 'warning' | 'error' | 'info';
 
@@ -67,9 +68,6 @@ const unknownOutcomeBanner = (): BannerCopy =>
 
 const positiveEtaSeconds = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
-
-const startingEtaSeconds = (result: TestConnectionResponse): number | null =>
-  positiveEtaSeconds(result.warmup_eta_seconds) ?? positiveEtaSeconds(result.retry_after_seconds);
 
 export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
   if (!isTestConnectionOutcome(result.outcome)) {
@@ -168,7 +166,7 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
       );
     }
     case TestConnectionOutcome.STARTING: {
-      const eta = startingEtaSeconds(result);
+      const eta = positiveEtaSeconds(result.warmup_eta_seconds);
       const primary =
         eta !== null
           ? sprintf(
@@ -177,11 +175,7 @@ export const renderBanner = (result: TestConnectionResponse): BannerCopy => {
               eta,
             )
           : __('Description service is starting.', 'alt-context');
-      const remediation =
-        eta !== null
-          ? __('The description service is warming up. Suggest and describe will retry automatically.', 'alt-context')
-          : __('Warming up, this can take a few minutes', 'alt-context');
-      return banner('info', 'status', primary, remediation, { prefixIcon: true });
+      return banner('info', 'status', primary, GPU_STATE_VOCABULARY.coldStartWait, { prefixIcon: true });
     }
     case TestConnectionOutcome.SERVER_ERROR:
       return banner(

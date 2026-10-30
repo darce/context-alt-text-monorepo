@@ -135,7 +135,10 @@ export const GPU_STATE_VOCABULARY = {
   ready: __('ready', 'alt-context'),
   degraded: __('degraded', 'alt-context'),
   notReportedNotice: __('GPU tier not reported. Describing can still continue on CPU.', 'alt-context'),
-  stoppedNotice: __('Will warm on start (~2 min)', 'alt-context'),
+  coldStartWait: __(
+    'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.',
+    'alt-context',
+  ),
   startingNotice: __('GPU is starting. CPU drafts stay available while it gets ready.', 'alt-context'),
   warmingNotice: __('GPU is warming. Review results for each description’s compute tier.', 'alt-context'),
   readyNotice: __('GPU ready. Review results for each description’s compute tier.', 'alt-context'),
@@ -224,7 +227,7 @@ export const gpuStateNotice = (state: GpuState | null, cpuDraftCount = 0): strin
     case GPU_STATE.UNKNOWN:
       return GPU_STATE_VOCABULARY.notReportedNotice;
     case GPU_STATE.STOPPED:
-      return GPU_STATE_VOCABULARY.stoppedNotice;
+      return GPU_STATE_VOCABULARY.coldStartWait;
     case GPU_STATE.STARTING:
       return GPU_STATE_VOCABULARY.startingNotice;
     case GPU_STATE.WARMING:

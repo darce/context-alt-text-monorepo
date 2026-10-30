@@ -20,7 +20,7 @@
       "id": "settings-burst-gpu",
       "kind": "screen",
       "title": "Settings › Description Service",
-      "purpose": "Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. The same Settings screen also owns Description API URL/key autosave feedback and post-save health status. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. Warm-up ETA comes from the load/status payload or is omitted; never invent a retry countdown.",
+      "purpose": "Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. The same Settings screen also owns Description API URL/key autosave feedback and post-save health status. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming → The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds. [secondary] Stop service; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. The operator status payload has no warm-up ETA; do not turn a polling interval into a readiness countdown.",
       "route": "#/settings",
       "job_entry": true,
       "deep_link": true,
@@ -34,7 +34,7 @@
         { "id": "z-gpu-intent", "label": "Effective intent and expiry — automatic / start until HH:MM / stop (pending: Stopping after the current work finishes until idle)", "role": "status", "states": ["default", "loading", "degraded"] },
         { "id": "z-gpu-lease", "label": "Service activity — idle or running since, auto-stops by HH:MM (run limit); never show lease ids", "role": "status", "states": ["default", "empty"] },
         { "id": "z-gpu-load", "label": "Describe load — work in flight yes/no with load snapshot freshness", "role": "status", "states": ["default", "empty", "degraded"] },
-        { "id": "z-gpu-cost", "label": "Cost disclosure — hourly rate and warm-up time before Start, not in the headline", "role": "content", "states": ["default"] },
+        { "id": "z-gpu-cost", "label": "Cost disclosure — hourly rate and the 60-minute maximum before Start, not in the headline", "role": "content", "states": ["default"] },
         { "id": "z-gpu-controls", "label": "Start service / Stop service / Return to automatic / Refresh status", "role": "form", "states": ["default", "loading", "error", "degraded"] },
         { "id": "z-description-api-routing", "label": "Description API URL and API key — concealed key input; edits stay in memory and the key is never echoed or written to local storage", "role": "form", "states": ["default", "first_time", "edge_input", "loading", "error", "offline"] },
         { "id": "z-routing-save-status", "label": "Local autosave status — dirty / saving / saved / failed; failed or partial save retains the typed key, and newer edits remain dirty", "role": "status", "states": ["default", "loading", "error", "degraded"] },
@@ -45,14 +45,14 @@
       "id": "gpu-start-confirm",
       "kind": "overlay",
       "title": "Confirm Start",
-      "purpose": "Inline confirm strip below the controls: names the hourly cost, the warm-up time and the intent TTL after which lifecycle returns to automatic. Stays until confirmed or dismissed.",
+      "purpose": "Inline confirm strip below the controls: names the hourly cost, that the service can take several minutes to be ready (no fixed estimate), and the intent TTL after which lifecycle returns to automatic. Stays until confirmed or dismissed.",
       "route": "#/settings (inline strip; no dedicated route)",
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx",
       "primary_action_id": "act-gpu-confirm-start",
       "states": ["default", "loading", "error"],
       "zones": [
-        { "id": "z-start-preview", "label": "Start preview — cost per hour, warm-up estimate, auto-return after TTL", "role": "content", "states": ["default"] },
+        { "id": "z-start-preview", "label": "Start preview — cost per hour, several-minutes readiness note (no fixed estimate), auto-return after TTL", "role": "content", "states": ["default"] },
         { "id": "z-start-actions", "label": "Confirm start / Cancel", "role": "form", "states": ["default", "loading", "error"] }
       ]
     },
@@ -81,7 +81,8 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
       "states": ["default"],
       "zones": [
-        { "id": "z-wb-entry", "label": "Workbench entry", "role": "nav", "states": ["default"] }
+        { "id": "z-wb-entry", "label": "Workbench entry", "role": "nav", "states": ["default"] },
+        { "id": "z-beta-expectations", "label": "Beta disclosure below the Review Queue h1, before the existing panels; What to expect details closed initially, with draft-review guidance and the shared cold-start explanation; no alert or model-comparison claim", "role": "content", "states": ["default"] }
       ]
     }
   ],
@@ -103,7 +104,7 @@
       "steps": [
         { "screen_id": "settings-burst-gpu", "branch_label": "state stopped → Start service" },
         { "screen_id": "gpu-start-confirm", "branch_label": "preview cost + TTL → Confirm start (202)" },
-        { "screen_id": "settings-burst-gpu", "branch_label": "intent start (pending) → starting → warming (bounded ETA) → ready" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "intent start (pending) → starting → warming (cold-start explanation; no countdown) → ready" },
         { "screen_id": "exit-workbench", "branch_label": "Go to Workbench" }
       ]
     },

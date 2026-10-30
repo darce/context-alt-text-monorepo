@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { StepMap, STEP_MAP_VALUES, type StepMapValue } from '../components/ui/StepMap';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
+import { BetaExpectationsNotice } from './workbench/BetaExpectationsNotice';
 import { ScanTabContent } from './workbench/ScanTabContent';
 import { ScanActionPanel } from './workbench/Panels';
 import { RecognitionPolicyControl } from './workbench/RecognitionPolicyControl';
@@ -186,6 +187,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
       <h1 id="acx-workbench-title" className="acx-dashboard__title">
         {__('Review Queue', 'alt-context')}
       </h1>
+      <BetaExpectationsNotice />
       <div className="acx-workbench__panels">
         <SyncStatusIndicator
           activeSection={activeSection}

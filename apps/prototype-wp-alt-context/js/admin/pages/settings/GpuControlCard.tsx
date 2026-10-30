@@ -10,7 +10,12 @@ import {
   unavailableReasonCopy,
   unavailableServiceLabel,
 } from '../../utils/serviceUnavailable';
-import { GPU_STATE_ICON, GPU_STATE_TONE, gpuStatePresentation } from '../workbench/gpuStatePresentation';
+import {
+  GPU_STATE_ICON,
+  GPU_STATE_TONE,
+  GPU_STATE_VOCABULARY,
+  gpuStatePresentation,
+} from '../workbench/gpuStatePresentation';
 import { useGpuControl } from './useGpuControl';
 
 type ConfirmationAction = typeof GpuIntentAction.START | typeof GpuIntentAction.STOP;
@@ -483,7 +488,7 @@ export const GpuControlCard = (): React.JSX.Element => {
           </div>
           <div id="z-gpu-cost" data-testid="z-gpu-cost" className="acx-gpu-control__row">
             {__(
-              'Cost: ≈$2.00 / service-hour · warm-up ≈2 min · never runs longer than the 60-minute maximum',
+              'Cost: ≈$2.00 / service-hour · never runs longer than the 60-minute maximum',
               'alt-context',
             )}
           </div>
@@ -499,7 +504,7 @@ export const GpuControlCard = (): React.JSX.Element => {
           ) : null}
 
           {displayedState === GPU_STATE.STARTING || displayedState === GPU_STATE.WARMING ? (
-            <p data-testid="gpu-warmup-eta">{__('Warming up, this can take a few minutes', 'alt-context')}</p>
+            <p data-testid="gpu-warmup-eta">{GPU_STATE_VOCABULARY.coldStartWait}</p>
           ) : null}
 
           <div id="z-gpu-controls" data-testid="z-gpu-controls" className="acx-gpu-control__actions">
@@ -563,7 +568,7 @@ export const GpuControlCard = (): React.JSX.Element => {
             <div id="z-start-preview" data-testid="z-start-preview" className="notice inline notice-warning">
               <p>
                 {__(
-                  'Starts the description service now (≈$2.00/h). Ready in about 2 min. ' +
+                  'Starts the description service now (≈$2.00/h). It can take several minutes to be ready. ' +
                     'Returns to automatic after 30 min unless work keeps it busy; the 60-minute maximum still applies.',
                   'alt-context',
                 )}

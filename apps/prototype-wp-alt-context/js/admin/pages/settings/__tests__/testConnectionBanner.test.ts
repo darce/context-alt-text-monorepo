@@ -32,14 +32,20 @@ describe('renderBanner starting outcome', () => {
     expect(TONE_CLASS[banner.tone]).toBe('notice-info');
     expect(banner.primary).toContain(TONE_ICON.info);
     expect(banner.primary).toContain('Description service is starting — ready in ~90 s');
-    expect(banner.remediation).toContain('warming up');
+    expect(banner.remediation).toBe(
+      'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.',
+    );
   });
 
-  it('uses retry_after_seconds when warmup_eta_seconds is absent', () => {
+  it('does not mistake a retry delay for a readiness estimate', () => {
     const banner = renderBanner(probe({ retry_after_seconds: 45 }));
 
     expect(banner.tone).toBe('info');
-    expect(banner.primary).toContain('Description service is starting — ready in ~45 s');
+    expect(banner.primary).toContain('Description service is starting.');
+    expect(banner.primary).not.toMatch(/\d/);
+    expect(banner.remediation).toBe(
+      'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.',
+    );
   });
 
   it('renders starting copy without an invented countdown when no ETA is present', () => {
@@ -51,7 +57,9 @@ describe('renderBanner starting outcome', () => {
     expect(banner.primary).toContain(TONE_ICON.info);
     expect(banner.primary).toContain('Description service is starting.');
     expect(banner.primary).not.toMatch(/\d/);
-    expect(banner.remediation).toBe('Warming up, this can take a few minutes');
+    expect(banner.remediation).toBe(
+      'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.',
+    );
     expect(banner.remediation).not.toMatch(/\d/);
   });
 

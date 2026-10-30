@@ -10,6 +10,7 @@ import {
 import {
   descriptionWaitPresentation,
   GPU_STATE_PRESENTATION,
+  GPU_STATE_VOCABULARY,
   gpuStateNotice,
   gpuStatePresentation,
   type GpuStatePresentation,
@@ -73,7 +74,14 @@ describe('gpuStatePresentation', () => {
   });
 
   it('owns the stopped and degraded consequence copy', () => {
-    expect(gpuStateNotice(GPU_STATE.STOPPED, 0)).toBe('Will warm on start (~2 min)');
+    expect(GPU_STATE_VOCABULARY).toHaveProperty(
+      'coldStartWait',
+      'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.',
+    );
+    expect(GPU_STATE_VOCABULARY).not.toHaveProperty('stoppedNotice');
+    expect(gpuStateNotice(GPU_STATE.STOPPED, 0)).toBe(
+      'The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.',
+    );
     expect(gpuStateNotice(GPU_STATE.DEGRADED, 3)).toBe(
       'GPU unavailable. Existing results remain available; review each description’s compute tier.',
     );

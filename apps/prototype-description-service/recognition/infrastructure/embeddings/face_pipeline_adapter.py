@@ -551,9 +551,18 @@ def _freeze_pair(detector, embedder, aligner, manifest, space, detector_dir,
     # ambient template registry. Immutable bytes also prevent setflags(write=True).
     template = aligner.dst_landmarks
     aligner.dst_landmarks = np.frombuffer(template.tobytes(), dtype=template.dtype).reshape(template.shape)
+    preprocessing = artifacts[1].manifest_snapshot.preprocessing
+    # SFace executes the legacy RGB/scale=1/mean=0 builder when its pinned
+    # manifest has no preprocessing declaration. Record that existing recipe
+    # without adding a graph-normalization claim or changing the manifest.
+    embedding_recipe = asdict(preprocessing) if preprocessing is not None else {
+        "input_size": (aligner.output_size, aligner.output_size),
+        "channel_order": "RGB", "input_scale": 1.0, "input_mean": 0.0,
+        "alignment_template_id": aligner.template_id,
+    }
     spec = FrozenPreprocessingSpecV1(
             detector=_frozen_detector_recipe(detector),
-            embedding={**asdict(artifacts[1].manifest_snapshot.preprocessing),
+            embedding={**embedding_recipe,
                        "layout": "NCHW", "dtype": "float32"},
             alignment={"template_sha256": tensor_record(aligner.dst_landmarks)["sha256"],
                           "template": aligner.dst_landmarks.tolist(), "dtype": str(aligner.dst_landmarks.dtype),
@@ -619,7 +628,7 @@ def _load_face_pipeline_runtime(
     assert_embedding_pgvector_pair()
     if retry_max_side is None:
         retry_max_side = resolve_retry_max_side(os.environ.get(RETRY_MAX_SIDE_ENV))
-    fingerprint =numeric_runtime_fingerprint() if space is ModelSpace.AURAFACE else None
+    fingerprint = numeric_runtime_fingerprint()
     if space is ModelSpace.AURAFACE:
         manifest = auraface_embedding_model_manifest(_fingerprint=fingerprint)
     else:
@@ -634,7 +643,7 @@ def _load_face_pipeline_runtime(
             nms_threshold=nms_threshold,
             top_k=top_k,
             retry_max_side=retry_max_side,
-            **({"acquire_verified": True} if space is ModelSpace.AURAFACE else {}),
+            acquire_verified=True,
         )
     except ModelMissingError as exc:
         raise FacePipelineRuntimeUnavailableError(
@@ -644,7 +653,7 @@ def _load_face_pipeline_runtime(
     if space is ModelSpace.AURAFACE:
         embedder = OrtSFaceEmbedder(model_name="auraface", models_dir=embedder_dir, acquire_verified=True)
     else:
-        embedder = OrtSFaceEmbedder(models_dir=embedder_dir)
+        embedder = OrtSFaceEmbedder(models_dir=embedder_dir, acquire_verified=True)
     return FacePipelineRuntime(
         detector=detector,
         aligner=aligner,
@@ -913,7 +922,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                 self._execution_receipt = ExecutionReceiptV1(
                     execution_id=str(uuid4()), runtime_generation_id=runtime.runtime_generation_id,
                     detector_session_id=runtime.session_receipts["yunet"].session_id,
-                    embedder_session_id=runtime.session_receipts["auraface"].session_id, captured_at=captured_at,
+                    embedder_session_id=runtime.session_receipts[runtime.embedder._model_name].session_id, captured_at=captured_at,
                     input_lineage=tensors["input_lineage"], detector_input=tensors["detector"][0] if tensors["detector"] else {},
                     detections_sha256=tensors["detections_sha256"], alignment=tensors["alignment"],
                     embedder_input=tensors["embedder"][-1] if tensors["embedder"] else {},
@@ -989,7 +998,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                         "template_sha256": tensor_record(self._runtime.aligner.dst_landmarks)["sha256"],
                         "affine_sha256": tensor_record(aligned.affine)["sha256"],
                         "crop_sha256": tensor_record(aligned.crop)["sha256"],
-                        "executing_spec_sha256": self._runtime.session_receipts["auraface"].frozen_preprocessing_sha256}
+                        "executing_spec_sha256": self._runtime.session_receipts[self._runtime.embedder._model_name].frozen_preprocessing_sha256}
                 batch = self._runtime.embedder.embed([aligned.crop])
                 embedding = batch.vectors[0]
                 emb_norm = float(batch.norms[0])

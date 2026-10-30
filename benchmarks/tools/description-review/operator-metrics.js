@@ -1,7 +1,7 @@
 /* Pinned operator contract v1. Human annotations are the only quality evidence. */
 (function (root) {
 'use strict';
-const DATA='qwen-high-precision-12-all-history-20261025', SHA='20bec411e94963641b1882edb680240991771bcc7b350856eb293398e3aa4d0e';
+const PINS=freezePins([{data:'qwen-high-precision-12-all-history-20261025',sha:'20bec411e94963641b1882edb680240991771bcc7b350856eb293398e3aa4d0e'}]);
 const issues=['unsupported','subject_object','attribute_count','action_relation','ocr_wrong','ocr_omission','salient_omission','context_identity'];
 const factual=issues.filter(x=>!x.endsWith('omission'));
 const severities=['not_assessed','none','minor','major','critical','uncertain'], ocrs=['not_assessed','accurate','wrong','omitted','not_applicable','uncertain'];
@@ -11,14 +11,32 @@ function str(x){return typeof x==='string'&&x.trim().length>0;}
 function arr(x){check(Array.isArray(x),'Expected array');return x;}
 function enumv(x,vs){check(vs.includes(x),'Invalid enum: '+x);}
 function unique(xs){check(new Set(xs).size===xs.length,'Duplicate values');}
+function freezePins(pins){
+check(Array.isArray(pins)&&pins.length>0,'Expected data pins');
+const seen=new Set();
+return Object.freeze(pins.map(pin=>{
+check(pin&&str(pin.data)&&typeof pin.sha==='string'&&/^[0-9a-f]{64}$/.test(pin.sha),'Invalid data pin');
+const key=JSON.stringify([pin.data,pin.sha]);check(!seen.has(key),'Duplicate data pin');seen.add(key);
+return Object.freeze({data:pin.data,sha:pin.sha});
+}));
+}
+// Register independently verified pins in trusted tool setup, never from review imports.
+// Each instance snapshots its allowlist; registering another report cannot loosen the default.
+function withPins(additionalPins){
+check(Array.isArray(additionalPins),'Expected data pins');
+const pins=freezePins([...PINS,...additionalPins]);
+return Object.freeze({...api,PINS:pins,summarize:(m,a)=>summarize(m,a,pins)});
+}
 function rate(n,d){return d?n/d:null;}
 function mean(xs){return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:null;}
 function ci(xs){if(xs.length<2)return null;let s=0x51f15e;const vals=[];for(let b=0;b<2000;b++){let sum=0;for(let i=0;i<xs.length;i++){s^=s<<13;s^=s>>>17;s^=s<<5;sum+=xs[(s>>>0)%xs.length];}vals.push(sum/xs.length);}vals.sort((a,b)=>a-b);return [vals[49],vals[1949]];}
 function norm(s){return s.replace(/\r\n?/g,'\n').normalize('NFC');}
 function distance(a,b){a=Array.from(a);b=Array.from(b);let p=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let q=[i];for(let j=1;j<=b.length;j++)q[j]=Math.min(q[j-1]+1,p[j]+1,p[j-1]+(a[i-1]!==b[j-1]));p=q;}return p[b.length];}
-function summarize(m,a){
+function summarize(m,a,pins){
 check(m&&a,'Missing inputs');
-function jsonValid(x){check(x!==undefined&&!(typeof x==='number'&&!Number.isFinite(x)),'Undefined/nonfinite input');if(x&&typeof x==='object')Object.values(x).forEach(jsonValid);}jsonValid(m);jsonValid(a);for(const [x,schema] of [[m,'bakeoff-operator-manifest/v1'],[a,'bakeoff-operator-reviews/v1']]){check(x.schema===schema&&x.dataset_id===DATA&&x.manifest_sha256===SHA&&x.rubric_version==='accuracy-v1','Schema/dataset/manifest/rubric mismatch');}
+function jsonValid(x){check(x!==undefined&&!(typeof x==='number'&&!Number.isFinite(x)),'Undefined/nonfinite input');if(x&&typeof x==='object')Object.values(x).forEach(jsonValid);}jsonValid(m);jsonValid(a);
+const pin=pins.find(pin=>pin.data===m.dataset_id&&pin.sha===m.manifest_sha256);
+for(const [x,schema] of [[m,'bakeoff-operator-manifest/v1'],[a,'bakeoff-operator-reviews/v1']]){check(pin&&x.schema===schema&&x.dataset_id===pin.data&&x.manifest_sha256===pin.sha&&x.rubric_version==='accuracy-v1','Schema/dataset/manifest/rubric mismatch');}
 check(str(a.reviewer_id)&&typeof a.blind_seed==='string','Missing reviewer/seed');
 const images=new Map(),cells=new Map(), combos=new Set(), arms=new Map(), pairs=new Map(), reviewed=new Map(), bound=new Set();
 arr(m.images).forEach(im=>{check(str(im.image_id)&&str(im.input_sha256)&&!images.has(im.image_id),'Invalid/duplicate image');images.set(im.image_id,im);});
@@ -177,5 +195,5 @@ if(missing.length)notes.push('Missing decision cells are bounded by pessimistic 
 if(sensitive)notes.push('Quality or performance winner changes under the missing-cell imputations.');
 return result;
 }
-const api={summarize,decisionCells,decisionReviewed,accepted,decide,ci};if(typeof module==='object'&&module.exports)module.exports=api;else root.OperatorMetrics=api;
+const api={PINS,withPins,summarize:(m,a)=>summarize(m,a,PINS),decisionCells,decisionReviewed,accepted,decide,ci};if(typeof module==='object'&&module.exports)module.exports=api;else root.OperatorMetrics=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

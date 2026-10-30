@@ -2,10 +2,10 @@
 (function (root) {
 'use strict';
 const TEXT = {
- crossModel:'Three-model blind review (A/B/C)',
- exitCrossModel:'Exit three-model blind review (reveal labels)',
+ crossModel:'Cross-model blind review',
+ exitCrossModel:'Exit cross-model blind review (reveal labels)',
  crossModelUnavailable:'Cross-model blind review unavailable: decision rule or operator-crossmodel.js missing.',
- candidates:['Candidate A','Candidate B','Candidate C'],
+ candidate:n=>'Candidate '+n,
  decisionReviewed:'Decision reviewed',
  progressUnavailable:'Decision progress unavailable',
  decisionTitle:'Description-model decision',
@@ -73,6 +73,20 @@ function validate(manifest, contract, s) {
  return s;
 }
 function crossModelAPI() {const api=root.OperatorCrossModel||(typeof require==='function'?require('./operator-crossmodel.js'):null);if(!api)throw Error('Cross-model preference module unavailable');return api;}
+function panelCandidates(rule) {
+ if(!rule||!Array.isArray(rule.candidates)||rule.candidates.length<2||new Set(rule.candidates).size!==rule.candidates.length||rule.candidates.some(id=>typeof id!=='string'||!id.trim()))throw Error('Invalid candidate rule');
+ return rule.candidates.map((id,index)=>({id,label:TEXT.candidate(index+1)}));
+}
+function panelOrders(manifest,rule,seed) {
+ const candidates=new Set(panelCandidates(rule).map(candidate=>candidate.id)),seen=new Set();
+ for(const cell of manifest.cells.filter(c=>Object.entries(rule.filter).every(([key,value])=>c[key]===value))) {
+  const key=JSON.stringify([cell.image_id,cell.physical_model_id]);
+  if(!candidates.has(cell.physical_model_id)||seen.has(key))throw Error('Invalid or duplicate panel candidate');
+  seen.add(key);
+ }
+ // Keep the seeded counterbalancing protocol and historical ballot candidate_keys verbatim.
+ return crossModelAPI().order(manifest,rule,seed);
+}
 function setPair(state,left,right,choice) {
  state.pairs=state.pairs.filter(p=>!(p.image_id===left.image_id&&p.model_key===left.model_key)); if(!choice) return;
  // Bind both judged outputs with unscored drafts; existing reviews stay unchanged and nothing becomes Reviewed.
@@ -124,7 +138,7 @@ function exportFileName(base,date) {
  return base+'-'+String(date.getFullYear()).padStart(4,'0')+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+'T'+pad(date.getHours())+'-'+pad(date.getMinutes())+'-'+pad(date.getSeconds())+(m>=0?'+':'-')+pad(Math.floor(offset/60))+pad(offset%60)+'.json';
 }
 
-const api={orders,empty,fresh,snapshot,validate,setPair,importState,validReview,invalidateGold,invalidateReview,stable,mergeInitialState,migrateState,exportFileName};
+const api={panelCandidates,panelOrders,orders,empty,fresh,snapshot,validate,setPair,importState,validReview,invalidateGold,invalidateReview,stable,mergeInitialState,migrateState,exportFileName};
 if(typeof module!=='undefined'&&module.exports) module.exports=api;
 root.OperatorReview=api;
 if(typeof document==='undefined') return;
@@ -132,6 +146,7 @@ const mnode=document.getElementById('operator-review-manifest'); if(!mnode) retu
 const manifest=JSON.parse(mnode.textContent), contract=JSON.parse(document.getElementById('operator-review-contract').textContent);
 function decisionBlock(id) {const node=document.getElementById(id);try{return node?JSON.parse(node.textContent):null;}catch(e){return null;}}
 const rule=decisionBlock('operator-decision-rule'),perf=decisionBlock('operator-decision-performance');
+const candidates=rule?panelCandidates(rule):[];
 const decisionKeys=new Set(rule?manifest.cells.filter(c=>Object.entries(rule.filter).every(([k,v])=>c[k]===v)).map(c=>c.key):[]);
 const storageKey='operator-review:'+manifest.dataset_id+':'+manifest.manifest_sha256+':'+manifest.rubric_version+':'+hash(stable(manifest.cells));
 const initialStateNode=document.getElementById('operator-review-initial-state');
@@ -215,7 +230,7 @@ function renderPreferenceRanking() {
  if(!rule||!root.OperatorCrossModel?.summarizePreferences){preferenceHost.append(el('p','Model preference ranking unavailable.'));return;}
  try {
   const result=root.OperatorCrossModel.summarizePreferences(manifest,rule,state);
-  if(result.status==='no_preferences')preferenceHost.append(el('p','No model preferences recorded. Enter three-model blind review and choose preferred A, B or C for each image.'));
+  if(result.status==='no_preferences')preferenceHost.append(el('p','No model preferences recorded. Enter cross-model blind review and choose a preferred candidate for each image.'));
   for(const group of result.groups) {
    preferenceHost.append(el('h3',group.models.length+'-candidate comparisons: '+group.recorded+' / '+group.available_images+' images scored'));
    preferenceHost.append(metricTable(['Rank','Model','Chosen','Selection rate'],group.models.map(m=>[m.rank===null?'N/A':String(m.rank),m.label,String(m.wins),pct(m.selection_rate)])));
@@ -246,7 +261,7 @@ function persist(message='') {
 }
 function updateCounts() {
  if(crossBlind) {
-  try {const progress=root.OperatorCrossModel.progress(manifest,rule,state,contract);count.textContent='Model preferences '+(state.model_preferences?.ballots.length||0)+' / '+Object.values(root.OperatorCrossModel.order(manifest,rule,state.blind_seed)).filter(keys=>keys.length>=2).length+' · '+TEXT.decisionReviewed+' '+progress.done+' / '+progress.total;}
+  try {const progress=root.OperatorCrossModel.progress(manifest,rule,state,contract);count.textContent='Model preferences '+(state.model_preferences?.ballots.length||0)+' / '+Object.values(panelOrders(manifest,rule,state.blind_seed)).filter(keys=>keys.length>=2).length+' · '+TEXT.decisionReviewed+' '+progress.done+' / '+progress.total;}
   catch(e) {count.textContent=TEXT.progressUnavailable;}
   return;
  }
@@ -381,9 +396,9 @@ function applyBlind() {
  document.body.classList.toggle('operator-crossmodel',crossBlind);
  blindButton.textContent=blind?'Exit lexicon A/B (reveal labels)':'Lexicon A/B preference';
  crossButton.textContent=crossBlind?TEXT.exitCrossModel:TEXT.crossModel;
- modeHelp.textContent=blind?'Lexicon A/B: each group compares the same model and image with writing lexicon OFF versus ON. Record A, B, Tie, Both unusable or Cannot judge using the group preference selectors above each image.':crossBlind?'Three-model A/B/C: choose the preferred description above each image, or record Tie, All unusable or Cannot judge. Export ranking JSON includes the mapped choices and descriptive model ranking. Factual assessments remain separate; Show historical reviews reveals earlier models.':'Lexicon A/B records off/on preferences within each model. Three-model A/B/C records your preferred model description per image. Show historical reviews reveals the earlier models and their saved assessments.';
+ modeHelp.textContent=blind?'Lexicon A/B: each group compares the same model and image with writing lexicon OFF versus ON. Record A, B, Tie, Both unusable or Cannot judge using the group preference selectors above each image.':crossBlind?'Cross-model blind review: choose the preferred description above each image, or record Tie, All unusable or Cannot judge. Export ranking JSON includes the mapped choices and descriptive model ranking. Factual assessments remain separate; Show historical reviews reveals earlier models.':'Lexicon A/B records off/on preferences within each model. Cross-model blind review records your preferred model description per image. Show historical reviews reveals the earlier models and their saved assessments.';
 
- const crossOrders=crossBlind?root.OperatorCrossModel.order(manifest,rule,state.blind_seed):{};
+ const crossOrders=crossBlind?panelOrders(manifest,rule,state.blind_seed):{};
  manifest.images.forEach(image=>{
   const card=cardNodes.get(image.image_id),table=card.querySelector('.description-table'),hr=table.tHead.rows[0],tr=table.tBodies[0].rows[0];
   if(!originals.has(image.image_id))originals.set(image.image_id,{heads:[...hr.children],cells:[...tr.children],headNodes:[...hr.childNodes],cellNodes:[...tr.childNodes],contents:[...hr.children].map(n=>[...n.childNodes]),attributes:[card,...hr.children,...tr.children].map(n=>[n,n.getAttribute('hidden'),n.getAttribute('class')]),identifiers:[...table.querySelectorAll(CROSS_MODEL_IDENTIFIERS)].map(n=>[n,n.getAttribute('hidden')])});
@@ -400,7 +415,7 @@ function applyBlind() {
    original.heads.forEach(h=>h.hidden=true);original.cells.forEach(td=>td.hidden=true);
    keys.forEach((key,index)=>{
     const td=cellNodes.get(key).closest('td'),i=original.cells.indexOf(td),h=original.heads[i];
-    h.textContent=TEXT.candidates[index];h.hidden=false;td.hidden=false;
+    h.textContent=candidates[index].label;h.hidden=false;td.hidden=false;
     h.classList.add('operator-crossmodel-neutral');td.classList.add('operator-crossmodel-neutral');
     hr.append(h);tr.append(td);
    });
@@ -410,8 +425,8 @@ function applyBlind() {
     const existing=state.model_preferences?.ballots.find(p=>p.image_id===image.image_id);
     const prior=existing?(existing.choice==='preferred'?existing.selected_key:existing.choice):'';
     const choice=select(['',...keys,'tie','all_unusable','unjudgeable'],prior);
-    [...choice.options].forEach(o=>{const index=keys.indexOf(o.value);o.textContent=index>=0?TEXT.candidates[index]:({'':'Unscored',tie:'Tie / no preference among all',all_unusable:'All unusable',unjudgeable:'Cannot judge'})[o.value];});
-    const preferenceLabel='Preferred description ('+keys.map((_,i)=>String.fromCharCode(65+i)).join('/')+')';choice.setAttribute('aria-label',preferenceLabel);field(panel,preferenceLabel,choice);
+    [...choice.options].forEach(o=>{const index=keys.indexOf(o.value);o.textContent=index>=0?candidates[index].label:({'':'Unscored',tie:'Tie / no preference among all',all_unusable:'All unusable',unjudgeable:'Cannot judge'})[o.value];});
+    const preferenceLabel='Preferred description ('+keys.map((_,i)=>candidates[i].label).join(' / ')+')';choice.setAttribute('aria-label',preferenceLabel);field(panel,preferenceLabel,choice);
     panel.append(el('p','Choose the best complete description for this image. This records a model preference; it does not mark factual reviews complete.'));
     choice.addEventListener('change',()=>{try{root.OperatorCrossModel.setPreference(manifest,rule,state,image.image_id,choice.value);persist('Model preference recorded');}catch(e){const saved=state.model_preferences?.ballots.find(p=>p.image_id===image.image_id);choice.value=saved?(saved.choice==='preferred'?saved.selected_key:saved.choice):'';status.textContent=e.message;}});
     (card.querySelector('.comparison-row')||card.querySelector('.description-scroll')).before(panel);

@@ -113,8 +113,9 @@ class Admin {
 		// Anchor on the src-bearing <script>, not merely the first one: WordPress
 		// prepends any `before` inline script / translations into $tag, and putting
 		// type=module on that classic wrapper would re-introduce the SyntaxError this
-		// fixes. No module handle uses a `before` inline today; the lookahead keeps it
-		// safe if one is ever added ([RES-01] defensive robustness).
+		// fixes. Module handles that call wp_set_script_translations (alt-context-admin,
+		// acx-public-demo-describe) get a classic translations inline once a JSON
+		// catalogue exists; the lookahead keeps type=module off it.
 		return (string) preg_replace( '/<script\b(?=[^>]*\ssrc=)/', '<script type="module"', $tag, 1 );
 	}
 

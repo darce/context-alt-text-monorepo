@@ -13,6 +13,7 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
+use function __;
 use function absint;
 use function add_option;
 use function apply_filters;
@@ -105,11 +106,11 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 					'media_id' => array(
 						'type'        => 'integer',
 						'required'    => true,
-						'description' => 'One attachment ID from the configured public demo allowlist.',
+						'description' => __( 'One attachment ID from the configured public demo allowlist.', 'alt-context' ),
 					),
 					'idempotency_key' => array(
 						'required'    => false,
-						'description' => 'Required client-generated key (16-128 chars, [A-Za-z0-9_-]) in the JSON or form body, or the Idempotency-Key header, for retrying one user-initiated trigger.',
+						'description' => __( 'Required client-generated key (16-128 chars, [A-Za-z0-9_-]) in the JSON or form body, or the Idempotency-Key header, for retrying one user-initiated trigger.', 'alt-context' ),
 					),
 				),
 			)
@@ -131,7 +132,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( true !== $enabled && 1 !== $enabled && '1' !== $enabled ) {
 			return new WP_Error(
 				PublicDemoErrorCode::DISABLED,
-				'The public description demo is not enabled.',
+				__( 'The public description demo is not enabled.', 'alt-context' ),
 				array( 'status' => 403 )
 			);
 		}
@@ -140,7 +141,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( '' === $nonce || ! wp_verify_nonce( $nonce, 'wp_rest' ) ) {
 			return new WP_Error(
 				PublicDemoErrorCode::INVALID_NONCE,
-				'This demo page token is missing or expired. Refresh the page and try again.',
+				__( 'This demo page token is missing or expired. Refresh the page and try again.', 'alt-context' ),
 				array( 'status' => 403 )
 			);
 		}
@@ -153,7 +154,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( ! in_array( $media_id, $this->allowlisted_media_ids(), true ) ) {
 			return new WP_Error(
 				PublicDemoErrorCode::MEDIA_NOT_ALLOWED,
-				'That image is not available in this demo.',
+				__( 'That image is not available in this demo.', 'alt-context' ),
 				array( 'status' => 403 )
 			);
 		}
@@ -177,7 +178,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$idempotency_lock_name = self::IDEMPOTENCY_LOCK_PREFIX . hash( 'sha256', $idempotency_key_name );
 		$idempotency_lock = $this->acquire_lock( $idempotency_lock_name, 5 );
 		if ( false === $idempotency_lock ) {
-			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 1 );
+			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo is temporarily busy. Please retry.', 'alt-context' ), 1 );
 		}
 
 		try {
@@ -186,7 +187,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 				if ( $media_id !== absint( $existing['media_id'] ?? 0 ) ) {
 					return new WP_Error(
 						PublicDemoErrorCode::IDEMPOTENCY_CONFLICT,
-						'That retry key is already associated with another demo image.',
+						__( 'That retry key is already associated with another demo image.', 'alt-context' ),
 						array( 'status' => 409 )
 					);
 				}
@@ -197,7 +198,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 				// A durable pending reservation means another request may have
 				// accepted paid work but not yet written its run ID. Fail closed;
 				// never spend a second run while that uncertainty is live.
-				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 5 );
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo is temporarily busy. Please retry.', 'alt-context' ), 5 );
 			}
 
 			$rate_result = $this->consume_rate_token( $client_key );
@@ -208,7 +209,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( ! $this->acquire_inflight_bulkhead( $media_id ) ) {
 				return $this->limited_response(
 					PublicDemoErrorCode::BUSY,
-					'Another description is already running. Please try again shortly.',
+					__( 'Another description is already running. Please try again shortly.', 'alt-context' ),
 					5
 				);
 			}
@@ -229,7 +230,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			);
 			if ( ! set_transient( $idempotency_key_name, $pending, self::IDEMPOTENCY_TTL_SECONDS ) ) {
 				$this->release_inflight_bulkhead();
-				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo state is temporarily unavailable. Please retry.', 5 );
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo state is temporarily unavailable. Please retry.', 'alt-context' ), 5 );
 			}
 
 			$pipeline_request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe/runs' );
@@ -243,7 +244,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			// Persist uncertainty before dispatch: a timeout or worker death can
 			// hide backend acceptance and must never turn into an expired free slot.
 			if ( ! $this->mark_submission_started() ) {
-				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 5 );
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo is temporarily busy. Please retry.', 'alt-context' ), 5 );
 			}
 			$response = $this->pipeline->submit_describe_run( $pipeline_request );
 
@@ -289,7 +290,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( '' === $run_id || ! $this->bind_inflight_run( $run_id ) ) {
 				return new WP_Error(
 					PublicDemoErrorCode::INVALID_PIPELINE_DATA,
-					'The description started but its status could not be tracked safely.',
+					__( 'The description started but its status could not be tracked safely.', 'alt-context' ),
 					array( 'status' => 502 )
 				);
 			}
@@ -302,7 +303,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( ! $this->store_idempotency_mapping( $idempotency_key_name, $media_id, $run_id, $public_response ) ) {
 				// The run is accepted and the bulkhead remains held. Do not report a
 				// retryable success when the durable dedupe record could not be written.
-				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo state is temporarily unavailable. Please retry.', 5 );
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo state is temporarily unavailable. Please retry.', 'alt-context' ), 5 );
 			}
 
 			return $public_response;
@@ -316,7 +317,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( '' === $run_id ) {
 			return new WP_Error(
 				PublicDemoErrorCode::RUN_NOT_AVAILABLE,
-				'That public demo run is not available.',
+				__( 'That public demo run is not available.', 'alt-context' ),
 				array( 'status' => 403 )
 			);
 		}
@@ -330,7 +331,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( ! is_array( $inflight ) || ! is_string( $inflight['run_id'] ?? null ) || ! hash_equals( $inflight['run_id'], $run_id ) ) {
 			return new WP_Error(
 				PublicDemoErrorCode::RUN_NOT_AVAILABLE,
-				'That public demo run is not available.',
+				__( 'That public demo run is not available.', 'alt-context' ),
 				array( 'status' => 403 )
 			);
 		}
@@ -417,7 +418,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( false === filter_var( $address, FILTER_VALIDATE_IP ) ) {
 			return new WP_Error(
 				PublicDemoErrorCode::CLIENT_UNAVAILABLE,
-				'The demo could not identify this client safely.',
+				__( 'The demo could not identify this client safely.', 'alt-context' ),
 				array( 'status' => 403 )
 			);
 		}
@@ -482,7 +483,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	private function required_idempotency_key_error(): WP_Error {
 		return new WP_Error(
 			'idempotency_key_required',
-			'idempotency_key is required for describe run submissions.',
+			__( 'idempotency_key is required for describe run submissions.', 'alt-context' ),
 			array(
 				'status' => 400,
 				'field'  => 'idempotency_key',
@@ -494,7 +495,8 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		return new WP_Error(
 			PublicDemoErrorCode::INVALID_IDEMPOTENCY_KEY,
 			sprintf(
-				'idempotency_key must be %d-%d characters using only letters, digits, underscore, or hyphen.',
+				/* translators: 1: minimum key length, 2: maximum key length. */
+				__( 'idempotency_key must be %1$d-%2$d characters using only letters, digits, underscore, or hyphen.', 'alt-context' ),
 				self::IDEMPOTENCY_KEY_MIN_LENGTH,
 				self::IDEMPOTENCY_KEY_MAX_LENGTH
 			),
@@ -667,7 +669,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		return new WP_REST_Response(
 			array(
 				'code'    => PublicDemoErrorCode::STATE_UNAVAILABLE,
-				'message' => 'The demo state is temporarily unavailable. Please retry.',
+				'message' => __( 'The demo state is temporarily unavailable. Please retry.', 'alt-context' ),
 				'data'    => array( 'status' => 503 ),
 			),
 			503
@@ -678,7 +680,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$lock_key = 'acx_public_demo_rate_lock_' . $client_key;
 		$lock_token = $this->acquire_lock( $lock_key, 5 );
 		if ( false === $lock_token ) {
-			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 1 );
+			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo is temporarily busy. Please retry.', 'alt-context' ), 1 );
 		}
 
 		try {
@@ -692,11 +694,11 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 			if ( $tokens < 1.0 ) {
 				$retry_after = max( 1, (int) ceil( ( 1.0 - $tokens ) / ( $rate / 60 ) ) );
-				return $this->limited_response( PublicDemoErrorCode::RATE_LIMITED, 'Too many demo requests. Please wait and try again.', $retry_after );
+				return $this->limited_response( PublicDemoErrorCode::RATE_LIMITED, __( 'Too many demo requests. Please wait and try again.', 'alt-context' ), $retry_after );
 			}
 
 			if ( ! set_transient( $key, array( 'tokens' => $tokens - 1.0, 'updated' => $now ), self::RATE_TTL_SECONDS ) ) {
-				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo rate limiter is unavailable. Please retry.', 5 );
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo rate limiter is unavailable. Please retry.', 'alt-context' ), 5 );
 			}
 		} finally {
 			$this->release_lock( $lock_key, $lock_token );
@@ -929,7 +931,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$retry_after = max( 1, 86400 - ( time() % 86400 ) );
 		$lock_token = $this->acquire_lock( $lock_key, 5 );
 		if ( false === $lock_token ) {
-			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo usage counter is temporarily unavailable.', 1 );
+			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo usage counter is temporarily unavailable.', 'alt-context' ), 1 );
 		}
 
 		try {
@@ -937,13 +939,13 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			$usage = get_option( $count_key, array() );
 			$count = is_array( $usage ) && $date === ( $usage['date'] ?? null ) ? max( 0, absint( $usage['count'] ?? 0 ) ) : 0;
 			if ( $count >= $cap ) {
-				return $this->limited_response( PublicDemoErrorCode::DAILY_CAP_REACHED, 'Today\'s demo limit has been reached. Please return tomorrow.', $retry_after );
+				return $this->limited_response( PublicDemoErrorCode::DAILY_CAP_REACHED, __( 'Today\'s demo limit has been reached. Please return tomorrow.', 'alt-context' ), $retry_after );
 			}
 
 			$next = array( 'date' => $date, 'count' => $count + 1 );
 			update_option( $count_key, $next, false );
 			if ( $next !== get_option( $count_key, array() ) ) {
-				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo usage counter could not be updated safely.', 5 );
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, __( 'The demo usage counter could not be updated safely.', 'alt-context' ), 5 );
 			}
 		} finally {
 			$this->release_lock( $lock_key, $lock_token );
@@ -1122,12 +1124,12 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( 'completed_with_errors' === $status ) {
 			$public['error'] = array(
 				'code' => PublicDemoErrorCode::PARTIAL_FAILURE,
-				'message' => 'The description did not complete successfully. Please try another image.',
+				'message' => __( 'The description did not complete successfully. Please try another image.', 'alt-context' ),
 			);
 		} elseif ( in_array( $status, array( 'failed', 'cancelled' ), true ) ) {
 			$public['error'] = array(
 				'code' => PublicDemoErrorCode::PIPELINE_FAILED,
-				'message' => 'The image could not be described. Please try again later.',
+				'message' => __( 'The image could not be described. Please try again later.', 'alt-context' ),
 			);
 		}
 
@@ -1170,7 +1172,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	private function invalid_pipeline_response(): WP_Error {
 		return new WP_Error(
 			PublicDemoErrorCode::INVALID_RESPONSE,
-			'The description service returned an invalid response. Please try again later.',
+			__( 'The description service returned an invalid response. Please try again later.', 'alt-context' ),
 			array( 'status' => 502 )
 		);
 	}
@@ -1187,7 +1189,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 		return new WP_Error(
 			PublicDemoErrorCode::PIPELINE_FAILED,
-			'The description service is temporarily unavailable. Please try again later.',
+			__( 'The description service is temporarily unavailable. Please try again later.', 'alt-context' ),
 			array( 'status' => $status )
 		);
 	}

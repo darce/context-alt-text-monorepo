@@ -6,6 +6,7 @@ namespace AltContext\PublicSite;
 
 use AltContext\Support\ViteManifest;
 
+use function __;
 use function absint;
 use function add_shortcode;
 use function array_filter;
@@ -15,18 +16,21 @@ use function array_values;
 use function class_exists;
 use function esc_attr;
 use function esc_html;
+use function esc_html__;
 use function esc_url;
 use function get_option;
 use function get_the_title;
 use function is_array;
 use function is_string;
 use function rest_url;
+use function sprintf;
 use function str_ends_with;
 use function wp_create_nonce;
 use function wp_enqueue_script;
 use function wp_enqueue_style;
 use function wp_get_attachment_image_url;
 use function wp_script_add_data;
+use function wp_set_script_translations;
 
 /** Registers and renders the [acx_demo_describe] public demo. */
 final class PublicDemoShortcode {
@@ -52,21 +56,22 @@ final class PublicDemoShortcode {
 	public function render( array $attributes = array() ): string {
 		unset( $attributes );
 		if ( ! $this->is_enabled() ) {
-			return '<div class="acx-demo" data-state="limited"><p class="acx-demo__status" role="status"><span aria-hidden="true">&#9888;</span> The image description demo is not available right now.</p></div>';
+			return '<div class="acx-demo" data-state="limited"><p class="acx-demo__status" role="status"><span aria-hidden="true">&#9888;</span> ' . esc_html__( 'The image description demo is not available right now.', 'alt-context' ) . '</p></div>';
 		}
 
 		$choices = $this->choices();
 		if ( array() === $choices ) {
-			return '<div class="acx-demo" data-state="error"><p class="acx-demo__status" role="alert"><span aria-hidden="true">&#9888;</span> No demo images are available right now.</p></div>';
+			return '<div class="acx-demo" data-state="error"><p class="acx-demo__status" role="alert"><span aria-hidden="true">&#9888;</span> ' . esc_html__( 'No demo images are available right now.', 'alt-context' ) . '</p></div>';
 		}
 
 		wp_enqueue_script(
 			self::SCRIPT_HANDLE,
 			esc_url( ACX_PLUGIN_URL . 'js/public/demo-describe.js' ),
-			array(),
+			array( 'wp-i18n' ),
 			ACX_VERSION,
 			true
 		);
+		wp_set_script_translations( self::SCRIPT_HANDLE, 'alt-context', ACX_PLUGIN_DIR . 'public/languages' );
 		wp_script_add_data( self::SCRIPT_HANDLE, 'type', 'module' );
 		$style_dependencies = array();
 		$token_assets       = ( $this->tokenAssetResolver )( self::TOKEN_ENTRY_POINT );
@@ -98,19 +103,19 @@ final class PublicDemoShortcode {
 		}
 
 		$preview  = '<aside class="acx-demo__preview" data-acx-demo-preview>';
-		$preview .= '<p>' . esc_html( 'Illustrative example — not a live result' ) . '</p>';
-		$preview .= '<p>' . esc_html( 'Alex stands beside a bicycle outside a cafe.' ) . '</p>';
-		$preview .= '<p>' . esc_html( 'This example is not a description of your selected image. Your live result may differ.' ) . '</p>';
+		$preview .= '<p>' . esc_html__( 'Illustrative example — not a live result', 'alt-context' ) . '</p>';
+		$preview .= '<p>' . esc_html__( 'Alex stands beside a bicycle outside a cafe.', 'alt-context' ) . '</p>';
+		$preview .= '<p>' . esc_html__( 'This example is not a description of your selected image. Your live result may differ.', 'alt-context' ) . '</p>';
 		$preview .= '</aside>';
 
 		return '<section class="acx-demo" data-acx-demo data-state="idle" data-submit-url="'
 			. esc_attr( rest_url( 'acx/v1/public/demo/describe' ) )
 			. '" data-nonce="' . esc_attr( wp_create_nonce( 'wp_rest' ) ) . '">'
 			. $preview
-			. '<form class="acx-demo__form"><fieldset><legend>Choose an image to describe</legend><div class="acx-demo__choices">'
+			. '<form class="acx-demo__form"><fieldset><legend>' . esc_html__( 'Choose an image to describe', 'alt-context' ) . '</legend><div class="acx-demo__choices">'
 			. $cards
-			. '</div></fieldset><button type="submit" class="acx-demo__submit">Describe selected image</button></form>'
-			. '<p class="acx-demo__status" data-acx-demo-status role="status" aria-live="polite"><span data-acx-demo-icon aria-hidden="true">&#9679;</span> <span data-acx-demo-message>Select an image, then choose Describe.</span></p>'
+			. '</div></fieldset><button type="submit" class="acx-demo__submit">' . esc_html__( 'Describe selected image', 'alt-context' ) . '</button></form>'
+			. '<p class="acx-demo__status" data-acx-demo-status role="status" aria-live="polite"><span data-acx-demo-icon aria-hidden="true">&#9679;</span> <span data-acx-demo-message>' . esc_html__( 'Select an image, then choose Describe.', 'alt-context' ) . '</span></p>'
 			. '<div class="acx-demo__result" data-acx-demo-result tabindex="-1" hidden></div>'
 			. '</section>';
 	}
@@ -138,7 +143,11 @@ final class PublicDemoShortcode {
 			$choices[] = array(
 				'id'    => $id,
 				'url'   => $url,
-				'title' => '' !== $title ? $title : 'Demo image ' . $id,
+				'title' => '' !== $title ? $title : sprintf(
+					/* translators: %d: attachment ID. */
+					__( 'Demo image %d', 'alt-context' ),
+					$id
+				),
 			);
 		}
 

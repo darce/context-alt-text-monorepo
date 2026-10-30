@@ -4,9 +4,9 @@
 **Source fixture:** `apps/prototype-wp-alt-context/src/public/class-public-demo-shortcode.php`
 
 ## Goals
-- Inventory OBSERVED-UI public-demo states from the shortcode and client: idle selection, static illustrative example, queued, warming, describing, typed complete labels, 429 limited, error/failed, and the 120-second poll ceiling (INT-10, RES-02, RES-03).
-- Record OBSERVED-FEATURE on this branch (these feature changes have not been deployed): completed nonempty envelopes emit description_tier; parser and pollRun preserve provisional_cpu | final_gpu | null; missing legacy is explicit null; completed UI labels are final_gpu = GPU description complete., provisional_cpu = CPU fallback draft (not GPU final)., null/legacy = Description complete, processing tier unavailable. Do not infer from gpu_state (HAI-05, HAI-08, PROV-06, DATA-13, rg-015).
-- Keep PROPOSED same-run resume bounded to the existing in-flight owner plus the in-memory idempotency key. Refresh drops that key. Do not invent a new paid job, do not raise the 120-second ceiling, and do not weaken authorization for terminal-run reads (API-02, API-04, RLSE-03).
+- Inventory OBSERVED-UI public-demo states from the shortcode and client: idle selection, static illustrative example, queued, warming, describing, typed complete labels, 429 limited, error/failed, client-only Stop waiting, and the 120-second poll ceiling (INT-10, RES-02, RES-03).
+- Record OBSERVED-FEATURE on this branch (these feature changes have not been deployed): completed nonempty envelopes emit description_tier; parser and pollRun preserve provisional_cpu | final_gpu | null; missing legacy is explicit null; completed UI labels are final_gpu = GPU description complete., provisional_cpu = CPU fallback draft (not GPU final)., null/legacy = Description available, processing tier unavailable. Do not infer from gpu_state (HAI-05, HAI-08, PROV-06, DATA-13, rg-015).
+- Same-page re-attach after Stop waiting, timeout or transient errors keeps the same-media in-memory key. Refresh-safe resume remains proposed. The 120-second poll ceiling and nonce/allowlist stay; no backend cancellation or authorization changes.
 
 ## Jobs
 - `describe-allowlisted-image` — Choose one operator-curated image and receive a generic alt-text draft
@@ -26,32 +26,33 @@
 
 ### Public demo › Describe an image (`public-demo-describe`)
 
-Purpose: OBSERVED visitor widget. Domain vocabulary behind canonical states: idle selection = default; queued, warming and describing = loading; no allowlisted images is a different screen; 429 limited = degraded; failed, invalid response, incomplete result and 120s poll timeout = error. Complete UI labels come from description_tier. A static illustrative example sits before Describe; it is not the selected image. Production is deployed; these feature changes have not been deployed. Serves job describe-allowlisted-image.
+Purpose: OBSERVED visitor widget. Domain vocabulary behind canonical states: idle selection and Stop waiting (stopped) = default; queued, warming and describing = loading; no allowlisted images is a different screen; 429 limited = degraded; failed, invalid response, incomplete result and 120s poll timeout = error. Complete UI labels come from description_tier. A static illustrative example sits before Describe; it is not the selected image. Production is deployed; these feature changes have not been deployed. Serves job describe-allowlisted-image.
 
-Action states: idle, in_flight, completed, failed, limited, timeout
+Action states: idle, in_flight, completed, failed, limited, timeout, stopped
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-media-choice` | OBSERVED image picker — idle radios are instance-scoped (acx-demo-media-N) and read from the submitting form only. Empty-selection submit stays on this screen as error copy. No images is public-demo-unavailable, not this zone. | form | default, loading, error |
-| `z-submit` | OBSERVED primary Describe selected image — enabled in idle, completed, failed, limited and timeout; disabled in in_flight. Same control retries; key reuse is in-memory only. | job | default, loading, error, degraded |
+| `z-submit` | OBSERVED primary Describe selected image — enabled in idle, completed, failed, limited, timeout and stopped; disabled in in_flight. Same control retries and re-attaches with the same image; key reuse is in-memory only. | job | default, loading, error, degraded |
 | `z-preview` | OBSERVED-FEATURE static illustrative example before Describe, labeled Illustrative example — not a live result. Fictional sentence is not the selected image, not a saved result, not a GPU receipt. Separate from data-acx-demo-result. Absent when the demo is disabled or the allowlist is empty. | content | default |
-| `z-status` | OBSERVED polite status — idle, queued, warming, describing, completed, limited (HTTP 429), failed, client error, 120s poll timeout. Icon plus token color. Envelope gpu_state is unused telemetry. Completed labels: GPU description complete. / CPU fallback draft (not GPU final). / Description complete, processing tier unavailable. | status | default, loading, error, degraded |
+| `z-status` | OBSERVED polite status — idle, queued, warming, describing, completed, limited (HTTP 429), failed, client error, 120s poll timeout, stopped. Icon plus token color. Envelope gpu_state is unused telemetry. Completed labels: GPU description complete. / CPU fallback draft (not GPU final). / Description available, processing tier unavailable. | status | default, loading, error, degraded |
 | `z-result` | OBSERVED-FEATURE completed result is alt_text_draft with focus move. Status labels come from description_tier (provisional_cpu \| final_gpu \| null; missing legacy is null) and are never inferred from gpu_state. OBSERVED-PRODUCTION is deployed; these feature changes have not been deployed. Prior observation: old Florence recognition image; Qwen-on-GPU entity-description proof is absent. | ai_review | default, empty |
+| `z-stop` | OBSERVED secondary Stop waiting — outside the form; visible only in in_flight, including submit, fetch body and backoff. Client-only (no request); keeps the key, returns focus to Describe after re-enabling controls. | job | loading |
 
 ```
 +------------------------------------------------------------+
 | Public demo › Describe an image  [screen]  [acx_demo_desc\ |
 |   ribe]                                                    |
 | OBSERVED visitor widget. Domain vocabulary behind canonic\ |
-|   al states: idle selection = default; queued, warming an\ |
-|   d describing = loading; no allowlisted images is a diff\ |
-|   erent screen; 429 limited = degraded; failed, invalid r\ |
-|   esponse, incomplete result and 120s poll timeout = erro\ |
-|   r. Complete UI labels come from description_tier. A sta\ |
-|   tic illustrative example sits before Describe; it is no\ |
-|   t the selected image. Production is deployed; these fea\ |
-|   ture changes have not been deployed. Serves job describ\ |
-|   e-allowlisted-image.                                     |
+|   al states: idle selection and Stop waiting (stopped) = \ |
+|   default; queued, warming and describing = loading; no a\ |
+|   llowlisted images is a different screen; 429 limited = \ |
+|   degraded; failed, invalid response, incomplete result a\ |
+|   nd 120s poll timeout = error. Complete UI labels come f\ |
+|   rom description_tier. A static illustrative example sit\ |
+|   s before Describe; it is not the selected image. Produc\ |
+|   tion is deployed; these feature changes have not been d\ |
+|   eployed. Serves job describe-allowlisted-image.          |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - OBSERVED image picker — idle radios are instance-scop\ |
@@ -60,9 +61,10 @@ Action states: idle, in_flight, completed, failed, limited, timeout
 |   rror copy. No images is public-demo-unavailable, not th\ |
 |   is zone. (form) states=[default,loading,error]           |
 |   - OBSERVED primary Describe selected image — enabled in\ |
-|    idle, completed, failed, limited and timeout; disabled\ |
-|    in in_flight. Same control retries; key reuse is in-me\ |
-|   mory only. (job) states=[default,loading,error,degraded] |
+|    idle, completed, failed, limited, timeout and stopped;\ |
+|    disabled in in_flight. Same control retries and re-att\ |
+|   aches with the same image; key reuse is in-memory only.\ |
+|    (job) states=[default,loading,error,degraded]           |
 |   - OBSERVED-FEATURE static illustrative example before D\ |
 |   escribe, labeled Illustrative example — not a live resu\ |
 |   lt. Fictional sentence is not the selected image, not a\ |
@@ -71,11 +73,12 @@ Action states: idle, in_flight, completed, failed, limited, timeout
 |   allowlist is empty. (content) states=[default]           |
 |   - OBSERVED polite status — idle, queued, warming, descr\ |
 |   ibing, completed, limited (HTTP 429), failed, client er\ |
-|   ror, 120s poll timeout. Icon plus token color. Envelope\ |
-|    gpu_state is unused telemetry. Completed labels: GPU d\ |
-|   escription complete. / CPU fallback draft (not GPU fina\ |
-|   l). / Description complete, processing tier unavailable\ |
-|   . (status) states=[default,loading,error,degraded]       |
+|   ror, 120s poll timeout, stopped. Icon plus token color.\ |
+|    Envelope gpu_state is unused telemetry. Completed labe\ |
+|   ls: GPU description complete. / CPU fallback draft (not\ |
+|    GPU final). / Description available, processing tier u\ |
+|   navailable. (status) states=[default,loading,error,degr\ |
+|   aded]                                                    |
 |   - OBSERVED-FEATURE completed result is alt_text_draft w\ |
 |   ith focus move. Status labels come from description_tie\ |
 |   r (provisional_cpu | final_gpu | null; missing legacy i\ |
@@ -84,12 +87,17 @@ Action states: idle, in_flight, completed, failed, limited, timeout
 |    been deployed. Prior observation: old Florence recogni\ |
 |   tion image; Qwen-on-GPU entity-description proof is abs\ |
 |   ent. (ai_review) states=[default,empty]                  |
+|   - OBSERVED secondary Stop waiting — outside the form; v\ |
+|   isible only in in_flight, including submit, fetch body \ |
+|   and backoff. Client-only (no request); keeps the key, r\ |
+|   eturns focus to Describe after re-enabling controls. (j\ |
+|   ob) states=[loading]                                     |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when idle                                                  |
 |   [PRIMARY] Describe selected image                        |
 | when in_flight                                             |
-|   No action (silent)                                       |
+|   [secondary] Stop waiting                                 |
 | when completed                                             |
 |   [PRIMARY] Describe selected image                        |
 | when failed                                                |
@@ -97,6 +105,8 @@ Action states: idle, in_flight, completed, failed, limited, timeout
 | when limited                                               |
 |   [PRIMARY] Describe selected image                        |
 | when timeout                                               |
+|   [PRIMARY] Describe selected image                        |
+| when stopped                                               |
 |   [PRIMARY] Describe selected image                        |
 +------------------------------------------------------------+
 | states: default | loading | error | degraded               |
@@ -131,7 +141,7 @@ Purpose: OBSERVED PHP shortcode substitutes when the widget cannot run. Demo fla
 
 ### Refresh page (drops in-memory retry key) (`refresh-page-drops-retry-key`)
 
-Purpose: OBSERVED: a full page load drops the in-memory idempotency key and the in-memory run_id. Timeout copy currently tells the visitor to refresh. PROPOSED durable resume is not this exit and is not implemented.
+Purpose: OBSERVED: a full page load drops the in-memory idempotency key and the in-memory run_id. PROPOSED durable resume is not this exit and is not implemented.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -142,9 +152,8 @@ Purpose: OBSERVED: a full page load drops the in-memory idempotency key and the 
 | Refresh page (drops in-memory retry key)  [exit]  [acx_de\ |
 |   mo_describe] (browser refresh)                           |
 | OBSERVED: a full page load drops the in-memory idempotenc\ |
-|   y key and the in-memory run_id. Timeout copy currently \ |
-|   tells the visitor to refresh. PROPOSED durable resume i\ |
-|   s not this exit and is not implemented.                  |
+|   y key and the in-memory run_id. PROPOSED durable resume\ |
+|    is not this exit and is not implemented.                |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - OBSERVED refresh consequence — in-memory retry key is\ |
@@ -160,7 +169,8 @@ Purpose: OBSERVED: a full page load drops the in-memory idempotency key and the 
 
 | id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `submit-describe` | Describe selected image | `POST /acx/v1/public/demo/describe` | primary | yes | no | yes | `public-demo-describe` | idle, completed, failed, limited, timeout |
+| `submit-describe` | Describe selected image | `POST /acx/v1/public/demo/describe` | primary | yes | no | yes | `public-demo-describe` | idle, completed, failed, limited, timeout, stopped |
+| `stop-waiting` | Stop waiting | `client-only (no request)` | secondary | no | no | no | `public-demo-describe` | in_flight |
 
 ## Flows
 ### OBSERVED: illustrative example, select image, wait, typed complete label (`observed-happy-path`)
@@ -211,12 +221,14 @@ flow: OBSERVED: failed pipeline, invalid envelope, or 120s po\
   ll timeout (observed-error-or-timeout) job=describe-allowli\
   sted-image
   1. Public demo › Describe an image [public-demo-describe]
-     --failed / invalid / incomplete → data-state=failed; for\
-  m re-enabled; in-memory key kept-->
+     --failed / cancelled / completed_with_errors / incomplet\
+  e (terminal) → data-state=failed; form re-enabled; key clea\
+  red. Invalid envelope or transient error → data-state=faile\
+  d; key kept-->
   2. Public demo › Describe an image [public-demo-describe] (\
   visit 2)
-     --120s client ceiling → poll timeout copy; form re-enabl\
-  ed; in-memory key kept-->
+     --120s client ceiling → timeout copy (same image re-atta\
+  ches); form re-enabled; in-memory key kept-->
   3. Refresh page (drops in-memory retry key) [refresh-page-d\
   rops-retry-key]
 ```
@@ -224,11 +236,11 @@ flow: OBSERVED: failed pipeline, invalid envelope, or 120s po\
 ```mermaid
 flowchart TD
   %% flow: OBSERVED: failed pipeline, invalid envelope, or 120s poll timeout job=describe-allowlisted-image
-  %% steps: [{"screen_id":"public-demo-describe","branch_label":"failed / invalid / incomplete → data-state=failed; form re-enabled; in-memory key kept"},{"screen_id":"public-demo-describe","branch_label":"120s client ceiling → poll timeout copy; form re-enabled; in-memory key kept"},{"screen_id":"refresh-page-drops-retry-key","branch_label":"timeout copy currently tells the visitor to refresh, which drops the key"}]
+  %% steps: [{"screen_id":"public-demo-describe","branch_label":"failed / cancelled / completed_with_errors / incomplete (terminal) → data-state=failed; form re-enabled; key cleared. Invalid envelope or transient error → data-state=failed; key kept"},{"screen_id":"public-demo-describe","branch_label":"120s client ceiling → timeout copy (same image re-attaches); form re-enabled; in-memory key kept"},{"screen_id":"refresh-page-drops-retry-key","branch_label":"visitor refreshes anyway → key dropped (refresh-safe resume not implemented)"}]
   n_public_demo_describe["Public demo › Describe an image (screen)"]
-  n_public_demo_describe -->|failed / invalid / incomplete → data-state=failed; form re-enabled; in-memory key kept| n_public_demo_describe
+  n_public_demo_describe -->|failed / cancelled / completed_with_errors / incomplete (terminal) → data-state=failed; form re-enabled; key cleared. Invalid envelope or transient error → data-state=failed; key kept| n_public_demo_describe
   n_refresh_page_drops_retry_key["Refresh page (drops in-memory retry key) (exit)"]
-  n_public_demo_describe -->|120s client ceiling → poll timeout copy; form re-enabled; in-memory key kept| n_refresh_page_drops_retry_key
+  n_public_demo_describe -->|120s client ceiling → timeout copy (same image re-attaches); form re-enabled; in-memory key kept| n_refresh_page_drops_retry_key
 ```
 
 ### OBSERVED: same-page retry reuses the in-memory key (`observed-same-page-retry`)
@@ -237,8 +249,8 @@ flowchart TD
 flow: OBSERVED: same-page retry reuses the in-memory key (obs\
   erved-same-page-retry) job=retry-same-trigger
   1. Public demo › Describe an image [public-demo-describe]
-     --failed, limited, or timeout on the same page with the \
-  same media → same idempotency_key-->
+     --limited, timeout, stopped or non-terminal failure on t\
+  he same page with the same media → same idempotency_key-->
   2. Public demo › Describe an image [public-demo-describe] (\
   visit 2)
 ```
@@ -246,25 +258,46 @@ flow: OBSERVED: same-page retry reuses the in-memory key (obs\
 ```mermaid
 flowchart TD
   %% flow: OBSERVED: same-page retry reuses the in-memory key job=retry-same-trigger
-  %% steps: [{"screen_id":"public-demo-describe","branch_label":"failed, limited, or timeout on the same page with the same media → same idempotency_key"},{"screen_id":"public-demo-describe","branch_label":"completed run clears the key; the next submit mints a new one"}]
+  %% steps: [{"screen_id":"public-demo-describe","branch_label":"limited, timeout, stopped or non-terminal failure on the same page with the same media → same idempotency_key"},{"screen_id":"public-demo-describe","branch_label":"completed run, terminal failure or 403 run_not_available clears the key; the next submit mints a new one; changing media also mints a new key"}]
   n_public_demo_describe["Public demo › Describe an image (screen)"]
-  n_public_demo_describe -->|failed, limited, or timeout on the same page with the same media → same idempotency_key| n_public_demo_describe
+  n_public_demo_describe -->|limited, timeout, stopped or non-terminal failure on the same page with the same media → same idempotency_key| n_public_demo_describe
+```
+
+### OBSERVED: Stop waiting is client-only and keeps the key (`stop-waiting`)
+
+```
+flow: OBSERVED: Stop waiting is client-only and keeps the key\
+   (stop-waiting) job=describe-allowlisted-image
+  1. Public demo › Describe an image [public-demo-describe]
+     --in_flight → Stop waiting (secondary) → local fetch or \
+  backoff stops; no request; data-state=stopped; ■ icon; focu\
+  s returns to Describe-->
+  2. Public demo › Describe an image [public-demo-describe] (\
+  visit 2)
+```
+
+```mermaid
+flowchart TD
+  %% flow: OBSERVED: Stop waiting is client-only and keeps the key job=describe-allowlisted-image
+  %% steps: [{"screen_id":"public-demo-describe","branch_label":"in_flight → Stop waiting (secondary) → local fetch or backoff stops; no request; data-state=stopped; ■ icon; focus returns to Describe"},{"screen_id":"public-demo-describe","branch_label":"Describe again with the same image → same idempotency_key re-attaches to the run"}]
+  n_public_demo_describe["Public demo › Describe an image (screen)"]
+  n_public_demo_describe -->|in_flight → Stop waiting (secondary) → local fetch or backoff stops; no request; data-state=stopped; ■ icon; focus returns to Describe| n_public_demo_describe
 ```
 
 ## Open questions
-- PROPOSED, not implemented: same-run resume after refresh or after the 120s poll ceiling. Bound remains existing inflight owner + idempotency; not a new paid job; 120s per-poll ceiling stays; bulkhead and nonce/allowlist stay.
-- Design question, not a slice: how can a visitor securely re-read a terminal run after inflight is released (status today returns 403 run_not_available) without weakening authorization? A durable handle must not become an unauthenticated run oracle.
+- PROPOSED, not implemented: same-run resume after refresh. Same-page re-attach after the 120s poll ceiling or Stop waiting is implemented by E15-38 (kept key, same image). Bound remains existing inflight owner + idempotency and terminal capability replay; 120s per-poll ceiling, bulkhead, nonce and allowlist stay.
+- Design question: refresh-safe durable resume remains unimplemented. Current status first attempts matching terminal capability replay; otherwise absent or mismatched inflight ownership returns 403 run_not_available. Do not weaken authorization to read arbitrary run IDs.
 
 ## Suggested task-slice decomposition (from map)
 
-1. PROPOSED follow-up, not this map: same-run resume using existing owner plus idempotency only. Keep the 120s ceiling, inflight bulkhead, nonce, and allowlist.
-2. Design-question follow-up, not this map: secure durable handle for terminal-run read after inflight release. No authorization weakening.
+1. PROPOSED follow-up: same-run resume after refresh. Same-page re-attach after timeout or Stop waiting is implemented (E15-38). Keep the 120s ceiling, inflight bulkhead, nonce and allowlist.
+2. Follow-up design question: refresh-safe durable capability; terminal capability replay already exists on this source baseline. No authorization weakening.
 
 ## Domain state mapping
 
 | domain state(s) | canonical state |
 | --- | --- |
-| `idle`, `completed` | `default` |
+| `idle`, `completed`, `stopped` | `default` |
 | `queued`, `warming`, `describing`, `in_flight` | `loading` |
 | `limited` | `degraded` |
 | `failed`, `error`, `timeout` | `error` |
@@ -277,17 +310,18 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: z-media-choice z-submit z-preview z-status z-result z-unavailable-status z-refresh-consequence
+Zone ids: z-media-choice z-submit z-preview z-status z-result z-stop z-unavailable-status z-refresh-consequence
 
-Action ids: submit-describe
+Action ids: submit-describe stop-waiting
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
 - OBSERVED image picker — idle radios are instance-scoped (acx-demo-media-N) and read from the submitting form only. Empty-selection submit stays on this screen as error copy. No images is public-demo-unavailable, not this zone.
-- OBSERVED primary Describe selected image — enabled in idle, completed, failed, limited and timeout; disabled in in_flight. Same control retries; key reuse is in-memory only.
+- OBSERVED primary Describe selected image — enabled in idle, completed, failed, limited, timeout and stopped; disabled in in_flight. Same control retries and re-attaches with the same image; key reuse is in-memory only.
 - OBSERVED-FEATURE static illustrative example before Describe, labeled Illustrative example — not a live result. Fictional sentence is not the selected image, not a saved result, not a GPU receipt. Separate from data-acx-demo-result. Absent when the demo is disabled or the allowlist is empty.
-- OBSERVED polite status — idle, queued, warming, describing, completed, limited (HTTP 429), failed, client error, 120s poll timeout. Icon plus token color. Envelope gpu_state is unused telemetry. Completed labels: GPU description complete. / CPU fallback draft (not GPU final). / Description complete, processing tier unavailable.
+- OBSERVED polite status — idle, queued, warming, describing, completed, limited (HTTP 429), failed, client error, 120s poll timeout, stopped. Icon plus token color. Envelope gpu_state is unused telemetry. Completed labels: GPU description complete. / CPU fallback draft (not GPU final). / Description available, processing tier unavailable.
 - OBSERVED-FEATURE completed result is alt_text_draft with focus move. Status labels come from description_tier (provisional_cpu | final_gpu | null; missing legacy is null) and are never inferred from gpu_state. OBSERVED-PRODUCTION is deployed; these feature changes have not been deployed. Prior observation: old Florence recognition image; Qwen-on-GPU entity-description proof is absent.
+- OBSERVED secondary Stop waiting — outside the form; visible only in in_flight, including submit, fetch body and backoff. Client-only (no request); keeps the key, returns focus to Describe after re-enabling controls.
 - OBSERVED substitute status — limited when the demo is disabled; error when no demo images are available. Not a describe-run phase.
 - OBSERVED refresh consequence — in-memory retry key is gone. Same-page retry would have retained it. Do not claim a new paid job is proven or disproven after refresh.
 

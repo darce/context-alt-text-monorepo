@@ -32,7 +32,7 @@
 
 ### Settings › Description Service (`settings-burst-gpu`)
 
-Purpose: Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. The same Settings screen also owns Description API URL/key autosave feedback and post-save health status. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. Warm-up ETA comes from the load/status payload or is omitted; never invent a retry countdown.
+Purpose: Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. The same Settings screen also owns Description API URL/key autosave feedback and post-save health status. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming → The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds. [secondary] Stop service; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. The operator status payload has no warm-up ETA; do not turn a polling interval into a readiness countdown.
 
 Action states: stopped, unknown, starting, warming, ready, degraded
 
@@ -42,7 +42,7 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 | `z-gpu-intent` | Effective intent and expiry — automatic / start until HH:MM / stop (pending: Stopping after the current work finishes until idle) | status | default, loading, degraded |
 | `z-gpu-lease` | Service activity — idle or running since, auto-stops by HH:MM (run limit); never show lease ids | status | default, empty |
 | `z-gpu-load` | Describe load — work in flight yes/no with load snapshot freshness | status | default, empty, degraded |
-| `z-gpu-cost` | Cost disclosure — hourly rate and warm-up time before Start, not in the headline | content | default |
+| `z-gpu-cost` | Cost disclosure — hourly rate and the 60-minute maximum before Start, not in the headline | content | default |
 | `z-gpu-controls` | Start service / Stop service / Return to automatic / Refresh status | form | default, loading, error, degraded |
 | `z-description-api-routing` | Description API URL and API key — concealed key input; edits stay in memory and the key is never echoed or written to local storage | form | default, first_time, edge_input, loading, error, offline |
 | `z-routing-save-status` | Local autosave status — dirty / saving / saved / failed; failed or partial save retains the typed key, and newer edits remain dirty | status | default, loading, error, degraded |
@@ -63,18 +63,18 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 |   y|degraded. Seven sketches: stopped → [PRIMARY] Start s\ |
 |   ervice; stopped by operator (intent STOP) → Stopped by \ |
 |   operator · auto-start paused, [PRIMARY] Start service, \ |
-|   [secondary] Return to automatic; starting/warming with \ |
-|   eta_seconds → Warming up, about {eta} left and [seconda\ |
-|   ry] Stop service; starting/warming without eta → Warmin\ |
-|   g up, this can take a few minutes; ready → Service: rea\ |
-|   dy · idle|N in flight and [secondary] Stop service; unk\ |
-|   nown/stale → Status unavailable, last seen {age} with [\ |
-|   tertiary] Refresh, Start/Stop hidden; degraded → Servic\ |
-|   e unavailable. Start service to retry. [PRIMARY] Start \ |
-|   service. Typed description_service_unavailable is copy \ |
-|   on degraded/unknown, not a gpu_state. Warm-up ETA comes\ |
-|    from the load/status payload or is omitted; never inve\ |
-|   nt a retry countdown.                                    |
+|   [secondary] Return to automatic; starting/warming → The\ |
+|    first description after a quiet period starts the GPU \ |
+|   and can take several minutes. After that, each image ta\ |
+|   kes seconds. [secondary] Stop service; ready → Service:\ |
+|    ready · idle|N in flight and [secondary] Stop service;\ |
+|    unknown/stale → Status unavailable, last seen {age} wi\ |
+|   th [tertiary] Refresh, Start/Stop hidden; degraded → Se\ |
+|   rvice unavailable. Start service to retry. [PRIMARY] St\ |
+|   art service. Typed description_service_unavailable is c\ |
+|   opy on degraded/unknown, not a gpu_state. The operator \ |
+|   status payload has no warm-up ETA; do not turn a pollin\ |
+|   g interval into a readiness countdown.                   |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Service status chip — Service: not reported / stopped\ |
@@ -90,8 +90,9 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 |   tes=[default,empty]                                      |
 |   - Describe load — work in flight yes/no with load snaps\ |
 |   hot freshness (status) states=[default,empty,degraded]   |
-|   - Cost disclosure — hourly rate and warm-up time before\ |
-|    Start, not in the headline (content) states=[default]   |
+|   - Cost disclosure — hourly rate and the 60-minute maxim\ |
+|   um before Start, not in the headline (content) states=[\ |
+|   default]                                                 |
 |   - Start service / Stop service / Return to automatic / \ |
 |   Refresh status (form) states=[default,loading,error,deg\ |
 |   raded]                                                   |
@@ -141,11 +142,11 @@ Action states: stopped, unknown, starting, warming, ready, degraded
 
 ### Confirm Start (`gpu-start-confirm`)
 
-Purpose: Inline confirm strip below the controls: names the hourly cost, the warm-up time and the intent TTL after which lifecycle returns to automatic. Stays until confirmed or dismissed.
+Purpose: Inline confirm strip below the controls: names the hourly cost, that the service can take several minutes to be ready (no fixed estimate), and the intent TTL after which lifecycle returns to automatic. Stays until confirmed or dismissed.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-start-preview` | Start preview — cost per hour, warm-up estimate, auto-return after TTL | content | default |
+| `z-start-preview` | Start preview — cost per hour, several-minutes readiness note (no fixed estimate), auto-return after TTL | content | default |
 | `z-start-actions` | Confirm start / Cancel | form | default, loading, error |
 
 ```
@@ -153,13 +154,15 @@ Purpose: Inline confirm strip below the controls: names the hourly cost, the war
 | Confirm Start  [overlay]  #/settings (inline strip; no de\ |
 |   dicated route)                                           |
 | Inline confirm strip below the controls: names the hourly\ |
-|    cost, the warm-up time and the intent TTL after which \ |
-|   lifecycle returns to automatic. Stays until confirmed o\ |
-|   r dismissed.                                             |
+|    cost, that the service can take several minutes to be \ |
+|   ready (no fixed estimate), and the intent TTL after whi\ |
+|   ch lifecycle returns to automatic. Stays until confirme\ |
+|   d or dismissed.                                          |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Start preview — cost per hour, warm-up estimate, auto\ |
-|   -return after TTL (content) states=[default]             |
+|   - Start preview — cost per hour, several-minutes readin\ |
+|   ess note (no fixed estimate), auto-return after TTL (co\ |
+|   ntent) states=[default]                                  |
 |   - Confirm start / Cancel (form) states=[default,loading\ |
 |   ,error]                                                  |
 +------------------------------------------------------------+
@@ -215,6 +218,7 @@ url_params: `run_id`
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-wb-entry` | Workbench entry | nav | default |
+| `z-beta-expectations` | Beta disclosure below the Review Queue h1, before the existing panels; What to expect details closed initially, with draft-review guidance and the shared cold-start explanation; no alert or model-comparison claim | content | default |
 
 ```
 +------------------------------------------------------------+
@@ -223,6 +227,11 @@ url_params: `run_id`
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Workbench entry (nav) states=[default]                 |
+|   - Beta disclosure below the Review Queue h1, before the\ |
+|    existing panels; What to expect details closed initial\ |
+|   ly, with draft-review guidance and the shared cold-star\ |
+|   t explanation; no alert or model-comparison claim (cont\ |
+|   ent) states=[default]                                    |
 +------------------------------------------------------------+
 | states: default                                            |
 +------------------------------------------------------------+
@@ -232,7 +241,7 @@ url_params: `run_id`
 
 ### Description Service state sketches
 
-Detailed sketches of the seven `settings-burst-gpu` states named in its purpose. Clock times, ages, ETAs and the hourly cost are illustrative examples, not measurements or validated pricing.
+Detailed sketches of the `settings-burst-gpu` states. Clock times, ages and the hourly cost are illustrative examples, not measurements or validated pricing. The operator status payload has no warm-up ETA; polling intervals do not predict readiness.
 
 #### stopped
 
@@ -243,7 +252,7 @@ Detailed sketches of the seven `settings-burst-gpu` states named in its purpose.
 | Intent: Automatic                                          |
 | Service: idle                                              |
 | Load: no work in flight                                    |
-| Cost: about $2/hour · warm-up about 2 min                  |
+| Cost: about $2/hour                                        |
 | [PRIMARY] Start service                                    |
 | [secondary] Return to automatic                            |
 | [tertiary] Refresh status                                  |
@@ -265,28 +274,15 @@ Detailed sketches of the seven `settings-burst-gpu` states named in its purpose.
 +------------------------------------------------------------+
 ```
 
-#### starting/warming with ETA
-
-```
-+------------------------------------------------------------+
-| Settings › Description Service  [screen]  #/settings       |
-| [~] Service: warming                                       |
-| Warming up, about 48 s left                                |
-| Intent: Start requested until 22:40                        |
-| Service: warming · no work in flight                       |
-| [secondary] Stop service                                   |
-| [secondary] Return to automatic                            |
-| [tertiary] Refresh status                                  |
-+------------------------------------------------------------+
-```
-
-#### starting/warming without ETA
+#### starting/warming
 
 ```
 +------------------------------------------------------------+
 | Settings › Description Service  [screen]  #/settings       |
 | [~] Service: starting                                      |
-| Warming up, this can take a few minutes                    |
+| The first description after a quiet period starts the GPU  |
+| and can take several minutes. After that, each image takes |
+| seconds.                                                   |
 | Intent: Automatic                                          |
 | Service: starting · no work in flight                      |
 | [secondary] Stop service                                   |
@@ -362,21 +358,21 @@ flow: Pre-warm before a demo (flow-prewarm) job=job-prewarm-g\
      --preview cost + TTL → Confirm start (202)-->
   3. Settings › Description Service [settings-burst-gpu] (vis\
   it 2)
-     --intent start (pending) → starting → warming (bounded E\
-  TA) → ready-->
+     --intent start (pending) → starting → warming (cold-star\
+  t explanation; no countdown) → ready-->
   4. Workbench [exit-workbench]
 ```
 
 ```mermaid
 flowchart TD
   %% flow: Pre-warm before a demo job=job-prewarm-gpu
-  %% steps: [{"screen_id":"settings-burst-gpu","branch_label":"state stopped → Start service"},{"screen_id":"gpu-start-confirm","branch_label":"preview cost + TTL → Confirm start (202)"},{"screen_id":"settings-burst-gpu","branch_label":"intent start (pending) → starting → warming (bounded ETA) → ready"},{"screen_id":"exit-workbench","branch_label":"Go to Workbench"}]
+  %% steps: [{"screen_id":"settings-burst-gpu","branch_label":"state stopped → Start service"},{"screen_id":"gpu-start-confirm","branch_label":"preview cost + TTL → Confirm start (202)"},{"screen_id":"settings-burst-gpu","branch_label":"intent start (pending) → starting → warming (cold-start explanation; no countdown) → ready"},{"screen_id":"exit-workbench","branch_label":"Go to Workbench"}]
   n_settings_burst_gpu["Settings › Description Service (screen)"]
   n_gpu_start_confirm["Confirm Start (overlay)"]
   n_settings_burst_gpu -->|state stopped → Start service| n_gpu_start_confirm
   n_gpu_start_confirm -->|preview cost + TTL → Confirm start (202)| n_settings_burst_gpu
   n_exit_workbench["Workbench (exit)"]
-  n_settings_burst_gpu -->|intent start (pending) → starting → warming (bounded ETA) → ready| n_exit_workbench
+  n_settings_burst_gpu -->|intent start (pending) → starting → warming (cold-start explanation; no countdown) → ready| n_exit_workbench
 ```
 
 ### Stop while a describe run is in flight (`flow-stop-blocked`)
@@ -502,7 +498,7 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: z-gpu-state-chip z-gpu-intent z-gpu-lease z-gpu-load z-gpu-cost z-gpu-controls z-description-api-routing z-routing-save-status z-routing-health-status z-start-preview z-start-actions z-stop-preview z-stop-actions z-wb-entry
+Zone ids: z-gpu-state-chip z-gpu-intent z-gpu-lease z-gpu-load z-gpu-cost z-gpu-controls z-description-api-routing z-routing-save-status z-routing-health-status z-start-preview z-start-actions z-stop-preview z-stop-actions z-wb-entry z-beta-expectations
 
 Action ids: act-gpu-start act-gpu-confirm-start act-gpu-stop act-gpu-confirm-stop act-gpu-auto act-gpu-refresh act-cancel-confirm act-goto-workbench
 
@@ -512,16 +508,17 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Effective intent and expiry — automatic / start until HH:MM / stop (pending: Stopping after the current work finishes until idle)
 - Service activity — idle or running since, auto-stops by HH:MM (run limit); never show lease ids
 - Describe load — work in flight yes/no with load snapshot freshness
-- Cost disclosure — hourly rate and warm-up time before Start, not in the headline
+- Cost disclosure — hourly rate and the 60-minute maximum before Start, not in the headline
 - Start service / Stop service / Return to automatic / Refresh status
 - Description API URL and API key — concealed key input; edits stay in memory and the key is never echoed or written to local storage
 - Local autosave status — dirty / saving / saved / failed; failed or partial save retains the typed key, and newer edits remain dirty
 - Connection health — automatic check after persisted Settings reload; discard a stale result after a newer URL or key edit
-- Start preview — cost per hour, warm-up estimate, auto-return after TTL
+- Start preview — cost per hour, several-minutes readiness note (no fixed estimate), auto-return after TTL
 - Confirm start / Cancel
 - Stop preview — Stop after the current run finishes? then Stopping after the current work finishes until idle
 - Confirm stop / Cancel
 - Workbench entry
+- Beta disclosure below the Review Queue h1, before the existing panels; What to expect details closed initially, with draft-review guidance and the shared cold-start explanation; no alert or model-comparison claim
 
 States (all zones and screens): default loading empty error degraded first_time edge_input offline
 

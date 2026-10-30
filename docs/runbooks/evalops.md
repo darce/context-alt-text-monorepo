@@ -1,7 +1,7 @@
 # Weekly EVALOPS measurements
 
 Owner: EVALOPS coordinator; implementation task `EVALOPS-1-RUNNER`, umbrella
-`EVALOPS-1`. This stdlib runner joins the three existing scorer APIs. It reads
+`EVALOPS-1`. This stdlib runner joins the existing scorer APIs. It reads
 exports or an explicitly selected read-only SQLite source and creates one new
 JSON report per invocation. It makes no model, provider, MCP or network calls.
 No scheduler is installed.
@@ -12,7 +12,8 @@ make evalops
 
 The default uses tracked `benchmarks/experiments/evalops/` evidence: 100 blind
 findings, qrels, **100 coded error samples, not all 441 historical errors**, and
-lesson exports. The default successfully reports `needs_labels`, unavailable
+lesson exports. Optional source1 reliability and generation-support inputs
+use their existing offline APIs. The default successfully reports `needs_labels`, unavailable
 retrieval results, unknown protocol/QC, and unknown replay coverage. Missing
 human work is not a tooling release blocker. Resolution status, notes and
 machine prelabels are never human truth. Seed inputs are never edited.
@@ -148,6 +149,167 @@ the `errors_sha256` for DB coverage. The helper has no public lessons exporter;
 the runner does not scan memory/decision tables. Supply an explicit lessons
 export, otherwise lessons are unavailable in DB mode.
 
+## Source1 VM categories: optional native contracts
+
+The additive `evalops.runner.v1` fields `scorers.reliability`,
+`scorers.faithfulness`, and `categories` preserve the existing defaults and
+scorer outputs. There is no trajectory adapter or second evaluation engine.
+The native contracts remain proposed, not adopted enforcement:
+[trajectory-v1](../../benchmarks/experiments/evalops/contracts/trajectory-v1.json)
+and [evidence-reuse-v1](../../benchmarks/experiments/evalops/contracts/evidence-reuse-v1.json).
+Their native owner must establish current subject, environment, command, input,
+coverage and applicability equivalence before accepting or reusing evidence.
+Schema validity, a filename, a digest, a role or a `verified` boolean cannot
+authenticate source-time provenance, label independence or accepted quality.
+
+* `--reliability FILE` reads exactly the scorer CLI request:
+  `{candidates: [...], trials?: [...], design?: object, artifacts?: object}`.
+  The runner calls `score_reliability.score(**request)`. Use the existing
+  [score_reliability.py](../../benchmarks/tools/evalops/score_reliability.py)
+  contract for frozen candidates, matched case/arm/repeat trials, design,
+  execution/oracle artifacts, pins and failed attempts. No trials are dispatched.
+  Candidate-only input retains unavailable task reliability, not zero pass rates.
+* `--faithfulness FILE` passes the unchanged
+  `{schema_version: "evalops.faithfulness-input.v1", cases: [...], pairwise?: [...]}`
+  object to `score_faithfulness.score(payload)`. The existing
+  [score_faithfulness.py](../../benchmarks/tools/evalops/score_faithfulness.py)
+  contract defines frozen cases, supplied context, generated outputs, externally
+  enumerated claims, judgments/QC/protocol and pairwise order results. Both orders
+  must actually be supplied; the runner never swaps or judges outputs itself.
+  Raw distributions, pair agreement and explicit merge-only fact-unit checks are
+  diagnostics; accepted semantic rates remain unavailable.
+
+Each wrapper has `status`, `reason`, `payload`; `payload` is the complete native
+scorer return value. Missing inputs yield `status=unavailable`, `payload=null`.
+Supplied empty arrays remain supplied observations. Each `categories` entry has
+`status`, `reason_codes`, `quality_acceptance=not_evaluated`,
+`product_regression=unknown`, `pins`, and `gate`. `pins.input` carries the exact
+input byte hash/path/size; `pins.scorer_payload` points to the native payload
+containing case, protocol, execution and judgment pins and detailed missingness.
+`inputs.category_protocol` pins any proposed threshold request. `code` now also
+hashes both scorer sources and checks their executed bytes against HEAD.
+
+JSON files use the existing strict parser, regular-file reader, protected input
+paths and atomic exclusive publication. The smaller of `--max-bytes` and the
+scorer's native limit applies before parsing: reliability 16 MiB, faithfulness
+8 MiB. The smaller of `--max-rows` and the native case/trial bounds applies to
+`candidates`, `trials`, `cases`, and `pairwise`; native node/depth/work bounds
+remain in force. No output or input is overwritten. All 240 dataset-v1 records
+remain quarantined; no controlled matched trials or independent semantic gold
+are available in the tracked evidence.
+
+### Proposed category thresholds and scoped holds
+
+`--category-protocol FILE` accepts only this offline proposal structure:
+
+```text
+{
+  "schema_version": "evalops.category-protocol.v1",
+  "categories": {
+    "reliability" or "faithfulness": {
+      "affected_action": {"kind": "promotion", "id": nonempty string},
+      "thresholds": [{"metric": native-payload JSON pointer,
+                      "operator": "gte" or "lte", "value": number in [0,1]}],
+      "provenance": {
+        "independent_labels": artifact_ref or null,
+        "qc": artifact_ref or null,
+        "protocol": artifact_ref or null,
+        "accepted_baseline": artifact_ref or null,
+        "subject": artifact_ref or null,
+        "environment": artifact_ref or null,
+        "command": artifact_ref or null,
+        "inputs": artifact_ref or null
+      }
+    }
+  }
+}
+```
+
+Only the two named categories are allowed; either may be omitted. Every shown
+category field is required. Provenance keys may be omitted to record missing
+evidence. An `artifact_ref` is exactly `{ref, sha256, version}`, with nonempty
+strings and a lowercase 64-hex digest; references are retained and never opened.
+Action IDs and metric pointers are bounded to 256 characters. Threshold arrays
+contain 1..min(16, max_rows) items, each with exactly the three shown keys.
+Threshold values must be finite numbers, excluding booleans. Metric pointers
+start with `/` and refer to the native scorer payload (for example,
+`/arms/B/2/pass_pow_k/value` or `/semantic_rates/supported/value`). They are
+declarations only: this subset does not resolve or compare them. The immutable
+external protocol must define the selected cohort, arm, k, denominator and
+decision before any enforcement can be adopted. No default thresholds exist.
+
+No external acceptance verifier is implemented at this runner boundary. Thus
+**every structurally valid threshold request**, even with all provenance refs,
+has `gate.status=unavailable`, `reason_codes` including
+`external_verifier_unavailable`, `disposition=hold_affected_promotion`, and its
+exact `affected_action` and `request`. Missing provenance adds
+`accepted_quality_provenance_missing`. `gate.validity=unknown` means the hold
+does not assert a valid defect. A category with no proposal has
+`gate.status=not_requested`, `disposition=none`, null action/request and no gate
+reasons. The runner neither certifies gold nor enforces a quality threshold.
+
+Command/report success remains exit 0 with `execution_status=ok`, including
+these unavailable gates. Malformed inputs/configuration, missing supplied files,
+imports or publication failures remain exit 2, with structured stderr and no
+report. No category aggregate percentage or blanket merge hold is emitted.
+A negative supplied reliability delta is conditional descriptive evidence;
+dispatch refusal is infrastructure evidence, not a failed task oracle. Fixture
+outcomes and unauthenticated labels cannot establish real product regression.
+An actual regression verdict needs an independently accepted baseline and
+quality provenance pinned to the current subject/environment/command/inputs.
+The native owner retains defect `validity` separately from action-specific
+`disposition`, original finding identity, evidence and adjudication; this runner
+does not rewrite findings or turn quality missingness into a merge blocker.
+
+### Existing VM gate commands
+
+Run the root target directly in the disposable VM snapshot with actual exported
+inputs; omit any input that is unavailable:
+
+```sh
+make evalops-vm EVALOPS_RELIABILITY=/tmp/evalops/matched-trials.json EVALOPS_FAITHFULNESS=/tmp/evalops/generation.json EVALOPS_CATEGORY_PROTOCOL=/tmp/evalops/proposed-category-protocol.json
+make test-evalops
+```
+
+`EVALOPS_RELIABILITY`, `EVALOPS_FAITHFULNESS` and `EVALOPS_CATEGORY_PROTOCOL` are
+optional path variables; `EVALOPS_ARGS` still accepts all runner CLI options.
+`evalops-vm` invokes `evalops` and reports categories; it cannot promote.
+`test-evalops` runs the existing runner plus reliability and faithfulness tests
+in one pytest process with `--noconftest`, without xdist or production inputs.
+These deterministic tests are not independent human gold or production rates.
+
+The existing transport is `scripts/remote_gate.sh` through root `check-remote`
+([remote-test-gate.md](remote-test-gate.md)), not GitHub CI. For a later
+coordinator invocation on **committed HEAD**:
+
+```sh
+WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS=evalops-vm
+WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS=test-evalops
+WORKBAY_REMOTE_GATE_WORKDIR=. make -n check-remote TARGETS=evalops-vm
+```
+
+The explicit `.` override is required: root `check-remote` otherwise selects
+`apps/prototype-description-service`. Keep the default
+`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 ACX_STRICT_GATE=1`.
+If the operator supplies `WORKBAY_REMOTE_GATE_ENV`, it replaces that entire
+default; restate all four assignments plus any `EVALOPS_RELIABILITY=...`,
+`EVALOPS_FAITHFULNESS=...` or `EVALOPS_CATEGORY_PROTOCOL=...` paths (without
+spaces) to existing VM exports. The transport does not copy arbitrary untracked
+input files. A direct target pass or `make -n` proves no live CI attachment,
+native evidence reuse, deployment or service acceptance; observe the actual
+transport receipt before claiming those results.
+
+Canon **v0.26.2**, all 53 release-manifest digests verified from the read-only VM
+copy: [EVAL-12] **Validate the judge against humans** and [EVAL-13] **Pin the
+judging protocol** (*AI Engineering*) keep thresholds non-enforcing without
+independent labels/QC and immutable evidence. [TEST-06] **Watch it fail once /
+predict the failure** (*Modern Software Engineering*, ch. 8) and [TEST-15]
+**Prove the green can go red** (*The Pragmatic Programmer*, ch. 9) require RED
+and a caught mutant. Measurement-integrity, evidence-before-commitment,
+context-obedience and falsification-disconfirmers cards inform these scoped
+unknowns and tests. The existing native journal/owner remains the authority;
+there is no second label or acceptance store.
+
 ## Blind labels, independent predictions and QC
 
 The coordinator arranges independent blinded labeling on a copy of the findings
@@ -171,7 +333,7 @@ decision needs actual independent evidence and a predeclared protocol.
 
 Each report records UTC bounds and observation time, immutable HEAD commit/tree,
 executed source byte hashes and whether those bytes match that tree, input byte
-hashes, support, provenance, and all three nested scorer payloads/availability.
+hashes, support, provenance, and all nested scorer payloads/availability.
 Run from a committed clean tree for immutable execution evidence. A dirty tree
 is disclosed; its HEAD tree alone does not identify the edited executed bytes.
 Reuse the same evidence, tree, bounds and `--now` for identical JSON (unique
@@ -183,7 +345,7 @@ on `PYTHONPATH`:
 ```sh
 python3 /absolute/repo/benchmarks/tools/evalops/run.py --output-dir /tmp/evalops-reports
 PYTHONPATH=/absolute/repo python3 -m benchmarks.tools.evalops.run --output-dir /tmp/evalops-reports
-LC_ALL=C uv run --no-project --with pytest python -m pytest benchmarks/tests/test_evalops_runner.py -q -p no:cacheprovider
+LC_ALL=C uv run --no-project --with pytest python -m pytest --noconftest benchmarks/tests/test_evalops_runner.py benchmarks/tests/test_evalops_score_reliability.py benchmarks/tests/test_evalops_score_faithfulness.py -q -p no:cacheprovider
 ```
 
 Exit 0 means execution succeeded, including `needs_labels` and unavailable

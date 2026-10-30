@@ -74,7 +74,7 @@ from recognition.observability.curation_refresh_metrics import get_default_curat
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from scene.application.gpu_state import GpuRoutingMode, GpuState, read_gpu_snapshot, resolve_gpu_routing_mode
 from scene.application.seeded_adapter import SeededDescriptionAdapter
-from scene.config.profiles import DescriptionProfile, ProfileSpec, get_profile_spec
+from scene.config.profiles import DEFAULT_DESCRIPTION_PROFILE, DescriptionProfile, ProfileSpec, get_profile_spec
 from scene.config.settings import _parse_allowlist
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http import deps as scene_http_deps
@@ -285,7 +285,7 @@ def _wire_model_version(spec: ProfileSpec, model_id: str | None) -> str | None:
 
 def _resolve_description_profile() -> DescriptionProfile:
     """Validate the configured description profile before registering routes."""
-    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.FLORENCE_SMALL.value)
+    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DEFAULT_DESCRIPTION_PROFILE.value)
     try:
         return DescriptionProfile(raw)
     except ValueError as exc:

@@ -8,8 +8,10 @@ gpu_phi4) are fail-closed: selecting them yields an UnavailableDescriptionAdapte
 whose ``describe`` raises a clear error.
 """
 
+import ast
 import logging
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -130,9 +132,30 @@ def test_available_gpu_profiles_pin_a_non_none_hub_revision():
 # ------------------------------------------------------------- settings wiring
 
 
-def test_settings_default_profile_is_florence_small(monkeypatch):
+def test_settings_default_profile_is_seeded(monkeypatch):
     monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
-    assert DescriptionSettings().profile is DescriptionProfile.FLORENCE_SMALL
+    assert DescriptionSettings().profile is DescriptionProfile.SEEDED
+
+
+def test_default_description_profile_has_one_owner():
+    from scene.config.profiles import DEFAULT_DESCRIPTION_PROFILE
+
+    assert DEFAULT_DESCRIPTION_PROFILE is DescriptionProfile.SEEDED
+    root = Path(__file__).resolve().parents[2]
+    for relative_path in ("scene/config/settings.py", "api/main.py"):
+        tree = ast.parse((root / relative_path).read_text())
+        reads = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and ast.unparse(node.func) == "os.environ.get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "ACX_DESCRIPTION_ADAPTER"
+        ]
+        assert len(reads) == 1, f"{relative_path} must read the adapter default exactly once"
+        assert len(reads[0].args) == 2, f"{relative_path} must declare its default"
+        assert ast.unparse(reads[0].args[1]) == "DEFAULT_DESCRIPTION_PROFILE.value", relative_path
 
 
 def test_settings_reads_profile_from_env(monkeypatch):
@@ -143,19 +166,19 @@ def test_settings_reads_profile_from_env(monkeypatch):
 # ------------------------------------------------------- adapter resolution
 
 
-def test_resolve_defaults_to_florence_small(monkeypatch):
+def test_resolve_defaults_to_seeded(monkeypatch):
     monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
     from scene.interface_adapters.http.deps import get_description_adapter
 
     _reset_singleton()
-    assert get_description_adapter().kind is DescriptionAdapterKind.LOCAL_CPU
+    assert get_description_adapter().kind is DescriptionAdapterKind.SEEDED
 
 
-def test_api_profile_resolver_defaults_to_florence_small(monkeypatch):
+def test_api_profile_resolver_defaults_to_seeded(monkeypatch):
     monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
     from api.main import _resolve_description_profile
 
-    assert _resolve_description_profile() is DescriptionProfile.FLORENCE_SMALL
+    assert _resolve_description_profile() is DescriptionProfile.SEEDED
 
 
 def test_resolve_florence_small_builds_local_cpu_without_loading(monkeypatch):
@@ -374,7 +397,7 @@ def test_default_profile_unaffected_by_hosted_optin(monkeypatch):
     from scene.interface_adapters.http.deps import get_description_adapter
 
     _reset_singleton()
-    assert get_description_adapter().kind is DescriptionAdapterKind.LOCAL_CPU
+    assert get_description_adapter().kind is DescriptionAdapterKind.SEEDED
 
 
 def test_fake_hosted_adapter_satisfies_protocol_with_canned_result():

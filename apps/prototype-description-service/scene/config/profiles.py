@@ -39,6 +39,10 @@ class DescriptionProfile(StrEnum):
     HOSTED_GPT4O = "hosted_gpt4o"
 
 
+# Unset means no model call: Florence is benchmark-only (decision 15953, E15-39).
+DEFAULT_DESCRIPTION_PROFILE = DescriptionProfile.SEEDED
+
+
 @dataclass(frozen=True)
 class ProfileSpec:
     """How one profile maps to an adapter. ``available=False`` => fail-closed stub."""

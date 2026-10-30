@@ -1747,6 +1747,33 @@ class _UnavailableGpuAdapter:
         raise DescriptionAdapterUnavailableError("gpu adapter unavailable")
 
 
+def test_gpu_unavailable_does_not_consume_demo_quota(monkeypatch, tmp_path):
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
+    adapter = _UnavailableGpuAdapter()
+    charges = []
+    consume = describe_module.maybe_consume_demo_quota
+
+    async def _count_charge(auth, session, *, units=1, durable=True):
+        charges.append(units)
+        return await consume(auth, session, units=units, durable=durable)
+
+    monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", _count_charge)
+    with _demo_quota_client(recognition_quota=2) as (client, sf, _prov, tenant_id, slug):
+        _ensure_describe_operation_tables(sf)
+        client.app.dependency_overrides[get_description_adapter] = lambda: adapter
+        response = _post(client, tenant_id)
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
+        assert adapter.calls == 0
+        assert charges == [], "GPU readiness rejection must happen before demo quota consumption"
+        assert _recognition_used(sf, slug) == 0
+
+
 def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
     _gpu_env(monkeypatch, tmp_path, state="ready")
     adapter = _UnavailableGpuAdapter()

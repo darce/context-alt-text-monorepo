@@ -111,6 +111,27 @@ def test_first_accept_charges_the_demo_quota_exactly_once(monkeypatch):
         assert _used(sf, slug) == 2
 
 
+def test_cancelling_a_demo_run_keeps_its_charge(monkeypatch):
+    _no_worker(monkeypatch)
+    with demo_quota_client(recognition_quota=5, tables="run") as (client, sf, _p, tenant_id, slug):
+        _install_admission(client)
+        accepted = _submit(client, tenant_id, [70, 71, 70], key=KEY_A)
+        assert accepted.status_code == 202, accepted.text
+        assert _used(sf, slug) == 2, "creation charges each unique media id once"
+
+        run_id = accepted.json()["run_id"]
+        cancelled = client.delete(f"/scene/describe/run/{run_id}")
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["run_id"] == run_id
+        assert cancelled.json()["status"] == "cancelled"
+        assert _used(sf, slug) == 2, "cancelling an accepted run must keep its creation charge"
+
+        persisted = client.get(f"/scene/describe/run/{run_id}")
+        assert persisted.status_code == 200, persisted.text
+        assert persisted.json()["status"] == "cancelled"
+        assert _used(sf, slug) == 2
+
+
 def test_replaying_one_key_never_charges_the_demo_quota_twice(monkeypatch):
     """[S08] The whole point of the token: a blind retry must be free.
 

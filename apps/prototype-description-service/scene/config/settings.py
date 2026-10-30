@@ -1,9 +1,9 @@
 """Description-specific settings, kept separate from RecognitionSettings.
 
 Env-driven via ``default_factory`` so a deployment can flip the adapter or caps
-without touching the recognition-only configuration surface. The default uses
-the image-grounded Florence adapter; the seeded fixture adapter is opt-in for
-tests and controlled demos.
+without touching the recognition-only configuration surface. An unset adapter
+uses seeded fixtures without a model call; Florence remains an explicit
+benchmark profile.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import os
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from scene.config.profiles import DescriptionProfile
+from scene.config.profiles import DEFAULT_DESCRIPTION_PROFILE, DescriptionProfile
 from shared.secrets import get_secret_provider
 
 _DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024  # 25 MiB, matches recognition multipart cap.
@@ -75,9 +75,11 @@ class DescriptionSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    # The operator switch: seeded | florence_small | florence_large | gpu_phi4.
+    # The operator switch; unset resolves to seeded (no model call).
     profile: DescriptionProfile = Field(
-        default_factory=lambda: DescriptionProfile(os.environ.get("ACX_DESCRIPTION_ADAPTER", "florence_small"))
+        default_factory=lambda: DescriptionProfile(
+            os.environ.get("ACX_DESCRIPTION_ADAPTER", DEFAULT_DESCRIPTION_PROFILE.value)
+        )
     )
     max_description_image_bytes: int = Field(
         default_factory=lambda: int(os.environ.get("ACX_DESCRIPTION_MAX_IMAGE_BYTES", _DEFAULT_MAX_IMAGE_BYTES))

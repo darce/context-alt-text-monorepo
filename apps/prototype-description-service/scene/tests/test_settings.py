@@ -12,7 +12,7 @@ from scene.config.settings import DEFAULT_GENERATION_TIMEOUT_SECONDS, Descriptio
 def test_description_settings_defaults(monkeypatch):
     monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
     s = DescriptionSettings()
-    assert s.profile is DescriptionProfile.FLORENCE_SMALL
+    assert s.profile is DescriptionProfile.SEEDED
     assert s.max_description_image_bytes == 25 * 1024 * 1024
     assert "image/jpeg" in s.allowed_description_mime_types
     assert s.prompt_or_task_version == "1"

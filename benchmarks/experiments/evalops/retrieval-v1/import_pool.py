@@ -144,10 +144,13 @@ def build(base=HERE):
                 if rank > depth:
                     continue
                 pointer = f"/results/{row_index}/results/{rank - 1}"
-                observation = {"strategy_id": name, "query_id": q, "provider_rank": rank,
-                               "snapshot_sha256": pin["sha256"], "json_pointer": pointer,
-                               "hit_sha256": digest(encoded(hit)), **hit}
-                document(identity)["observations"].append(observation)
+                lineage = {"strategy_id": name, "query_id": q, "provider_rank": rank,
+                           "snapshot_sha256": pin["sha256"], "json_pointer": pointer,
+                           "hit_sha256": digest(encoded(hit))}
+                # Raw fields stay verbatim beside generated lineage, so a provider key may not replace one.
+                clash = sorted(lineage.keys() & hit.keys())
+                require(not clash, f"provider hit field collides with generated lineage: {', '.join(clash)}")
+                document(identity)["observations"].append({**lineage, **hit})
                 if identity not in contributions:
                     ranked.append(identity)
                     contributions[identity] = {"strategy_id": name, "document_rank": len(ranked),

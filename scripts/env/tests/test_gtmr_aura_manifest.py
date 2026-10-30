@@ -1,10 +1,10 @@
-"""GTMR RED: causal manifest contract for three isolated AuraFace 512d targets.
+"""Causal manifest contract for three isolated AuraFace 512d targets.
 
-Authored against unchanged production source (commit 0d3ff19d, tree 1fb33a6).
-Contract tests fail until the Aura manifest slice lands. Healthy controls pin the
-current generic/FIR renders and prove the contract gate can fail, so a green result
-cannot come from an empty or vacuous check. Environment labels and resource names
-are proposed configuration, not observed resources.
+Generic/FIR runtime controls pin the accepted fbcd8ee0 contract (provenance below),
+superseding the original pre-Aura fingerprints from commit 0d3ff19d, tree 1fb33a6.
+The Aura contract originated at that older source; its mutation controls prove
+the gate can fail. Environment labels and resource names are configuration,
+not observed resources.
 """
 
 from __future__ import annotations
@@ -60,14 +60,21 @@ FIR_CONTROL = {
     "RECOGNITION_ADMIN_ENABLED": "false",
 }
 
-# sha256 over sorted runtime assignments plus the required-but-unsupplied host secrets,
-# captured from unchanged production (tree 1fb33a6) with the fake resolver below.
+# Fixed expectations reviewed against accepted source fbcd8ee0fba416f703637f87b130fd3dbf25434c,
+# tree 267daa6f8164913f6880f975fac1fd0beeddf99d; never regenerated during tests.
+# Supersedes tree 1fb33a6: each VM render adds only ACX_GPU_OPERATOR_TENANT_IDS=,
+# the existing deny-all operator default (pre-existing drift, separate from FIR).
+# FIR adds gpu_qwen30b, http://10.0.1.9:8000, an empty endpoint allowlist, and the
+# conditionally required host ACX_GPU_ENDPOINT_API_KEY. Its semantic contract is
+# covered by test_fir_gpu_manifest.py; local/demo runtime pins remain unchanged.
+# sha256 covers ALL sorted runtime assignments plus required-but-unsupplied host
+# secret names, using the fake resolver below. Do not filter GPU keys or secrets.
 EXISTING_RENDER_GOLDEN = {
     ("svc-local", "local"): ("0b4466bebdf663a9e427912cafdb0dd73085cd3921fc05b71547c2d17b216092", 18),
-    ("svc-vm", "dev"): ("2a67a34ab2a7612bbeea35430e12c6f33f58aa7bbf5622b3a99cb19d43a2b5df", 45),
-    ("svc-vm", "staging"): ("3284ebc6e48c201138f10c8812b049bca5bfc0be391a6d1aba9e5216c3af8ca9", 37),
-    ("svc-vm", "prod"): ("cd22953276f3b9bb27507abba79865e6048c778b3c6a62d5c7472e979fed613b", 50),
-    ("svc-fir", "fir"): ("61391317a2500419470638bd6f8378ba945e1bba8ce38c10888b341a5cf23f37", 32),
+    ("svc-vm", "dev"): ("0eb822cd23b3a1b612a8a9c0a1a8a16978a831e0ae7d83b1d65f8df9a45c4b18", 46),
+    ("svc-vm", "staging"): ("b058595a0477379a799f28b0eba5a73bade97ba095f5596526f8e6e9640f50fa", 38),
+    ("svc-vm", "prod"): ("ee903838f3da1384eafbcd795a9dae8774b44a90d062cb087ff82b42faf055c8", 51),
+    ("svc-fir", "fir"): ("9c557c835bc7365fa41fe526ff3330520896aa9623fd6224ec1695c9b483d254", 35),
     ("demo", "demo"): ("1b07a0150a4b99495c4caceddc761b6f7b5894398ee27b0c3be07737c2cc7daa", 16),
 }
 
@@ -493,7 +500,7 @@ def test_aura_example_is_generated_from_the_target_render():
 
 
 # ---------------------------------------------------------------------------
-# Healthy controls: must pass against unchanged production
+# Healthy controls: must pass against the accepted production contract
 # ---------------------------------------------------------------------------
 
 

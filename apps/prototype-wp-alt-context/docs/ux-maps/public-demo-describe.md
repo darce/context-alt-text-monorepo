@@ -229,18 +229,24 @@ flow: OBSERVED: failed pipeline, invalid envelope, or 120s po\
   visit 2)
      --120s client ceiling → timeout copy (same image re-atta\
   ches); form re-enabled; in-memory key kept-->
-  3. Refresh page (drops in-memory retry key) [refresh-page-d\
+  3. Public demo › Describe an image [public-demo-describe] (\
+  visit 3)
+     --visitor refreshes anyway (voluntary; timeout alone sta\
+  ys on this page) → in-memory key and run_id dropped (refres\
+  h-safe resume not implemented)-->
+  4. Refresh page (drops in-memory retry key) [refresh-page-d\
   rops-retry-key]
 ```
 
 ```mermaid
 flowchart TD
   %% flow: OBSERVED: failed pipeline, invalid envelope, or 120s poll timeout job=describe-allowlisted-image
-  %% steps: [{"screen_id":"public-demo-describe","branch_label":"failed / cancelled / completed_with_errors / incomplete (terminal) → data-state=failed; form re-enabled; key cleared. Invalid envelope or transient error → data-state=failed; key kept"},{"screen_id":"public-demo-describe","branch_label":"120s client ceiling → timeout copy (same image re-attaches); form re-enabled; in-memory key kept"},{"screen_id":"refresh-page-drops-retry-key","branch_label":"visitor refreshes anyway → key dropped (refresh-safe resume not implemented)"}]
+  %% steps: [{"screen_id":"public-demo-describe","branch_label":"failed / cancelled / completed_with_errors / incomplete (terminal) → data-state=failed; form re-enabled; key cleared. Invalid envelope or transient error → data-state=failed; key kept"},{"screen_id":"public-demo-describe","branch_label":"120s client ceiling → timeout copy (same image re-attaches); form re-enabled; in-memory key kept"},{"screen_id":"public-demo-describe","branch_label":"visitor refreshes anyway (voluntary; timeout alone stays on this page) → in-memory key and run_id dropped (refresh-safe resume not implemented)"},{"screen_id":"refresh-page-drops-retry-key","branch_label":null}]
   n_public_demo_describe["Public demo › Describe an image (screen)"]
   n_public_demo_describe -->|failed / cancelled / completed_with_errors / incomplete (terminal) → data-state=failed; form re-enabled; key cleared. Invalid envelope or transient error → data-state=failed; key kept| n_public_demo_describe
+  n_public_demo_describe -->|120s client ceiling → timeout copy (same image re-attaches); form re-enabled; in-memory key kept| n_public_demo_describe
   n_refresh_page_drops_retry_key["Refresh page (drops in-memory retry key) (exit)"]
-  n_public_demo_describe -->|120s client ceiling → timeout copy (same image re-attaches); form re-enabled; in-memory key kept| n_refresh_page_drops_retry_key
+  n_public_demo_describe -->|visitor refreshes anyway (voluntary; timeout alone stays on this page) → in-memory key and run_id dropped (refresh-safe resume not implemented)| n_refresh_page_drops_retry_key
 ```
 
 ### OBSERVED: same-page retry reuses the in-memory key (`observed-same-page-retry`)

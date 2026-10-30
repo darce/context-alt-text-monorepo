@@ -184,8 +184,12 @@
           "branch_label": "120s client ceiling → timeout copy (same image re-attaches); form re-enabled; in-memory key kept"
         },
         {
+          "screen_id": "public-demo-describe",
+          "branch_label": "visitor refreshes anyway (voluntary; timeout alone stays on this page) → in-memory key and run_id dropped (refresh-safe resume not implemented)"
+        },
+        {
           "screen_id": "refresh-page-drops-retry-key",
-          "branch_label": "visitor refreshes anyway → key dropped (refresh-safe resume not implemented)"
+          "branch_label": null
         }
       ]
     },

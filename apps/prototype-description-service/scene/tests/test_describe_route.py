@@ -46,6 +46,7 @@ from recognition.interface_adapters.http.middleware.metrics import get_default_m
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
 from scene.interface_adapters.http.router import router as scene_router
 from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate, _PreflightMissCacheRepository
@@ -146,6 +147,13 @@ class _SlowLocalAdapter:
         )
 
 
+_DESCRIBE_LOAD_SNAPSHOT_REVISIONS_DDL = (
+    "CREATE TABLE describe_load_snapshot_revisions ("
+    "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+    "revision INTEGER NOT NULL)"
+)
+
+
 def _make_db(naming_agreement_enabled=True):
     path = os.path.join(tempfile.gettempdir(), f"e19_route_{uuid.uuid4().hex}.db")
     url = f"sqlite+aiosqlite:///{path}"
@@ -173,13 +181,7 @@ def _make_db(naming_agreement_enabled=True):
                     ],
                 ),
             )
-            await conn.execute(
-                text(
-                    "CREATE TABLE describe_load_snapshot_revisions ("
-                    "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
-                    "revision INTEGER NOT NULL)"
-                )
-            )
+            await conn.execute(text(_DESCRIBE_LOAD_SNAPSHOT_REVISIONS_DDL))
         sf = async_sessionmaker(engine, expire_on_commit=False)
         async with sf() as s:  # provision the tenant so require_tenant_record passes
             s.add(
@@ -282,6 +284,21 @@ def _ensure_describe_operation_tables(session_factory) -> None:
                     ],
                 )
             )
+
+    asyncio.run(_create())
+
+
+def _ensure_describe_load_snapshot_table(session_factory) -> None:
+    """Demo-quota harness omits the snapshot revision table that accepted operations publish through.
+
+    Only call this after redirecting ACX_DESCRIBE_LOAD_PATH (``_gpu_env``): with the
+    table present the best-effort snapshot dump succeeds and writes that path.
+    """
+
+    async def _create():
+        engine = session_factory.kw["bind"]
+        async with engine.begin() as conn:
+            await conn.execute(text(_DESCRIBE_LOAD_SNAPSHOT_REVISIONS_DDL))
 
     asyncio.run(_create())
 
@@ -1750,9 +1767,24 @@ class _UnavailableGpuAdapter:
 def test_gpu_unavailable_does_not_consume_demo_quota(monkeypatch, tmp_path):
     from scene.interface_adapters.http.routers import describe as describe_module
 
-    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    _, load_path, _, _ = _gpu_env(monkeypatch, tmp_path, state="stopped")
+    # A public endpoint makes the real GPU resolver fail closed; tier=gpu selects it.
     monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
-    adapter = _UnavailableGpuAdapter()
+    resolved = []
+    resolve_gpu_adapter = describe_module.get_gpu_description_adapter
+
+    def _record_gpu_adapter():
+        adapter = resolve_gpu_adapter()
+        resolved.append(adapter)
+        return adapter
+
+    describes = []
+    unavailable_describe = UnavailableDescriptionAdapter.describe
+
+    def _count_describe(self, *, image_bytes, context):
+        describes.append(1)
+        return unavailable_describe(self, image_bytes=image_bytes, context=context)
+
     charges = []
     consume = describe_module.maybe_consume_demo_quota
 
@@ -1760,18 +1792,28 @@ def test_gpu_unavailable_does_not_consume_demo_quota(monkeypatch, tmp_path):
         charges.append(units)
         return await consume(auth, session, units=units, durable=durable)
 
+    monkeypatch.setattr(describe_module, "get_gpu_description_adapter", _record_gpu_adapter)
+    monkeypatch.setattr(UnavailableDescriptionAdapter, "describe", _count_describe)
     monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", _count_charge)
     with _demo_quota_client(recognition_quota=2) as (client, sf, _prov, tenant_id, slug):
         _ensure_describe_operation_tables(sf)
-        client.app.dependency_overrides[get_description_adapter] = lambda: adapter
-        response = _post(client, tenant_id)
+        _ensure_describe_load_snapshot_table(sf)
+        response = _post(
+            client,
+            tenant_id,
+            request_body={"tenant_id": tenant_id, "media_id": 42, "tier": "gpu"},
+        )
         assert response.status_code == 503, response.text
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
         assert detail["reason"] == "endpoint_not_private"
-        assert adapter.calls == 0
-        assert charges == [], "GPU readiness rejection must happen before demo quota consumption"
+        assert len(resolved) == 1
+        assert isinstance(resolved[0], UnavailableDescriptionAdapter)
+        assert resolved[0].kind is DescriptionAdapterKind.GPU
+        assert describes == []
+        assert charges == [], "GPU unavailable refusal must happen before demo quota consumption"
         assert _recognition_used(sf, slug) == 0
+        assert load_path.exists(), "accepted operation must publish its load snapshot"
 
 
 def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):

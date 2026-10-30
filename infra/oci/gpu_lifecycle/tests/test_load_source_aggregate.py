@@ -9,6 +9,12 @@ import os
 from pathlib import Path
 
 import pytest
+from infra.oci.gpu_lifecycle.controller import (
+    GpuInstance,
+    GpuInstanceState,
+    GpuLifecycleController,
+    LifecycleAction,
+)
 from infra.oci.gpu_lifecycle.load_source import (
     LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS,
     AggregateJobLoadSource,
@@ -20,6 +26,7 @@ from infra.oci.gpu_lifecycle.reaper import (
 )
 
 NOW = 10_000.0
+EXPECTED_PRODUCERS = ("dev", "dev-auraface", "dev-fir", "prod", "staging")
 
 
 def _write_load(
@@ -452,7 +459,73 @@ def test_missing_deployment_registry_is_rejected(tmp_path: Path) -> None:
 def test_default_registry_supplies_the_expected_producer_set(tmp_path: Path) -> None:
     source = AggregateJobLoadSource(directory=tmp_path, stale_seconds=120)
 
-    assert source.expected_environments == ("dev", "dev-auraface", "prod", "staging")
+    assert source.expected_environments == EXPECTED_PRODUCERS
+
+
+@pytest.mark.parametrize(
+    ("queue_depth", "in_flight", "batch_in_progress"),
+    [(0, 0, True), (2, 0, False), (0, 1, False), (0, 0, False)],
+    ids=["fir-batch-only", "fir-queued-only", "fir-in-flight-only", "all-idle"],
+)
+def test_default_registry_routes_fir_only_demand_to_start_decision(
+    tmp_path: Path,
+    queue_depth: int,
+    in_flight: int,
+    batch_in_progress: bool,
+) -> None:
+    # Keep the producer fixture independent of the registry: an omitted producer
+    # must still publish its real snapshot, especially zero-counter bulk demand.
+    for environment in EXPECTED_PRODUCERS:
+        is_fir = environment == "dev-fir"
+        _write_load(
+            tmp_path,
+            environment,
+            queue_depth=queue_depth if is_fir else 0,
+            in_flight=in_flight if is_fir else 0,
+            batch_in_progress=batch_in_progress if is_fir else False,
+        )
+    source = AggregateJobLoadSource(directory=tmp_path, stale_seconds=120)
+    snapshot = source.snapshot()
+    controller = GpuLifecycleController(idle_seconds=300)
+    stopped = GpuInstance(
+        instance_id="fixture-stopped-gpu",
+        state=GpuInstanceState.STOPPED,
+        idle_for_seconds=0,
+    )
+
+    assert snapshot.evidence == "trustworthy"
+    assert snapshot.untrustworthy is False
+    # This is a pure decision: no actuator or lifecycle cycle is invoked.
+    actions = controller.start_needed_instances(
+        [stopped],
+        queue_depth=snapshot.queue_depth,
+        in_flight=snapshot.in_flight,
+        batch_in_progress=snapshot.batch_in_progress,
+    )
+
+    has_demand = queue_depth > 0 or in_flight > 0 or batch_in_progress
+    assert actions == ([(LifecycleAction.START, stopped.instance_id)] if has_demand else [])
+    assert snapshot.queue_depth == queue_depth
+    assert snapshot.in_flight == in_flight
+    assert snapshot.batch_in_progress is batch_in_progress
+    assert snapshot.has_work is has_demand
+
+
+def test_default_registry_missing_fir_producer_is_unknown_not_idle(tmp_path: Path) -> None:
+    for environment in EXPECTED_PRODUCERS:
+        if environment != "dev-fir":
+            _write_load(tmp_path, environment, queue_depth=0, in_flight=0)
+
+    snapshot = AggregateJobLoadSource(directory=tmp_path, stale_seconds=120).snapshot()
+
+    assert snapshot.evidence == "unknown"
+    assert snapshot.untrustworthy is True
+    assert snapshot.unknown_environments == ("dev-fir",)
+    assert snapshot.unknown_reasons == (("dev-fir", "missing"),)
+    assert snapshot.queue_depth == 0
+    assert snapshot.in_flight == 0
+    assert snapshot.batch_in_progress is False
+    assert snapshot.has_work is False
 
 
 def test_compare_and_act_holds_every_producer_lock_through_stop(tmp_path: Path) -> None:

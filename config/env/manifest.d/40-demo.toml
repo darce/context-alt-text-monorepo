@@ -144,7 +144,7 @@ values = { demo = "acx-ci@demo.altcontext.com" }
 [[override]]
 name = "ACX_DESCRIPTION_ADAPTER"
 target = "demo"
-doc = "--- GPU burst profile (demo) ---\nThis is the complete, preflighted flip contract. Allowed adapter values:\n  florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nThe demo copy is an operator assertion used by preflight; the running\ndescription service remains the producer and is independently probed below.\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env"
+doc = "--- GPU burst profile (demo) ---\nThis is the complete, preflighted flip contract. Allowed adapter values:\n  gpu_qwen30b | gpu_qwen30b_ensemble\nThe demo copy is an operator assertion used by preflight; the running\ndescription service remains the producer and is independently probed below.\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env"
 required = true
 
 [[override]]

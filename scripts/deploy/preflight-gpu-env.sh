@@ -925,7 +925,7 @@ validate_side() {
     stale_seconds="$(env_get "$file" ACX_GPU_STATE_STALE_SECONDS)"
 
     if ! acx_is_trusted_describe_profile "$adapter"; then
-        echo "ERROR [1] ${role} ACX_DESCRIPTION_ADAPTER must be florence_small, gpu_qwen30b, or gpu_qwen30b_ensemble. Set one validated live adapter (redacted length=${#adapter})." >&2
+        echo "ERROR [1] ${role} ACX_DESCRIPTION_ADAPTER must be gpu_qwen30b or gpu_qwen30b_ensemble. Set one validated live adapter (redacted length=${#adapter})." >&2
         exit 1
     fi
 

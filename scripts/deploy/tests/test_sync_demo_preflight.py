@@ -132,7 +132,7 @@ def _run_sync(
             "  printf 'x-wp-total: 1\\n' >\"$headers\"\n"
             "fi\n"
             "if [[ \"$url\" == */wp-json/wp/v2/media* ]]; then\n"
-            "  printf '%s\\n' '[{\"id\":1,\"alt_text\":\"A woman in a red coat speaks at a podium.\",\"acx_alt_provenance\":{\"adapter\":\"florence_small\"}}]' >\"$body\"\n"
+            "  printf '%s\\n' '[{\"id\":1,\"alt_text\":\"A woman in a red coat speaks at a podium.\",\"acx_alt_provenance\":{\"adapter\":\"gpu_qwen30b\"}}]' >\"$body\"\n"
             "elif [[ \"$format\" == *'%{url_effective}'* ]]; then\n"
             "  printf '200 %s' \"$url\"\n"
             "else\n"
@@ -338,7 +338,7 @@ if [[ "$url" == */wp-json/wp/v2/media* ]]; then
   if [[ -n "$headers" ]]; then printf 'x-wp-total: 1\\n' >"$headers"; fi
   printf '%s%s\\n' \\
     '[{"id":1,"alt_text":"A woman in a red coat speaks at a podium.",' \\
-    '"acx_alt_provenance":{"adapter":"florence_small"}}]' >"$body"
+    '"acx_alt_provenance":{"adapter":"gpu_qwen30b"}}]' >"$body"
   printf 'media %s 200\\n' "$url" >> "$CURL_LOG"
   printf 'curl media %s 200\\n' "$url" >> "$EVENT_LOG"
 elif [[ "$format" == *'%{url_effective}'* ]]; then

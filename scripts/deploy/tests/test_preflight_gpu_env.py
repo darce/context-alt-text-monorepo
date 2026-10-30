@@ -503,7 +503,25 @@ def test_01_rejects_empty_seeded_and_unknown_adapters(tmp_path: Path, adapter: s
 
     assert result.returncode != 0
     assert "ERROR [1] producer ACX_DESCRIPTION_ADAPTER" in result.stderr
-    assert "florence_small, gpu_qwen30b, or gpu_qwen30b_ensemble" in result.stderr
+    assert "must be gpu_qwen30b or gpu_qwen30b_ensemble" in result.stderr
+
+
+@pytest.mark.parametrize("role", ["producer", "demo"])
+def test_01_rejects_benchmark_only_florence(tmp_path: Path, role: str) -> None:
+    producer = valid_env()
+    demo = valid_demo_env()
+    target = producer if role == "producer" else demo
+    target["ACX_DESCRIPTION_ADAPTER"] = "florence_small"
+    if role == "producer":
+        # Matched inputs used to pass. The demo-only case below must fail
+        # its trust check before reaching the shared-value mismatch check.
+        demo["ACX_DESCRIPTION_ADAPTER"] = "florence_small"
+
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"ERROR [1] {role} ACX_DESCRIPTION_ADAPTER" in result.stderr
+    assert "must be gpu_qwen30b or gpu_qwen30b_ensemble" in result.stderr
 
 
 @pytest.mark.parametrize("endpoint", ["", "acx-gpu:8000", "ftp://acx-gpu", "https://"])

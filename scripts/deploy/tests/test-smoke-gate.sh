@@ -34,7 +34,7 @@ source "${script_dir}/../lib/smoke-gate.sh"
 
 REAL_CAPTION='A woman in a red coat speaks at a podium in front of a blue backdrop.'
 FIXTURE_CAPTION='A close-up of a small object on a neutral background.'
-TRUSTED_ONE='florence_small'
+TRUSTED_ONE='gpu_qwen30b'
 
 failures=0
 
@@ -186,13 +186,17 @@ assert_eq "alt provenance extra internal whitespace still fixture" FAIL "$(class
 assert_eq "alt provenance trailing bang still fixture" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A person standing outdoors near greenery!')" "$TRUSTED_ONE" 1)"
 # R1-03B part 2: Gate A adapter identity, ANDed with Gate B.
 assert_eq "alt provenance trusted adapter x1 usable 1" PASS "$(classify_alt_provenance 0 "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance trusted adapters x3 usable 3" PASS "$(classify_alt_provenance 0 "florence_small gpu_qwen30b gpu_qwen30b_ensemble" 3)"
+assert_eq "alt provenance trusted adapters x3 usable 3" PASS "$(classify_alt_provenance 0 "gpu_qwen30b gpu_qwen30b_ensemble gpu_qwen30b" 3)"
+assert_verdict_rc "alt provenance florence_small is benchmark-only (untrusted)" FAIL 1 \
+    classify_alt_provenance 0 florence_small 1
+assert_verdict_rc "alt provenance mixed GPU and Florence cannot publish" FAIL 1 \
+    classify_alt_provenance 0 'gpu_qwen30b florence_small' 2
 assert_eq "alt provenance untrusted adapter seeded" FAIL "$(classify_alt_provenance 0 "seeded" 1)"
-assert_eq "alt provenance mixed trusted + untrusted" FAIL "$(classify_alt_provenance 0 "florence_small seeded" 2)"
+assert_eq "alt provenance mixed trusted + untrusted" FAIL "$(classify_alt_provenance 0 "gpu_qwen30b seeded" 2)"
 assert_eq "alt provenance empty adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance 0 "" 1)"
 assert_eq "alt provenance whitespace adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance 0 "   " 1)"
 assert_eq "alt provenance trusted fewer than usable_count" FAIL "$(classify_alt_provenance 0 "$TRUSTED_ONE" 2)"
-assert_eq "alt identity extra trusted tokens fail equality (not >=)" FAIL "$(classify_alt_identity 'florence_small florence_small' 1)"
+assert_eq "alt identity extra trusted tokens fail equality (not >=)" FAIL "$(classify_alt_identity 'gpu_qwen30b gpu_qwen30b' 1)"
 assert_eq "alt identity glob star token is untrusted" FAIL "$(classify_alt_identity '*' 1)"
 assert_eq "alt identity glob question token is untrusted" FAIL "$(classify_alt_identity '?' 1)"
 assert_eq "alt identity glob bracket token is untrusted" FAIL "$(classify_alt_identity '[a-z]' 1)"
@@ -580,7 +584,7 @@ smoke_fail=1" "$empty_override"
                 case "$with_alt" in *[!0-9]*|'') ;; *)
                     i=0
                     while [ "$i" -lt "$with_alt" ]; do
-                        adapters="${adapters}florence_small "
+                        adapters="${adapters}gpu_qwen30b "
                         i=$((i + 1))
                     done
                     ;;
@@ -703,7 +707,7 @@ smoke_fail=1" "$empty_override"
 
         cat > "$media_json" <<JSON
 [
-  {"id":1,"alt_text":"${REAL_CAPTION}","acx_alt_provenance":{"adapter":"florence_small","model_id":"x"}},
+  {"id":1,"alt_text":"${REAL_CAPTION}","acx_alt_provenance":{"adapter":"gpu_qwen30b_ensemble","model_id":"x"}},
   {"id":2,"alt_text":"${SECOND_CAPTION}","acx_alt_provenance":{"adapter":"gpu_qwen30b","model_id":"y"}},
   {"id":3,"alt_text":"","acx_alt_provenance":null}
 ]
@@ -711,12 +715,12 @@ JSON
         load_alt_counts_from_media_body "$media_json"
         assert_eq "TEST-15 realistic body_total follows attachment count" "3" "$body_total"
         assert_eq "TEST-15 realistic with_alt counts only usable alts" "2" "$with_alt"
-        assert_eq "TEST-15 realistic adapters are per-usable-item join" "florence_small gpu_qwen30b " "$adapters"
+        assert_eq "TEST-15 realistic adapters are per-usable-item join" "gpu_qwen30b_ensemble gpu_qwen30b " "$adapters"
         assert_eq "TEST-15 realistic identity PASS" PASS "$(classify_alt_identity "$adapters" "$with_alt")"
 
         cat > "$media_json" <<JSON
 [
-  {"id":1,"alt_text":"${REAL_CAPTION}","acx_alt_provenance":{"adapter":"florence_small florence_small","model_id":"x"}},
+  {"id":1,"alt_text":"${REAL_CAPTION}","acx_alt_provenance":{"adapter":"gpu_qwen30b gpu_qwen30b","model_id":"x"}},
   {"id":2,"alt_text":"${SECOND_CAPTION}","acx_alt_provenance":null}
 ]
 JSON
@@ -757,7 +761,7 @@ for i, caption in enumerate(captions, start=1):
     items.append({
         "id": i,
         "alt_text": caption,
-        "acx_alt_provenance": {"adapter": "florence_small", "model_id": "x"},
+        "acx_alt_provenance": {"adapter": "gpu_qwen30b", "model_id": "x"},
     })
 json.dump(items, open(sys.argv[1], "w"))
 PY
@@ -780,7 +784,7 @@ items = json.load(open(path))
 items.append({
     "id": 11,
     "alt_text": "A close-up of a small object on a neutral background.",
-    "acx_alt_provenance": {"adapter": "florence_small", "model_id": "x"},
+    "acx_alt_provenance": {"adapter": "gpu_qwen30b", "model_id": "x"},
 })
 json.dump(items, open(path, "w"))
 PY
@@ -799,7 +803,7 @@ items = []
 for i in range(10):
     items.append({"id": i + 1, "alt_text": usable, "acx_alt_provenance": None})
 for i in range(10):
-    items.append({"id": i + 11, "alt_text": "", "acx_alt_provenance": {"adapter": "florence_small"}})
+    items.append({"id": i + 11, "alt_text": "", "acx_alt_provenance": {"adapter": "gpu_qwen30b"}})
 json.dump(items, open(sys.argv[1], "w"))
 PY
         load_alt_counts_from_media_body "$media_json"
@@ -934,7 +938,7 @@ body=""
 while (( $# > 0 )); do
     if [[ "$1" == "-o" ]]; then body="$2"; shift 2; else shift; fi
 done
-printf '%s' '{"status":"ok","description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"microsoft/Florence-2-base-ft","model_version":"florence-2-base-ft"}}' >"$body"
+printf '%s' '{"status":"ok","description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639","model_version":"Q4_K_M"}}' >"$body"
 printf '200'
 EOF
 chmod 700 "$burst_root/bin/docker" "$burst_root/bin/curl"

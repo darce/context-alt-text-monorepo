@@ -63,7 +63,7 @@ assert_eq "R2-11 describe suite guards BASH_VERSION before pipefail" \
     "guard-before-pipefail" "$r211_self"
 
 # --- classify_describe_gate <adapter_profile> <total_media> <media_with_alt> ---
-# Adapter allowlist is the first gate. Anything other than the three trusted
+# Adapter allowlist is the first gate. Anything other than the trusted
 # live adapters BLOCKs — including today's production `seeded` profile.
 assert_eq "seeded 100 0 (live situation)" BLOCK "$(classify_describe_gate seeded 100 0)"
 assert_eq "empty profile 100 0"          BLOCK "$(classify_describe_gate '' 100 0)"
@@ -80,24 +80,24 @@ assert_eq "seeded empty empty (profile first)" BLOCK "$(classify_describe_gate s
 ready_florence='florence_small|local_cpu|false|false|null|false|true|null'
 ready_gpu='gpu_qwen30b|gpu|true|true|true|true|true|null'
 ready_gpu_ensemble='gpu_qwen30b_ensemble|gpu|true|true|true|true|true|null'
-assert_eq "florence_small 100 0" \
-    RUN "$(classify_describe_gate florence_small 100 0 UNKNOWN "$ready_florence")"
+assert_eq "gpu_qwen30b 100 0" \
+    RUN "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN "$ready_gpu")"
 assert_eq "gpu_qwen30b 100 40 (partial)" \
     RUN "$(classify_describe_gate gpu_qwen30b 100 40 UNKNOWN "$ready_gpu")"
-assert_eq "florence_small 100 99 (one missing)" \
-    RUN "$(classify_describe_gate florence_small 100 99 UNKNOWN "$ready_florence")"
+assert_eq "gpu_qwen30b 100 99 (one missing)" \
+    RUN "$(classify_describe_gate gpu_qwen30b 100 99 UNKNOWN "$ready_gpu")"
 
 # Idempotent full coverage / no media -> SKIP.
 # Full coverage SKIPs only when provenance is an explicit PASS (R1-04).
 assert_eq "gpu_qwen30b_ensemble 100 100 (full)" SKIP "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 PASS)"
-assert_eq "florence_small 0 0 (no media)"       SKIP "$(classify_describe_gate florence_small 0 0)"
-assert_eq "florence_small 10 10 (full)"         SKIP "$(classify_describe_gate florence_small 10 10 PASS)"
+assert_eq "gpu_qwen30b 0 0 (no media)"       SKIP "$(classify_describe_gate gpu_qwen30b 0 0)"
+assert_eq "gpu_qwen30b 10 10 (full)"         SKIP "$(classify_describe_gate gpu_qwen30b 10 10 PASS)"
 
 # Broken probe -> BLOCK (never guess).
-assert_eq "florence_small empty total" BLOCK "$(classify_describe_gate florence_small '' 0)"
-assert_eq "florence_small non-numeric alt" BLOCK "$(classify_describe_gate florence_small 100 abc)"
-assert_eq "florence_small alt > total" BLOCK "$(classify_describe_gate florence_small 100 200)"
-assert_eq "florence_small 0 1 (alt > total)" BLOCK "$(classify_describe_gate florence_small 0 1)"
+assert_eq "gpu_qwen30b empty total" BLOCK "$(classify_describe_gate gpu_qwen30b '' 0)"
+assert_eq "gpu_qwen30b non-numeric alt" BLOCK "$(classify_describe_gate gpu_qwen30b 100 abc)"
+assert_eq "gpu_qwen30b alt > total" BLOCK "$(classify_describe_gate gpu_qwen30b 100 200)"
+assert_eq "gpu_qwen30b 0 1 (alt > total)" BLOCK "$(classify_describe_gate gpu_qwen30b 0 1)"
 
 # --- is_trusted_describe_profile: exit 0 trusted, 1 otherwise ---
 assert_exit() {
@@ -108,7 +108,12 @@ assert_exit() {
     assert_eq "$label" "$expected" "$actual"
 }
 
-assert_exit "is_trusted florence_small" 0 is_trusted_describe_profile florence_small
+# Florence remains available for benchmarks, but cannot publish live output.
+assert_exit "is_trusted florence_small (benchmark-only)" 1 is_trusted_describe_profile florence_small
+assert_eq "florence_small 100 0 (untrusted) BLOCK" BLOCK "$(classify_describe_gate florence_small 100 0 UNKNOWN "$ready_florence")"
+assert_eq "florence_small no media still BLOCK" BLOCK "$(classify_describe_gate florence_small 0 0)"
+assert_eq "florence_small full coverage PASS still BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 PASS "$ready_florence")"
+
 assert_exit "is_trusted gpu_qwen30b" 0 is_trusted_describe_profile gpu_qwen30b
 assert_exit "is_trusted gpu_qwen30b_ensemble" 0 is_trusted_describe_profile gpu_qwen30b_ensemble
 assert_exit "is_trusted seeded" 1 is_trusted_describe_profile seeded
@@ -124,7 +129,6 @@ assert_predicate_matches_classifier() {
     if is_trusted_describe_profile "$profile"; then
         expected=RUN
         case "$profile" in
-            florence_small) readiness="$ready_florence" ;;
             gpu_qwen30b) readiness="$ready_gpu" ;;
             gpu_qwen30b_ensemble) readiness="$ready_gpu_ensemble" ;;
         esac
@@ -151,20 +155,20 @@ assert_predicate_matches_classifier florence_large
 
 # --- R1-04: 4th arg provenance (PASS|FAIL|UNKNOWN) ---
 # Full coverage + canned alts must not SKIP (that freezes the lie).
-assert_eq "florence_small 10 10 FAIL -> RUN_FORCE" RUN_FORCE \
-    "$(classify_describe_gate florence_small 10 10 FAIL "$ready_florence")"
+assert_eq "gpu_qwen30b 10 10 FAIL -> RUN_FORCE" RUN_FORCE \
+    "$(classify_describe_gate gpu_qwen30b 10 10 FAIL "$ready_gpu")"
 assert_eq "gpu_qwen30b_ensemble 100 100 FAIL -> RUN_FORCE" RUN_FORCE \
     "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 FAIL "$ready_gpu_ensemble")"
-assert_eq "florence_small 10 10 UNKNOWN -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 UNKNOWN)"
-assert_eq "florence_small 10 10 omitted provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10)"
-assert_eq "florence_small 10 10 garbage provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 MAYBE)"
+assert_eq "gpu_qwen30b 10 10 UNKNOWN -> BLOCK" BLOCK "$(classify_describe_gate gpu_qwen30b 10 10 UNKNOWN)"
+assert_eq "gpu_qwen30b 10 10 omitted provenance -> BLOCK" BLOCK "$(classify_describe_gate gpu_qwen30b 10 10)"
+assert_eq "gpu_qwen30b 10 10 garbage provenance -> BLOCK" BLOCK "$(classify_describe_gate gpu_qwen30b 10 10 MAYBE)"
 # Partial coverage stays RUN even when published alts are canned (fill missing first).
-assert_eq "florence_small 100 40 FAIL still RUN" RUN \
-    "$(classify_describe_gate florence_small 100 40 FAIL "$ready_florence")"
-assert_eq "florence_small 100 40 UNKNOWN still RUN" RUN \
-    "$(classify_describe_gate florence_small 100 40 UNKNOWN "$ready_florence")"
+assert_eq "gpu_qwen30b 100 40 FAIL still RUN" RUN \
+    "$(classify_describe_gate gpu_qwen30b 100 40 FAIL "$ready_gpu")"
+assert_eq "gpu_qwen30b 100 40 UNKNOWN still RUN" RUN \
+    "$(classify_describe_gate gpu_qwen30b 100 40 UNKNOWN "$ready_gpu")"
 # No media still SKIP regardless of provenance.
-assert_eq "florence_small 0 0 FAIL still SKIP" SKIP "$(classify_describe_gate florence_small 0 0 FAIL)"
+assert_eq "gpu_qwen30b 0 0 FAIL still SKIP" SKIP "$(classify_describe_gate gpu_qwen30b 0 0 FAIL)"
 
 # --- R1-06: classify from warmth-independent readiness evidence ---
 # A cold but correctly configured GPU is admitted so the burst can warm it.
@@ -311,7 +315,7 @@ if fixture_sample_is_denied "$xlane02_sample"; then xlane02_denied=1; fi
 assert_eq "XLANE-02 shared matcher denies lowercased close-up" \
     "1" "$xlane02_denied"
 assert_eq "XLANE-02 live-smoke lowercased close-up is FAIL" \
-    FAIL "$(classify_alt_provenance "$xlane02_denied" florence_small 1 1)"
+    FAIL "$(classify_alt_provenance "$xlane02_denied" gpu_qwen30b 1 1)"
 hatch_pat="lacks DEMOLIVE-6"
 hatch_pat="${hatch_pat} normalizer"
 assert_eq "XLANE-02 live-smoke bind has no deferral hatch" \
@@ -364,7 +368,7 @@ assert_corpus_row() {
     row_normalized=0
     if [ -n "$(normalize_fixture_sample "$sample")" ]; then row_normalized=1; fi
     # FAIL paths return 1 (R2-13); this suite runs under set -e.
-    smoke_live=$(classify_alt_provenance "$row_denied" florence_small 1 "$row_normalized") || true
+    smoke_live=$(classify_alt_provenance "$row_denied" gpu_qwen30b 1 "$row_normalized") || true
     assert_eq "corpus live-smoke aggregate ${label}" "$smoke_exp" "$smoke_live"
 }
 
@@ -521,7 +525,7 @@ assert_file_grep "probe-failure message names the probed endpoint" \
 # sibling classify_claimed_adapter_matches_probe already carries. Without it a
 # profile of `*` glob-expands against cwd.
 glob_probe_dir=$(mktemp -d)
-glob_cause=$(cd "$glob_probe_dir" && : > florence_small && classify_describe_block_cause '*')
+glob_cause=$(cd "$glob_probe_dir" && : > gpu_qwen30b && classify_describe_block_cause '*')
 rm -rf "$glob_probe_dir"
 assert_eq "block cause: a glob profile does not expand against cwd" \
     UNTRUSTED_PROFILE "$glob_cause"

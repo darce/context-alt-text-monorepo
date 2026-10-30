@@ -22,7 +22,8 @@
 # Callers (bootstrap-wp.sh) read the same source so BLOCK messages can
 # distinguish "untrusted adapter" from "trusted adapter, unmeasurable corpus".
 
-ACX_TRUSTED_DESCRIBE_PROFILES="florence_small gpu_qwen30b gpu_qwen30b_ensemble"
+# florence_small is benchmark-only (E15-39, decision #20474).
+ACX_TRUSTED_DESCRIBE_PROFILES="gpu_qwen30b gpu_qwen30b_ensemble"
 
 # These are every configuration-fault member of AdapterReadinessReason in
 # apps/prototype-description-service/api/main.py. The intentionally omitted
@@ -37,8 +38,8 @@ _DESCRIBE_GATE_READINESS_FILE="${TMPDIR:-/tmp}/acx-describe-gate-readiness-$$"
 
 # is_trusted_describe_profile <profile>
 #   exit 0 if <profile> is an exact allowlist member, else 1 (not echo).
-# WHY word-split + [ = ], not case *"$p"*: "florence" and "small" are
-# substrings of florence_small and must not count as trusted.
+# WHY word-split + [ = ], not case *"$p"*: "gpu" and "qwen30b" are
+# substrings of gpu_qwen30b and must not count as trusted.
 is_trusted_describe_profile() {
     local profile="$1"
     local candidate
@@ -370,7 +371,6 @@ classify_describe_provenance() {
 # mapping here makes a claimed profile with a mismatched producer kind block.
 _describe_profile_kind() {
     case "$1" in
-        florence_small) printf '%s' local_cpu ;;
         gpu_qwen30b|gpu_qwen30b_ensemble) printf '%s' gpu ;;
         *) return 1 ;;
     esac

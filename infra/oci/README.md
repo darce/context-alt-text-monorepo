@@ -951,6 +951,11 @@ covers the backend-agnostic fallbacks (self-host over Tailscale, serverless, hos
 
 ## VLM weight cache (runtime-vlm / Florence LOCAL_CPU)
 
+Florence is benchmark-only; `florence_small` is never trusted for demo publish.
+The live demo describe and deploy gates trust only `gpu_qwen30b` and
+`gpu_qwen30b_ensemble`. The offline CPU cache procedures below remain available
+for benchmarks and the dormant CPU fallback.
+
 The `runtime-vlm` image is permanently offline for Hugging Face
 (`HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` baked in). It cannot download
 Florence weights at boot. Operators seed a host path **outside** that image,

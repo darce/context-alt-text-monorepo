@@ -218,11 +218,63 @@ def test_clock_jump_never_claims_completion(db, tmp_path, jump):
     assert any('clock' in e['payload'].get('reason','') for e in ledger(out) if e['kind'] == 'gap')
     assert not any(e['payload'].get('status') == 'duration_completed' for e in ledger(out))
 
-def test_missed_cadence_is_disclosed(db, tmp_path):
+def cadence(report):
+    """Observation offsets and missed-cadence gaps as (cause, since, until, missed) offsets."""
+    start = c.parsed(report['started_at'])
+    offset = lambda value: (c.parsed(value) - start).total_seconds()
+    return ([offset(t) for t in report['observation_times']],
+            [(g['cause'], offset(g['since']), offset(g['until']), g['missed_polls'])
+             for g in report['gaps'] if g['reason'] == 'missed_cadence'])
+
+def slow_reads(clock, extra):
+    """Reader whose Nth call (1-based) takes extra[N] more seconds after a real snapshot."""
+    calls = []
+    def reader(*args):
+        snapshot = c.read_snapshot(*args)
+        calls.append(1)
+        clock.advance(extra.get(len(calls), 0))
+        return snapshot
+    return reader
+
+def test_missed_cadence_counts_each_unobserved_slot_once(db, tmp_path):
+    # 6s/1s grid; the first sleep oversleeps by 3s, so slots 1,2,3 are missed and slot 4 is served late.
     def delay(clock):
         if clock.sleeps == 1: clock.advance(3)
     report = observe(db, tmp_path / 'capture', duration_seconds=6, poll_seconds=1, clock=FakeClock(delay))
-    assert any(g['reason'] == 'missed_cadence' for g in report['gaps'])
+    times, missed = cadence(report)
+    assert times == [0, 4, 5]
+    assert missed == [('late_wakeup', 0, 4, 3)]
+    assert [g['due_monotonic'] for g in report['gaps']] == [101]
+    assert len(times) + sum(m[3] for m in missed) == report['expected_observations'] == 6
+    assert report['status'] == 'duration_completed'
+
+def test_slow_read_overrun_is_counted_once_over_the_read_window(db, tmp_path):
+    # No oversleep: the first read alone runs 2.5s, so slots 1,2 come due mid-read and are skipped.
+    clock = FakeClock()
+    report = observe(db, tmp_path / 'capture', duration_seconds=6, poll_seconds=1, clock=clock,
+                     reader=slow_reads(clock, {1:2.5}))
+    times, missed = cadence(report)
+    assert times == [2.5, 3, 4, 5]  # Fixed grid kept: next read is slot 3, not 2.5+1.
+    assert missed == [('read_overrun', 0, 2.5, 2)]
+    gap = report['gaps'][0]
+    assert gap['due_monotonic'] == 101 and gap['read_started_monotonic'] == 100
+    assert len(times) + gap['missed_polls'] == report['expected_observations']
+
+def test_late_wakeup_and_read_overrun_partition_slots_without_overlap(db, tmp_path):
+    def delay(clock):
+        if clock.sleeps == 1: clock.advance(3)
+    clock = FakeClock(delay)
+    report = observe(db, tmp_path / 'capture', duration_seconds=6, poll_seconds=1, clock=clock,
+                     reader=slow_reads(clock, {2:1.5}))
+    times, missed = cadence(report)
+    assert times == [0, 5.5]
+    assert missed == [('late_wakeup', 0, 4, 3), ('read_overrun', 4, 5.5, 1)]
+    for (_, since, until, _), (_, later, _, _) in zip(missed, missed[1:] + [(None, 6, None, None)]):
+        assert since < until <= later  # Positive-length, non-overlapping windows.
+    assert len(times) + sum(m[3] for m in missed) == report['expected_observations']
+    # Raw read evidence remains: every observation keeps its own measured timing and ledger hash chain.
+    assert len(report['measured_read_seconds']) == 2
+    assert c.run_capture(db, tmp_path / 'capture', resume=True, once=True, clock=clock)['observations'] == 2
 
 
 def test_interrupted_publication_preserves_orphans_and_restart_gap(db, tmp_path, monkeypatch):

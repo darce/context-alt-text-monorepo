@@ -1,0 +1,27 @@
+{"query": "make plan-done says task_row_missing for a MAINT task I registered in lowercase", "query_id": "q-000", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A commit accidentally included a reviewer's temporary test mutation; how can I prevent that?", "query_id": "q-001", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Close check reports an open finding that didn't appear in my list results", "query_id": "q-002", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "My findings query returned nine rows even though more exist; how do I get the rest?", "query_id": "q-003", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Tests pass separately but collecting two directories together imports the wrong conftest", "query_id": "q-004", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A lane's focused tests passed but the full PHP suite now has order-dependent failures", "query_id": "q-005", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Two simultaneous red-proof runs left a mutant in the sandbox after both restored their backups", "query_id": "q-006", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A shared Python function changed and dozens of tests outside the lane's selected directories failed", "query_id": "q-007", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Several green lane gates missed failures in sibling modules and downstream callers", "query_id": "q-008", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Both branches pass their own tests but the combined merge fails on stale fakes and vocabulary", "query_id": "q-009", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A review done outside the standard pipeline passed, but git merge still demands an adjudication artifact", "query_id": "q-010", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "The task row disappeared while its new worktree was still active and the feature branch had no commits", "query_id": "q-011", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Disk filled again with orphaned tmp_pack and tmp_idx files under .git/objects/pack", "query_id": "q-012", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Worktree retirement keeps leaking large temporary Git packs onto the full local disk", "query_id": "q-013", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A new lane off main was assigned another task's review rounds and hit the cycle budget", "query_id": "q-014", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Fresh UX lanes report review_cycle_subject_ambiguous even though each has its own branch", "query_id": "q-015", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Sibling dispatches share the wrong ledger subject even when launched one at a time", "query_id": "q-016", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "The review bridge exits 76 when a remote pass starts from a driver shell", "query_id": "q-017", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "All open lane briefs are reported missing after projection_budget_exceeded", "query_id": "q-018", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Remote JavaScript tests cannot find jsdom and the lane has no node_modules", "query_id": "q-019", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A deleted lane still seems to block every remote implementation dispatch", "query_id": "q-020", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "The installed ledger requires a route that conflicts with the newer operator policy", "query_id": "q-021", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A plan was committed to a feature branch, but task-finish archived the row before the document reached main", "query_id": "q-022", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "I need the full main tree, but a fresh lane is refused as belonging to another review-cycle subject", "query_id": "q-023", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Retrying task-start fails because a virtual environment already exists in the worktree", "query_id": "q-024", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "A remote pass says review failed with provider_transport_error, but it also says commit_landed and tests passed", "query_id": "q-025", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}
+{"query": "Several wave results are red at review with provider transport errors, although their commits and self-verification succeeded", "query_id": "q-026", "source": "qrels-v0", "split": "seed_dev", "untouched_heldout": false}

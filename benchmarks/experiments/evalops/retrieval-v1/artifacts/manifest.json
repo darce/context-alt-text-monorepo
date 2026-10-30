@@ -1,0 +1,108 @@
+{
+  "acceptance": {
+    "artifact_contract": "bounded import and deterministic union only",
+    "calibration": "not_evaluated",
+    "human_gold": "unavailable",
+    "production_reliability": "unknown",
+    "quality": "not_accepted",
+    "runtime": "not_evaluated"
+  },
+  "artifacts": {
+    "corpus.jsonl": {
+      "bytes": 155565,
+      "sha256": "f9c4d9ef461667afd0476a1c8c97518234291546da4f66680cb831d615804e55"
+    },
+    "pool.jsonl": {
+      "bytes": 111496,
+      "sha256": "eb5d4b55580dd9ab140d4bba3719155f8cc82d8a216f5314d37e4f5edfaa6056"
+    },
+    "qrels.jsonl": {
+      "bytes": 53351,
+      "sha256": "29327d2d6d8158b0c62b146108a08cd568f42ea107b55cd20df0c17811ec8b31"
+    },
+    "queries.jsonl": {
+      "bytes": 5261,
+      "sha256": "0d8ee999ec097585befa14d27bc2840c494d90dbb29999810380c5aa66ca7fa1"
+    },
+    "results/gte-dense.jsonl": {
+      "bytes": 4014,
+      "sha256": "9ef372aca1d5af6af807c54ecfe3a454348ad3229e52b507c41d76059487c51b"
+    },
+    "runs.json": {
+      "bytes": 21306,
+      "sha256": "b3e95dbc3672b083d63570b27cebdbb981ffc78e06ac28cc76f8575301e56d7e"
+    },
+    "scores/gte-dense.json": {
+      "bytes": 104127,
+      "sha256": "10ffb80e19d353b8dfa1b441b26acb26fa4d6ef9fd7f42334f446024eef93de3"
+    }
+  },
+  "code": {
+    "benchmarks/tools/evalops/score_retrieval.py": "611466af6f1721592b75002a741d0274f17745581f56e7b44fda873e164456f9",
+    "import_pool.py": "97c277b0031d7319b97f1e5a02337f08de00a648cc37fe8afb6fa63333875270"
+  },
+  "corpus": {
+    "content": "Provider snippets only: truncated text or null, not complete documents. Seed-only references have unknown content.",
+    "full_index_document_count": null,
+    "full_index_snapshot_sha256": null,
+    "match_status": "provider_identity_and_observed_fields_only",
+    "scope": "union of returned record references and seed-qrel references"
+  },
+  "counts": {
+    "corpus_references": 227,
+    "independent_judgments": 0,
+    "pool_pairs": 212,
+    "pool_pairs_with_seed_grade": 7,
+    "queries": 27,
+    "seed_pairs": 41,
+    "untouched_heldout_queries": 0
+  },
+  "generation_faithfulness": {
+    "reason": "Retrieval recall/nDCG do not measure downstream answer support. Requires separate source/answer evidence, stale or contradictory context, missing context and abstention cases.",
+    "status": "not_evaluated"
+  },
+  "inputs": {
+    "inputs/dense-retrieval.json": {
+      "bytes": 92093,
+      "sha256": "fc9e80a5199c25b0ab808738832555996bdb480ee9e246c92a3f2476333c0929"
+    },
+    "inputs/qrels-v0.jsonl": {
+      "bytes": 13495,
+      "sha256": "46dcff758b957b925b14551c265919bff467ebd6c7e727baff2abd848e11e18b"
+    },
+    "protocol.json": {
+      "bytes": 3452,
+      "sha256": "36bf4f114763a9e2f0cc9bd2abd7c20ab2535007753f2b35071c32a2b53af695"
+    }
+  },
+  "pool": {
+    "actual_contributors": [
+      "gte-dense"
+    ],
+    "completeness": "incomplete",
+    "field_depth": 8,
+    "independent_relevance_status": "unavailable",
+    "ks": [
+      1,
+      5,
+      8
+    ],
+    "unavailable_strategies": [
+      "codemap",
+      "current-baseline",
+      "lexical"
+    ],
+    "union_order": "query_id then doc_id; contributors sorted by strategy_id",
+    "unjudged": "null/UNKNOWN, never nonrelevant"
+  },
+  "protocol_sha256": "36bf4f114763a9e2f0cc9bd2abd7c20ab2535007753f2b35071c32a2b53af695",
+  "schema": "evalops.retrieval-artifacts.v1",
+  "source": {
+    "database": "handoff.db",
+    "scope": "operational telemetry; not application production traffic",
+    "source_sha": "fd4aca96df2b11222d575cb59de5fe8219412329",
+    "source_tree": "111c27d87e0707f966aeb0a0236c1a9c60a6a91b",
+    "transport": "external codex-remote; precedent20551, not native dispatch success"
+  },
+  "usage": null
+}

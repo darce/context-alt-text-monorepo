@@ -115,8 +115,8 @@ async def test_filter_before_offset_and_deterministic_created_at_ties(db_session
 @pytest.mark.asyncio
 async def test_search_labeled_and_minimum_intersect(db_session, tenant):
     selected = await seed_cluster(db_session, tenant.id, [10, 11], label="Alice_%", confirmed=True)
-    await seed_cluster(db_session, tenant.id, [20], label="Alice_%", confirmed=True)
-    await seed_cluster(db_session, tenant.id, [30, 31], label="Alice_%", confirmed=False)
+    await seed_cluster(db_session, tenant.id, [20], label="Alice_% one-photo", confirmed=True)
+    await seed_cluster(db_session, tenant.id, [30, 31], label="Alice_% unconfirmed", confirmed=False)
     await seed_cluster(db_session, tenant.id, [40, 41], label="AliceXX", confirmed=True)
     repo = SqlAlchemyClusterRepository(db_session)
     rows = await repo.get_by_tenant(str(tenant.id), min_photos=2, labeled_only=True, search="alice_%")
@@ -175,7 +175,7 @@ async def test_authenticated_api_serializes_actual_sql_count(db_session, tenant,
     from recognition.interface_adapters.http.routers.clusters_snapshot import router
 
     selected = await seed_cluster(db_session, tenant.id, [10, 10, 20], label="Alice", confirmed=True)
-    await seed_cluster(db_session, tenant.id, [30], label="Alice", confirmed=True)
+    await seed_cluster(db_session, tenant.id, [30], label="Alice single-photo", confirmed=True)
     app = FastAPI()
     app.include_router(router, prefix="/recognition")
 

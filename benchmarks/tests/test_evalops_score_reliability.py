@@ -446,6 +446,142 @@ def test_missing_bridge_withholds_entire_linked_component():
     assert report['status'] == 'partial_descriptive'
 
 
+# EVALOPS3-EVALUATION-R2-02 topology: cases 0-1 share group g1, cases 1-2 share
+# root r2, and cases 3/4/5 have no shared identity. Task ids are all distinct.
+BRIDGE_OUTCOMES = [(['pass', 'fail'], ['pass', 'pass']), (['pass', 'pass'], ['fail', 'fail']),
+                   (['fail', 'fail'], ['fail', 'pass']), (['pass', 'pass'], ['fail', 'pass']),
+                   (['fail', 'pass'], ['pass', 'pass']), (['fail', 'fail'], ['pass', 'fail'])]
+ABSENT = object()
+
+
+def case(i):
+    return f'SYNTHETIC-case-{i}'
+
+
+def bridge_fixture():
+    return Synthetic(BRIDGE_OUTCOMES, groups=['g1', 'g1', 'g2', 'g3', 'g4', 'g5'],
+                     roots=['r1', 'r2', 'r2', 'r3', 'r4', 'r5'])
+
+
+def regroup(fixture, index, **changes):
+    """Edit one declared grouping, rehash its case and rebind its trials with unchanged outcomes."""
+    row = fixture.candidates[index]
+    for field, value in changes.items():
+        if value is ABSENT:
+            row['grouping'].pop(field)
+        else:
+            row['grouping'][field] = value
+    fixture.rehash(row)
+    for trial in fixture.trials:
+        if trial['case_id'] == row['candidate_id']:
+            outcome = json.loads(fixture.artifacts[trial['oracle']['ref']])['outcome']
+            trial['case_sha256'] = row['content_sha256']
+            trial['group_id'] = row['grouping'].get('group_id')
+            trial['root_cause_id'] = row['grouping'].get('root_cause_id')
+            fixture.bind_trial(trial, row, outcome)
+
+
+def test_partial_identity_case_keeps_known_bridges_and_withholds_component():
+    control = bridge_fixture().score()
+    assert control['cohort']['excluded'] == []
+    assert control['uncertainty']['cluster_members'] == [[case(0), case(1), case(2)], [case(3)], [case(4)], [case(5)]]
+    assert control['uncertainty']['status'] == 'available'
+    fixture = bridge_fixture()
+    regroup(fixture, 1, canonical_task_id=None)  # supplied g1/r2 links and evidence remain
+    report = fixture.score()
+    cohort = report['cohort']
+    assert {r['case_id']: r['reasons'] for r in cohort['excluded']} == {
+        case(0): ['linked_case_unavailable'], case(1): ['grouping_unavailable'], case(2): ['linked_case_unavailable']}
+    assert [r['case_id'] for r in cohort['per_case']] == [case(3), case(4), case(5)]
+    assert (cohort['declared_cases'], cohort['eligible_cases'], cohort['case_coverage']) == (6, 3, .5)
+    # Held cases keep every planned attempt and their counts; only metrics are withheld.
+    assert (cohort['expected_attempts'], cohort['supplied_attempts'], cohort['unavailable_attempts']) == (24, 24, 0)
+    assert cohort['missing_attempts'] == [] and len(report['attempts']) == 24
+    held = {r['case_id']: r['arms'] for r in cohort['excluded']}
+    assert held[case(0)]['B'] == {'n': 2, 'observed_attempts': 2, 'successes': 2, 'failures': 0, 'metrics': None}
+    # Three singletons remain, below the four-cluster minimum (was five, interval [.1, .7]).
+    assert report['uncertainty']['cluster_members'] == [[case(3)], [case(4)], [case(5)]]
+    assert report['uncertainty']['status'] == 'insufficient_clusters'
+    for arm in ('A', 'B'):
+        for k in (1, 2):
+            for name in ('pass_at_k', 'pass_pow_k'):
+                assert metric(report, arm, k, name)['case_count'] == 3
+                assert metric(report, arm, k, name)['interval_95'] is None
+    # Hand-computed on cases 3/4/5 (was .4 for arm A, k=1 on five cases).
+    assert metric(report, k=1, name='pass_at_k')['value'] == .5
+    assert metric(report, k=2, name='pass_at_k')['value'] == pytest.approx(2 / 3)
+    assert metric(report, k=2)['value'] == pytest.approx(1 / 3)
+    assert metric(report, arm='B', k=1)['value'] == pytest.approx(2 / 3)
+    pair = report['paired'][0]
+    assert pair['case_count'] == 3
+    assert pair['metrics']['1']['pass_at_k']['delta'] == pytest.approx(1 / 6)
+    assert pair['metrics']['1']['pass_at_k']['interval_95'] is None
+    assert report['status'] == 'partial_descriptive'
+
+
+@pytest.mark.parametrize('field,held,status,value', [
+    ('canonical_task_id', {0, 2}, 'insufficient_clusters', .5),  # g1 and r2 remain
+    ('group_id', {2}, 'available', .5),                          # only r2 remains
+    ('root_cause_id', {0}, 'available', .375),                   # only g1 remains
+])
+def test_each_missing_identity_type_withholds_only_remaining_known_bridges(field, held, status, value):
+    fixture = bridge_fixture()
+    regroup(fixture, 1, **{field: None})
+    report = fixture.score()
+    exclusions = {r['case_id']: r['reasons'] for r in report['cohort']['excluded']}
+    assert 'grouping_unavailable' in exclusions.pop(case(1))
+    assert exclusions == {case(i): ['linked_case_unavailable'] for i in held}
+    eligible = [case(i) for i in (0, 2, 3, 4, 5) if i not in held]
+    assert [r['case_id'] for r in report['cohort']['per_case']] == eligible
+    assert report['uncertainty']['cluster_members'] == [[c] for c in eligible]
+    assert report['uncertainty']['status'] == status
+    assert metric(report, k=1)['case_count'] == len(eligible)
+    assert metric(report, k=1)['value'] == value
+
+
+def test_incomplete_cases_propagate_holds_through_transitive_known_links():
+    # 0 -g1- 1(task absent) -r2- 2 -g2- 3; 4(only task-5 known) -task- 5; 6/7 unlinked.
+    fixture = Synthetic([(['pass', 'fail'], ['fail', 'pass'])] * 8,
+                        groups=['g1', 'g1', 'g2', 'g2', 'g4', 'g5', 'g6', 'g7'],
+                        roots=['r1', 'r2', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7'])
+    regroup(fixture, 1, canonical_task_id=None)
+    regroup(fixture, 4, group_id=None, root_cause_id=None, canonical_task_id='task-5')
+    report = fixture.score()
+    exclusions = {r['case_id']: r['reasons'] for r in report['cohort']['excluded']}
+    assert exclusions == {
+        case(0): ['linked_case_unavailable'], case(1): ['grouping_unavailable'],
+        case(2): ['linked_case_unavailable'], case(3): ['linked_case_unavailable'],
+        case(4): ['grouping_unavailable', 'unavailable_attempt'], case(5): ['linked_case_unavailable']}
+    assert [r['case_id'] for r in report['cohort']['per_case']] == [case(6), case(7)]
+    assert report['uncertainty']['status'] == 'insufficient_clusters'
+    assert metric(report, k=1)['interval_95'] is None
+
+
+@pytest.mark.parametrize('invalid', [None, '', '   ', ABSENT, 7, ['task-1']])
+def test_invalid_identity_adds_no_edge_and_equal_text_across_types_never_links(invalid):
+    fixture = bridge_fixture()
+    regroup(fixture, 1, canonical_task_id=invalid)
+    # Same strings as case 1's surviving g1/r2, but under other identity types.
+    regroup(fixture, 4, root_cause_id='g1', canonical_task_id='r2')
+    report = fixture.score()
+    assert {r['case_id']: r['reasons'] for r in report['cohort']['excluded']} == {
+        case(0): ['linked_case_unavailable'], case(1): ['grouping_unavailable'], case(2): ['linked_case_unavailable']}
+    assert report['uncertainty']['cluster_members'] == [[case(3)], [case(4)], [case(5)]]
+
+
+def test_closure_never_links_absent_null_or_cross_type_identities():
+    # Every invalid identity sits on a case already held for grouping_unavailable,
+    # so scorer output cannot show a null union; check the closure contract directly.
+    rows = [{'case_id': 'a', 'group_id': 'x', 'root_cause_id': None, 'canonical_task_id': ''},
+            {'case_id': 'b', 'group_id': None, 'root_cause_id': 'x', 'canonical_task_id': '  '},
+            {'case_id': 'c', 'group_id': None, 'root_cause_id': None, 'canonical_task_id': 'x'},
+            {'case_id': 'd', 'group_id': 'x', 'root_cause_id': '', 'canonical_task_id': None}]
+    assert [[r['case_id'] for r in g] for g in MODULE._clusters(rows)] == [['a', 'd'], ['b'], ['c']]
+    malformed = [{'case_id': 'e', 'group_id': ['x']}, {'case_id': 'f', 'root_cause_id': 7},
+                 {'case_id': 'g', 'root_cause_id': 7}, {'case_id': 'h'}]
+    assert [[r['case_id'] for r in g] for g in MODULE._clusters(malformed)] == [['e'], ['f'], ['g'], ['h']]
+
+
 def test_explicit_group_and_stratum_comparisons_are_case_macro():
     fixture = Synthetic([(['fail', 'fail'], ['pass', 'pass']),
                          (['pass', 'pass'], ['pass', 'fail']),

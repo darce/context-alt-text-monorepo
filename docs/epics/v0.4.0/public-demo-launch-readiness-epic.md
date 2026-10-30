@@ -1,12 +1,30 @@
 # E15. Public Demo Launch Readiness (v0.4.0)
 
+> **Source-of-truth status — 2026-10-30:** the [current roadmap status and continuation](../../roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md#current-status-2026-10-30) supersede this epic's older actionable provisioning/status guidance. Source/runtime fixes and six-site **0.0.42** installation are complete. E15-38/E15-39/DESCPICK-5 have an accepted **planning** baseline (MCP 20609); their stale `proposed` headers do not reopen planning, and acceptance does not prove their implementation or quality comparisons shipped.
+
+## Current continuation (2026-10-30)
+
+Resume continuation `cont-20261030T200707380516Z-c947ce09` against accepted main `bda5a0d4ac75c5bf4c2ea0a0750252cef84995fc`, tree `ada3873a1c8aa67c7d9b0bd093e22e62dec6231a`. The six LocalWP sites (`fir`, `wp-context-alt-text`, `vlm`, `r`, `auraface-prod`, `insightface`) serve artifact SHA-256 `60038e0e11ed284fdd466c0c9b3ee95c518fb2e679a2b73c847082e6a86f7c33`. Consume `.task-state/localwp-rollout-20261030/rollout-result.json` for installation/assets/navigation and `.task-state/fircold-20261030/runtime-acceptance.json` (decision 20802) for accepted runtime scope. Retain all four persistent Compose overlays and current site bindings; do not reinstall or redo completed source/runtime cases.
+
+| Track | Current state and remaining evidence |
+| --- | --- |
+| Accepted actual runtime | Cold GPU completion, saved-draft navigation and automatic OCI STOP; cold SFace CPU persistence/API/projection with original UUID preservation. These accepted cases are complete within their receipt scope. |
+| Remaining installed runtime acceptance | Actual in-flight description navigation/remount/client Stop waiting; real saved-credential edit/autosave; remaining installed naming recovery. Controlled tests and deployment navigation do not establish these cases. |
+| Accepted E15 planning | [E15-38](../../tasks/15.0/E15-38-public-demo-honest-wait-and-beta-copy-task-plan.md), [E15-39](../../tasks/15.0/E15-39-description-default-trusted-set-and-serve-pin-task-plan.md), [DESCPICK-5](../../tasks/vlm/DESCPICK-5-served-q4-candidate-and-four-candidate-panel-task-plan.md): use decision 20609, then inspect actual missing source deltas. At this source baseline the settings/API default and trusted list still include `florence_small`; the E15-39 plan is not implementation proof. |
+| Description authority and curation | DESCAUTH-1 / IDWEAVE-1 archived `done` is planning only. [ADR-017](../../adrs/ADR-017-description-authority-wordpress-curation-service-generation.md) / [ADR-018](../../adrs/ADR-018-post-curation-identity-weaving.md) remain Proposed; [ADR-019](../../adrs/ADR-019-person-anchored-curation-surfaces.md) is Accepted with missing producer/real-database qualification. Existing recovery pieces do not prove the whole contract shipped. |
+| Independent quality and outcomes | Exhaustive independent face truth, fixed representative production replay, calibrated comparisons and independent human description judgment remain. E15-40 depends on qualified generation/selected-generation/presentation producers; read/cache timestamps are not acceptance evidence. No runtime or rollout receipt supplies quality gold, a model winner or automatic promotion. |
+
+Canonical C1: **The first description after a quiet period starts the GPU and can take several minutes. After that, each image takes seconds.** Stop waiting stops client observation only, with no backend cancel. Preserve the same-media key after timeout/transient errors; clear it for true terminal failures. Keep the 120-second client ceiling. Quota is charged at creation; unavailable GPU consumes zero; cancelling does not refund it.
+
+The older MVP/phase material below is historical scope and requirement context, not a fresh dispatch list or proof of current readiness. Any unmapped criterion remains pending evidence. This docs-only reconciliation grants no service/deploy/settings/payment/inference/scan/GPU mutation, new credentials or paid calls.
+
 > **Epic Short ID**: E15
-> **Status**: active — Phase 1 + Phase 2 merged to `main` (via `b6a2e272` and predecessors); MVP narrowed to Phases 3, 4, and 6 with E15-6 re-activated for a docs-first/operator-evidence v1 slice under this epic
+> **Status**: source/runtime and six-site installation complete within recorded scope; remaining installed workflow acceptance, missing source deltas and independent quality evidence are distinct (2026-10-30)
 > **Predecessors**: [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md) (Phases 2-6), [self-hosting-epic.md](../v0.3.1/self-hosting-epic.md) (remaining deliverables)
 > **Successor (deferred follow-ons)**: [v0.4.1/public-demo-followons-epic.md](../v0.4.1/public-demo-followons-epic.md)
 > **Revision**: Apr 2026 — MVP close-out scope locked under handoff decision `scope_e15_mvp_close_intake_202604`. CI smoke-gate and observability/auth follow-ons demoted to v0.4.1; Jun 2026 accepted plan [E15-6. Playwright Operator-Evidence Harness](../../tasks/15.0/E15-6-playwright-operator-evidence-harness-task-plan.md) pulls the docs-first/operator-evidence v1 slice back into v0.4.0 while leaving the durable CI smoke envelope deferred.
 
-## MVP Scope (Apr 2026 close-out)
+## Historical MVP scope (Apr 2026 close-out)
 
 The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Everything else moves to the [v0.4.1 follow-on epic](../v0.4.1/public-demo-followons-epic.md).
 
@@ -33,9 +51,9 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 
 Bring the deployed recognition service from "running on the server" to "publicly accessible, secure, observable demo with a WordPress frontend." When this epic is complete, anyone with the demo URL can see the ACX plugin in action against a live recognition backend.
 
-## Problem Statement
+## Historical problem statement (pre-provisioning)
 
-The backend is deployed and serving HTTPS at `api.altcontext.com` (E14-1 complete, all 6 slices verified), but five gaps prevent public exposure as a demo or MVP:
+The original E14-to-E15 intake listed the following gaps. These are historical motivations, not current findings; completion and remaining cases are governed by the dated status above.
 
 1. **Incomplete security hardening.** API key validation and tenant isolation already exist (`require_auth` in `apps/prototype-description-service/recognition/interface_adapters/http/deps/auth.py` enforces hashed-key lookup, tenant header matching, and write-access gating). What is missing: browser origin allowlist (CORS), per-key rate limiting, and a key lifecycle/rotation surface. The service is internet-reachable and authenticated but not yet rate-limited or origin-restricted.
 2. **No WordPress demo frontend.** There is no public-facing WP instance running the ACX plugin. The backend has no audience without a frontend.
@@ -69,7 +87,7 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 - **WP demo**: a publicly accessible WordPress instance with the ACX plugin installed, configured to communicate with the live backend.
 - **E2E smoke gate**: automated Playwright test suite that validates sovereign flows end-to-end.
 
-## Current State
+## Historical baseline and phase requirements
 
 ### Confirmed Complete (from E14 / Production Readiness Phase 1 & 6)
 
@@ -84,7 +102,7 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 - `DashboardPage` is live and hook-backed.
 - Route-level error boundaries, URL-synced tabs, scroll restoration all landed.
 
-### Production Gaps (What This Epic Closes)
+### Original gap register (not a current work queue)
 
 | Gap                                                       | Source                             | Status                                                                                 |
 | --------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------- |
@@ -97,7 +115,7 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 | Structured JSON logs + correlation IDs                    | Production Readiness Phase 5       | **Complete — E15-2 Slice 1** (merged to `main`)                                        |
 | Request latency metrics + `/metrics` endpoint             | Production Readiness Phase 5       | **Complete — E15-2 Slice 3a** (merged to `main`)                                       |
 | Operations runbook                                        | Production Readiness Phase 5       | **Complete — E15-2 Slice 3b** (merged to `main`)                                       |
-| WordPress demo page                                       | Production Readiness Phase 6 / E14 | Not started — **E15-3** (provider-agnostic, this epic)                                 |
+| WordPress demo page                                       | Production Readiness Phase 6 / E14 | Original provisioning requirement; consume current receipts rather than reinstall |
 | Manual remote E2E verification                            | Production Readiness Phase 6 / E14 | Not started — **E15-5** (this epic)                                                    |
 | Workbench live findings panel                             | Workbench clustering UI scope       | Planned -- **E15-23**                                                                  |
 | OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — **E15-5a** (OCI operational hygiene)                                    |
@@ -193,16 +211,16 @@ Exit criteria:
 
 ---
 
-### Phase 3: WordPress Demo Provisioning -- in-progress
+### Phase 3: WordPress Demo Provisioning — historical contract
 
-> **Status**: in-progress — [E15-28](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md) supersedes shared-hosting topology in [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
-> **Task plans**: [E15-28. OCI Demo Provisioning](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md) (active), [E15-3a. LocalWP -> OCI Round-Trip Verification](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) (pre-provisioning gate), [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md) (superseded hosting deliverables)
+> **Status**: completed installation/runtime work is governed by the 2026-10-30 receipts above; no provisioning redispatch. This historical public-demo contract is not blanket acceptance of every criterion.
+> **Task plans (historical ownership)**: [E15-28. OCI Demo Provisioning](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md), [E15-3a. LocalWP -> OCI Round-Trip Verification](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md), [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md) (superseded hosting deliverables)
 > **Predecessor gates**: [E15-22](../../tasks/15.0/E15-22-workbench-avatar-and-progress-readiness-task-plan.md) Workbench avatar/review-drawer proof; [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP → OCI round-trip before public DNS.
 > **Source**: Production Readiness Phase 6, E14 remaining (subsumes E14 checklist items: provision WP demo hosting, install + configure ACX plugin)
 
 **Goal**: A publicly accessible WordPress page at `https://demo.altcontext.com` demonstrates the ACX plugin against the live backend via the same DNS path self-hosted users take.
 
-**Pre-provisioning gates**: Do not point public DNS at the demo vhost until (1) the local/LocalWP Workbench path renders truthful avatars and a populated Review Cluster drawer, and (2) the E15-3a round-trip gate passes.
+**Historical pre-provisioning gates**: truthful local Workbench avatars/populated Review Cluster drawer and the E15-3a round trip were prerequisites to public DNS. Preserve their evidence; do not repeat provisioning from this history.
 
 Deliverables:
 
@@ -218,13 +236,13 @@ Exit criteria:
 - WP demo loads at `https://demo.altcontext.com`.
 - Plugin settings show constant-provenance config; settings probe passes against configured API.
 - Scan → recognition → curation walkthrough recorded with E15-22 proof bundle shapes.
-- Sovereign local-read + degraded banner demonstrated when API container stopped (E15-26).
+- Sovereign local-read + degraded-state evidence (E15-26); this requirement is not authorization to stop the current API.
 
 ---
 
-### Phase 4: End-to-End Verification -- in-progress
+### Phase 4: End-to-End Verification — historical contract
 
-> **Status**: in-progress — E15-4 active (local reset hardening); the Apr 2026 scope split moved budget alerts + Tailscale + Hetzner fallback into E15-5a (OCI operational hygiene), leaving E15-5 as manual remote E2E + ARM verification. E15-3a (Phase 3 pre-provisioning gate) gates demo provisioning.
+> **Status**: historical ownership split, not a new remote E2E dispatch. Consume accepted runtime evidence and keep only the remaining actual acceptance cases in the dated status open.
 > **Task plans**: [E15-4. Local Reset Bootstrap Hardening](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md), [E15-5a. OCI Operational Hygiene](../../tasks/15.0/E15-5a-oci-operational-hygiene-task-plan.md), [E15-5. Remote E2E Verification + ARM Evidence](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
 > **Source**: Production Readiness Phase 6 exit criteria; subsumes E14 checklist items: configure budget alerts, verify ARM compatibility, end-to-end smoke test, dynamic IP SSH access drift
 
@@ -254,9 +272,9 @@ Rationale: MVP completion signal is still "demo URL live + manual E2E pass once"
 
 ---
 
-### Phase 6: Local Sync Correctness and Audit Closure -- in-progress
+### Phase 6: Local Sync Correctness and Audit Closure — historical contract
 
-> **Status**: in-progress
+> **Status**: historical requirements; map source and receipts before identifying a current missing delta
 > **Task plans**: [E15-7. Local Sync Completion and Audit Closure](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md), [E15-13. Recognition Roster Curation Loop](../../tasks/15.0/E15-13-roster-curation-loop-task-plan.md), [E15-14. LocalWP Batch Smoke Argument Plumbing](../../tasks/15.0/E15-14-localwp-batch-smoke-argument-plumbing-task-plan.md), [E15-15. Dashboard Operator Triage with Existing Fields](../../tasks/15.0/E15-15-dashboard-operator-triage-existing-fields-task-plan.md), [E15-16. Dashboard Durable Activity and Diagnostics](../../tasks/15.0/E15-16-dashboard-durable-activity-and-diagnostics-task-plan.md), [E15-17. Roster Person Review Scrub Workspace](../../tasks/15.0/E15-17-roster-person-review-scrub-workspace-task-plan.md)
 > **Source**: runtime investigation follow-up on sovereign local-read correctness
 
@@ -271,10 +289,10 @@ Deliverables:
 - ADR-009-gated curation-loop planning and implementation ordering for E15-13 and E15-17, so person-review and curriculum-queue work stays attached to the same sovereign correctness track.
 - Phase-6 verification and operator-hardening follow-ons: E15-14 for trustworthy LocalWP smoke evidence, E15-15 for existing-field dashboard triage, and E15-16 for durable dashboard activity/diagnostics.
 
-Phase 6 execution order:
+Original Phase 6 dependency order (historical, not a redispatch instruction):
 
 1. E15-7 closes the sovereign local-sync correctness and audit findings.
-2. Resolve the E15-3a LocalWP -> OCI gate and Workbench entity-avatar/review-drawer blocker before Phase 3 provisioning starts: seeded local media must show real avatar thumbnails, Top Cluster face samples, and Review Cluster member rows instead of placeholders, thumbnail errors, or "No members found" for populated clusters, and the OCI round trip must pass.
+2. E15-3a and Workbench entity-avatar/review-drawer evidence preceded public provisioning. Current remaining installed naming recovery is listed above; it does not reopen completed installation.
 3. E15-13 starts after ADR-009 review acceptance and lands the roster curation loop, person projection, and queue contracts.
 4. E15-14 can run independently once LocalWP smoke evidence is prioritized, but still reports under Phase 6 because it hardens demo-readiness correctness proof.
 5. E15-15 reshapes dashboard triage using existing fields only.
@@ -292,7 +310,7 @@ Exit criteria:
 
 | Dependency                              | Owner   | Status                  | Blocks  |
 | --------------------------------------- | ------- | ----------------------- | ------- |
-| OCI demo stack + DNS (`demo.altcontext.com`) | @daniel | In progress (E15-28) | Phase 3 |
+| OCI demo stack + DNS (`demo.altcontext.com`) | @daniel | Historical E15-28 dependency; consult receipts, no new provisioning | Historical Phase 3 |
 | API key / origin policy decisions       | @daniel | Not started             | Phase 1 |
 | OCI budget alert verification           | @daniel | Not started             | Phase 4 (E15-5a) |
 | Tailscale installation on OCI VM        | @daniel | Implemented/documented  | Phase 4 |
@@ -330,12 +348,14 @@ Exit criteria:
 - Public demo URL accessible and functional for product demonstrations.
 - Backend API rejects invalid keys, non-allowlisted origins, and excess request rates.
 - Operator can diagnose a failed sync from HTTP endpoints and structured logs alone.
-- E2E smoke suite passes in CI without LocalWP private APIs.
+- Historical CI smoke target: context only; current evidence status does not imply CI is enabled or passing.
 - Monthly cost: $0 backend + ~$2-5 WP hosting = ~$2-5/mo total.
 
 ---
 
-## Consolidated Checklist
+## Historical requirement checklist
+
+Unchecked historical requirements below are not a current dispatch list. Reconcile them to actual source/receipts; keep missing evidence explicit without reopening accepted work.
 
 ## Phase 1: Security Baseline -- SHIPPED → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 
@@ -356,16 +376,13 @@ Exit criteria:
 - [x] Add latency and error metrics by endpoint class ← _Prod Readiness P5 (Slice 3a)_
 - [x] Document operator diagnostics flow/runbook ← _Prod Readiness P5 (Slice 3b)_
 
-## Phase 3: WordPress Demo Provisioning -- IN PROGRESS → [E15-28](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md)
+## Phase 3: WordPress Demo Provisioning — receipt reconciliation → [E15-28](../../tasks/15.0/E15-28-oci-demo-provisioning-task-plan.md)
 
 > Source: Production Readiness Phase 6 + E14 remaining (OCI-colocated topology)
 
-- [ ] Complete [E15-3a](../../tasks/15.0/E15-3a-localwp-oci-roundtrip-task-plan.md) LocalWP → OCI round-trip gate before public demo DNS ← _pre-provisioning gate_
-- [ ] Confirm Workbench entity-avatar/review-drawer gate locally ← _E15-22 / E15-3a proof bundle_
-- [ ] Land repo-tracked demo stack (`acx-demo`, bulkheads, Caddy vhost) ← _E15-28 Slice 1_
-- [ ] Bootstrap WP + ACX plugin + explicit tenant/key ← _E15-28 Slice 2_
-- [ ] Seed demo media + capture walkthrough smoke log ← _E15-28 Slice 3_
-- [ ] Add `demo` DNS A record + verify TLS on `demo.altcontext.com` ← _operator_
+- [x] Six-site 0.0.42 installation/assets/authenticated navigation completed within the rollout receipt scope above
+- [x] Bounded actual cold GPU and cold SFace runtime cases accepted within their separate receipt scope
+- [ ] Map any other historical public-demo criterion to exact evidence; leave unevidenced criteria pending without new installation, tenant/key, seed or DNS changes
 
 ## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5a](../../tasks/15.0/E15-5a-oci-operational-hygiene-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
 
@@ -374,15 +391,15 @@ Exit criteria:
 - [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← _finding INVEST-reset-env-contract-mismatch_
 - [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14 (E15-5a)_
 - [x] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md) (implemented/documented)_
-- [ ] Run end-to-end WP → backend → recognition → response smoke test ← _Prod Readiness P6 + E14 (E15-5)_
+- [ ] Reconcile E15-5 criteria with accepted actual runtime receipts; remaining in-flight/credential/naming cases are listed above
 - [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14 (E15-5a)_
 - [ ] Capture ARM compatibility verification evidence ← _E14 (E15-5; de facto verified by running A1 instance, but missing recorded artifact)_
 
-## Phase 5: E2E Smoke Gate Automation -- DEFERRED → [v0.4.1](../v0.4.1/public-demo-followons-epic.md)
+## Phase 5: E2E Smoke Gate Automation — historical CI envelope → [v0.4.1](../v0.4.1/public-demo-followons-epic.md)
 
 > Source: Production Readiness Phase 2. Deferred under handoff decision `scope_e15_mvp_close_intake_202604`.
 
-All Phase 5 deliverables move to the v0.4.1 follow-on epic. MVP-blocking scenarios (offline persistence, local-read resilience, sync transitions) are validated manually as part of E15-5.
+The durable CI envelope was deferred to v0.4.1, while E15-6 v1 operator evidence remained in v0.4.0 as described above. Consume existing evidence paths; this historical CI requirement does not authorize re-enabling retired GitHub CI or repeating accepted live cases.
 
 ## Phase 6: Local Sync Correctness -- IN PROGRESS → [E15-7](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md)
 

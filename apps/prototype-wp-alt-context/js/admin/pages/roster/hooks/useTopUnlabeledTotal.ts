@@ -29,7 +29,7 @@ export const useTopUnlabeledTotal = (): number | null => {
     retry: false,
   });
   const total = query.data?.total;
-  if (typeof total !== 'number' || !COUNTED_SOURCES.has(query.data?.data_source ?? '')) {
+  if (query.isError || typeof total !== 'number' || !COUNTED_SOURCES.has(query.data?.data_source ?? '')) {
     return null;
   }
   return total;

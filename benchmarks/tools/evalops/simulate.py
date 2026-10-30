@@ -1,7 +1,9 @@
 """Bounded offline CLI prototype: fictional cases and scripted simulated users.
 
-Run separately from the P1 gate; this module neither imports run.py nor calls a
-provider, network, shell, model, workflow engine, or production adapter. Example:
+Run separately from the P1 gate with Python 3.10+ and the jsonschema package
+(Draft 2020-12 dataset schema validation); this module neither imports run.py nor
+calls a provider, network, shell, model, workflow engine, or production adapter.
+Example:
   python3 benchmarks/tools/evalops/simulate.py --demo --output /tmp/demo.json
   python3 benchmarks/tools/evalops/simulate.py --input request.json --output result.json
 
@@ -32,10 +34,14 @@ rate, production pass@k, or a citation/faithfulness evaluation. Usage/cost are n
 Actual production adapter and independent checker are unavailable. Future bounded
 LLM users are deferred and not executed; no pretend provider is installed.
 
-dataset-v1 at immutable source 0151411349e23b154fe4a6ec25777d70a6800ee4 is
-input contract only. All 240 real operational candidates stay quarantined with
-null ground truth; optional selected records are copied as unexecuted references,
-never turned into scripts, expected behavior, human data or independent gold.
+dataset-v1 at immutable producer source 40cee1214528dc47c79b2fc476c7f9c5fee8efb6
+(reviewed P1 main 7ed6b94b) is input contract only. Its manifest SHA-256 is a
+reviewed constant paired with that revision, never recomputed from bytes found on
+disk: regenerated dataset bytes fail closed until deliberately repinned here, and
+dataset artifacts are never edited by this consumer. All 240 real operational
+candidates (400 stored occurrences) stay quarantined with null ground truth;
+optional selected records are copied as unexecuted references, never turned into
+scripts, expected behavior, human data or independent gold.
 No answer files, journals, gold corpus, DB, or upstream canon are read or written.
 JSON is strict (duplicate keys/nonfinite numbers rejected), output is bounded,
 created exclusively, and never overwrites inputs. Invalid requests/custody/I/O
@@ -56,7 +62,9 @@ Graphs, ch. 8 + Mental Models, ch. 8); [DATA-14] No dual writes (Designing
 Data-Intensive Applications, ch. 11): preserve refs/pins, derive outputs only.
 [TEST-06] Watch it fail once / predict the failure (Modern Software Engineering,
 ch. 8); [TEST-15] Prove the green can go red (The Pragmatic Programmer, ch. 9):
-red API-absence test followed by state-check and retry-bound mutation checks.
+red API-absence test followed by state-check and retry-bound mutation checks;
+source2 observed the stale-pin RED on the composed release, then mutated the pin
+and consumed committed artifacts separately.
 [MEAS-09] Factor must be defined, observable, and decision-linked (How to Measure
 Anything in Cybersecurity Risk, ch. 6 + Measuring the User Experience, section
 10.6): coverage counts explicit tuples; unavailable gold never becomes zero.
@@ -64,7 +72,9 @@ Anything in Cybersecurity Risk, ch. 6 + Measuring the User Experience, section
 (AI Engineering): no judge/gate claims; pins are custody, not calibration.
 Measurement-integrity, evidence-before-commitment and falsification-disconfirmers
 cards motivate the independent-of-script assertions and mutation checks. The
-context-obedience card is read but inert: no generation/context scoring here.
+correction-at-source card keeps dataset-v1 the single authority: a stale consumer
+pin is corrected by a reviewed repin, never by editing or re-hashing its bytes.
+The context-obedience card is read but inert: no generation/context scoring here.
 """
 
 from __future__ import annotations
@@ -79,8 +89,8 @@ import stat
 from pathlib import Path
 
 DATASET = Path(__file__).resolve().parents[2] / "experiments/evalops/dataset-v1"
-DATASET_MANIFEST_SHA256 = "0bd6c56798aec9f2637e2b2dad020f6ce09f13598673ca1401c3051b24ce5850"
-SOURCE_REVISION = "0151411349e23b154fe4a6ec25777d70a6800ee4"
+DATASET_MANIFEST_SHA256 = "ead78cb8f35ad443e1d626e5ed2c0358b7e230fcce65b1d99f277664d11807c6"
+SOURCE_REVISION = "40cee1214528dc47c79b2fc476c7f9c5fee8efb6"
 MAX_REQUEST_BYTES = 16_384
 MAX_FILE_BYTES = 1_048_576
 MAX_OUTPUT_BYTES = 2_097_152

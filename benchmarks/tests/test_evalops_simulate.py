@@ -1,9 +1,11 @@
 """Offline contract tests; all lifecycle examples below are fictional fixtures."""
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +14,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "benchmarks/tools/evalops/simulate.py"
+DATASET = ROOT / "benchmarks/experiments/evalops/dataset-v1"
+# Reviewed composed release: dataset producer source2 manifest bytes and revision.
+REVIEWED_PIN = (
+    "ead78cb8f35ad443e1d626e5ed2c0358b7e230fcce65b1d99f277664d11807c6",
+    "40cee1214528dc47c79b2fc476c7f9c5fee8efb6",
+)
+STALE_SOURCE1_PIN = "0bd6c56798aec9f2637e2b2dad020f6ce09f13598673ca1401c3051b24ce5850"
 SPEC = importlib.util.spec_from_file_location("evalops_simulate", MODULE)
 SIM = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SIM)
@@ -284,6 +293,7 @@ def test_cli_demo_exclusive_output_and_strict_errors(tmp_path):
     help_result = cli("--help")
     assert help_result.returncode == 0 and b"offline" in help_result.stdout.lower()
     assert b"--input" in help_result.stdout and b"--demo" in help_result.stdout
+    assert b"jsonschema" in help_result.stdout
 
 
 def test_cli_request_external_fixture_and_repeatable_bytes(tmp_path):
@@ -308,3 +318,115 @@ def test_cli_rejects_nonregular_and_oversized_inputs_without_output(tmp_path):
     for source in (fifo, tmp_path, oversized):
         assert cli("--input", source, "--output", output).returncode != 0
         assert not output.exists()
+
+
+# Composed-release regressions: the actual committed dataset, not a stand-alone fixture.
+def committed_rows():
+    return [json.loads(line) for line in (DATASET / "artifacts/candidates.jsonl").read_bytes().splitlines()]
+
+
+@pytest.fixture(scope="module")
+def default_report():
+    return SIM.build(SIM.demo_request())
+
+
+def test_reviewed_pin_matches_committed_dataset_bytes():
+    assert (SIM.DATASET_MANIFEST_SHA256, SIM.SOURCE_REVISION) == REVIEWED_PIN
+    actual = hashlib.sha256((DATASET / "artifacts/manifest.json").read_bytes()).hexdigest()
+    assert actual == SIM.DATASET_MANIFEST_SHA256, "dataset regenerated: review and deliberately repin simulate.py"
+
+
+def test_cli_default_demo_reports_current_composed_release(tmp_path):
+    output = tmp_path / "demo.json"
+    result = cli("--demo", "--output", output)
+    assert result.returncode == 0, result.stderr
+    assert b"real deployment acceptance unavailable" in result.stdout
+    report = json.loads(output.read_bytes())
+    manifest = json.loads((DATASET / "artifacts/manifest.json").read_bytes())
+    rows = committed_rows()
+    dataset = report["dataset"]
+    assert (dataset["manifest_sha256"], dataset["source_revision"]) == REVIEWED_PIN
+    assert dataset["dataset_version"] == dataset["protocol_version"] == "1.0.0"
+    assert dataset["contract_files"] == manifest["contract_files"]
+    assert dataset["artifact_files"] == manifest["files"]
+    assert dataset["candidate_records"] == len(rows) == 240
+    assert sum(r["source"]["occurrence_count"] for r in rows) == manifest["occurrence_count"] == 400
+    assert all(r["status"] == "quarantine" for r in rows)
+    assert sum(r["independent_label"] is not None or r["expected_output_or_rubric"] is not None for r in rows) == 0
+    assert dataset["independent_gold_status"] == "needs_labels"
+    assert report["candidate_references"] == []
+    assert report["acceptance"] == {
+        "production": None,
+        "production_adapter": "unavailable",
+        "independent_checker": "unavailable",
+        "independent_gold": None,
+    }
+    assert report["llm_users"] == "deferred_not_executed"
+    assert report["usage"] is report["cost"] is None
+    assert all(r["usage"] is r["cost"] is None for r in report["runs"])
+    assert report["producer"]["sha256"] == hashlib.sha256(MODULE.read_bytes()).hexdigest()
+    assert [r["fixture_check"]["status"] for r in report["runs"]] == ["satisfied"] * 3
+    assert all(c["provenance"]["kind"] == "synthetic_scripted_fixture" for c in report["cases"])
+
+
+@pytest.mark.parametrize("pin", [STALE_SOURCE1_PIN, REVIEWED_PIN[0][:-1] + "0"])
+def test_mutated_pin_rejects_committed_dataset_then_revert_passes(tmp_path, monkeypatch, pin):
+    monkeypatch.setattr(SIM, "DATASET_MANIFEST_SHA256", pin)
+    with pytest.raises(ValueError, match="dataset manifest pin mismatch"):
+        SIM.build(SIM.demo_request())
+    output = tmp_path / "demo.json"
+    with pytest.raises(SystemExit) as exited:
+        SIM.main(["--demo", "--output", str(output)])
+    assert exited.value.code == 1 and not output.exists()
+    monkeypatch.undo()
+    assert SIM.build(SIM.demo_request())["dataset"]["manifest_sha256"] == REVIEWED_PIN[0]
+
+
+def dataset_copy(tmp_path):
+    return shutil.copytree(DATASET, tmp_path / "dataset-v1", ignore=shutil.ignore_patterns("__pycache__"))
+
+
+@pytest.mark.parametrize(
+    "name,old,new,message",
+    [
+        ("artifacts/manifest.json", b'"needs_labels"', b'"labelled"', "dataset manifest pin"),
+        ("artifacts/candidates.jsonl", b'"status":"quarantine"', b'"status":"admitted"', "dataset artifact hash"),
+        ("artifacts/coverage.json", b'"admitted_cases": 0', b'"admitted_cases": 1', "dataset artifact hash"),
+        ("schema.json", b'"const": "quarantine"', b'"enum": ["quarantine", "admitted"]', "dataset contract hash"),
+        ("protocol.json", b'"version": "1.0.0"', b'"version": "1.0.1"', "dataset contract hash"),
+        ("input-lock.json", b'"release": "0.26.2"', b'"release": "0.26.3"', "dataset contract hash"),
+        ("import_candidates.py", b"def main():", b"def main():  # changed", "dataset contract hash"),
+    ],
+)
+def test_mutated_consumed_artifact_rejected_then_revert_passes(tmp_path, default_report, name, old, new, message):
+    base = dataset_copy(tmp_path)
+    path = base / name
+    original = path.read_bytes()
+    assert original.count(old) >= 1
+    path.write_bytes(original.replace(old, new, 1))
+    with pytest.raises(ValueError, match=message):
+        SIM.build(SIM.demo_request(), dataset_dir=base)
+    path.write_bytes(original)
+    assert SIM.build(SIM.demo_request(), dataset_dir=base) == default_report
+
+
+def test_self_consistent_rehash_cannot_promote_quarantined_record(tmp_path, monkeypatch):
+    base = dataset_copy(tmp_path)
+    candidates, manifest_path = base / "artifacts/candidates.jsonl", base / "artifacts/manifest.json"
+    lines = candidates.read_bytes().splitlines()
+    row = json.loads(lines[0])
+    row.update(status="admitted", independent_label="FORGED-NEGATIVE-FIXTURE")
+    row["content_sha256"] = SIM.digest(SIM.canonical({k: v for k, v in row.items() if k != "content_sha256"}))
+    lines[0] = SIM.canonical(row)
+    data = b"\n".join(lines) + b"\n"
+    candidates.write_bytes(data)
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["files"]["candidates.jsonl"] = {"bytes": len(data), "sha256": SIM.digest(data)}
+    forged = json.dumps(manifest, indent=2, sort_keys=True).encode() + b"\n"
+    manifest_path.write_bytes(forged)
+    with pytest.raises(ValueError, match="dataset manifest pin mismatch"):
+        SIM.build(SIM.demo_request(), dataset_dir=base)
+    # A pin recomputed from the bytes present is tautological; row guards must still refuse.
+    monkeypatch.setattr(SIM, "DATASET_MANIFEST_SHA256", SIM.digest(forged))
+    with pytest.raises(ValueError, match="dataset candidate schema violation"):
+        SIM.build(SIM.demo_request(), dataset_dir=base)

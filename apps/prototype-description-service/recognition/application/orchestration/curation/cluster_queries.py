@@ -19,15 +19,22 @@ async def list_clusters(
     include_outliers: bool = False,
     labeled_only: bool = False,
     search: str | None = None,
+    min_photos: int | None = None,
 ) -> list[IdentityCluster]:
     """Return clusters for a tenant using the persistence layer."""
     clusters = await cluster_repo.get_by_tenant(
-        tenant_id, limit=limit, offset=offset, labeled_only=labeled_only, search=search
+        tenant_id,
+        limit=limit,
+        offset=offset,
+        labeled_only=labeled_only,
+        search=search,
+        **({"min_photos": min_photos} if min_photos is not None else {}),
     )
     for cluster in clusters:
         cluster.representatives = getattr(cluster, "representatives", []) or []
     if include_outliers:
-        outlier_cluster = await build_outlier_cluster(session, tenant_id)
+        # The unassigned pseudo-group is not a persisted person group.
+        outlier_cluster = await build_outlier_cluster(session, tenant_id) if min_photos is None else None
         if outlier_cluster and outlier_cluster.identity_count > 0:
             outlier_cluster.representatives = getattr(outlier_cluster, "representatives", []) or []
             clusters.append(outlier_cluster)

@@ -325,11 +325,25 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         offset: int = 0,
         labeled_only: bool = False,
         search: str | None = None,
+        min_photos: int | None = None,
     ):
         """Fetch clusters for a tenant, with representatives eagerly loaded for discovery."""
-        stmt: Select[tuple[ClusterModel]] = (
-            select(ClusterModel)
-            .where(ClusterModel.tenant_id == _coerce_uuid(tenant_id))
+        tenant_uuid = _coerce_uuid(tenant_id)
+        photo_counts = (
+            select(
+                IdentityMemberModel.cluster_id,
+                func.count(func.distinct(MediaIdentity.media_id)).label("photo_count"),
+            )
+            .join(MediaIdentity, MediaIdentity.id == IdentityMemberModel.identity_id)
+            .where(IdentityMemberModel.tenant_id == tenant_uuid, MediaIdentity.tenant_id == tenant_uuid)
+            .group_by(IdentityMemberModel.cluster_id)
+            .subquery()
+        )
+        photo_count = func.coalesce(photo_counts.c.photo_count, 0)
+        stmt = (
+            select(ClusterModel, photo_count)
+            .outerjoin(photo_counts, photo_counts.c.cluster_id == ClusterModel.id)
+            .where(ClusterModel.tenant_id == tenant_uuid)
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
                 selectinload(ClusterModel.centroid_data),
@@ -338,6 +352,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .limit(limit)
             .offset(offset)
         )
+
+        if min_photos is not None:
+            stmt = stmt.where(photo_count >= min_photos).order_by(ClusterModel.id.asc())
 
         if labeled_only:
             stmt = stmt.where(ClusterModel.label.isnot(None))
@@ -348,7 +365,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             stmt = stmt.where(ClusterModel.label.ilike(f"%{escaped_search}%", escape="\\"))
 
         result = await self._session.execute(stmt)
-        return [self._to_domain(row) for row in result.scalars().all()]
+        clusters = []
+        for model, count in result.all():
+            cluster = self._to_domain(model)
+            cluster.photo_count = int(count)
+            clusters.append(cluster)
+        return clusters
 
     async def get_top_unlabeled(
         self,

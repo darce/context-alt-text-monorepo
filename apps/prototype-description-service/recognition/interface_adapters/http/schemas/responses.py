@@ -135,6 +135,7 @@ class ClusterResponse(BaseModel):
     is_labeled: bool
     is_auto_label: bool
     identity_count: int
+    photo_count: int | None = Field(default=None, ge=0, strict=True)
     representatives: list[RepresentativeResponse] = Field(default_factory=list)
     suggested_label: str | None = None
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None

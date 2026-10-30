@@ -38,6 +38,7 @@ class DummyClusterRepository(ClusterRepository):
         offset: int = 0,
         labeled_only: bool = False,
         search: str | None = None,
+        min_photos: int | None = None,
     ) -> list[IdentityCluster]:
         raise NotImplementedError
 

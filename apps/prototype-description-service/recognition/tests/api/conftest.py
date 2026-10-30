@@ -890,3 +890,42 @@ def seed_cluster(
         )
 
     return cluster
+
+
+@pytest.fixture
+def fg6_http_app(tenant_id, fake_cluster_service, fake_cluster_repository):
+    """Listing HTTP boundary with an authenticated principal and async service boundary.
+
+    SQL/count behavior is exercised separately through the real repository.
+    """
+    from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
+    from recognition.interface_adapters.http.routers.clusters_snapshot import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+
+    async def authenticated_principal():
+        return SimpleNamespace(enabled=True, tenant_claim=tenant_id, is_admin=False)
+
+    async def no_rate_limit():
+        return None
+
+    async def service_builder():
+        async def build(resolved_tenant_id):
+            assert resolved_tenant_id == tenant_id
+            return fake_cluster_service
+
+        return build
+
+    async def repository():
+        return fake_cluster_repository
+
+    async def session():
+        yield FakeSession()
+
+    app.dependency_overrides[dependencies.get_cluster_repository] = repository
+    app.dependency_overrides[dependencies.get_session] = session
+    app.dependency_overrides[dependencies.require_auth] = authenticated_principal
+    app.dependency_overrides[enforce_rate_limit] = no_rate_limit
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = service_builder
+    return app

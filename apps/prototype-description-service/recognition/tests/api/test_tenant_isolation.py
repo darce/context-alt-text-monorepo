@@ -27,6 +27,7 @@ class StubClusterService:
         include_outliers: bool = False,
         labeled_only: bool = False,
         search: str | None = None,
+        min_photos: int | None = None,
     ):
         if self._on_list is not None:
             self._on_list(
@@ -36,6 +37,7 @@ class StubClusterService:
                 include_outliers=include_outliers,
                 labeled_only=labeled_only,
                 search=search,
+                min_photos=min_photos,
             )
         return []
 

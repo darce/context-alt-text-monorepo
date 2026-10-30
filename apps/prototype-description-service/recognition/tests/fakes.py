@@ -614,11 +614,20 @@ class FakeClusterService:
         include_outliers: bool = False,
         labeled_only: bool = False,
         search: str | None = None,
+        min_photos: int | None = None,
     ) -> list[ClusterResponse]:
         self.calls.append(
-            {"method": "list_clusters", "tenant_id": tenant_id, "include_outliers": include_outliers, "limit": limit}
+            {
+                "method": "list_clusters",
+                "tenant_id": tenant_id,
+                "include_outliers": include_outliers,
+                "limit": limit,
+                "min_photos": min_photos,
+            }
         )
         filtered = [c for c in self.clusters if c.tenant_id == tenant_id]
+        if min_photos is not None:
+            filtered = [c for c in filtered if c.photo_count is not None and c.photo_count >= min_photos]
         return filtered[offset : offset + limit]
 
     async def cluster_unclustered_identities(

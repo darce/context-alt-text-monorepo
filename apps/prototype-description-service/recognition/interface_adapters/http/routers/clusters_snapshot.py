@@ -9,12 +9,14 @@ face-box and snapshot-response builders those reads share.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from math import isfinite
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.settings import ClusteringSettings
@@ -384,6 +386,24 @@ async def _enrich_with_suggested_labels(
             )
 
 
+def _parse_min_photos(value: object) -> int | None:
+    """Keep the optional integer query contract while reporting invalid input as 400."""
+    if value is None:
+        return None
+    try:
+        if re.fullmatch(r"[+-]?[0-9]+", str(value)) is None:
+            raise ValueError
+        minimum = int(str(value))
+        if not 1 <= minimum <= 2147483647:
+            raise ValueError
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="min_photos must be an integer between 1 and 2147483647",
+        ) from None
+    return minimum
+
+
 @router.get("/clusters", response_model=list[ClusterResponse])
 async def list_clusters(
     tenant_id: str = Depends(get_authenticated_tenant_id),
@@ -392,6 +412,7 @@ async def list_clusters(
     include_outliers: bool = Query(False),
     labeled_only: bool = Query(False),
     search: str | None = Query(None),
+    min_photos: Annotated[int | None, Query(ge=1, le=2147483647), BeforeValidator(_parse_min_photos)] = None,
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> list[ClusterResponse]:
     """List clusters with paging."""
@@ -405,6 +426,7 @@ async def list_clusters(
         include_outliers=include_outliers,
         labeled_only=labeled_only,
         search=search,
+        min_photos=min_photos,
     )
 
 

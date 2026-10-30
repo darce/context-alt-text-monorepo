@@ -234,6 +234,7 @@ class ClusterService:
         include_outliers: bool = False,
         labeled_only: bool = False,
         search: str | None = None,
+        min_photos: int | None = None,
     ):
         """Return clusters for a tenant using the persistence layer."""
         clusters = await list_clusters_op(
@@ -245,6 +246,7 @@ class ClusterService:
             include_outliers=include_outliers,
             labeled_only=labeled_only,
             search=search,
+            min_photos=min_photos,
         )
 
         # Populate suggested_label fields for unlabeled clusters

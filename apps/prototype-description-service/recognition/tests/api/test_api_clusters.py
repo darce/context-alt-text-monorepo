@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import AsyncMock, create_autospec
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -1351,3 +1352,45 @@ def test_cluster_delta_includes_suggested_label_for_unlabeled_cluster(
     assert clusters[0]["suggested_label_source"] == "roster"
     assert clusters[0]["suggested_label_confidence"] == pytest.approx(0.75, abs=1e-6)
     assert clusters[0]["suggested_target_cluster_id"] is None
+
+
+@pytest.mark.parametrize("minimum", ["0", "-1", "1.5", "2.0", "abc", "", "2147483648", "1e2", "true"])
+@pytest.mark.asyncio
+async def test_min_photos_invalid_query_is_400(fg6_http_app, tenant_id, minimum):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fg6_http_app), base_url="http://fg6.test") as client:
+        response = await client.get("/recognition/clusters", params={"min_photos": minimum})
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("minimum", [1, 2147483647])
+@pytest.mark.asyncio
+async def test_min_photos_valid_value_reaches_service(fg6_http_app, tenant_id, fake_cluster_service, minimum):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fg6_http_app), base_url="http://fg6.test") as client:
+        response = await client.get("/recognition/clusters", params={"min_photos": minimum})
+    assert response.status_code == 200
+    assert fake_cluster_service.calls[-1]["min_photos"] == minimum
+
+
+@pytest.mark.asyncio
+async def test_min_photos_omission_preserves_legacy_unknown(fg6_http_app, tenant_id, fake_cluster_service):
+    seeded = seed_cluster(fake_cluster_service, tenant_id, identity_count=0)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fg6_http_app), base_url="http://fg6.test") as client:
+        response = await client.get("/recognition/clusters")
+    assert response.status_code == 200
+    returned = next(row for row in response.json() if row["id"] == seeded.id)
+    assert returned["photo_count"] is None
+    assert fake_cluster_service.calls[-1]["min_photos"] is None
+
+
+@pytest.mark.asyncio
+async def test_top_unlabeled_uncomputed_photo_count_is_null(
+    fg6_http_app, tenant_id, fake_cluster_service, fake_cluster_repository
+):
+    seeded = seed_cluster(
+        fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository, identity_count=8
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fg6_http_app), base_url="http://fg6.test") as client:
+        response = await client.get("/recognition/clusters/top-unlabeled")
+    assert response.status_code == 200
+    returned = next(row for row in response.json()["clusters"] if row["id"] == seeded.id)
+    assert returned["photo_count"] is None

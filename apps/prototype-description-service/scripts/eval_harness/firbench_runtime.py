@@ -38,6 +38,104 @@ from scripts.eval_harness import gallery_split
 
 if TYPE_CHECKING:
     from scripts.eval_harness.fir_occ_labels import LabelEvidenceBundle
+    from scripts.eval_harness.firbench_views import PersonBox, ViewBudget, ViewPolicy, ViewResult
+
+
+@dataclass(frozen=True)
+class ExperimentalViewSearch:
+    """Pre-scoring candidate packet for ONE independently declared source search.
+
+    All people/groups remain in ``views``; ``top_k`` is the maximum score for each
+    gallery identity over the source's candidates, useful for an any-alarm
+    non-mated decision. It is not a person association or a mated identification
+    outcome. No crop or detection creates a source unit [EVAL-19, Do not let
+    detector alarms dilute FPIR, IARPA Janus Benchmark-C, § 2.3.4].
+
+    This packet deliberately cannot masquerade as native searches.jsonl. S1 unit
+    association, multi-view calibration and persisted CLI lineage are integration
+    work before S3 scoring; native preparation/default_collaborators are unchanged.
+    """
+
+    source_search_id: str
+    gallery_sha256: str
+    gallery_leg_key: str
+    views: ViewResult
+    candidate_hits: tuple[tuple[tuple[str, float], ...], ...]  # same order as views.candidates
+    top_k: tuple[tuple[str, float], ...]
+
+
+def experimental_view_search(
+    *,
+    leg: fl.LegRuntime,
+    image_bgr: np.ndarray,
+    source_id: str,
+    source_sha256: str,
+    source_search_id: str,
+    orientation: str,
+    policy: ViewPolicy,
+    budget: ViewBudget,
+    gallery: fl.Gallery,
+    gallery_leg_id: fc.LegId,
+    top_k: int,
+    person_boxes: tuple[PersonBox, ...] = (),
+    quarter_turns: int = 0,
+    proposal_status: str | None = None,
+    proposal_source_ref: str | None = None,
+    duplicate_tolerance_px: float = 0.0,
+    offline: bool = False,
+) -> ExperimentalViewSearch:
+    """Explicit offline-only bridge to existing observe and gallery search producers.
+
+    Gallery provenance is mandatory because S2 Gallery stores no model-space tag.
+    It must name the exact native leg contract [EMB-01, One embedding space per
+    comparison, Foundations of Vector Retrieval, ch. 1]. No factories or downloads.
+    The caller supplies a source-search ID enumerated independently of detections;
+    this helper neither builds a denominator nor calibrates/accepts identities.
+    """
+    from scripts.eval_harness.firbench_views import produce_views
+
+    if leg.kind not in (fc.LegKind.sface, fc.LegKind.auraface, fc.LegKind.insightface):
+        raise fc.FrameContractError("experimental view search supports the three native model legs only")
+    if not isinstance(source_search_id, str) or not source_search_id.strip():
+        raise fc.FrameContractError("an independently declared source_search_id is required")
+    if type(top_k) is not int or top_k < 1:
+        raise fc.FrameContractError("top_k must be a positive integer")
+    native_id = leg.leg_id(fc.Arm.native)
+    if gallery_leg_id != native_id:
+        raise fc.RuntimeMismatchError("gallery model space/runtime differs from query leg")
+    for vector in gallery.prototypes.values():
+        array = np.asarray(vector)
+        if array.shape != (leg.embedding_dim,):
+            raise fc.RuntimeMismatchError("gallery dimension differs from query leg")
+        if not np.isfinite(array).all() or not np.isclose(np.linalg.norm(array), 1.0):
+            raise fc.RuntimeMismatchError("gallery prototype must be finite and unit normalized")
+    views = produce_views(
+        leg=leg,
+        image_bgr=image_bgr,
+        source_id=source_id,
+        source_sha256=source_sha256,
+        orientation=orientation,
+        policy=policy,
+        budget=budget,
+        person_boxes=person_boxes,
+        proposal_status=proposal_status,
+        proposal_source_ref=proposal_source_ref,
+        quarter_turns=quarter_turns,
+        duplicate_tolerance_px=duplicate_tolerance_px,
+        offline=offline,
+    )
+    candidate_hits = tuple(
+        fl._top_k(c.observation.embedding, gallery, top_k) if c.observation.embedding is not None else ()
+        for c in views.candidates
+    )
+    maxima: dict[str, float] = {}
+    for hits in candidate_hits:
+        for identity, score in hits:
+            maxima[identity] = max(score, maxima.get(identity, -math.inf))
+    hits = tuple(sorted(maxima.items(), key=lambda item: (-item[1], item[0]))[:top_k])
+    return ExperimentalViewSearch(
+        source_search_id, gallery.gallery_sha256, native_id.key(), views, candidate_hits, hits
+    )
 
 
 class DocumentBinding(TypedDict):

@@ -98,4 +98,48 @@ class PersonResolutionServiceTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $result);
         $this->assertSame('acx_db_error', $result->get_error_code());
     }
+
+    public function testAutomaticAssociationUsesInjectedTablesAndExplicitTenant(): void
+    {
+        global $wpdb;
+        $wpdb->tableRows['alt_acx_clusters'] = [[
+            'cluster_uuid' => 'group', 'tenant_id' => 'requested-tenant', 'person_id' => 9,
+        ]];
+        // Legacy same-name humans remain separate UUID choices. Place the
+        // other namesake first so name-based selection cannot pass this case.
+        $wpdb->tableRows['alt_acx_persons'] = [[
+            'id' => 8, 'tenant_id' => 'requested-tenant',
+            'person_uuid' => 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee', 'name' => 'Stored human name',
+        ], [
+            'id' => 9, 'tenant_id' => 'requested-tenant',
+            'person_uuid' => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'name' => 'Stored human name',
+        ]];
+        $result = (new PersonResolutionService('alt_'))->resolve_for_automatic_bind(
+            'Person 3', 'requested-tenant', 'group',
+            static function (): bool { self::fail('Observation must not enqueue creation.'); }
+        );
+        self::assertIsArray($result);
+        self::assertSame(9, $result['person_id']);
+        self::assertSame('Stored human name', $result['name']);
+        self::assertSame('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', $result['person_uuid']);
+        self::assertCount(2, $wpdb->tableRows['alt_acx_persons']);
+        foreach ($wpdb->queries as $query) {
+            self::assertStringNotContainsString('wp_acx_', $query);
+        }
+    }
+
+    public function testAutomaticResolutionDoesNotInventIdentityWhenDatabaseUnavailable(): void
+    {
+        $saved = $GLOBALS['wpdb'];
+        try {
+            unset($GLOBALS['wpdb']);
+            $result = (new PersonResolutionService())->resolve_for_automatic_bind(
+                'Ada', self::currentTenantId(), 'group', static fn(): bool => false
+            );
+        } finally {
+            $GLOBALS['wpdb'] = $saved;
+        }
+        self::assertInstanceOf(\WP_Error::class, $result);
+        self::assertSame('acx_db_error', $result->get_error_code());
+    }
 }

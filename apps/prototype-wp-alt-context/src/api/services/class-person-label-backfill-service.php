@@ -25,9 +25,10 @@ use function min;
 use function trim;
 
 /**
- * Idempotent heal: bind persons for human-labelled clusters that have no person_id.
+ * Inspect legacy label evidence without inferring person bindings (ADR019 1b).
  *
- * Heal binds person_id ONLY (does not set is_user_confirmed / curation_state).
+ * Unlinked labels are skipped, including in dry runs. Existing associations
+ * may be observed idempotently; label text never creates or selects a person.
  */
 class PersonLabelBackfillService {
 	use DetectsSystemDefinedLabels;
@@ -202,15 +203,6 @@ class PersonLabelBackfillService {
 			return $none;
 		}
 
-		if ( $dry_run ) {
-			return array(
-				'status'     => 'bound',
-				'person_id'  => 0,
-				'created'    => false,
-				'collision'  => false,
-			);
-		}
-
 		global $wpdb;
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) ) {
 			return $none;
@@ -225,8 +217,17 @@ class PersonLabelBackfillService {
 				return true;
 			}
 		);
-		if ( is_wp_error( $resolved ) ) {
+		if ( is_wp_error( $resolved ) || (int) $resolved['person_id'] <= 0 ) {
 			return $none;
+		}
+
+		if ( $dry_run ) {
+			return array(
+				'status'     => 'bound',
+				'person_id'  => 0,
+				'created'    => false,
+				'collision'  => false,
+			);
 		}
 
 		$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );

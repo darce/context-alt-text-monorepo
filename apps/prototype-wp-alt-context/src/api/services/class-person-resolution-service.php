@@ -142,9 +142,16 @@ class PersonResolutionService {
 	}
 
 	/**
-	 * Automatic bind policy (R1-08): reuse a same-name person only when that
-	 * person is already bound to a cluster in this tenant. Otherwise create a
-	 * distinct person and mark collision.
+	 * Observe an existing tenant/group association; a label never authorizes one.
+	 *
+	 * ADR019 rule 1b: snapshot/projection/backfill labels remain evidence only.
+	 * Unlinked results carry person_id=0 and the unchanged label so projection
+	 * callers can retain it. ClusterCurationWriter treats that ID as a no-op.
+	 * A positive result comes only from this group's stored person association,
+	 * independent of name equality. Explicit human naming uses resolve_or_create.
+	 *
+	 * The callback is retained for caller compatibility and is never invoked.
+	 * This service does not create binding intent or continue journal commands.
 	 *
 	 * @param callable(string $person_uuid, string $name, array<int,mixed> $tags): bool $enqueue_person_created
 	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string,collision:bool}|WP_Error
@@ -155,33 +162,58 @@ class PersonResolutionService {
 		string $cluster_uuid,
 		callable $enqueue_person_created
 	): array|WP_Error {
-		$resolved = $this->resolve_or_create( $display_name, $enqueue_person_created );
-		if ( is_wp_error( $resolved ) ) {
-			return $resolved;
+		global $wpdb;
+
+		$unlinked = array(
+			'person_id'   => 0,
+			'person_uuid' => '',
+			'name'        => $display_name,
+			'outcome'     => 'unlinked',
+			'collision'   => false,
+		);
+		$tenant_id    = trim( $tenant_id );
+		$cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $tenant_id || '' === $cluster_uuid ) {
+			return $unlinked;
 		}
 
-		if ( 'created' === $resolved['outcome'] ) {
-			$resolved['collision'] = false;
-			return $resolved;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return new WP_Error( 'acx_db_error', __( 'Database access is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
-		if ( $this->person_is_bound_to_cluster( (int) $resolved['person_id'], $cluster_uuid ) ) {
-			$resolved['collision'] = false;
-			return $resolved;
+		$prefix = is_string( $this->table_prefix ) && '' !== $this->table_prefix ? $this->table_prefix : $wpdb->prefix;
+		$group  = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+				$prefix . 'acx_clusters',
+				$cluster_uuid,
+				$tenant_id
+			)
+		);
+		$person_id = is_object( $group ) ? (int) ( $group->person_id ?? 0 ) : 0;
+		if ( $person_id <= 0 ) {
+			return $unlinked;
 		}
 
-		if ( ! $this->person_is_bound_in_tenant( (int) $resolved['person_id'], $tenant_id ) ) {
-			$resolved['collision'] = false;
-			return $resolved;
+		$person = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT id, person_uuid, name FROM %i WHERE id = %d AND tenant_id = %s',
+				$this->persons_table(),
+				$person_id,
+				$tenant_id
+			)
+		);
+		if ( ! is_object( $person ) || (int) ( $person->id ?? 0 ) !== $person_id || '' === trim( (string) ( $person->person_uuid ?? '' ) ) ) {
+			return $unlinked;
 		}
 
-		$distinct = $this->create_distinct( $display_name, $enqueue_person_created );
-		if ( is_wp_error( $distinct ) ) {
-			return $distinct;
-		}
-
-		$distinct['collision'] = true;
-		return $distinct;
+		return array(
+			'person_id'   => $person_id,
+			'person_uuid' => (string) $person->person_uuid,
+			'name'        => (string) ( $person->name ?? '' ),
+			'outcome'     => 'rebound',
+			'collision'   => false,
+		);
 	}
 
 	public function person_is_bound_to_cluster( int $person_id, string $cluster_uuid ): bool {

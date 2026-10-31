@@ -1,12 +1,22 @@
 #!/bin/sh
 # Shared boot chain for runtime and runtime-vlm (ORCH-LAUNCH-01-S1-BR-02 / RA-08).
-# Order is load-bearing: migrate, sync schema, verify schema, then (vlm only)
+# Default order is load-bearing: migrate, sync schema, verify schema, then (vlm only)
 # verify the pre-seeded model cache, then hand off to uvicorn as PID 1.
+# ACX_SCHEMA_BOOTSTRAP_MODE=verify uses only runtime credentials after an
+# operator-owned schema job has completed; it never migrates or heals.
 #
 # Image variant is build-immutable at /app/.image-variant (not ENV alone —
 # compose env_file can override ACX_IMAGE_VARIANT and fail open). String values
 # must match ImageVariant in scripts/verify_vlm_cache.py (recognition | vlm).
 set -eu
+SCHEMA_BOOTSTRAP_MODE=${ACX_SCHEMA_BOOTSTRAP_MODE-apply}
+case "${SCHEMA_BOOTSTRAP_MODE}" in
+apply|verify) ;;
+*)
+	echo "FATAL: invalid ACX_SCHEMA_BOOTSTRAP_MODE='${SCHEMA_BOOTSTRAP_MODE}' (expected apply or verify)" >&2
+	exit 1
+	;;
+esac
 cd /app
 
 # PID-1 signal handling (REV-r08112960-A-13): the kernel ignores unhandled
@@ -65,6 +75,7 @@ fi
 # Long steps: background + wait so the TERM trap can kill them (A-13).
 # Line prefixes stay as the bare command so packaging gates that key on
 # alembic / python module lines still match.
+if [ "${SCHEMA_BOOTSTRAP_MODE}" = "apply" ]; then
 alembic -c db/alembic.ini upgrade head &
 _boot_child=$!
 wait "${_boot_child}" || exit $?
@@ -79,6 +90,12 @@ python -m scripts.verify_identity_schema &
 _boot_child=$!
 wait "${_boot_child}" || exit $?
 _boot_child=""
+else
+python -m scripts.verify_identity_schema --runtime-role &
+_boot_child=$!
+wait "${_boot_child}" || exit $?
+_boot_child=""
+fi
 
 # VLM image only (bake-driven via ACX_IMAGE_VARIANT above). The Python gate
 # self-skips non-LOCAL_CPU profiles; recognition must not grow a weight-mount

@@ -146,6 +146,106 @@ const mountEditor = (expand = true, label: string | null = null) => {
   return view;
 };
 const input = () => screen.getByRole('combobox', { name: 'Person name' });
+
+// jsdom has no layout or native scrolling. Model the measured nested Library
+// scrollports, with rects derived from content offsets and actual scrollTop.
+// A layout delivery can move the row without resizing the name editor itself.
+const installNamingLayout = (viewport: '1024' | '1440') => {
+  const compact = viewport === '1024';
+  const libraryBottom = compact ? 730 : 856;
+  const rowsTop = compact ? 585.953125 : 760;
+  let rowsHeight = compact ? 128 : 160;
+  let growth = 0;
+  const rect = (top: number, height: number): DOMRect => new DOMRect(744.6875, top, 150.21875, height);
+  const observers: LayoutResizeObserver[] = [];
+  class LayoutResizeObserver implements ResizeObserver {
+    targets = new Set<Element>();
+    constructor(private callback: ResizeObserverCallback) { observers.push(this); }
+    observe(target: Element) { this.targets.add(target); }
+    unobserve(target: Element) { this.targets.delete(target); }
+    disconnect() { this.targets.clear(); }
+    deliver(target: Element) {
+      this.callback([{ target, contentRect: target.isConnected ? target.getBoundingClientRect() : new DOMRect(),
+        borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [] }], this);
+    }
+  }
+  vi.stubGlobal('ResizeObserver', LayoutResizeObserver);
+  const library = () => screen.getByTestId('library-pane');
+  const rows = () => screen.getByTestId('media-pane');
+  const origin = () => rowsTop - library().scrollTop;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.dataset.testid === 'library-pane') return rect(100, libraryBottom - 100);
+    if (this.dataset.testid === 'media-pane') return rect(origin(), rowsHeight);
+    const editorTop = origin() + 460 + growth - rows().scrollTop;
+    if (this.classList.contains('acx-identity-cluster__edit')) return rect(editorTop, 152.609375);
+    if (this.getAttribute('role') === 'combobox') return rect(editorTop + 26.203125, 40);
+    if (this.tagName === 'BUTTON' && this.textContent === 'Name this person') {
+      return rect(origin() + 486.203125 - rows().scrollTop, 26.203125);
+    }
+    return rect(0, 0);
+  });
+  // Emulate native nearest scrolling through every scroll container, separately
+  // from the visibility oracle below. Include the existing 8px scroll padding
+  // and 8px control margin. Do not give the product a fixed passing input rect.
+  const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+    for (let parent = this.parentElement; parent; parent = parent.parentElement) {
+      if (!/(auto|scroll|hidden)/.test(getComputedStyle(parent).overflowY)) continue;
+      const bounds = this.getBoundingClientRect();
+      const pane = parent.getBoundingClientRect();
+      const top = pane.top + 16;
+      const bottom = pane.top + parent.clientHeight - 16;
+      if (bounds.top < top && bounds.bottom > bottom) continue;
+      if (bounds.top < top) parent.scrollTop += bounds.top - top;
+      else if (bounds.bottom > bottom) parent.scrollTop += bounds.bottom - bottom;
+    }
+  });
+  // Deliberately preserve native focus, supplying the actual element via .call.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const browserFocus = HTMLElement.prototype.focus;
+  const focus = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+    browserFocus.call(this, options);
+    if (!options?.preventScroll) this.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
+  const clips = (target: HTMLElement) => {
+    const bounds = target.getBoundingClientRect();
+    const failures = [];
+    if (bounds.top < 0 || bounds.bottom > (compact ? 900 : 1080)) failures.push('viewport');
+    for (let parent = target.parentElement; parent; parent = parent.parentElement) {
+      if (!/(auto|scroll|hidden|clip)/.test(getComputedStyle(parent).overflowY)) continue;
+      const pane = parent.getBoundingClientRect();
+      if (bounds.top < pane.top || bounds.bottom > pane.top + parent.clientHeight
+        || bounds.left < pane.left || bounds.right > pane.right) failures.push(parent.dataset.testid);
+    }
+    return failures;
+  };
+  const deliver = (target: Element) => act(() => {
+    observers.filter((observer) => observer.targets.has(target)).forEach((observer) => observer.deliver(target));
+  });
+  return {
+    clips, observers, deliver,
+    focusCount: (target: HTMLElement) => focus.mock.contexts.filter((node) => node === target).length,
+    scrollCount: () => scroll.mock.calls.length,
+    attach: () => {
+      Object.defineProperties(rows(), {
+        scrollHeight: { get: () => 5049 + growth }, clientHeight: { get: () => rowsHeight },
+      });
+      Object.defineProperties(library(), {
+        scrollHeight: { get: () => Math.max(libraryBottom - 100 + 43, rowsTop + rowsHeight - 100 + 16) },
+        clientHeight: { get: () => libraryBottom - 100 },
+      });
+      for (const node of [rows(), library()]) {
+        let scroll = 0;
+        Object.defineProperty(node, 'scrollTop', {
+          get: () => scroll,
+          set: (next: number) => { scroll = Math.max(0, Math.min(next, node.scrollHeight - node.clientHeight)); },
+        });
+      }
+    },
+    settleRow: () => { growth = compact ? 338.0625 : 114.87625; },
+    shrinkRows: () => { rowsHeight = 80; },
+  };
+};
+
 describe('Name this person focus and draft journey through actual producers', () => {
   it('focuses immediately while mandatory people lookup is pending, allows typing and keeps commit gated', async () => {
     const read = hold('roster');
@@ -197,31 +297,79 @@ describe('Name this person focus and draft journey through actual producers', ()
     expect(input()).toHaveFocus();
   });
 
-  it('reveals the whole editor in only the nearest scrollable pane', async () => {
-    client.setQueryData(queryKeys.roster.entries(), roster);
-    const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 400, width: 400, height: bottom - top, x: 0, y: top, toJSON: () => ({}) });
-    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (this.dataset.testid === 'media-pane') return rect(100, 400);
-      if (this.classList.contains('acx-identity-cluster__edit')) return rect(380, 500);
-      return rect(0, 800);
-    });
-    const { container } = render(<div data-testid="outer-pane" style={{ overflowY: 'auto' }}>
-      <div data-testid="media-pane" style={{ overflowY: 'auto' }}><IdentityClusterItem cluster={{
+  it.each(['1024', '1440'] as const)('keeps the focused draft inside every clipping ancestor after %s Library layout settles and resizes', async (viewport) => {
+    const read = hold('roster');
+    const layout = installNamingLayout(viewport);
+    render(<section data-testid="library-pane" style={{ overflowY: 'auto' }}>
+      <div data-testid="media-pane" style={{ overflowY: 'auto' }}><table><tbody><tr><td data-testid="evidence-cell">
+        <IdentityClusterItem cluster={{
         key: CLUSTER_ID, clusterId: CLUSTER_ID, label: null,
         isAutoLabel: false, clusteringPending: false, members: [member],
-      }} canLabel canMutate /></div>
-    </div>, { wrapper: createQueryWrapper(client) });
-    const pane = screen.getByTestId('media-pane');
-    const outer = screen.getByTestId('outer-pane');
-    for (const node of [pane, outer]) {
-      Object.defineProperties(node, { scrollHeight: { value: 900 }, clientHeight: { value: 300 } });
-    }
+      }} canLabel canMutate /></td></tr></tbody></table></div>
+    </section>, { wrapper: createQueryWrapper(client) });
+    layout.attach();
     await userEvent.setup().click(screen.getByRole('button', { name: 'Name this person' }));
+    const draft = input() as HTMLInputElement;
+    expect(draft).toHaveFocus();
+    await userEvent.setup().keyboard('Zoe');
+    draft.setSelectionRange(1, 2);
+    const focusCount = () => layout.focusCount(draft);
+    expect(focusCount()).toBe(1);
+    const select = vi.spyOn(draft, 'select');
+    layout.settleRow();
+    // Real failure sequence: a later table/ancestor layout moves a still-focused
+    // input. A viewport-only check also misses the 1440 ancestor clipping case.
+    expect(layout.clips(draft)).toContain('media-pane');
+    layout.deliver(screen.getByTestId('evidence-cell'));
+    expect(layout.clips(draft), 'input fully intersects viewport AND every clipping ancestor').toEqual([]);
+    act(() => read.resolve(roster));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled());
+    layout.deliver(draft.closest('.acx-identity-cluster__edit')!);
+    layout.shrinkRows();
+    layout.deliver(screen.getByTestId('media-pane'));
+    expect(layout.clips(draft)).toEqual([]);
+    expect(input()).toBe(draft);
+    expect(draft).toHaveFocus();
+    expect(draft).toHaveValue('Zoe');
+    expect([draft.selectionStart, draft.selectionEnd]).toEqual([1, 2]);
+    expect(focusCount()).toBe(1);
+    expect(select).not.toHaveBeenCalled();
+
+    if (draft.getAttribute('aria-expanded') === 'true') {
+      await userEvent.setup().keyboard('{Escape}');
+      expect(draft).toHaveFocus();
+      expect(draft).toHaveAttribute('aria-expanded', 'false');
+    }
+    await userEvent.setup().keyboard('{Escape}');
+    const opener = screen.getByRole('button', { name: 'Name this person' });
+    await waitFor(() => expect(opener).toHaveFocus());
+    expect(layout.clips(opener)).toEqual([]);
+    await userEvent.setup().keyboard('{Enter}');
     expect(input()).toHaveFocus();
-    expect(pane.scrollTop).toBe(100);
-    expect(outer.scrollTop).toBe(0);
-    expect(container).toContainElement(input());
-    geometry.mockRestore();
+    expect(input()).toHaveValue('');
+    expect(layout.clips(input())).toEqual([]);
+
+    // A size notification must neither scroll back to a field the user left,
+    // nor revive focus after navigation/unmount, including a queued delivery.
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    cancel.focus();
+    const pane = screen.getByTestId('media-pane');
+    const previousScroll = pane.scrollTop;
+    layout.settleRow();
+    layout.deliver(screen.getByTestId('evidence-cell'));
+    expect(cancel).toHaveFocus();
+    expect(pane.scrollTop).toBe(previousScroll);
+    const editor = input().closest('.acx-identity-cluster__edit')!;
+    cleanup();
+    render(<button>Another route</button>);
+    const nextRoute = screen.getByRole('button', { name: 'Another route' });
+    nextRoute.focus();
+    const scrollCalls = layout.scrollCount();
+    layout.observers.forEach((observer) => observer.deliver(editor));
+    expect(layout.observers.every((observer) => observer.targets.size === 0)).toBe(true);
+    expect(nextRoute).toHaveFocus();
+    expect(layout.scrollCount()).toBe(scrollCalls);
+    expect(focusCount()).toBe(1);
   });
 
   it('keeps an explicitly retained controlled draft across cancel and keyed identity/tenant changes', async () => {

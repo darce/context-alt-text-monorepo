@@ -57,23 +57,13 @@ const captureNamingOpener = () => {
   };
 };
 
-/** Reveal the editor, including its actions, without moving outer panes. */
-const revealNamingEditor = (editor: HTMLElement) => {
-  for (let pane = editor.parentElement; pane; pane = pane.parentElement) {
-    if (!/(auto|scroll)/.test(window.getComputedStyle(pane).overflowY)
-      || pane.scrollHeight <= pane.clientHeight) {
-      continue;
-    }
-    const bounds = editor.getBoundingClientRect();
-    const top = pane.getBoundingClientRect().top + pane.clientTop;
-    const bottom = top + pane.clientHeight;
-    if (bounds.top < top || bounds.height > pane.clientHeight) {
-      pane.scrollTop += bounds.top - top;
-    } else if (bounds.bottom > bottom) {
-      pane.scrollTop += bounds.bottom - bottom;
-    }
-    break;
-  }
+/** Native scrolling accounts for every scrollport and its scroll padding. */
+const revealNamingEditor = (editor: HTMLElement, input: HTMLInputElement) => {
+  const options: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest', behavior: 'instant' };
+  editor.scrollIntoView(options);
+  // The Library's row scrollport can be shorter than the complete form. Keep
+  // the focused field visible even when all the actions cannot fit beside it.
+  input.scrollIntoView(options);
 };
 
 export const normalizeNameFaceLabel = (raw: string): string =>
@@ -337,14 +327,33 @@ export const NameFaceControl = ({
   const isInputDisabled = disabled || (inputDisabled ?? (isPending || isLoading));
 
   useLayoutEffect(() => {
-    if (autoFocus && !isInputDisabled && !focusedOnOpen.current && inputRef.current) {
-      focusedOnOpen.current = true;
-      inputRef.current.focus({ preventScroll: true });
-      inputRef.current.select();
-      if (editorRef.current) {
-        revealNamingEditor(editorRef.current);
-      }
+    const input = inputRef.current;
+    const editor = editorRef.current;
+    if (!autoFocus || isInputDisabled || !input || !editor) {
+      return;
     }
+    if (!focusedOnOpen.current) {
+      focusedOnOpen.current = true;
+      input.focus({ preventScroll: true });
+      input.select();
+    }
+    const reveal = () => {
+      if (editor.isConnected && document.activeElement === input) {
+        revealNamingEditor(editor, input);
+      }
+    };
+    reveal();
+    // Table-cell wrapping, async hints/status, images and fonts can move the
+    // editor after the opening effect; pane resizing changes its clip as well.
+    // Observe this editor's ancestor chain, not the document or a polling loop.
+    // ResizeObserver delivers after layout, including an initial delivery.
+    const observer = new ResizeObserver(reveal);
+    for (let node: HTMLElement | null = editor;
+      node && node !== document.body && node !== document.documentElement;
+      node = node.parentElement) {
+      observer.observe(node, { box: 'border-box' });
+    }
+    return () => observer.disconnect();
   }, [autoFocus, isInputDisabled]);
 
   const handleCancel = () => {

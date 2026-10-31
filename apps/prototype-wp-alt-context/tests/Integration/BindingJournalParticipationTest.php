@@ -22,32 +22,39 @@ use PHPUnit\Framework\TestCase;
 if ( '1' === getenv( 'ACX_JOURNAL_MYSQL_TEST' ) ) {
 	$wordpress = rtrim( (string) getenv( 'ACX_TEST_WORDPRESS_ROOT' ), '/' );
 	if ( is_file( $wordpress . '/wp-admin/includes/upgrade.php' ) && ! function_exists( 'dbDelta' ) ) {
-		// Loading upgrade.php itself also loads admin.php and a possible install.php.
-		// Extract its complete, unchanged dbDelta declaration to avoid those side effects.
-		$tokens = \PhpToken::tokenize( (string) file_get_contents( $wordpress . '/wp-admin/includes/upgrade.php' ) );
-		$declaration = '';
-		foreach ( $tokens as $index => $token ) {
-			if ( T_FUNCTION !== $token->id ) { continue; }
-			$next = $index + 1;
-			while ( $tokens[ $next ]->isIgnorable() ) { ++$next; }
-			if ( 'dbDelta' !== $tokens[ $next ]->text ) { continue; }
-			$depth = 0;
-			$opened = false;
-			for ( $cursor = $index; $cursor < count( $tokens ); ++$cursor ) {
-				$current = $tokens[ $cursor ];
-				$declaration .= $current->text;
-				if ( $current->is( '{' ) ) { ++$depth; $opened = true; }
-				if ( $current->is( '}' ) && 0 === --$depth && $opened ) { break; }
+		// Extract unchanged core declarations without loading install or wp-config.
+		foreach ( array(
+			'dbDelta' => $wordpress . '/wp-admin/includes/upgrade.php',
+			'mbstring_binary_safe_encoding' => $wordpress . '/wp-includes/functions.php',
+			'reset_mbstring_encoding' => $wordpress . '/wp-includes/functions.php',
+		) as $name => $source ) {
+			if ( function_exists( $name ) ) { continue; }
+			if ( ! is_file( $source ) ) { throw new \RuntimeException( 'Missing WordPress source for ' . $name ); }
+			$tokens = \PhpToken::tokenize( (string) file_get_contents( $source ) );
+			$declaration = '';
+			foreach ( $tokens as $index => $token ) {
+				if ( T_FUNCTION !== $token->id ) { continue; }
+				$next = $index + 1;
+				while ( $tokens[ $next ]->isIgnorable() ) { ++$next; }
+				if ( $name !== $tokens[ $next ]->text ) { continue; }
+				$depth = 0;
+				$opened = false;
+				for ( $cursor = $index; $cursor < count( $tokens ); ++$cursor ) {
+					$current = $tokens[ $cursor ];
+					$declaration .= $current->text;
+					if ( $current->is( '{' ) ) { ++$depth; $opened = true; }
+					if ( $current->is( '}' ) && 0 === --$depth && $opened ) { break; }
+				}
+				break;
 			}
-			break;
-		}
-		if ( '' === $declaration ) { throw new \RuntimeException( 'Cannot locate actual WordPress dbDelta.' ); }
-		$temporary = tempnam( sys_get_temp_dir(), 'cj-dbdelta-' );
-		try {
-			file_put_contents( $temporary, "<?php\n" . $declaration );
-			require $temporary;
-		} finally {
-			unlink( $temporary );
+			if ( '' === $declaration ) { throw new \RuntimeException( 'Cannot locate actual WordPress ' . $name . '.' ); }
+			$temporary = tempnam( sys_get_temp_dir(), 'cj-wp-core-' );
+			try {
+				file_put_contents( $temporary, "<?php\n" . $declaration );
+				require $temporary;
+			} finally {
+				unlink( $temporary );
+			}
 		}
 		foreach ( array( 'WP_DEBUG' => false, 'WP_DEBUG_DISPLAY' => false, 'DB_CHARSET' => 'utf8mb4', 'DB_COLLATE' => '' ) as $constant => $value ) {
 			if ( ! defined( $constant ) ) { define( $constant, $value ); }

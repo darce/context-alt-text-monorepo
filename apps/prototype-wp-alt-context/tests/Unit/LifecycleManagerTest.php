@@ -78,7 +78,7 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertIsArray($queries);
-        $this->assertCount(12, $queries);
+        $this->assertCount(13, $queries);
 
         $personsSql = $queries[0];
         $clustersSql = $queries[1];
@@ -165,7 +165,7 @@ class LifecycleManagerTest extends TestCase
         $this->manager->activate();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertCount(24, $queries);
+        $this->assertCount(26, $queries);
         $this->assertStringNotContainsString('DROP TABLE', \implode("\n", $queries));
     }
 
@@ -262,14 +262,19 @@ class LifecycleManagerTest extends TestCase
     {
         global $wpdb;
 
-        $tables = ['wp_acx_sync_outbox', 'wp_acx_sync_conflicts'];
+        $tables = ['wp_acx_sync_outbox', 'wp_acx_sync_conflicts', 'wp_acx_binding_journal',
+            'wp_acx_persons', 'wp_acx_clusters', 'wp_acx_identity_members', 'wp_acx_sync_state'];
+        // The shared stub preinstalls only the first two; model the remaining installed participants.
+        foreach (array_slice($tables, 2) as $table) {
+            $wpdb->tableEngines[$table] = 'InnoDB';
+        }
         foreach ($tables as $table) {
             $this->assertSame('InnoDB', $wpdb->get_var($this->engineProbe($table)));
         }
         $manager = new class extends LifecycleManager {
             public function build_projection_schema_statements(string $prefix, string $charset_collate): array
             {
-                return ['acx_persons' => "CREATE TABLE {$prefix}acx_persons (id bigint NOT NULL);"];
+                return ['acx_persons' => "CREATE TABLE {$prefix}acx_persons (id bigint NOT NULL) ENGINE=InnoDB;"];
             }
         };
         $manager->maybe_upgrade();

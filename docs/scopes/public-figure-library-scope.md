@@ -2,7 +2,7 @@
 
 **Intake**: 2026-10-21 · task MAINT-public-figure-gallery-scope-20261021 (to be rehomed to PUBFIG-1) · answers recorded in handoff MCP
 **Canon**: heuristics canon v0.26.2
-**Status**: DRAFT, revised after planning review PR1 (2026-10-21), then revised for **public figures on by default** (operator direction 2026-10-21, § How it would work item 2), then revised after review gate 1 (2026-10-22: one eligibility gate for linked and unlinked paths, PUBFIG-8/9 in the release gate, API contract owners, FM-14 warrant). Phase 1 is decided by the operator and its release is gated on counsel (§ MVP scope): politicians and living celebrities (athletes included), with auto-name. Every operator call is decided (§ Operator calls). § Implementation task plans is the input for drafting PUBFIG-2..11.
+**Status**: DRAFT, revised after planning review PR1 (2026-10-21), then revised for **public figures on by default** (operator direction 2026-10-21, § How it would work item 2), then revised after review gate 1 (2026-10-22: one eligibility gate for linked and unlinked paths, PUBFIG-8/9 in the release gate, API contract owners, FM-14 warrant), then revised 2026-10-31 (task BIODEF-1, operator direction): private recognition is offered to every tenant at onboarding under [ADR-020](../adrs/ADR-020-recognition-opt-in-at-onboarding.md), and the gallery starts with deceased historical figures (tier H1, § MVP scope). Phase 1 is decided by the operator and its release is gated on counsel (§ MVP scope): politicians and living celebrities (athletes included), with auto-name. Every operator call is decided (§ Operator calls). § Implementation task plans is the input for drafting PUBFIG-2..11.
 
 ## Problem
 
@@ -35,12 +35,12 @@ News and education tenants keep hand-labelling the same recurring people: politi
    - `pf_reference`: source, licence, attribution, sha256, **capture basis** (MLDATA-14), retention expiry (MLDATA-15).
    - `pf_template`: vector, `embedding_model`, `gallery_version`.
    - One gallery per embedding contract (EMB-01). Versions are pinned, and the gallery is rebuilt when the contract changes (EMB-05, IDX-02).
-2. **Public figures on by default; private recognition stays opt-in** (operator direction 2026-10-21: the market now names public figures by default). The canon reading is a partition by object and by sequence, recorded as a contextual judgment (§ Canon validation, SECD-12 row):
-   - **Object: private faces keep SECD-12.** The tenant roster, clustering and `acx_recognition_enabled` stay off until the tenant opts in (`apps/prototype-wp-alt-context/src/settings/class-recognition-policy.php::RecognitionPolicy::DEFAULT` stays `false`).
+2. **Public figures on by default; private recognition offered at onboarding under ADR-020** (operator direction 2026-10-21: the market now names public figures by default; operator direction 2026-10-31: onboarding asks every tenant to turn private recognition on). The canon reading is a partition by object and by sequence, recorded as a contextual judgment (§ Canon validation, SECD-12 row):
+   - **Object: private faces follow [ADR-020](../adrs/ADR-020-recognition-opt-in-at-onboarding.md).** The tenant roster, clustering and `acx_recognition_enabled` stay off until the tenant turns them on. Once ADR-020's release gate passes, onboarding asks every new tenant, and a held or unknown jurisdiction also needs the tenant's attestation. `RecognitionPolicy::DEFAULT` stays `false`, so everything below that says "private recognition off" covers every tenant that hasn't turned it on.
    - **Object: PFL tiers default on.** SECD-12 binds "when choice is product-real". The operator ruled that a product without public-figure names is disqualified (decisions 18949, 18981), so an off default is not a real choice for this object. The tenant opt-in never protected the pictured person, who has no choice either way. The person's protections are kept: tier bounds (MLDATA-16), subject opt-out (item 6), the `public_role` gate (item 5), the subject notice and audit (SECD-11), and editor review before publish (SECD-14).
    - **Sequence: the system default stays deny** (SECD-05). A server setting `PFL_ENABLED` defaults to `false` and stays off until the release gate passes (§ Implementation task plans). Every failure path fails to no PFL name: the flag is off, the gallery is unreachable, the version is stale, or the jurisdiction is held or unknown.
-   - **Surface: held jurisdictions stay off.** `tenant_pfl_settings.jurisdiction` is an ISO 3166-2 code captured at onboarding (e.g. `US-IL`, `CA-QC`). A config list `pfl_held_jurisdictions` turns PFL off there, and an unknown jurisdiction counts as held. The list starts with every jurisdiction that has a biometric statute or special-category regime: US-IL, US-TX, US-WA, EU/EEA, UK and CA-QC. It shrinks only on a counsel answer (§ Operator calls, call 4).
-   - **Tenant control.** `tenant_pfl_settings(tenant_id, jurisdiction, enabled_tiers, autoname_tiers, updated_by, updated_at)`. With no row, every released tier is enabled with auto-name on. One switch turns PFL off and is as easy as turning it on (SECD-08), with per-tier detail behind it. The first PFL-named draft a tenant sees carries a one-time notice naming the switch, so turning it off is never a hunt.
+   - **Surface: held jurisdictions stay off.** The tenant's `jurisdiction` is an ISO 3166-2 code captured at onboarding. It is one tenant-level field shared with ADR-020 rule 4, not a PFL column (DATA-14) (e.g. `US-IL`, `CA-QC`). A config list `pfl_held_jurisdictions` turns PFL off there, and an unknown jurisdiction counts as held. The list starts with every jurisdiction that has a biometric statute or special-category regime: US-IL, US-TX, US-WA, EU/EEA, UK and CA-QC. It shrinks only on a counsel answer (§ Operator calls, call 4).
+   - **Tenant control.** `tenant_pfl_settings(tenant_id, enabled_tiers, autoname_tiers, updated_by, updated_at)`. With no row, every released tier is enabled with auto-name on. One switch turns PFL off and is as easy as turning it on (SECD-08), with per-tier detail behind it. The first PFL-named draft a tenant sees carries a one-time notice naming the switch, so turning it off is never a hunt.
    - **Entitlement.** Every plan, trial included, grants PFL by default through `SqlAlchemyTenantEntitlementRepository`. It is bundled, never an upsell (§ Not doing).
    - **One eligibility decision gates every PFL path** (SECD-05, SEC-01). `recognition/application/pfl/eligibility.py::resolve_pfl_eligibility(tenant_id)` returns `PflEligibility(open, enabled_tiers, autoname_tiers)`.
      - It is open only when `PFL_ENABLED` is on, the tenant is entitled, its jurisdiction is neither held nor unknown, and the tenant has not switched PFL off. `enabled_tiers` is the released tiers (criterion 12) ∩ the tenant's tiers. Any read failure returns closed.
@@ -172,7 +172,7 @@ The core distinction is that **there are two separate questions, and fame answer
 
 | Axis | Public (may be in PFL / may be named) | Private (never in PFL / never auto-named) |
 | --- | --- | --- |
-| Who (inclusion tier) | Deceased historical figures. **Politicians in the current news cycle** (operator decision 2026-10-21): (P1) current national heads of state/government, cabinet ministers, national legislators, governors/premiers and big-city mayors in supported countries, via Wikidata P39 with no end date; (P2) any adult current or former officeholder or declared candidate whose trailing-30-day news salience is above a threshold, e.g. Trudeau, a former PM who is still in the news. **Living celebrities** (operator decision 2026-10-21, decision 18981, table stakes): (P3) living adults famous through a voluntary public career (entertainment, music, film/TV, sport, arts, media, business) above a notability threshold, e.g. Katy Perry. Notability is Wikimedia pageviews over a trailing 12 months (decision 18983); the threshold value comes from the call-6 FPIR budget. Athletes above the threshold are P3 (decision 18983); team rosters cover the rest. | Minors, including child performers. Relatives of public figures without independent notability. Involuntary or one-time newsmakers (victims, bystanders, viral subjects). Anyone who opted out. |
+| Who (inclusion tier) | **Deceased historical figures** (2026-10-31): (H1) died at least 20 years ago, via Wikidata P570, served first (§ MVP scope); (H2) died less than 20 years ago, handled like P1–P3 (held list, `public_role` gate), because PIPEDA's 20-year rule and surviving relatives' interests still apply. **Politicians in the current news cycle** (operator decision 2026-10-21): (P1) current national heads of state/government, cabinet ministers, national legislators, governors/premiers and big-city mayors in supported countries, via Wikidata P39 with no end date; (P2) any adult current or former officeholder or declared candidate whose trailing-30-day news salience is above a threshold, e.g. Trudeau, a former PM who is still in the news. **Living celebrities** (operator decision 2026-10-21, decision 18981, table stakes): (P3) living adults famous through a voluntary public career (entertainment, music, film/TV, sport, arts, media, business) above a notability threshold, e.g. Katy Perry. Notability is Wikimedia pageviews over a trailing 12 months (decision 18983); the threshold value comes from the call-6 FPIR budget. Athletes above the threshold are P3 (decision 18983); team rosters cover the rest. | Minors, including child performers. Relatives of public figures without independent notability. Involuntary or one-time newsmakers (victims, bystanders, viral subjects). Anyone who opted out. |
 | What (image context) | The image depicts the public role: podium, chamber, official event, performance, archival record. | Family, medical, home, holiday, religious or recovery settings (Campbell, von Hannover), even if the person is famous. |
 | Why (tenant purpose) | News, education, archive captioning of the tenant's own media library, with use bound by tenant terms and the vendor's recorded necessity case (SECD-13, MLDATA-16). | People search, open "who is this" lookups, marketing, monitoring. |
 | When (decay) | Role is current, salience is current (P2 enters on threshold and exits after 90 days below it), notability is current (P3 is re-checked at each editorial review date), or historical and deceased. | Limited-purpose fame that has faded. A weekly salience job removes P2 identities that have exited and deletes their templates (data minimisation). The name entry and existing tenant QID links stay. |
@@ -213,16 +213,33 @@ The core distinction is that **there are two separate questions, and fame answer
 
 ## MVP scope (phased; PROD-18, PROD-45)
 
-Reordered 2026-10-21 (decision 18958): politicians are the parity gap, so they come first.
+Reordered 2026-10-21 (decision 18958): politicians are the parity gap, so they come first. Reordered again 2026-10-31 (BIODEF-1): **H1 historical figures ship first**. They clear the release gate fastest and prove the whole pipeline (artifact, eligibility, naming, tombstone) on the population with the least legal exposure. Politicians and celebrities follow on the same pipeline.
+
+- **Parity in parallel, no gallery.** Run the Alternative 4 disconfirmer now: does AltContext's own VLM name Trudeau and Perry once the prompt rule is relaxed for a suggestion channel? Free tools reach parity this way without a gallery of their own; what the model learned about those faces sits in its weights, where one person can't be removed short of retraining. If ours does too, the parity gap for living public figures closes before any gallery ships, and P1–P3 become an accuracy upgrade rather than a blocker.
 
 - **Phase 0. Metadata-first naming.** No biometrics. It ships in parallel and is no longer a go/no-go gate.
   - Add an IPTC/XMP person-name reader (`Iptc4xmpExt:PersonInImage`, ImageRegion names), then surface those names as suggestions.
-- **Phase 1. Public Figures Library: politicians (P1 + P2) and living celebrities (P3), with auto-name.**
+- **Phase 1a. Historical Figures Library (H1).** Deceased people who died at least 20 years ago, with notable Wikimedia pageviews, from public-domain or CC references. Curriculum and archive identities (heads of state, scientists, authors, artists). Same eligibility, naming and tombstone paths as every tier; `public_role` still gates naming, since a family photo stays private after death. H1 still needs counsel Q5 (CC templating) and Q7, criterion 12 and a commercial embedder (§ Assumptions). It doesn't need Q1–Q4 for living people.
+- **Phase 1b–1c. Public Figures Library: politicians (P1 + P2), then living celebrities (P3), with auto-name.**
   - Living current and former officeholders and candidates in the news cycle, built from official portraits and licensed sources.
   - Living celebrities above the notability threshold (decision 18981). This is table stakes: without it the Tribeca photo names Trudeau and leaves Perry generic, while free tools name both.
   - On by default for every tenant in a cleared jurisdiction, on every plan including trial. The tenant can turn it off (§ How it would work, item 2). A tier serves only after its calibration evidence passes (criterion 12).
   - Release gated on counsel memos: EU AI Act Art. 6 classification (the Commission lists "facial recognition for media archives" under Annex III 1(a)), a DPIA, BIPA/CUBI geo-policy, Quebec biometric-database disclosure, and right of publicity for P3.
-- **Phase 2. Historical Figures Library.** Deceased persons, public-domain references, curriculum and archive identities. Same pipeline; lower legal exposure (GDPR Recital 27).
+- **Phase 2. H2 and gallery growth.** Recently deceased (H2), regional notability per Wikimedia project, agency feeds only on named demand (call 2).
+
+### Starting the gallery from Wikimedia Commons (H1 first)
+
+The gallery is never a public database: it is a SELECT-only schema served only through `list_pfl_candidates`, with no export, no open "who is this" lookup and no vector download (§ Serving architecture, § Not doing). Bootstrap, as an operator-run offline build (PUBFIG-8 tooling, PUBFIG-2 loader):
+
+1. **Select identities.** A Wikidata SPARQL query for humans (P31 = Q5) with a date of death (P570) at least 20 years ago, at least one image (P18), and 12-month pageviews above the H1 threshold. Exclude anyone who died as a minor. The output is a QID list with the tier and review date.
+2. **Collect references.** For each QID, take the P18 image plus up to five more Commons images from the person's category. Read each file's licence from the Commons API (`extmetadata.LicenseShortName`, `Artist`, `Credit`) and keep only PD, CC0, CC BY and CC BY-SA. Record the licence, attribution, sha256 and `capture_basis = pfl_licensed` per reference (MLDATA-14).
+3. **Crop only the target face.** Group photos produce one crop of the identified person. No other face in a reference image is embedded or stored. A human confirms each crop is the person (§ How it would work, item 8).
+4. **Require three references.** An identity with fewer than three verified references drops out of the served N (call 2).
+5. **Add names.** Each identity gets an `en` `identity_name` row with three warrant sources (FM-14).
+6. **Build and load.** Embed with the production commercial model only, write the `pfl-<model>-<version>` artifact with its sha256, load it blue/green, and run PUBFIG-10 fairness slices before the tier serves.
+7. **Then add P1.** P1 adds official portraits and Wikidata P39 with no end date. P2 and P3 follow on the same pipeline.
+
+Untargeted crawling of Commons for faces is out: the build is per QID, from a curated list (EU AI Act Art. 5(1)(e)).
 
 ## Assumptions
 
@@ -277,7 +294,7 @@ Each criterion maps to an eval case in `public-figure-library-evals.json`.
 
 | ID | Rule | Verdict for this design |
 | --- | --- | --- |
-| SECD-12 | Biometric opt-in default | Partitioned by object (§ How it would work, item 2). Private faces stay opt-in. PFL tiers default on, a contextual judgment: the rule binds "when choice is product-real", and the operator ruled an off default disqualifies the product (decisions 18949, 18981). Counter-case: the pictured person gets no choice either way, so their protections (tier bounds, opt-out, context gate, notice, editor review) are all kept. |
+| SECD-12 | Biometric opt-in default | Partitioned by object (§ How it would work, item 2). Private faces follow ADR-020 (off until the tenant turns it on at onboarding, so the rule is met; unnamed faces expire after 30 days; held jurisdictions also need an attestation). PFL tiers default on, a contextual judgment: the rule binds "when choice is product-real", and the operator ruled an off default disqualifies the product (decisions 18949, 18981). Counter-case: the pictured person gets no choice either way, so their protections (tier bounds, opt-out, context gate, notice, editor review) are all kept. |
 | SECD-05 | Fail-safe defaults | `PFL_ENABLED` defaults to false. Held or unknown jurisdiction, stale version or unreachable gallery all mean no PFL name. One per-request eligibility decision gates linked and unlinked paths alike and fails closed (criterion 21). |
 | SECD-08 | Make the safe path the easy path | One switch turns PFL off. A first-run notice on the first PFL-named draft names it. The switch (PUBFIG-9) is a release prerequisite. |
 | SECD-14 | FP/FN harm polarity for face decisions | FPIR bound per tier at the served N (call 6). An auto-name lands only in a draft an editor applies. |
@@ -324,6 +341,7 @@ Each criterion maps to an eval case in `public-figure-library-evals.json`.
    - Q4. Does naming a P3 person in alt text, in `public_role` context, create right-of-publicity exposure? Yes/no per jurisdiction.
    - Q5. Do CC BY and CC BY-SA permit deriving a biometric template from the image? Yes/no.
    - Q6. Asked only before EU/EEA leaves the held list: does the PFL fall under EU AI Act Annex III 1(a)? Yes/no.
+   - Q7. For H1 (died at least 20 years ago): may H1 serve in every launch jurisdiction, including the held list, given GDPR Recital 27 (deceased persons are out of scope), PIPEDA's 20-year rule, and BIPA/CUBI/Washington wording? Does any jurisdiction (for example France or Italy, which protect data of the deceased) need a carve-out? Yes/no per jurisdiction. If yes everywhere, H1 is exempt from `pfl_held_jurisdictions`.
 4. **Launch jurisdictions.** Launch only where counsel answers Q1 yes and Q2 "on by default". The starting held list is US-IL, US-TX, US-WA, EU/EEA, UK and CA-QC, and an unknown jurisdiction counts as held (SECD-05). The list is config (`pfl_held_jurisdictions`), so a counsel answer is a config change. Where Q2 is "opt-in", the tenant switch starts off there.
 5. **Salience and notability sources.** One pipeline, Wikimedia pageviews, keyed by QID through Wikipedia sitelinks (FM-12). GDELT keys on name strings and needs entity resolution, so it is not used.
    - P2: trailing-30-day pageviews. Entry at or above the threshold, exit after 90 days below it.
@@ -337,7 +355,8 @@ Each criterion maps to an eval case in `public-figure-library-evals.json`.
 7. **Living entertainers.** Living celebrities are P3 in Phase 1, as table stakes (decision 18981).
 8. **Launch languages.** English only, with i18n built in (decision 18963).
 9. **Tenant language-form override.** Not in Phase 1. One authored source renders per consumer (DATA-14, REF-45). A style-guide variant is a registry correction request.
-10. **Default posture.** Public figures are on by default and private recognition stays opt-in (§ How it would work, item 2).
+10. **Default posture.** Public figures are on by default. Private recognition is off until the tenant turns it on, and onboarding asks every tenant under ADR-020 (revised 2026-10-31); held jurisdictions also need an attestation (§ How it would work, item 2).
+11. **Starting population** (2026-10-31). H1 historical figures first, then P1 + P2, then P3 (§ MVP scope).
 
 **Operator actions.** These are actions, not open decisions:
 - Engage counsel with Q1–Q6.
@@ -364,7 +383,7 @@ PUBFIG-10 waits for curation. PUBFIG-11 runs in parallel throughout.
   - "Not this person": the UI action writes the suppression and the QID is unnamed in the next description (criterion 15);
   - tombstone: a request through the notice-page opt-out route removes the identity's templates and stops its name resolving (criterion 9).
 - Criterion 12 passes for the tier.
-- Counsel has answered Q1–Q5 for the launch jurisdictions.
+- Counsel has answered Q1–Q5 for the launch jurisdictions. For an H1-only release, Q5 and Q7 are enough.
 - The vendor notice page is live, with its opt-out route wired to the tombstone path.
 
 The flag's false default (criterion 1) makes intermediate merges safe. Market pressure does not move this gate (RLSE-02).

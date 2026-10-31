@@ -184,6 +184,8 @@ final class BindingIntentJournal implements BindingIntentJournalInterface {
 			'tenant_id' => $tenant_id,
 			'request_id' => $request_id,
 			'fingerprint' => $fingerprint,
+			// Immutable command includes participating row preimages and effect identities.
+			'command' => $command,
 			'before' => $state['people'][ $person ] ?? null,
 			'after' => $current,
 		);

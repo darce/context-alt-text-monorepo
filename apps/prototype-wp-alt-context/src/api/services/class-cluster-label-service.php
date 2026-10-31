@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 require_once __DIR__ . '/class-person-resolution-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-cluster-curation-writer.php';
+require_once __DIR__ . '/class-cluster-mutation-service.php';
 
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
@@ -58,6 +59,11 @@ class ClusterLabelService {
 	public function update_cluster_label( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
 		$tenant_id = $this->host->get_tenant_id();
+		// Explicit intent is handled before legacy label validation/proxy/transactions.
+		// Absence retains the legacy request contract; malformed presence never falls through.
+		if ( array_key_exists( 'binding_intent', $request->get_params() ) ) {
+			return ( new ClusterMutationService() )->apply_binding_intent( $tenant_id, (string) $request->get_param( 'cluster_id' ), $request->get_param( 'binding_intent' ) );
+		}
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		$label      = sanitize_text_field( (string) $request->get_param( 'label' ) );

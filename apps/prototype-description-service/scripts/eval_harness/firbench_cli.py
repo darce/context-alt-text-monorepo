@@ -6,6 +6,10 @@ existing non-empty run directory, canary on a sealed frame, ``created_at`` prece
 only through ``FirBenchCollaborators``. Nothing here reads the wall clock except
 ``_attempt_timestamp``, the non-replayable attempt-receipt boundary (FLOW-18).
 
+``run-views --offline`` and ``score-views`` form a separate experimental policy
+route. Native ``--arms`` remain extraction arms; policy outcomes never write
+native ``scores.json`` or promote a quality verdict.
+
 ``unseal`` appends one unspent token under a cross-process ledger lock and refuses any frame that
 already holds a token under any decision sha (EVAL-07). ``compare`` refuses on the compatibility key
 before any metric is computed; a refusal writes nothing.
@@ -63,6 +67,7 @@ class LegRunResult:
     searches: Mapping[str, Sequence[Mapping[str, Any]]]
     ledger: Mapping[str, Sequence[Mapping[str, Any]]]
     timings_ms: Mapping[str, float]
+    view_evidence: Mapping[str, Mapping[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -318,11 +323,18 @@ def run_frame(
     out_dir: Path,
     repo_root: Path,
     created_at: str | None = None,
+    view_policy: Mapping[str, str] | None = None,
 ) -> Path:
     """Create one immutable run directory and return it (S0 Build 10)."""
     collaborators = _load_collaborators()
     if subset is not None and subset_seed is None:
         raise FrameContractError("--subset requires --subset-seed")
+    if view_policy is not None:
+        if set(view_policy) != {"path", "sha256"} or arms != (Arm.native,) or LegKind.canary in legs:
+            raise FrameContractError("experimental view policy requires native extraction without canary")
+        from scripts.eval_harness.firbench_contract import _require_sha
+
+        _require_sha(view_policy["sha256"], "view policy sha256")
     decision = load_decision_manifest(decision_path)
     frame: FrameSpec = decision.frame(frame_id)
     if frame.sealed and LegKind.canary in legs:
@@ -377,7 +389,7 @@ def run_frame(
                     "gallery_split": decision.gallery_lineage.split_seed,
                     "bootstrap": decision.interval.seed,
                 },
-                "similarity_threshold": collaborators.similarity_threshold,
+                "similarity_threshold": None if view_policy is not None else collaborators.similarity_threshold,
                 "scorer_sha256": collaborators.scorer_sha,
                 "created_at": created,
                 "created_at_source": source,
@@ -393,6 +405,10 @@ def run_frame(
             "decision": decision,
             "out_dir": run_dir,
         }
+        if view_policy is not None:
+            arguments["view_policy"] = dict(view_policy)
+            if collaborators.prepare_run is None:
+                raise FrameContractError("view policy requires the protected prepared runtime")
         prepared = None
         if collaborators.prepare_run is not None:
             prepared = collaborators.prepare_run(**arguments, repo_root=repo_root)
@@ -404,6 +420,11 @@ def run_frame(
                 crop_margin=prepared.crop_margin,
                 canary_permutations=prepared.canary_permutations,
             )
+            if view_policy is not None:
+                declaration = getattr(prepared, "experimental_view_policy", None)
+                if declaration is None or any(declaration.get(k) != v for k, v in view_policy.items()):
+                    raise FrameContractError("prepared runtime did not bind experimental view policy")
+                manifest["firbench"]["experimental_view_policy"] = declaration
             frame_text = frame_json(prepared.frame) + "\n"
             bundle = getattr(prepared, "label_evidence", None)
             evidence_files = {}
@@ -476,6 +497,22 @@ def run_frame(
         if prepared is None:
             # Backwards-compatible injected collaborators retain their original seam.
             _write_new(run_dir / "manifest.json", json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+        if view_policy is not None:
+            if result.view_evidence is None or set(result.view_evidence) != set(leg_keys):
+                raise FrameContractError("view policy result lacks complete evidence")
+            cache_index = {}
+            for key in leg_keys:
+                packet = {
+                    "schema": "firbench-offline-view-cache/v1",
+                    "policy_sha256": view_policy["sha256"],
+                    "leg_key": key,
+                    "sources": result.view_evidence[key],
+                }
+                data = json.dumps(packet, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
+                relative = f"views/{view_policy['sha256']}/{key}.json"
+                _write_new(run_dir / relative, data)
+                cache_index[relative] = hashlib.sha256(data.encode()).hexdigest()
+            _write_new(run_dir / "view-cache-index.json", json.dumps(cache_index, sort_keys=True) + "\n")
         for key in leg_keys:
             _write_new(run_dir / "legs" / key / "searches.jsonl", _jsonl(result.searches[key]))
             _write_new(run_dir / "ledger" / f"{key}.jsonl", _jsonl(result.ledger[key]))
@@ -503,6 +540,8 @@ def score_run(run_dir: Path, *, repo_root: Path) -> Path:
         json.loads(timings_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise FrameContractError(f"run {resolved} lacks a readable manifest or timing receipt: {exc}") from exc
+    if "experimental_view_policy" in firbench:
+        raise FrameContractError("experimental view policy requires score-views; native score promotion is held")
     decision_path = Path(repo_root) / firbench["decision_path"]
     decision = load_decision_manifest(decision_path)
     if _file_sha256(decision_path) != firbench["decision_sha256"]:
@@ -591,6 +630,15 @@ def unseal_frame(*, decision_path: Path, frame_id: str, run_id: str, repo_root: 
     return _token_ref(token)
 
 
+def _require_native_policy(run_dir):
+    try:
+        declaration = json.loads((Path(run_dir) / "manifest.json").read_text())["firbench"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return  # Existing producer owns ordinary malformed-run diagnostics.
+    if "experimental_view_policy" in declaration:
+        raise FrameContractError("experimental view policy promotion is held; use score-views")
+
+
 def report_run(run_dir: Path, *, include_crops: bool, repo_root: Path) -> Path:
     """Materialise clusters through S4 IO, then render S5 into ``<run_dir>/report/``.
 
@@ -598,6 +646,7 @@ def report_run(run_dir: Path, *, include_crops: bool, repo_root: Path) -> Path:
     refuses with a named error before either producer writes.
     """
     resolved = require_private_output_path(run_dir, repo_root=repo_root)
+    _require_native_policy(resolved)
     try:
         clusters = importlib.import_module("scripts.eval_harness.firbench_cluster_io")
         report = importlib.import_module("scripts.eval_harness.firbench_report")
@@ -1321,6 +1370,8 @@ def compare_runs(run_a: Path, run_b: Path, *, out_dir: Path, treatment: str | No
     """
     if treatment is not None and treatment not in _TREATABLE:
         raise FrameContractError(f"--treatment {treatment!r} is not a declared treatment field")
+    _require_native_policy(require_private_output_path(run_a, repo_root=repo_root))
+    _require_native_policy(require_private_output_path(run_b, repo_root=repo_root))
     compatibility_helper = globals().get("_comparison_compatibility")
     if not callable(compatibility_helper):
         raise FrameContractError("comparison compatibility helper _comparison_compatibility is not installed")
@@ -1380,6 +1431,19 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--subset-seed", type=int)
     run.add_argument("--created-at")
     run.add_argument("--out", required=True, type=Path)
+    view = commands.add_parser("run-views", help="explicit experimental offline view policy run")
+    view.add_argument("--offline", action="store_true", required=True)
+    view.add_argument("--frame", required=True)
+    view.add_argument("--decision", required=True, type=Path)
+    view.add_argument("--legs", required=True)
+    view.add_argument("--view-policy", required=True, type=Path)
+    view.add_argument("--view-policy-sha256", required=True)
+    view.add_argument("--created-at")
+    view.add_argument("--out", required=True, type=Path)
+    view_score = commands.add_parser(
+        "score-views", help="experimental S3 policy calibration and outcomes; no promotion"
+    )
+    view_score.add_argument("run_dir", type=Path)
     score = commands.add_parser("score", help="write scores.json for an existing run")
     score.add_argument("run_dir", type=Path)
     report = commands.add_parser("report", help="render the private report for an existing run")
@@ -1449,6 +1513,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 repo_root=repo_root,
                 created_at=args.created_at,
             )
+        elif args.command == "run-views":
+            policy_path = require_private_output_path(args.view_policy, repo_root=repo_root)
+            path = run_frame(
+                frame_id=args.frame,
+                decision_path=args.decision,
+                legs=_parse_enum_list(LegKind, args.legs, "--legs"),
+                arms=(Arm.native,),
+                subset=None,
+                subset_seed=None,
+                out_dir=args.out,
+                repo_root=repo_root,
+                created_at=args.created_at,
+                view_policy={"path": policy_path.relative_to(repo_root).as_posix(), "sha256": args.view_policy_sha256},
+            )
+        elif args.command == "score-views":
+            from scripts.eval_harness.firbench_runtime import score_view_policy_run
+
+            resolved = require_private_output_path(args.run_dir, repo_root=repo_root)
+            payload = score_view_policy_run(resolved, repo_root=repo_root)
+            path = resolved / "experimental-view-scores.json"
+            _write_new(path, json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n")
         elif args.command == "score":
             path = score_run(args.run_dir, repo_root=repo_root)
         elif args.command == "report":

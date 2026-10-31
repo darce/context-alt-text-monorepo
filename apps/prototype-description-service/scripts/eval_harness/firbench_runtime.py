@@ -38,6 +38,337 @@ from scripts.eval_harness import gallery_split
 
 if TYPE_CHECKING:
     from scripts.eval_harness.fir_occ_labels import LabelEvidenceBundle
+    from scripts.eval_harness.firbench_views import PersonBox, ViewBudget, ViewPolicy, ViewResult
+
+
+@dataclass(frozen=True)
+class ExperimentalViewSearch:
+    """Pre-scoring candidate packet for ONE independently declared source search.
+
+    All people/groups remain in ``views``; ``top_k`` is the maximum score for each
+    gallery identity over the source's candidates, useful for an any-alarm
+    non-mated decision. It is not a person association or a mated identification
+    outcome. The separate search_view_policy runtime and run-views CLI own frozen
+    S1 association and experimental S3 scoring. No crop or detection creates a source unit [EVAL-19, Do not let
+    detector alarms dilute FPIR, IARPA Janus Benchmark-C, § 2.3.4].
+
+    This packet deliberately cannot masquerade as native searches.jsonl. S1 unit
+    association, policy calibration and persisted CLI lineage belong to the explicit
+    experimental entrypoint; native defaults retain their original behavior.
+    """
+
+    source_search_id: str
+    gallery_sha256: str
+    gallery_leg_key: str
+    views: ViewResult
+    candidate_hits: tuple[tuple[tuple[str, float], ...], ...]  # same order as views.candidates
+    top_k: tuple[tuple[str, float], ...]
+
+
+def experimental_view_search(
+    *,
+    leg: fl.LegRuntime,
+    image_bgr: np.ndarray,
+    source_id: str,
+    source_sha256: str,
+    source_search_id: str,
+    orientation: str,
+    policy: ViewPolicy,
+    budget: ViewBudget,
+    gallery: fl.Gallery,
+    gallery_leg_id: fc.LegId,
+    top_k: int,
+    person_boxes: tuple[PersonBox, ...] = (),
+    quarter_turns: int = 0,
+    proposal_status: str | None = None,
+    proposal_source_ref: str | None = None,
+    duplicate_tolerance_px: float = 0.0,
+    offline: bool = False,
+) -> ExperimentalViewSearch:
+    """Explicit offline-only bridge to existing observe and gallery search producers.
+
+    Gallery provenance is mandatory because S2 Gallery stores no model-space tag.
+    It must name the exact native leg contract [EMB-01, One embedding space per
+    comparison, Foundations of Vector Retrieval, ch. 1]. No factories or downloads.
+    The caller supplies a source-search ID enumerated independently of detections;
+    this helper neither builds a denominator nor calibrates/accepts identities.
+    """
+    from scripts.eval_harness.firbench_views import produce_views
+
+    if leg.kind not in (fc.LegKind.sface, fc.LegKind.auraface, fc.LegKind.insightface):
+        raise fc.FrameContractError("experimental view search supports the three native model legs only")
+    if not isinstance(source_search_id, str) or not source_search_id.strip():
+        raise fc.FrameContractError("an independently declared source_search_id is required")
+    if type(top_k) is not int or top_k < 1:
+        raise fc.FrameContractError("top_k must be a positive integer")
+    native_id = leg.leg_id(fc.Arm.native)
+    if gallery_leg_id != native_id:
+        raise fc.RuntimeMismatchError("gallery model space/runtime differs from query leg")
+    for vector in gallery.prototypes.values():
+        array = np.asarray(vector)
+        if array.shape != (leg.embedding_dim,):
+            raise fc.RuntimeMismatchError("gallery dimension differs from query leg")
+        if not np.isfinite(array).all() or not np.isclose(np.linalg.norm(array), 1.0):
+            raise fc.RuntimeMismatchError("gallery prototype must be finite and unit normalized")
+    views = produce_views(
+        leg=leg,
+        image_bgr=image_bgr,
+        source_id=source_id,
+        source_sha256=source_sha256,
+        orientation=orientation,
+        policy=policy,
+        budget=budget,
+        person_boxes=person_boxes,
+        proposal_status=proposal_status,
+        proposal_source_ref=proposal_source_ref,
+        quarter_turns=quarter_turns,
+        duplicate_tolerance_px=duplicate_tolerance_px,
+        offline=offline,
+    )
+    candidate_hits = tuple(
+        fl._top_k(c.observation.embedding, gallery, top_k) if c.observation.embedding is not None else ()
+        for c in views.candidates
+    )
+    maxima: dict[str, float] = {}
+    for hits in candidate_hits:
+        for identity, score in hits:
+            maxima[identity] = max(score, maxima.get(identity, -math.inf))
+    hits = tuple(sorted(maxima.items(), key=lambda item: (-item[1], item[0]))[:top_k])
+    return ExperimentalViewSearch(
+        source_search_id, gallery.gallery_sha256, native_id.key(), views, candidate_hits, hits
+    )
+
+
+@dataclass(frozen=True)
+class ViewPolicyResult:
+    records: tuple[fl.FaceSearchRecord, ...]
+    ledger: tuple[fl.LedgerRow, ...]
+    timings_ms: dict[str, float]
+    evidence: dict[str, dict]
+
+
+def search_view_policy(
+    *,
+    leg,
+    images,
+    image_units,
+    faces,
+    gallery,
+    psu_by_image,
+    fold_by_psu,
+    fold_roles,
+    exhaustive,
+    top_k,
+    policy,
+    budget,
+    source_proposals,
+    cells=None,
+    quarter_turns=0,
+    duplicate_tolerance_px=0.0,
+    offline=False,
+):
+    """Assign each view's detections to original S1 faces, then aggregate identity alarms.
+
+    Hungarian matching is per view, with S2's fixed IoU threshold, before any
+    identity score is read. Cross-view trials never create source units [EVAL-19,
+    Do not let detector alarms dilute FPIR, IARPA Janus Benchmark-C, § 2.3.4].
+    Unlocalized mated people remain misses [EVAL-16, same source § 2.3.4].
+    Each geometric duplicate or background group keeps its own spurious-name row;
+    background group rows share one fixed background unit. An incomplete background
+    search cannot be a reject.
+    """
+    from time import perf_counter
+
+    from scripts.eval_harness.face_assignment import IOU_MATCH_THRESHOLD, hungarian_iou_pairs, iou_pixel_corner
+    from scripts.eval_harness.firbench_views import PersonProposalInput, oriented_pixels_sha256
+
+    if offline is not True or exhaustive is not True:
+        raise fc.FrameContractError("view policy requires explicit offline and exhaustive source")
+    if set(source_proposals) != set(images) or not set(images) <= set(image_units):
+        raise fc.FrameContractError("view policy requires proposal lineage for every source")
+    if len({f.face_id for f in faces}) != len(faces) or any(f.image_id not in images for f in faces):
+        raise fc.FrameContractError("view policy requires unique frozen source faces")
+    key = leg.leg_id(fc.Arm.native).key()
+    records, ledger, timings, evidence = [], [], {}, {}
+    for image_id, image in sorted(images.items()):
+        start = perf_counter()
+        unit = image_units[image_id]
+        proposal = source_proposals[image_id]
+        if (
+            not isinstance(proposal, PersonProposalInput)
+            or proposal.source_id != image_id
+            or proposal.source_sha256 != unit.sha256
+            or proposal.oriented_pixels_sha256 != oriented_pixels_sha256(image)
+        ):
+            raise fc.FrameContractError("proposal lineage differs from oriented source")
+        from scripts.eval_harness.firbench_views import ViewPolicy
+
+        person = policy is ViewPolicy.person_boxes
+        packet = experimental_view_search(
+            leg=leg,
+            image_bgr=image,
+            source_id=image_id,
+            source_sha256=unit.sha256,
+            source_search_id=image_id,
+            orientation=proposal.orientation,
+            policy=policy,
+            budget=budget,
+            gallery=gallery,
+            gallery_leg_id=leg.leg_id(fc.Arm.native),
+            top_k=top_k,
+            person_boxes=proposal.boxes if person else (),
+            proposal_status=proposal.status if person else None,
+            proposal_source_ref=proposal.source_ref if person else None,
+            quarter_turns=quarter_turns,
+            duplicate_tolerance_px=duplicate_tolerance_px,
+            offline=True,
+        )
+        image_faces = sorted((f for f in faces if f.image_id == image_id), key=lambda f: f.face_id)
+        boxes = [f.box for f in image_faces]
+        assigned = {f.face_id: [] for f in image_faces}
+        background, duplicates, assignments = [], [], []
+        by_view = defaultdict(list)
+        for index, candidate in enumerate(packet.views.candidates):
+            by_view[candidate.view_id].append(index)
+        for indices in by_view.values():
+            matrix = np.array(
+                [
+                    [iou_pixel_corner(packet.views.candidates[i].observation.detection.bbox_px, box) for box in boxes]
+                    for i in indices
+                ]
+            ).reshape(len(indices), len(boxes))
+            matched = {indices[i]: j for i, j, _ in hungarian_iou_pairs(matrix, threshold=IOU_MATCH_THRESHOLD)}
+            for i in indices:
+                if i in matched:
+                    face_id = image_faces[matched[i]].face_id
+                    assigned[face_id].append(i)
+                    assignments.append({"candidate_index": i, "face_id": face_id, "unit_id": face_id})
+                else:
+                    overlaps = any(
+                        iou_pixel_corner(packet.views.candidates[i].observation.detection.bbox_px, b) > 0 for b in boxes
+                    )
+                    (duplicates if overlaps else background).append(i)
+                    assignments.append(
+                        {
+                            "candidate_index": i,
+                            "face_id": None,
+                            "unit_id": None if overlaps else f"background:{image_id}",
+                        }
+                    )
+        psu = psu_by_image[image_id]
+        fold = fold_by_psu[psu]
+        image_rows = []
+
+        def emit(
+            face_id,
+            indices,
+            *,
+            face=None,
+            unit_id=None,
+            cell=("background", "background"),
+            unavailable=False,
+            context=(packet, image_id, psu, fold, unit, image_rows),
+        ):
+            packet, image_id, psu, fold, unit, image_rows = context
+            maxima = {}
+            for i in indices:
+                for identity, value in packet.candidate_hits[i]:
+                    maxima[identity] = max(value, maxima.get(identity, -math.inf))
+            hits = tuple(sorted(maxima.items(), key=lambda x: (-x[1], x[0]))[:top_k])
+            stages = [packet.views.candidates[i].observation.stage for i in indices]
+            stage = (
+                fc.SearchStage.embedded
+                if fc.SearchStage.embedded in stages
+                else fc.SearchStage.unaligned
+                if fc.SearchStage.unaligned in stages
+                else fc.SearchStage.detected
+                if stages
+                else fc.SearchStage.missed
+            )
+            mated = (
+                face is not None
+                and face.identity_status is fc.IdentityStatus.named
+                and face.identity_id in gallery.prototypes
+            )
+            if face is not None:
+                unit_id = (
+                    face.face_id if fl._is_nonmated(face.identity_status, mated=mated, exhaustive=exhaustive) else None
+                )
+            ref = f"{key}/native/{face_id}"
+            row = fl.FaceSearchRecord(
+                face_id,
+                image_id,
+                psu,
+                face.identity_id if mated else None,
+                face.identity_status if face else fc.IdentityStatus.unknown,
+                fold,
+                fold_roles[fold],
+                cell,
+                unit_id,
+                unit.sampling_arm,
+                unit.inclusion_probability,
+                fl._cohort(face) if face else None,
+                key,
+                fc.Arm.native,
+                fc.ArmStatus.unavailable if unavailable else fc.ArmStatus.available,
+                leg.alignment_mode,
+                fc.SearchStage.unavailable if unavailable else stage,
+                hits,
+                gallery.gallery_sha256,
+                ref,
+            )
+            image_rows.append(row)
+            return row
+
+        for face in image_faces:
+            row = emit(
+                face.face_id,
+                assigned[face.face_id],
+                face=face,
+                cell=tuple((cells or {}).get(face.face_id, ("unknown", "unknown"))),
+            )
+            ledger.append(
+                fl.LedgerRow(
+                    face.face_id, key, fc.Arm.native, row.stage_reached, row.arm_availability, leg.alignment_mode
+                )
+            )
+        # Repeated views of one conservative geometric group are one alarm, with
+        # per-identity maxima; retain all member observations in the cache. Like
+        # native's row per detection, each background group's row shares the one
+        # fixed S1 unit: FPI counts the unit once, S3 still counts each group's names.
+        incomplete = any(r.status not in {"ok", "empty", "proposal_empty"} for r in packet.views.receipts)
+        candidate_indices = {id(c): i for i, c in enumerate(packet.views.candidates)}
+        groups = [[candidate_indices[id(c)] for c in group.members] for group in packet.views.groups]
+        background_set, duplicate_set = set(background), set(duplicates)
+        background_groups = [(g, [i for i in group if i in background_set]) for g, group in enumerate(groups)]
+        background_groups = [(g, members) for g, members in background_groups if members]
+        for group_index, members in background_groups:
+            emit(
+                f"det:{image_id}:background:{group_index}",
+                members,
+                unit_id=f"background:{image_id}",
+                unavailable=incomplete,
+            )
+        if not background_groups:
+            # A fixed explicit row survives empty scenes and failed localization alike.
+            emit(f"det:{image_id}:background", (), unit_id=f"background:{image_id}", unavailable=incomplete)
+        for group_index, group in enumerate(groups):
+            members = [i for i in group if i in duplicate_set]
+            if members:
+                emit(f"det:{image_id}:group:{group_index}", members, cell=("duplicate", "duplicate"))
+        share = (perf_counter() - start) * 1000 / len(image_rows)
+        timings.update({r.timing_receipt_ref: share for r in image_rows})
+        records.extend(image_rows)
+        evidence[image_id] = {
+            **packet.views.to_dict(),
+            "assignments": assignments,
+            "candidate_hits": packet.candidate_hits,
+            "source_face_ids": [f.face_id for f in image_faces],
+            "background_unit_id": f"background:{image_id}",
+            "gallery_sha256": gallery.gallery_sha256,
+            "searches": [r.to_dict() for r in image_rows],
+        }
+    return ViewPolicyResult(tuple(records), tuple(ledger), timings, evidence)
 
 
 class DocumentBinding(TypedDict):
@@ -145,6 +476,7 @@ class PreparedRun:
     crop_margin: float
     canary_permutations: dict[int, dict[str, str]]
     label_evidence: LabelEvidenceBundle | None = None
+    experimental_view_policy: dict | None = None
 
 
 def _qualified_source(path: Path, binding: InputBinding, root: Path) -> None:
@@ -262,7 +594,7 @@ class _Adapter:
         except (KeyError, TypeError, ValueError, OSError, ImportError, RuntimeError, AssertionError) as exc:
             raise fc.FrameContractError(f"invalid runtime input binding/GT/template context: {exc}") from exc
 
-    def _prepare_run(self, *, frame, legs, arms, subset, subset_seed, decision, out_dir, repo_root):
+    def _prepare_run(self, *, frame, legs, arms, subset, subset_seed, decision, out_dir, repo_root, view_policy=None):
         root = Path(repo_root)
         binding_path = root / "benchmarks/private/firbench/inputs" / f"{frame.frame_id}.json"
         binding = _json(_private(root, binding_path.relative_to(root).as_posix()))
@@ -419,6 +751,47 @@ class _Adapter:
         margin = binding.get("crop_margin", 0.0)
         if isinstance(margin, bool) or not isinstance(margin, (int, float)) or not math.isfinite(margin) or margin < 0:
             raise fc.FrameContractError("crop_margin must be finite and nonnegative")
+        policy_config, proposal_inputs = None, {}
+        if view_policy is not None:
+            from scripts.eval_harness.firbench_views import ViewBudget, ViewPolicy, person_proposals_from_json
+
+            if arms != (fc.Arm.native,) or fc.LegKind.canary in legs:
+                raise fc.FrameContractError(
+                    "view policy uses native extraction only, without canary or attribution arms"
+                )
+            policy_bytes = _bytes(_private(root, view_policy["path"]), view_policy["sha256"])
+            if len(policy_bytes) > 2_000_000:
+                raise fc.FrameContractError("view policy JSON exceeds bounded input size")
+            policy_config = json.loads(
+                policy_bytes, object_pairs_hook=fc._reject_duplicate_keys, parse_constant=fc._reject_non_finite
+            )
+            fields = {"schema", "policy", "budget", "quarter_turns", "duplicate_tolerance_px", "sources"}
+            if (
+                not isinstance(policy_config, dict)
+                or set(policy_config) != fields
+                or policy_config["schema"] != "firbench-offline-view-policy/v1"
+                or set(policy_config["sources"]) != set(pixels)
+            ):
+                raise fc.FrameContractError("invalid complete offline view policy declaration")
+            policy = ViewPolicy(policy_config["policy"])
+            budget = ViewBudget(**policy_config["budget"])
+            turns = policy_config["quarter_turns"]
+            tolerance = policy_config["duplicate_tolerance_px"]
+            from scripts.eval_harness.firbench_views import View, deduplicate
+
+            View("validate", (0, 0, 1, 1), turns)
+            deduplicate((), tolerance_px=tolerance)
+            for image in source.images:
+                proposal_inputs[image.image_id] = person_proposals_from_json(
+                    policy_config["sources"][image.image_id],
+                    source_id=image.image_id,
+                    source_sha256=image.sha256,
+                    image_bgr=pixels[image.image_id],
+                )
+                if policy is not ViewPolicy.person_boxes and proposal_inputs[image.image_id].boxes:
+                    raise fc.FrameContractError("person boxes require person_boxes policy")
+                if len(proposal_inputs[image.image_id].boxes) > budget.max_proposals:
+                    raise fc.FrameContractError("person proposals exceed declared budget")
         models = {kind: self.model(kind) for kind in legs if kind is not fc.LegKind.canary}
         galleries, registry = {}, []
         for kind, model in models.items():
@@ -507,6 +880,7 @@ class _Adapter:
             from scripts.eval_harness.firbench_cli import LegRunResult, _check_run_result
 
             searches, ledger, timings = {}, {}, {}
+            view_evidence = defaultdict(dict)
             observations = defaultdict(list)
             for kind, model in models.items():
                 for fold in range(k):
@@ -525,23 +899,49 @@ class _Adapter:
                             )
                             for f in faces
                         }
-                        result = fl.search_leg_arm(
-                            leg=runtime,
-                            arm=arm,
-                            images=selected,
-                            image_units={i.image_id: i for i in source.images},
-                            faces=faces,
-                            gallery=galleries[kind, fold],
-                            psu_by_image=components,
-                            fold_by_psu=folds,
-                            fold_roles=prepared_frame.fold_roles,
-                            exhaustive=True,
-                            top_k=20,
-                            cells=cells,
-                            cached_landmarks=landmarks,
-                            crop_margin=float(margin),
-                        )
-                        if arm is fc.Arm.native and runtime.alignment_mode is fc.AlignmentMode.separable:
+                        if policy_config is not None:
+                            result = search_view_policy(
+                                leg=runtime,
+                                images=selected,
+                                image_units={i.image_id: i for i in source.images},
+                                faces=faces,
+                                gallery=galleries[kind, fold],
+                                psu_by_image=components,
+                                fold_by_psu=folds,
+                                fold_roles=prepared_frame.fold_roles,
+                                exhaustive=True,
+                                top_k=20,
+                                cells=cells,
+                                policy=policy,
+                                budget=budget,
+                                source_proposals={i: proposal_inputs[i] for i in selected},
+                                quarter_turns=turns,
+                                duplicate_tolerance_px=tolerance,
+                                offline=True,
+                            )
+                            view_evidence[key].update(result.evidence)
+                        else:
+                            result = fl.search_leg_arm(
+                                leg=runtime,
+                                arm=arm,
+                                images=selected,
+                                image_units={i.image_id: i for i in source.images},
+                                faces=faces,
+                                gallery=galleries[kind, fold],
+                                psu_by_image=components,
+                                fold_by_psu=folds,
+                                fold_roles=prepared_frame.fold_roles,
+                                exhaustive=True,
+                                top_k=20,
+                                cells=cells,
+                                cached_landmarks=landmarks,
+                                crop_margin=float(margin),
+                            )
+                        if (
+                            policy_config is None
+                            and arm is fc.Arm.native
+                            and runtime.alignment_mode is fc.AlignmentMode.separable
+                        ):
                             # Replay the very same native assignment; no private reads,
                             # detector calls or repeated Hungarian matching.
                             landmarks = {
@@ -549,7 +949,8 @@ class _Adapter:
                                 for o in result.cached_observations
                                 if o.gt_face_id is not None and o.landmarks_px is not None
                             }
-                        observations[key].extend(result.cached_observations)
+                        if policy_config is None:
+                            observations[key].extend(result.cached_observations)
                         searches.setdefault(key, []).extend(r.to_dict() for r in result.records)
                         ledger.setdefault(key, []).extend(
                             {
@@ -562,11 +963,19 @@ class _Adapter:
                             for r in result.ledger
                         )
                         timings.update(result.timings_ms)
-            result = LegRunResult(tuple(f.face_id for f in source.faces), searches, ledger, timings)
+            result = LegRunResult(
+                tuple(f.face_id for f in source.faces),
+                searches,
+                ledger,
+                timings,
+                dict(view_evidence) if policy_config is not None else None,
+            )
             keys = tuple(sorted({row["leg_key"] for row in registry}))
             # Validate ALL query outcomes and ALL packed caches before publishing any cache.
             # The driver keeps immutable declarations/failure evidence on an exception here.
             _check_run_result(result, leg_keys=keys, arms=arms)
+            if policy_config is not None:
+                return result
             packed = {key: fl.pack_cache_observations(observations[key], leg_key=key) for key in keys}
             for key, arrays in packed.items():
                 fl.validate_cache_observations(
@@ -588,6 +997,17 @@ class _Adapter:
             float(margin),
             {fold: dict(model.permutation) for fold, model in models.get(fc.LegKind.canary, {}).items()},
             label_evidence,
+            None
+            if policy_config is None
+            else {
+                **view_policy,
+                "recipe": policy_config,
+                "document_utf8": policy_bytes.decode("utf-8"),
+                "status": "experimental",
+                "promotion": "hold",
+                "association": "per-view-hungarian-s2-iou",
+                "aggregation": "per-source-identity-maximum",
+            },
         )
 
 
@@ -618,3 +1038,151 @@ def default_collaborators():
         similarity_threshold=knobs.similarity_threshold,
         prepare_run=adapter.prepare_run,
     )
+
+
+def score_view_policy_run(run_dir: Path, *, repo_root: Path) -> dict:
+    """Use S3's frozen inventory, policy-only fit-fold calibration and per-face decider.
+
+    This experimental schema has no confirmatory verdict. Native tau, pair-FMR,
+    clustering and promotion are unavailable. Qualification of a separately
+    calibrated policy protocol is outside this software slice [CAL-07, Select
+    face thresholds on identity-disjoint folds, Video-to-Video Face Recognition
+    for Low-Quality Surveillance Data, ch. 6]. Never reopen source pixels here.
+    """
+    from scripts.eval_harness import firbench_score_io as io
+
+    try:
+        root = Path(repo_root)
+        run_dir = fc.require_private_output_path(run_dir, repo_root=root)
+        declaration = _json(run_dir / "manifest.json")["firbench"]
+        policy = declaration["experimental_view_policy"]
+        fc._require_sha(policy["sha256"], "view policy sha256")
+        if (
+            hashlib.sha256(policy["document_utf8"].encode()).hexdigest() != policy["sha256"]
+            or json.loads(policy["document_utf8"]) != policy["recipe"]
+            or policy["status"] != "experimental"
+            or policy["promotion"] != "hold"
+            or declaration["arms"] != ["native"]
+            or declaration["similarity_threshold"] is not None
+        ):
+            raise fc.FrameContractError("experimental view declaration identity mismatch")
+        decision_path = root / declaration["decision_path"]
+        decision = fc.load_decision_manifest(decision_path)
+        if hashlib.sha256(decision_path.read_bytes()).hexdigest() != declaration["decision_sha256"]:
+            raise fc.FrameContractError("experimental view decision sha256 mismatch")
+        io._decision_binding(declaration, decision, run_dir)
+        registry, enrolled = io._registry(declaration, decision)
+        payload = _json(run_dir / "frame.json")
+        inventory = io._inventory(payload, decision, enrolled)
+        if declaration["frame"] != {
+            n: payload[n] for n in ("frame_id", "admissibility", "sealed", "source_sha256", "exhaustive")
+        }:
+            raise fc.FrameContractError("experimental view frame binding mismatch")
+        if any(
+            any(r["identity_folds"].get(i) != f for i, f in inventory.identity_folds.items()) for r in registry.values()
+        ):
+            raise fc.FrameContractError("experimental view identity fold mismatch")
+        records = io._records(run_dir, declaration, inventory, registry)
+        index = _json(run_dir / "view-cache-index.json")
+        expected = {f"views/{policy['sha256']}/{key}.json" for key in declaration["leg_keys"]}
+        if set(index) != expected:
+            raise fc.FrameContractError("incomplete policy cache index")
+        for key in declaration["leg_keys"]:
+            relative = f"views/{policy['sha256']}/{key}.json"
+            packet = json.loads(_bytes(run_dir / relative, index[relative]))
+            if (
+                packet["schema"] != "firbench-offline-view-cache/v1"
+                or packet["policy_sha256"] != policy["sha256"]
+                or packet["leg_key"] != key
+                or set(packet["sources"]) != set(inventory.images)
+            ):
+                raise fc.FrameContractError("policy cache lineage differs from run")
+            cached_rows = []
+            for image_id, source in packet["sources"].items():
+                if (
+                    source["source_id"] != image_id
+                    or source["leg_key"] != key
+                    or source["source_sha256"] != inventory.images[image_id].sha256
+                    or source["gallery_sha256"]
+                    != registry[key, inventory.folds[inventory.psus[image_id]]]["gallery_sha256"]
+                ):
+                    raise fc.FrameContractError("policy source cache differs from frozen source/gallery")
+                from scripts.eval_harness.firbench_views import ViewBudget, ViewPolicy
+
+                expected_source = policy["recipe"]["sources"][image_id]
+                recipe = source["recipe"]
+                person = policy["recipe"]["policy"] == ViewPolicy.person_boxes.value
+                expected_recipe_fields = {
+                    "policy": policy["recipe"]["policy"],
+                    "budget": asdict(ViewBudget(**policy["recipe"]["budget"])),
+                    "quarter_turns": policy["recipe"]["quarter_turns"],
+                    "duplicate_tolerance_px": policy["recipe"]["duplicate_tolerance_px"],
+                    "proposal_status": expected_source["status"] if person else None,
+                    "proposal_source_ref": expected_source["source_ref"] if person else None,
+                    "proposals": sorted(expected_source["boxes"], key=lambda b: b["proposal_id"]) if person else [],
+                }
+                if (
+                    source["oriented_pixels_sha256"] != expected_source["oriented_pixels_sha256"]
+                    or source["orientation"] != expected_source["orientation"]
+                    or any(recipe.get(name) != value for name, value in expected_recipe_fields.items())
+                    or hashlib.sha256(json.dumps(recipe, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    != source["recipe_sha256"]
+                ):
+                    raise fc.FrameContractError("policy source recipe differs from authorized declaration")
+                cached_rows.extend(source["searches"])
+
+            def wire(rows):
+                return sorted(json.dumps(r, sort_keys=True) for r in rows)
+
+            if wire(cached_rows) != wire(r.to_dict() for r in records if r.leg_key == key):
+                raise fc.FrameContractError("policy searches differ from bound cache")
+        contexts, legs = {}, []
+        fit = frozenset(set(range(decision.fold_protocol.k)) - {inventory.test_fold})
+        for key in sorted(declaration["leg_keys"]):
+            rows = [r for r in records if r.leg_key == key and r.sampling_arm is fc.SamplingArm.probability]
+            fit_rows = [r for r in rows if r.fold in fit]
+            test_rows = [r for r in rows if r.fold == inventory.test_fold]
+            fit_units = [u for f in sorted(fit) for u in io._units(inventory, f, fc.SamplingArm.probability)]
+            test_units = io._units(inventory, inventory.test_fold, fc.SamplingArm.probability)
+            tau, calibration = io._calibrate(
+                fit_rows, fit_units, registry[key, inventory.test_fold]["identity_folds"], fit, decision
+            )
+            contexts[key] = {"tau": tau}
+            curves = (
+                []
+                if tau is None
+                or any(r.unit_id is not None and r.arm_availability is not fc.ArmStatus.available for r in test_rows)
+                else [
+                    asdict(p)
+                    for p in io.core.curve(
+                        test_rows, units=test_units, thresholds=[tau], boundary=decision.boundary_semantics
+                    )
+                ]
+            )
+            legs.append(
+                {
+                    "leg_key": key,
+                    "threshold_source": "policy_fit_folds",
+                    "calibration": calibration,
+                    "operating_point": io._operating(test_rows, test_units, tau, decision),
+                    "curve": curves,
+                    "fit_unit_ids": [u.unit_id for u in fit_units],
+                    "test_unit_ids": [u.unit_id for u in test_units],
+                }
+            )
+        return {
+            "schema": "firbench-offline-view-scores/v1",
+            "policy_sha256": policy["sha256"],
+            "status": "experimental",
+            "promotion": "hold",
+            "reason": "separately_calibrated_protocol_not_qualified",
+            "decision_sha256": declaration["decision_sha256"],
+            "frame_id": inventory.spec.frame_id,
+            "boundary_semantics": decision.boundary_semantics.value,
+            "legs": legs,
+            "face_outcomes": io._face_outcomes(records, inventory, registry, contexts, decision.boundary_semantics),
+        }
+    except fc.FirBenchError:
+        raise
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise fc.FrameContractError(f"invalid experimental view scoring evidence: {exc}") from exc

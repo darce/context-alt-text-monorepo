@@ -114,6 +114,9 @@ class LegRuntime(Protocol):
     kind: LegKind
     alignment_mode: AlignmentMode
 
+    @property
+    def embedding_dim(self) -> int: ...
+
     def leg_id(self, arm: Arm) -> LegId: ...
 
     def observe(self, image_bgr: np.ndarray) -> tuple[Observation, ...]: ...
@@ -185,15 +188,28 @@ class FacePipelineLeg:
         result = self.embedder.embed([aligned])
         return _check_dimension(np.asarray(result.vectors)[0], self.embedding_dim, leg=self.kind.value)
 
-    def observe(self, image_bgr: np.ndarray) -> tuple[Observation, ...]:
+    def observe(
+        self, image_bgr: np.ndarray, *, before_stage: Callable[[str], None] | None = None
+    ) -> tuple[Observation, ...]:
+        """Run native stages; the offline caller may bound admission before each stage.
+
+        The hook cannot interrupt an in-flight call. Native callers omit it and
+        retain exactly the same detect/align/embed and AlignmentError behavior.
+        """
         out: list[Observation] = []
+        if before_stage is not None:
+            before_stage("detect")
         for detection in self.detect(image_bgr):
+            if before_stage is not None:
+                before_stage("align")
             try:
                 aligned = self.align(image_bgr, detection.landmarks_px)
             except AlignmentError:
                 # The aligner found no valid transform: the detector fired, but no embedding was made.
                 out.append(Observation.unaligned(detection))
                 continue
+            if before_stage is not None:
+                before_stage("embed")
             out.append(Observation.embedded(detection, self.embed(aligned)))
         return tuple(out)
 
@@ -330,6 +346,11 @@ class BuffaloLeg:
         self._opencv_version = opencv_version
         self._ort_version = ort_version
 
+    @property
+    def embedding_dim(self) -> int:
+        """Declared dimension, without loading a model; same seam as FacePipelineLeg [EMB-01]."""
+        return self._embedding_dim
+
     def leg_id(self, arm: Arm) -> LegId:
         return LegId(self.kind, arm, self._space, self._opencv_version, self._ort_version)
 
@@ -422,6 +443,10 @@ class CanaryLeg:
             self.permutation = derangement(self.canary_identities, seed=seed)
         else:
             self.permutation = _validate_permutation(self.canary_identities, permutation)
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._base.embedding_dim
 
     def leg_id(self, arm: Arm) -> LegId:
         base = self._base.leg_id(arm)

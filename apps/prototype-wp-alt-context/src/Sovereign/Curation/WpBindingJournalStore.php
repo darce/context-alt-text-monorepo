@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Curation;
 
+require_once __DIR__ . '/BindingJournalStore.php';
+
 /**
  * InnoDB adapter. Dedicated durable table, outside projection reset lists.
  * Use the SAME wpdb connection for every participating writer. This adapter owns
@@ -24,9 +26,14 @@ final class WpBindingJournalStore implements BindingJournalStore {
 		$this->table = $table;
 	}
 
-	/** Registration proposal only: schema owner must create this before use. */
+	/** Shared installed DDL; included in lifecycle fingerprint and uninstall inventory. */
 	public function schema_sql(): string {
-		return 'CREATE TABLE ' . $this->table . ' (tenant_id varchar(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, state_json longtext NOT NULL, PRIMARY KEY (tenant_id)) ENGINE=InnoDB';
+		return self::schema_statement( $this->table );
+	}
+
+	/** Trusted lifecycle table name (also renders its fingerprint placeholder). */
+	public static function schema_statement( string $table ): string {
+		return 'CREATE TABLE ' . $table . " (\n\t\t\ttenant_id varchar(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,\n\t\t\tstate_json longtext NOT NULL,\n\t\t\tPRIMARY KEY  (tenant_id)\n\t\t) ENGINE=InnoDB;";
 	}
 
 	public function transaction( string $tenant_id, callable $operation ) {

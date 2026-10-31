@@ -10,6 +10,7 @@ require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
 require_once __DIR__ . '/../api/services/class-person-label-backfill-service.php';
 require_once __DIR__ . '/../api/class-tenant-identity.php';
 require_once __DIR__ . '/../public/class-public-guide-route.php';
+require_once __DIR__ . '/../Sovereign/Curation/WpBindingJournalStore.php';
 
 use AltContext\Api\Services\PersonLabelBackfillService;
 use AltContext\Api\Services\PersonResolutionService;
@@ -753,7 +754,7 @@ class LifecycleManager {
 			PRIMARY KEY  (id),
 			UNIQUE KEY idx_tenant_normalized_name (tenant_id, normalized_name),
 			UNIQUE KEY idx_person_uuid (person_uuid)
-		) {$charset_collate};";
+		) ENGINE=InnoDB {$charset_collate};";
 
 		$clusters_sql = "CREATE TABLE {$clusters_table} (
 			cluster_uuid varchar(64) NOT NULL,
@@ -786,7 +787,7 @@ class LifecycleManager {
 			KEY tenant_confirmed (tenant_id, is_user_confirmed),
 			KEY tenant_representative (tenant_id, representative_id),
 			KEY tenant_revision (tenant_id, local_revision)
-		) {$charset_collate};";
+		) ENGINE=InnoDB {$charset_collate};";
 
 		// rg-005 / DATA-15: assigned_at is the recognition source-of-truth membership-order
 		// key (ORDER BY assigned_at ASC, identity_uuid); datetime(6) preserves recognition's
@@ -813,7 +814,7 @@ class LifecycleManager {
 			PRIMARY KEY  (identity_uuid),
 			KEY cluster_identity (cluster_uuid, identity_uuid),
 			KEY attachment_lookup (attachment_id)
-		) {$charset_collate};";
+		) ENGINE=InnoDB {$charset_collate};";
 
 		$sync_sql = "CREATE TABLE {$sync_table} (
 			stream_name varchar(100) NOT NULL,
@@ -828,7 +829,7 @@ class LifecycleManager {
 			last_curation_failed_at datetime DEFAULT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (stream_name)
-		) {$charset_collate};";
+		) ENGINE=InnoDB {$charset_collate};";
 
 		$batch_runs_sql = "CREATE TABLE {$batch_runs_table} (
 			run_id char(36) NOT NULL,
@@ -1007,6 +1008,9 @@ class LifecycleManager {
 			'acx_description_runs'     => $description_runs_sql,
 			'acx_description_run_items'=> $description_run_items_sql,
 			'acx_description_usage'    => $description_usage_sql,
+			// Durable authority, registered here for install/fingerprint/uninstall only.
+			// Projection reset lists intentionally do not contain this table.
+			'acx_binding_journal'      => \AltContext\Sovereign\Curation\WpBindingJournalStore::schema_statement( $prefix . 'acx_binding_journal' ),
 		);
 	}
 
@@ -1112,7 +1116,7 @@ class LifecycleManager {
 		if ( ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'query' ) ) {
 			return false;
 		}
-		foreach ( array( 'acx_sync_outbox', 'acx_sync_conflicts' ) as $suffix ) {
+		foreach ( array( 'acx_sync_outbox', 'acx_sync_conflicts', 'acx_binding_journal', 'acx_persons', 'acx_clusters', 'acx_identity_members', 'acx_sync_state' ) as $suffix ) {
 			$table = $prefix . $suffix;
 			$probe = $wpdb->prepare(
 				'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',

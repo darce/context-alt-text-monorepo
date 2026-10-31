@@ -262,4 +262,35 @@ final class BindingIntentJournalTest extends TestCase {
 			self::assertSame( array( 'request' ), $this->db->effects );
 		}
 	}
+
+	public function test_same_request_and_person_ids_are_isolated_by_tenant(): void {
+		$command = $this->command();
+		$first = $this->journal->apply( 'tenant', $command, $this->participate() );
+		$foreign = $command;
+		$foreign['claims']['request-claim']['tenant_id'] = 'other-tenant';
+		$second = $this->new_journal()->apply( 'other-tenant', $foreign, $this->participate() );
+		self::assertNotSame( $first['fingerprint'], $second['fingerprint'] );
+		self::assertSame( $first, $this->new_journal()->apply( 'tenant', $command, $this->participate() ) );
+		self::assertSame( $second, $this->new_journal()->apply( 'other-tenant', $foreign, $this->participate() ) );
+		self::assertSame( array( 'request', 'request' ), $this->db->effects );
+		self::assertSame( $first['after'], $this->journal->inspect( 'tenant' )['people']['person'] );
+		self::assertSame( $second['after'], $this->journal->inspect( 'other-tenant' )['people']['person'] );
+	}
+
+	public function test_retry_accepts_map_reordering_but_rejects_changed_scalar_type(): void {
+		$command = $this->command();
+		$first = $this->journal->apply( 'tenant', $command, $this->participate() );
+		$command['guards'] = array_reverse( $command['guards'], true );
+		self::assertSame( $first, $this->new_journal()->apply( 'tenant', $command, $this->participate() ) );
+		$before = $this->db->rows;
+		$command['guards']['person_revision'] = 5.0;
+		try {
+			$this->journal->apply( 'tenant', $command, $this->participate() );
+			self::fail( 'A changed typed guard must not adopt a cached receipt.' );
+		} catch ( \DomainException $error ) {
+			self::assertSame( 'Changed request identity.', $error->getMessage() );
+			self::assertSame( $before, $this->db->rows );
+			self::assertSame( array( 'request' ), $this->db->effects );
+		}
+	}
 }

@@ -99,4 +99,32 @@ final class FaceCorrespondenceResolverTest extends TestCase {
 		$anchors['anchor-1']['face_evidence_v1']['region']['x'] = 1;
 		self::assertSame( 'ambiguous', $this->resolve( array( $one, $two ), $anchors )['correspondence_status'] );
 	}
+
+	public function test_current_snapshot_measurement_does_not_supply_lifecycle_authority(): void {
+		// responses.py::FaceEvidenceResponse / ClusterSnapshotMemberResponse:
+		// region is a JSON tuple, and correspondence_eligible is Literal[False].
+		$face = self::face();
+		unset( $face['tenant_id'], $face['lifecycle_eligible'] );
+		$face['cluster_uuid'] = 'group';
+		$face['face_evidence_status'] = 'measured_lifecycle_unavailable';
+		$face['correspondence_eligible'] = false;
+		$face['face_evidence_v1']['region'] = array( 1, 2, 20, 30 );
+		$face['face_evidence_v1']['decode_recipe_id'] = 'pil-rgb-no-exif-cv2-bgr-v1';
+		$face['face_evidence_v1']['raster_serialization'] = 'face-raster-v1:BGR:uint8:HWC:C';
+		self::assertFalse( FaceCorrespondenceResolver::valid_face( $face ) );
+		$result = $this->resolve( array( $face ), null, array( 'lifecycle_attested' => false ) );
+		self::assertSame( 'unavailable', $result['correspondence_status'] );
+		self::assertSame( array(), $result['matched_faces'] );
+	}
+
+	public function test_restored_ids_and_namespace_do_not_replace_journal_ancestry(): void {
+		// A boundary probe, not a simulated database restore: all serialized
+		// identity/proof values survive, but current journal ancestry is unknown.
+		foreach ( array( 'person-1', 'person-2', 'person-3', 'person-4' ) as $person ) {
+			$anchor = self::face() + array( 'person_uuid' => $person, 'authority_state' => 'active', 'binding_intent_id' => 'intent' );
+			$result = $this->resolve( array( self::face() ), array( 'anchor' => $anchor ), array(), array( 'person_uuid' => $person, 'ancestry_attested' => false ) );
+			self::assertSame( 'unavailable', $result['correspondence_status'] );
+			self::assertSame( array(), $result['matched_faces'] );
+		}
+	}
 }

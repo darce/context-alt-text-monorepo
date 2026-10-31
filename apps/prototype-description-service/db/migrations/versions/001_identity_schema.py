@@ -1917,6 +1917,7 @@ def ensure_tables(op) -> None:
             nullable=False,
         ),
         sa.Column("idempotency_key", sa.String(length=64), nullable=False),
+        sa.Column("request_fingerprint", sa.String(length=64), nullable=True),
         sa.Column("result_status", sa.String(length=20), nullable=False),
         sa.Column("backend_version", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
         sa.Column("conflict_code", sa.String(length=64), nullable=True),
@@ -1936,7 +1937,12 @@ def ensure_tables(op) -> None:
             "refresh_status IN ('not_applicable', 'queued', 'running', 'no_candidates', 'timed_out', 'completed', 'failed')",
             name="ck_curation_replay_refresh_status",
         ),
+        sa.CheckConstraint(
+            "request_fingerprint IS NULL OR length(request_fingerprint) = 64",
+            name="ck_curation_replay_request_fingerprint",
+        ),
         sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),
+        heal_constraints=("ck_curation_replay_request_fingerprint",),
     )
 
     _ensure_table(

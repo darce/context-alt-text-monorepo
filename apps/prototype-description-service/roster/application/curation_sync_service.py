@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, ClassVar, Literal, Protocol
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import BigInteger, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.identity import CurationReplayRecord, IdentityCluster, IdentityMember
@@ -107,7 +109,12 @@ class CurationSyncService:
 
         idempotency_key = self._required_str(operation, "idempotency_key")
         tenant_uuid = self._parse_uuid(normalized_tenant_id, field_name="tenant_id")
-        cached = await self._load_replay_result(tenant_uuid, idempotency_key)
+        request_fingerprint, operation = self._fingerprint_operation(tenant_uuid, operation)
+        # Serialize absent-row retries too, before any effect or follow-up enqueue.
+        # The lock ends with the caller's transaction, just like the effect and receipt.
+        if not await self._lock_replay_key(tenant_uuid, idempotency_key):
+            return CurationSyncResult(status="conflict", backend_version=0, conflict_code="replay_in_progress")
+        cached = await self._load_replay_result(tenant_uuid, idempotency_key, request_fingerprint)
         if cached is not None:
             return cached
 
@@ -115,7 +122,7 @@ class CurationSyncService:
 
         if operation_type in self._PERSON_OPERATION_TYPES:
             result = await self._apply_person_operation(tenant_uuid, operation_type, operation)
-            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result)
+            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result, request_fingerprint)
             return result
 
         cluster_uuid = self._resolve_cluster_uuid(operation)
@@ -129,7 +136,7 @@ class CurationSyncService:
                 conflict_code="cluster_not_found",
                 machine_payload={"cluster_uuid": str(cluster_uuid), "reason": "cluster_not_found"},
             )
-            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result)
+            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result, request_fingerprint)
             return result
 
         desired_dismissed = self._resolve_desired_dismissed(operation_type)
@@ -162,6 +169,7 @@ class CurationSyncService:
                 cluster_uuid=cluster.id,
                 idempotency_key=idempotency_key,
                 result=result,
+                request_fingerprint=request_fingerprint,
             )
             return result
 
@@ -189,7 +197,7 @@ class CurationSyncService:
                     "label": current_label,
                 },
             )
-            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result)
+            await self._store_replay_result(tenant_uuid, idempotency_key, operation_type, result, request_fingerprint)
             return result
 
         cluster.roster_id = UUID(desired_roster_id) if desired_roster_id is not None else None
@@ -225,6 +233,7 @@ class CurationSyncService:
             cluster_uuid=cluster.id,
             idempotency_key=idempotency_key,
             result=result,
+            request_fingerprint=request_fingerprint,
         )
         return result
 
@@ -241,7 +250,68 @@ class CurationSyncService:
             backend_version=await self._current_backend_version(tenant_id),
         )
 
-    async def _load_replay_result(self, tenant_id: UUID, idempotency_key: str) -> CurationSyncResult | None:
+    def _fingerprint_operation(self, tenant_id: UUID, operation: Any) -> tuple[str, dict[str, Any]]:
+        """Freeze the complete route operation without losing JSON types or precision.
+
+        CurationSyncRequest supplies these seven fields. Direct callers must supply
+        the same JSON domain; never stringify an unknown guard or a map key. Maps
+        are canonical, arrays stay ordered, and 1, 1.0 and true remain distinct.
+        """
+        def field(name: str, default: Any = None) -> Any:
+            return operation.get(name, default) if isinstance(operation, dict) else getattr(operation, name, default)
+
+        snapshot = {
+            name: field(name)
+            for name in ("operation_type", "entity_type", "entity_key", "idempotency_key")
+        }
+        for name in snapshot:
+            self._required_str(snapshot, name)
+        for name in ("expected_base_version", "local_revision"):
+            value = field(name, 0)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{name} must be a nonnegative JSON integer")
+            snapshot[name] = value
+        snapshot["payload"] = field("payload", {})
+        if type(snapshot["payload"]) is not dict:
+            raise ValueError("payload must be a JSON object")
+
+        def validate_json(value: Any) -> None:
+            if type(value) in (str, int, bool, type(None)):
+                return
+            if type(value) is float and math.isfinite(value):
+                return
+            if type(value) is list:
+                for item in value:
+                    validate_json(item)
+                return
+            if type(value) is dict and all(type(key) is str for key in value):
+                for item in value.values():
+                    validate_json(item)
+                return
+            raise ValueError("operation must contain only finite JSON values and string map keys")
+
+        validate_json(snapshot)
+        canonical = json.dumps(
+            {"schema": "curation-replay-v1", "tenant_id": str(tenant_id), "operation": snapshot},
+            sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
+        # Detach nested payloads before the first await: the applied effect must
+        # consume exactly the identity we hashed even if a direct caller mutates it.
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest(), json.loads(canonical)["operation"]
+
+    async def _lock_replay_key(self, tenant_id: UUID, idempotency_key: str) -> bool:
+        if self._session.get_bind().dialect.name != "postgresql":
+            # SQLite test storage still enforces tenant/key uniqueness on flush.
+            return True
+        lock_identity = json.dumps(["curation-replay", str(tenant_id), idempotency_key], separators=(",", ":"))
+        lock_key = int.from_bytes(hashlib.sha256(lock_identity.encode("utf-8")).digest()[:8], "big", signed=True)
+        return bool(await self._session.scalar(
+            select(func.pg_catalog.pg_try_advisory_xact_lock(literal(lock_key, type_=BigInteger)))
+        ))
+
+    async def _load_replay_result(
+        self, tenant_id: UUID, idempotency_key: str, request_fingerprint: str,
+    ) -> CurationSyncResult | None:
         result = await self._session.execute(
             select(CurationReplayRecord).where(
                 CurationReplayRecord.tenant_id == tenant_id,
@@ -251,6 +321,14 @@ class CurationSyncService:
         record = result.scalar_one_or_none()
         if not isinstance(record, CurationReplayRecord):
             return None
+
+        if record.request_fingerprint is None or record.request_fingerprint != request_fingerprint:
+            return CurationSyncResult(
+                status="conflict",
+                backend_version=max(0, int(record.backend_version)),
+                conflict_code=("replay_fingerprint_unavailable" if record.request_fingerprint is None
+                               else "replay_fingerprint_conflict"),
+            )
 
         machine_payload: dict[str, Any] | None = None
         if isinstance(record.machine_payload_json, str) and record.machine_payload_json.strip():
@@ -273,11 +351,8 @@ class CurationSyncService:
         idempotency_key: str,
         operation_type: str,
         result: CurationSyncResult,
+        request_fingerprint: str,
     ) -> None:
-        existing = await self._load_replay_result(tenant_id, idempotency_key)
-        if existing is not None:
-            return
-
         machine_payload_json: str | None = None
         if isinstance(result.machine_payload, dict):
             machine_payload_json = json.dumps(result.machine_payload, sort_keys=True)
@@ -289,6 +364,7 @@ class CurationSyncService:
             CurationReplayRecord(
                 tenant_id=tenant_id,
                 idempotency_key=idempotency_key,
+                request_fingerprint=request_fingerprint,
                 result_status=result.status,
                 backend_version=max(0, int(result.backend_version)),
                 conflict_code=result.conflict_code,
@@ -350,6 +426,7 @@ class CurationSyncService:
         cluster_uuid: UUID,
         idempotency_key: str,
         result: CurationSyncResult,
+        request_fingerprint: str,
     ) -> None:
         await self._queue_refresh_followup(
             tenant_id=tenant_id,
@@ -357,7 +434,7 @@ class CurationSyncService:
             cluster_uuid=cluster_uuid,
             idempotency_key=idempotency_key,
         )
-        await self._store_replay_result(tenant_id, idempotency_key, operation_type, result)
+        await self._store_replay_result(tenant_id, idempotency_key, operation_type, result, request_fingerprint)
 
     def _acknowledged_machine_payload(
         self,

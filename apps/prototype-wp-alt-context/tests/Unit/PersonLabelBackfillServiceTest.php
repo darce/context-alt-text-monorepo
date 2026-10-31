@@ -16,54 +16,28 @@ class PersonLabelBackfillServiceTest extends TestCase
 {
     use FindsSqlQueries;
 
-    public function testBackfillBindsPersonForHumanLabelWithoutPerson(): void
+    public function testBackfillPreservesHumanLabelAsUnlinkedEvidence(): void
     {
         global $wpdb;
-
-        $wpdb->insert_id = 44;
         $wpdb->tableRows['wp_acx_persons'] = [];
-        $wpdb->tableRows['wp_acx_clusters'] = [
-            [
-                'cluster_uuid' => 'cluster-tory',
-                'tenant_id' => self::currentTenantId(),
-                'label' => 'Tory Guzman',
-                'person_id' => null,
-            ],
-        ];
-        $wpdb->mockResults = [
-            [
-                'cluster_uuid' => 'cluster-tory',
-                'label' => 'Tory Guzman',
-                'person_id' => null,
-            ],
-        ];
-
-        $result = (new PersonLabelBackfillService())->backfill_tenant(self::currentTenantId(), 10);
-
-        $this->assertSame(1, $result['bound']);
-        $this->assertFalse($result['stalled']);
-
+        $wpdb->tableRows['wp_acx_clusters'] = [[
+            'cluster_uuid' => 'cluster-tory', 'tenant_id' => self::currentTenantId(),
+            'label' => 'Tory Guzman', 'person_id' => null,
+        ]];
+        $wpdb->mockResults = [['cluster_uuid' => 'cluster-tory', 'label' => 'Tory Guzman', 'person_id' => null]];
+        $before = $wpdb->tableRows;
+        $service = new PersonLabelBackfillService();
+        foreach ([false, true, false] as $dryRun) {
+            $result = $service->backfill_tenant(self::currentTenantId(), 10, $dryRun);
+            $this->assertSame(0, $result['bound']);
+            $this->assertSame(0, $result['created']);
+            $this->assertSame(0, $result['persons']);
+            $this->assertSame(1, $result['skipped']);
+            $this->assertFalse($result['stalled']);
+            $this->assertSame($before, $wpdb->tableRows);
+        }
         $listSql = $this->findQueryContaining($wpdb->queries, 'person_id IS NULL');
         $this->assertStringContainsString("LIKE 'cluster-%%'", $listSql);
-        $this->assertStringContainsString("LIKE 'cluster\\_%%'", $listSql);
-
-        $personInserts = array_values(
-            array_filter(
-                $wpdb->queries,
-                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
-            )
-        );
-        $this->assertCount(1, $personInserts);
-        $this->assertStringContainsString("'Tory Guzman'", $personInserts[0]);
-        $this->assertStringContainsString(
-            "'" . PersonResolutionService::normalize_name('Tory Guzman') . "'",
-            $personInserts[0]
-        );
-
-        $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 44');
-        $this->assertStringContainsString('cluster-tory', $bindUpdate);
-        $this->assertStringNotContainsString("curation_state = 'confirmed'", $bindUpdate);
-        $this->assertStringNotContainsString('is_user_confirmed = 1', $bindUpdate);
     }
 
     public function testBackfillIsIdempotentWhenPersonAlreadyBound(): void
@@ -84,20 +58,20 @@ class PersonLabelBackfillServiceTest extends TestCase
                 'cluster_uuid' => 'cluster-tory',
                 'tenant_id' => self::currentTenantId(),
                 'label' => 'Tory Guzman',
-                'person_id' => null,
+                'person_id' => 9,
             ],
         ];
         $wpdb->mockResults = [
             [
                 'cluster_uuid' => 'cluster-tory',
                 'label' => 'Tory Guzman',
-                'person_id' => null,
+                'person_id' => 9,
             ],
         ];
 
         $service = new PersonLabelBackfillService();
         $first = $service->backfill_tenant(self::currentTenantId(), 10);
-        $this->assertSame(1, $first['bound']);
+        $this->assertSame(0, $first['bound']);
 
         $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] = 9;
         $wpdb->queries = [];
@@ -149,7 +123,7 @@ class PersonLabelBackfillServiceTest extends TestCase
         $this->assertSame(1, $result['examined']);
     }
 
-    public function testAutomaticBindCreatesDistinctPersonOnNameCollision(): void
+    public function testAutomaticBindDoesNotCreateDistinctPersonOnNameCollision(): void
     {
         global $wpdb;
 
@@ -188,23 +162,12 @@ class PersonLabelBackfillServiceTest extends TestCase
 
         $result = (new PersonLabelBackfillService())->backfill_tenant(self::currentTenantId(), 10);
 
-        $this->assertSame(1, $result['bound']);
-        $this->assertGreaterThanOrEqual(1, $result['collisions']);
-        $personInserts = array_values(
-            array_filter(
-                $wpdb->queries,
-                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
-            )
-        );
-        $this->assertNotEmpty($personInserts);
-        $this->assertStringContainsString("'John Smith (2)'", $personInserts[0]);
-        $createdIds = array_values(array_filter(
-            array_map(static fn(array $row): int => (int) ($row['id'] ?? 0), $wpdb->tableRows['wp_acx_persons']),
-            static fn(int $id): bool => $id > 0
-        ));
-        $this->assertContains(3, $createdIds);
-        $this->assertContains(80, $createdIds);
-        $this->assertCount(count(array_unique($createdIds)), $createdIds, 'collision insert must receive a distinct person id');
+        $this->assertSame(0, $result['bound']);
+        $this->assertSame(0, $result['collisions']);
+        $this->assertCount(1, $wpdb->tableRows['wp_acx_persons']);
+        $this->assertSame($existingUuid, $wpdb->tableRows['wp_acx_persons'][0]['person_uuid']);
+        $this->assertSame(3, $wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
+        $this->assertNull($wpdb->tableRows['wp_acx_clusters'][1]['person_id']);
     }
 
     public function testAutomaticBindReusesPersonAlreadyBoundToThisCluster(): void
@@ -272,7 +235,8 @@ class PersonLabelBackfillServiceTest extends TestCase
         $this->assertTrue($result['capped']);
         $this->assertFalse($result['stalled']);
         $this->assertSame(2, $service->pages);
-        $this->assertSame(2, $result['bound']);
+        $this->assertSame(0, $result['bound']);
+        $this->assertSame(2, $result['skipped']);
         $this->assertSame(2, $result['examined']);
     }
 }

@@ -313,6 +313,182 @@ def test_repeated_cross_view_duplicate_group_is_one_spurious_alarm():
     assert point.n_units == 1 and point.spurious_names == 1
 
 
+POLICIES = [fv.ViewPolicy.scene_only, fv.ViewPolicy.fixed_overlap, fv.ViewPolicy.person_boxes]
+# Hand-counted sightings of each marker: A whole scene; B adds four 75x60 corner
+# crops at (0,0), (25,0), (0,20), (25,20); C adds the two person boxes below.
+SIGHTINGS = {
+    fv.ViewPolicy.scene_only: {(10, 10): 1, (70, 50): 1},
+    fv.ViewPolicy.fixed_overlap: {(10, 10): 2, (70, 50): 5},
+    fv.ViewPolicy.person_boxes: {(10, 10): 2, (70, 50): 2},
+}
+BACKGROUND_CASES = {  # markers {(x, y): gallery identity index}, additional spurious names
+    "same_name_two_groups": ({(10, 10): 0, (70, 50): 0}, 1),
+    "different_names_two_groups": ({(10, 10): 0, (70, 50): 1}, 1),
+    "one_group_repeated_views": ({(70, 50): 0}, 0),
+}
+
+
+def background_scene(markers, policy, fail_call=None):
+    """No-GT source; each view reports one face at every visible identity marker.
+
+    Every view maps a marker to the same oriented-source geometry, so its repeated
+    sightings are one conservative group. The pool comes from actual S1 producers.
+    """
+    pixels = np.zeros((80, 100, 3), np.uint8)
+    for (x, y), identity in markers.items():
+        pixels[y, x, 0] = identity + 1
+
+    def kernel(fail_at):
+        calls = []
+
+        def process(p):
+            calls.append(p.shape)
+            if len(calls) == fail_at:
+                raise RuntimeError("synthetic view failure")
+            return [
+                {
+                    "bbox_px": (float(x), float(y), 10.0, 10.0),
+                    "landmarks_px": np.tile([x + 2.0, y + 2.0], (5, 1)),
+                    "det_score": 0.9,
+                    "embedding": np.eye(512)[int(p[y, x, 0]) - 1],
+                }
+                for y, x in np.argwhere(p[:, :, 0])
+            ]
+
+        return leg(process)
+
+    image = ff.ImageUnit("image", "a" * 64, fc.SamplingArm.probability, 1.0)
+    components = ff.build_psu_components([image], [])
+    folds = dict.fromkeys(components.values(), 0)
+    gallery = fl.Gallery.enrol({"id-alice": [np.eye(512)[0]], "id-bob": [np.eye(512)[1]]})
+    pool = ff.build_nonmated_pool(
+        [],
+        [image],
+        folds,
+        fold=0,
+        component_map=components,
+        exhaustive=True,
+        planning_icc=0.05,
+        enrolled_identity_ids=frozenset(gallery.prototypes),
+    )
+    shared = {
+        "images": {"image": pixels},
+        "image_units": {"image": image},
+        "faces": (),
+        "gallery": gallery,
+        "psu_by_image": components,
+        "fold_by_psu": folds,
+        "fold_roles": {0: fc.FoldRole.test},
+        "exhaustive": True,
+        "top_k": 2,
+    }
+    person = policy is fv.ViewPolicy.person_boxes
+    boxes = (fv.PersonBox("p0", (0, 0, 40, 40), "synthetic"), fv.PersonBox("p1", (50, 30, 50, 50), "synthetic"))
+    proposal = fv.PersonProposalInput(
+        "image",
+        image.sha256,
+        fv.oriented_pixels_sha256(pixels),
+        "opencv-imread-color-exif",
+        "ok" if person else "empty",
+        "synthetic",
+        boxes if person else (),
+    )
+    views = rt.search_view_policy(
+        **shared,
+        leg=kernel(fail_call),
+        offline=True,
+        policy=policy,
+        budget=fv.ViewBudget(5, 40000, 5, 100, 100, 30),
+        source_proposals={"image": proposal},
+    )
+    native = fl.search_leg_arm(**shared, leg=kernel(None), arm=fc.Arm.native)
+    return views, native, pool.units
+
+
+def curve_point(records, units):
+    return score.curve(records, units=units, thresholds=[0.5], boundary=fc.BoundarySemantics.v2)[0]
+
+
+@pytest.mark.parametrize("policy", POLICIES, ids=["A", "B", "C"])
+@pytest.mark.parametrize("case", sorted(BACKGROUND_CASES))
+def test_background_group_alarms_keep_native_s3_multiplicity(policy, case):
+    # S3 Build 2: every above-threshold name beyond the first in a unit is spurious;
+    # FPI still counts the one fixed background unit once [EVAL-19].
+    markers, extra_names = BACKGROUND_CASES[case]
+    views, native, units = background_scene(markers, policy)
+    evidence = views.evidence["image"]
+    assert len(evidence["groups"]) == len(markers)
+    assert len(evidence["candidates"]) == sum(SIGHTINGS[policy][m] for m in markers)
+    point = curve_point(views.records, units)
+    assert point == curve_point(native.records, units)
+    assert (point.fpi, point.n_units, point.fpir, point.spurious_names) == (1, 1, 1.0, extra_names)
+
+
+def test_background_group_rows_share_original_unit_and_walk_back_to_groups():
+    views, _, units = background_scene(BACKGROUND_CASES["same_name_two_groups"][0], fv.ViewPolicy.fixed_overlap)
+    evidence = views.evidence["image"]
+    rows = [r for r in views.records if r.unit_id is not None]
+    assert [u.unit_id for u in units] == ["background:image"] and not views.ledger
+    assert len(rows) == len(evidence["groups"]) == 2
+    for row in rows:
+        group = evidence["groups"][int(row.face_id.removeprefix("det:image:background:"))]
+        assert row.unit_id == "background:image" and row.cell == ("background", "background")
+        assert {a["unit_id"] for a in evidence["assignments"] if a["candidate_index"] in group} == {row.unit_id}
+        # Repeated sightings are deduplicated by per-identity maxima, never multiplied.
+        assert all(evidence["candidate_hits"][i] == row.top_k for i in group)
+        assert row.top_k == (("id-alice", 1.0), ("id-bob", 0.0))
+
+
+def test_incomplete_source_keeps_every_background_group_row_unavailable():
+    markers = BACKGROUND_CASES["same_name_two_groups"][0]
+    views, _, _ = background_scene(markers, fv.ViewPolicy.fixed_overlap, fail_call=3)
+    evidence = views.evidence["image"]
+    assert [r["status"] for r in evidence["receipts"]].count("failed") == 1
+    rows = [r for r in views.records if r.unit_id is not None]
+    assert len(rows) == len(evidence["groups"]) == 2
+    assert all(r.arm_availability is fc.ArmStatus.unavailable for r in rows)
+    assert all(r.stage_reached is fc.SearchStage.unavailable for r in rows)
+
+
+def test_cli_persists_background_group_rows_through_policy_s3_validation(view_files):
+    from scripts.eval_harness import firbench_cli as cli
+
+    f = view_files
+    source = json.loads(f.source.read_text())
+    source["faces"][0]["box"] = [0, 0, 10, 20]
+    f.source.write_text(json.dumps(source))
+    sha = hashlib.sha256(f.source.read_bytes()).hexdigest()
+    f.binding["query_source"]["sha256"] = sha
+    f.binding_path.write_text(json.dumps(f.binding))
+    decision = json.loads(f.decision.read_text())
+    decision["frames"][0]["source_sha256"] = sha
+    f.decision.write_text(json.dumps(decision))
+    recipe = json.loads(f.policy.read_text())
+    f.policy.write_text(json.dumps({**recipe, "policy": "scene_only"}))
+    f.policy_sha = hashlib.sha256(f.policy.read_bytes()).hexdigest()
+    f.query_outputs = {0: [detection((14, 0, 4, 4)), detection((14, 16, 4, 4))]}
+    directory = cli.run_frame(
+        frame_id="fake-only",
+        decision_path=f.decision,
+        legs=(fc.LegKind.sface, fc.LegKind.auraface, fc.LegKind.insightface),
+        arms=(fc.Arm.native,),
+        subset=None,
+        subset_seed=None,
+        out_dir=f.private / "run",
+        repo_root=f.repo,
+        created_at="2026-10-15T08:00:00+00:00",
+        view_policy={"path": f.policy.relative_to(f.repo).as_posix(), "sha256": f.policy_sha},
+    )
+    manifest = json.loads((directory / "manifest.json").read_text())["firbench"]
+    for key in manifest["leg_keys"]:
+        rows = [json.loads(x) for x in (directory / "legs" / key / "searches.jsonl").read_text().splitlines()]
+        background = [r for r in rows if r["unit_id"] == "background:image-0000"]
+        assert sorted(r["face_id"] for r in background) == [f"det:image-0000:background:{g}" for g in (0, 1)]
+        assert background[0]["top_k"] and background[0]["top_k"] == background[1]["top_k"]
+    # Actual cache, IO record and policy S3 validators accept rows sharing one unit.
+    assert rt.score_view_policy_run(directory, repo_root=f.repo)["promotion"] == "hold"
+
+
 def test_cli_multiple_people_failures_and_complete_outcome_ledger(view_files):
     from scripts.eval_harness import firbench_cli as cli
 

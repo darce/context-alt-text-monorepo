@@ -173,8 +173,9 @@ def search_view_policy(
     identity score is read. Cross-view trials never create source units [EVAL-19,
     Do not let detector alarms dilute FPIR, IARPA Janus Benchmark-C, § 2.3.4].
     Unlocalized mated people remain misses [EVAL-16, same source § 2.3.4].
-    Duplicate sightings retain spurious-name rows; background alarms aggregate to
-    one fixed background unit. An incomplete background search cannot be a reject.
+    Each geometric duplicate or background group keeps its own spurious-name row;
+    background group rows share one fixed background unit. An incomplete background
+    search cannot be a reject.
     """
     from time import perf_counter
 
@@ -331,15 +332,28 @@ def search_view_policy(
                     face.face_id, key, fc.Arm.native, row.stage_reached, row.arm_availability, leg.alignment_mode
                 )
             )
-        # A fixed explicit row survives empty scenes and failed localization alike.
+        # Repeated views of one conservative geometric group are one alarm, with
+        # per-identity maxima; retain all member observations in the cache. Like
+        # native's row per detection, each background group's row shares the one
+        # fixed S1 unit: FPI counts the unit once, S3 still counts each group's names.
         incomplete = any(r.status not in {"ok", "empty", "proposal_empty"} for r in packet.views.receipts)
-        emit(f"det:{image_id}:background", background, unit_id=f"background:{image_id}", unavailable=incomplete)
-        # Repeated views of one conservative geometric duplicate are one alarm,
-        # with per-identity maxima; retain all member observations in the cache.
         candidate_indices = {id(c): i for i, c in enumerate(packet.views.candidates)}
-        duplicate_set = set(duplicates)
-        for group_index, group in enumerate(packet.views.groups):
-            members = [candidate_indices[id(c)] for c in group.members if candidate_indices[id(c)] in duplicate_set]
+        groups = [[candidate_indices[id(c)] for c in group.members] for group in packet.views.groups]
+        background_set, duplicate_set = set(background), set(duplicates)
+        background_groups = [(g, [i for i in group if i in background_set]) for g, group in enumerate(groups)]
+        background_groups = [(g, members) for g, members in background_groups if members]
+        for group_index, members in background_groups:
+            emit(
+                f"det:{image_id}:background:{group_index}",
+                members,
+                unit_id=f"background:{image_id}",
+                unavailable=incomplete,
+            )
+        if not background_groups:
+            # A fixed explicit row survives empty scenes and failed localization alike.
+            emit(f"det:{image_id}:background", (), unit_id=f"background:{image_id}", unavailable=incomplete)
+        for group_index, group in enumerate(groups):
+            members = [i for i in group if i in duplicate_set]
             if members:
                 emit(f"det:{image_id}:group:{group_index}", members, cell=("duplicate", "duplicate"))
         share = (perf_counter() - start) * 1000 / len(image_rows)

@@ -1569,6 +1569,143 @@ class ClusterReadServiceTest extends TestCase
         $this->assertTrue($data['truncated']);
     }
 
+    public function testFg6InvalidMinimumIsRejectedBeforeEitherReadPath(): void
+    {
+        foreach ([false, true] as $local) {
+            foreach (['', '0', '-1', '2147483648', '1.5', '1.0', '1e2', ' 2', '2 ', 'abc', [], ['2'], true, false, 1.5, null] as $raw) {
+                $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+                $request->set_param('min_photos', $raw);
+                $result = $this->makeService($this->localHost(), $local)->list_clusters($request);
+                $this->assertInstanceOf(WP_Error::class, $result, 'invalid minimum: ' . json_encode($raw));
+                $this->assertSame('invalid_min_photos', $result->get_error_code());
+                $this->assertSame(400, $result->get_error_data()['status']);
+            }
+        }
+    }
+
+    public function testFg6LocalFilterKeepsPersonAuthorityAndUsesFilteredTotalAfterOffset(): void
+    {
+        $repo = new class() extends NullClustersRepository {
+            public array $calls = [];
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                $this->calls[] = [$tenant_id, $limit, $offset, $filters];
+                return [['cluster_uuid' => 'c-local', 'person_uuid' => 'wp-person', 'label' => 'Alice',
+                    'identity_count' => 0, 'photo_count' => '2', 'total_count' => 3]];
+            }
+        };
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        foreach (['min_photos' => '2', 'limit' => 1, 'offset' => 2, 'labeled_only' => true, 'search' => 'Alice'] as $key => $value) {
+            $request->set_param($key, $value);
+        }
+        $response = $this->makeService($this->localHost(), true, $repo)->list_clusters($request);
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(['tenant-1', 1, 2, ['search' => 'Alice', 'labeled_only' => true, 'min_photos' => 2]], $repo->calls[0]);
+        $data = $response->get_data();
+        $this->assertSame('wp-person', $data['clusters'][0]['person_uuid']);
+        $this->assertSame(2, $data['clusters'][0]['photo_count']);
+        $this->assertSame(3, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
+    public function testFg6EmptyOffsetPageRetainsFilteredTotal(): void
+    {
+        $repo = new class() extends NullClustersRepository {
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                return $offset > 0 ? [] : [['cluster_uuid' => 'c', 'total_count' => 3]];
+            }
+        };
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $request->set_param('min_photos', 2);
+        $request->set_param('offset', 100);
+        $result = $this->makeService($this->localHost(), true, $repo)->list_clusters($request)->get_data();
+        $this->assertSame([], $result['clusters']);
+        $this->assertSame(3, $result['total']);
+        $this->assertFalse($result['truncated']);
+    }
+
+    public function testFg6RemoteForwardsOnlyRequestedMinimumAndProbesSameFilteredPage(): void
+    {
+        $host = new class() implements ClustersHostInterface {
+            public array $queries = [];
+            public function get_tenant_id(): string { return 'tenant-1'; }
+            public function host_should_use_local_projection_gate(SyncStateRepositoryInterface $r, string $t): bool { return false; }
+            public function host_is_projection_stale(?string $t): bool { return false; }
+            public function proxy_recognition_request(string $method, string $path, array $body = [], array $query = [], string $request_class = 'auto', string $body_kind = 'json', ?int $max_body_bytes = null): WP_REST_Response|WP_Error
+            {
+                $this->queries[] = $query;
+                if (!isset($query['min_photos'])) {
+                    return new WP_REST_Response(['clusters' => [], 'limit' => 50, 'total' => 0, 'truncated' => false]);
+                }
+                // The backend applies the minimum before producing its bare list.
+                if ($query['min_photos'] > 2) {
+                    return new WP_REST_Response([]);
+                }
+                // Actual ClusterResponse producer has no person binding or total.
+                return new WP_REST_Response([['id' => 'c-' . $query['offset'], 'tenant_id' => 'tenant-1', 'label' => null,
+                    'is_labeled' => false, 'is_auto_label' => false, 'identity_count' => 7,
+                    'photo_count' => 2, 'representatives' => []]]);
+            }
+        };
+        $service = $this->makeService($host, false);
+        $service->list_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters'));
+        $this->assertArrayNotHasKey('min_photos', $host->queries[0]);
+        foreach ([1, 2147483647, '+2', '0002'] as $minimum) {
+            $host->queries = [];
+            $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+            foreach (['min_photos' => $minimum, 'limit' => 1, 'offset' => 2, 'search' => 'Alice', 'labeled_only' => true] as $key => $value) {
+                $request->set_param($key, $value);
+            }
+            $response = $service->list_clusters($request);
+            $this->assertInstanceOf(WP_REST_Response::class, $response);
+            $data = $response->get_data();
+            if ((int)$minimum > 2) {
+                $this->assertSame([], $data['clusters']);
+                $this->assertNull($data['total']);
+                $this->assertFalse($data['truncated']);
+                $this->assertCount(1, $host->queries);
+                $this->assertSame((int)$minimum, $host->queries[0]['min_photos']);
+                continue;
+            }
+            $this->assertSame(2, $data['clusters'][0]['photo_count']);
+            $this->assertNull($data['clusters'][0]['person_uuid']);
+            $this->assertNull($data['total']);
+            $this->assertTrue($data['truncated']);
+            $this->assertSame([2, 3], array_column($host->queries, 'offset'));
+            foreach ($host->queries as $query) {
+                $this->assertSame((int)$minimum, $query['min_photos']);
+                $this->assertSame('Alice', $query['search']);
+                $this->assertSame('true', $query['labeled_only']);
+                $this->assertSame(1, $query['limit']);
+            }
+        }
+    }
+
+    public function testFg6ProbeFailureDoesNotInventAnEndOrFallBackToAnotherPath(): void
+    {
+        $error = new WP_Error('backend_unavailable', 'Temporary read failure', ['status' => 503]);
+        $host = new class($error) implements ClustersHostInterface {
+            public int $calls = 0;
+            public function __construct(private WP_Error $error) {}
+            public function get_tenant_id(): string { return 'tenant-1'; }
+            public function host_should_use_local_projection_gate(SyncStateRepositoryInterface $r, string $t): bool { return false; }
+            public function host_is_projection_stale(?string $t): bool { return false; }
+            public function proxy_recognition_request(string $method, string $path, array $body = [], array $query = [], string $request_class = 'auto', string $body_kind = 'json', ?int $max_body_bytes = null): WP_REST_Response|WP_Error
+            {
+                ++$this->calls;
+                return $this->calls === 1
+                    ? new WP_REST_Response([['id' => 'c', 'photo_count' => 2, 'identity_count' => 3, 'representatives' => []]])
+                    : $this->error;
+            }
+        };
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $request->set_param('min_photos', 2);
+        $request->set_param('limit', 1);
+        $this->assertSame($error, $this->makeService($host, false)->list_clusters($request));
+        $this->assertSame(2, $host->calls);
+    }
+
     private function localHost(): ClustersHostInterface
     {
         return new class() implements ClustersHostInterface {

@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-photo-list-response.schema.json",
+  "title": "FG6 WordPress cluster photo-filter listing",
+  "description": "Opt-in min_photos listing contract. Local projection returns a filtered window total. A bare-list recognition producer has no total; WordPress reports null until the end can be established from a non-empty page or an empty first page. A bounded same-filter lookahead establishes truncated. Older uncomputed photo_count fields may be absent; neither absence nor null is a face count.",
+  "type": "object",
+  "required": ["clusters", "limit", "total", "truncated"],
+  "properties": {
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": {"type": "string"},
+          "photo_count": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Distinct actual media/attachment identities across the complete member set, independent of identity_count and face_count. Null means the aggregate is unavailable."
+          },
+          "person_uuid": {
+            "type": ["string", "null"],
+            "description": "Only the local WordPress person binding establishes this identity. The remote recognition path emits null."
+          }
+        }
+      }
+    },
+    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    "total": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Exact filtered total when established, otherwise null. Never the page length as a substitute for the total."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Additional matching rows exist after offset plus this page."
+    }
+  },
+  "definitions": {
+    "min_photos": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "Optional query minimum after strict raw integer parsing. Omission applies no photo filter; an explicitly empty, null, fractional, boolean, array, or out-of-range value is HTTP 400."
+    }
+  }
+}

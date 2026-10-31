@@ -14,6 +14,22 @@ class ClusterResponseMapperTest extends TestCase
 {
     private ClusterResponseMapper $mapper;
 
+    public function testFg6PhotoCountUsesOnlyCompleteAggregateNeverFaceOrPreviewCount(): void
+    {
+        $mapper = new ClusterResponseMapper();
+        foreach ([2 => 2, 0 => 0, '7' => 7] as $raw => $expected) {
+            $row = $mapper->map_cluster_detail(['cluster_uuid' => 'c', 'identity_count' => 99, 'face_count' => 99, 'photo_count' => $raw], []);
+            $this->assertSame($expected, $row['photo_count']);
+        }
+        foreach ([null, -1, 'unknown', 1.5, true, '1.2'] as $raw) {
+            $row = $mapper->map_cluster_detail(['cluster_uuid' => 'c', 'face_count' => 99, 'photo_count' => $raw], [['attachment_id' => 1], ['attachment_id' => 2]]);
+            $this->assertArrayHasKey('photo_count', $row);
+            $this->assertNull($row['photo_count']);
+        }
+        $row = $mapper->map_cluster_detail(['cluster_uuid' => 'c', 'face_count' => 99], [['attachment_id' => 1]]);
+        $this->assertArrayNotHasKey('photo_count', $row);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

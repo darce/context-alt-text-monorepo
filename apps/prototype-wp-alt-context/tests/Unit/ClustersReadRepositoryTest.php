@@ -13,6 +13,44 @@ use AltContext\Tests\TestCase;
  */
 class ClustersReadRepositoryTest extends TestCase
 {
+    public function testFg6ActualSqlCountsDistinctAttachmentsBeforeFilteringAndPagination(): void
+    {
+        global $wpdb;
+        $wpdb->onGetResults = static function (string $sql): array {
+            $process = proc_open(['python3', __DIR__ . '/../fixtures/clusters-read/fg6-query.py'],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            if (!is_resource($process)) {
+                throw new \RuntimeException('SQL oracle failed to start');
+            }
+            fwrite($pipes[0], json_encode(['sql' => $sql], JSON_THROW_ON_ERROR));
+            fclose($pipes[0]);
+            $result = stream_get_contents($pipes[1]);
+            $error = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            if (proc_close($process) !== 0) {
+                throw new \RuntimeException($error);
+            }
+            return json_decode($result, true, 512, JSON_THROW_ON_ERROR);
+        };
+        $all = $this->repository->list_for_tenant('tenant-1');
+        $counts = array_column($all, 'photo_count', 'cluster_uuid');
+        $this->assertSame(['duplicate' => 1, 'two-a' => 2, 'two-b' => 2, 'unknown' => null, 'empty' => 0], $counts);
+        foreach ([[], ['labeled_only' => true], ['search' => 'Alice'], ['labeled_only' => true, 'search' => 'Alice']] as $other) {
+            $filters = array_merge($other, ['min_photos' => 2]);
+            $page = $this->repository->list_for_tenant('tenant-1', 1, 1, $filters);
+            $this->assertSame(['two-b'], array_column($page, 'cluster_uuid'));
+            $this->assertSame(2, $page[0]['photo_count']);
+            $this->assertSame(2, $page[0]['total_count']);
+            $this->assertSame('wp-person', $page[0]['person_uuid']);
+            $this->assertSame('Local Alice', $page[0]['label']);
+            $this->assertSame([], $this->repository->list_for_tenant('tenant-1', 1, 2, $filters));
+        }
+        $this->assertSame([], $this->repository->list_for_tenant('tenant-1', 10, 0, ['min_photos' => 3]));
+        $foreign = $this->repository->list_for_tenant('tenant-2', 10, 0, ['min_photos' => 3]);
+        $this->assertSame(['foreign'], array_column($foreign, 'cluster_uuid'));
+    }
+
     private ClustersReadRepository $repository;
 
     protected function setUp(): void

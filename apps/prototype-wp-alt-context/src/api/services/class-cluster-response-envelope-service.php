@@ -8,6 +8,7 @@ use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use WP_Error;
 use WP_REST_Response;
 
+use function array_values;
 use function count;
 use function is_array;
 use function is_bool;
@@ -26,7 +27,7 @@ class ClusterResponseEnvelopeService {
 	 * @param array<int,array<string,mixed>> $clusters
 	 * @return array<string,mixed>
 	 */
-	public function build_cluster_list_envelope( array $rows, array $clusters, int $limit ): array {
+	public function build_cluster_list_envelope( array $rows, array $clusters, int $limit, int $offset = 0 ): array {
 		$total = count( $clusters );
 
 		if ( isset( $rows[0]['total_count'] ) && is_numeric( $rows[0]['total_count'] ) ) {
@@ -37,8 +38,37 @@ class ClusterResponseEnvelopeService {
 			'clusters' => $clusters,
 			'limit' => $limit,
 			'total' => $total,
-			'truncated' => $total > count( $clusters ),
+			'truncated' => max( 0, $offset ) + count( $clusters ) < $total,
 		);
+	}
+
+	/**
+	 * FG6 backend emits list[ClusterResponse], with no total. A separate
+	 * bounded probe establishes continuation; a partial page establishes the
+	 * end only when it contains a row (or starts at offset zero).
+	 */
+	public function build_filtered_cluster_page_response( WP_REST_Response $response, int $limit, int $offset, bool $has_more ): WP_REST_Response|WP_Error {
+		$rows = $response->get_data();
+		if ( ! is_array( $rows ) || array_values( $rows ) !== $rows || count( $rows ) > $limit ) {
+			return new WP_Error( 'invalid_cluster_list_page', 'Invalid cluster list page.', array( 'status' => 502 ) );
+		}
+		$clusters = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) || ! isset( $row['id'] ) ) {
+				return new WP_Error( 'invalid_cluster_list_page', 'Invalid cluster list item.', array( 'status' => 502 ) );
+			}
+			$row['photo_count'] = $this->cluster_mapper->normalize_photo_count( $row['photo_count'] ?? null );
+			// Only WordPress can establish a local person binding.
+			$row['person_uuid'] = null;
+			$clusters[] = $this->cluster_mapper->ensure_emitted_label_state( $row );
+		}
+		$total = ! $has_more && ( array() !== $rows || 0 === $offset ) ? $offset + count( $rows ) : null;
+		return new WP_REST_Response( array(
+			'clusters' => $clusters,
+			'limit' => $limit,
+			'total' => $total,
+			'truncated' => $has_more,
+		), $response->get_status() );
 	}
 
 	/**

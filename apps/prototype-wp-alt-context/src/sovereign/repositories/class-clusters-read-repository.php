@@ -64,19 +64,28 @@ class ClustersReadRepository {
 		$normalized_offset = max( 0, $offset );
 		$persons_table     = $this->resolve_persons_table_name();
 
+		$members_table = $this->resolve_identity_members_table_name();
+		$min_photos = max( 0, (int) ( $filters['min_photos'] ?? 0 ) );
+		// Count full attachment identities independently of face counts and
+		// previews. Missing attachment IDs make the aggregate unknown. A zero
+		// minimum means the optional filter was omitted, including unknown rows.
 		// Literal SQL templates (four filter combinations) so parity scanners see fixed strings.
 		if ( $labeled_only && '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state, (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) AS photo_count
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != '' AND c.label LIKE %s
+				 WHERE c.tenant_id = %s AND (%d = 0 OR (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) >= %d) AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != '' AND c.label LIKE %s
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
+					$members_table,
 					$this->table_name,
 					$persons_table,
 					$normalized_tenant_id,
+					$min_photos,
+					$members_table,
+					$min_photos,
 					'%' . $wpdb->esc_like( $search ) . '%',
 					$normalized_limit,
 					$normalized_offset,
@@ -84,32 +93,40 @@ class ClustersReadRepository {
 			);
 		} elseif ( $labeled_only ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state, (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) AS photo_count
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != ''
+				 WHERE c.tenant_id = %s AND (%d = 0 OR (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) >= %d) AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} IS NOT NULL AND {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} != ''
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
+					$members_table,
 					$this->table_name,
 					$persons_table,
 					$normalized_tenant_id,
+					$min_photos,
+					$members_table,
+					$min_photos,
 					$normalized_limit,
 					$normalized_offset,
 				)
 			);
 		} elseif ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state, (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) AS photo_count
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s AND c.label LIKE %s
+				 WHERE c.tenant_id = %s AND (%d = 0 OR (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) >= %d) AND c.label LIKE %s
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
+					$members_table,
 					$this->table_name,
 					$persons_table,
 					$normalized_tenant_id,
+					$min_photos,
+					$members_table,
+					$min_photos,
 					'%' . $wpdb->esc_like( $search ) . '%',
 					$normalized_limit,
 					$normalized_offset,
@@ -117,16 +134,20 @@ class ClustersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state
+				"SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label, {$this->projected_cluster_label_state_sql( 'p.name', 'c.label' )} AS label_state, (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) AS photo_count
 				 FROM %i c
 				 LEFT JOIN %i p ON c.person_id = p.id
-				 WHERE c.tenant_id = %s
+				 WHERE c.tenant_id = %s AND (%d = 0 OR (SELECT CASE WHEN COUNT(*) <> COUNT(NULLIF(m.attachment_id, 0)) THEN NULL ELSE COUNT(DISTINCT m.attachment_id) END FROM %i m WHERE m.cluster_uuid = c.cluster_uuid) >= %d)
 				 ORDER BY c.updated_at DESC, c.cluster_uuid ASC
 				 LIMIT %d OFFSET %d",
 				array(
+					$members_table,
 					$this->table_name,
 					$persons_table,
 					$normalized_tenant_id,
+					$min_photos,
+					$members_table,
+					$min_photos,
 					$normalized_limit,
 					$normalized_offset,
 				)

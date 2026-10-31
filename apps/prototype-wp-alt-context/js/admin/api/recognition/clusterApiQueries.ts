@@ -5,6 +5,7 @@ import {
   normalizeTopUnlabeledRepresentative,
   type TopUnlabeledRepresentativePayload,
 } from './normalizeTopUnlabeledRepresentative';
+import type { TopUnlabeledPhotoPage } from './types/cluster';
 import { parseDataSource, parseProjectionStatus } from './types/dataSource';
 import type {
   ClusterListResponse,
@@ -71,12 +72,18 @@ const requireClusterListBoolean = (value: unknown, fieldName: string): boolean =
   return value;
 };
 
-const normalizeTopUnlabeledCluster = (cluster: TopUnlabeledClusterPayload): TopUnlabeledCluster => ({
-  ...cluster,
-  representatives: Array.isArray(cluster.representatives)
-    ? cluster.representatives.map(normalizeTopUnlabeledRepresentative)
-    : [],
-});
+const normalizeTopUnlabeledCluster = (cluster: TopUnlabeledClusterPayload): TopUnlabeledCluster => {
+  const count = cluster.photo_count;
+  if (count !== undefined && count !== null && (!Number.isInteger(count) || count < 0)) {
+    throw new Error('Cluster photo_count must be a nonnegative integer or null.');
+  }
+  return {
+    ...cluster,
+    representatives: Array.isArray(cluster.representatives)
+      ? cluster.representatives.map(normalizeTopUnlabeledRepresentative)
+      : [],
+  };
+};
 
 /** Explicit opt-in overload; the legacy overload and ReturnType remain unchanged. */
 export function listRecognitionClusters(
@@ -156,15 +163,36 @@ export const getRecognitionCluster = async (clusterId: string): Promise<ClusterS
   });
 };
 
-export const fetchTopUnlabeledClusters = async (
+export function fetchTopUnlabeledClusters(
   tenantId: string,
   limit: number,
   signal?: AbortSignal,
-): Promise<TopUnlabeledClustersResponse> => {
+): Promise<TopUnlabeledClustersResponse>;
+export function fetchTopUnlabeledClusters(
+  tenantId: string,
+  limit: number,
+  signal: AbortSignal | undefined,
+  page: { min_photos?: number; offset?: number },
+): Promise<TopUnlabeledPhotoPage>;
+export async function fetchTopUnlabeledClusters(
+  tenantId: string,
+  limit: number,
+  signal?: AbortSignal,
+  page: { min_photos?: number; offset?: number } = {},
+): Promise<TopUnlabeledPhotoPage> {
   const base = getEndpoint('recognitionClusters');
   const url = new URL(`${stripTrailingSlash(base)}/top-unlabeled`, window.location.origin);
   url.searchParams.set('tenant_id', tenantId);
   url.searchParams.set('limit', String(limit));
+  if (page.min_photos !== undefined) {
+    if (!Number.isInteger(page.min_photos) || page.min_photos < 1 || page.min_photos > 2147483647) {
+      throw new Error('Minimum photos must be an integer from 1 to 2147483647.');
+    }
+    url.searchParams.set('min_photos', String(page.min_photos));
+  }
+  if (page.offset) {
+    url.searchParams.set('offset', String(page.offset));
+  }
 
   const payload = await fetchRequiredApi<TopUnlabeledClustersResponsePayload>(url.toString(), {
     method: 'GET',
@@ -172,12 +200,17 @@ export const fetchTopUnlabeledClusters = async (
     signal,
   });
 
-  return normalizeTopUnlabeledClustersResponse(payload);
-};
+  return page.min_photos !== undefined
+    ? {
+        ...normalizeTopUnlabeledFields(payload),
+        total: payload.total === null ? null : requireTopUnlabeledNumber(payload.total, 'total'),
+      }
+    : normalizeTopUnlabeledClustersResponse(payload);
+}
 
-export const normalizeTopUnlabeledClustersResponse = (
+const normalizeTopUnlabeledFields = (
   payload: TopUnlabeledClustersResponsePayload,
-): TopUnlabeledClustersResponse => {
+): Omit<TopUnlabeledClustersResponse, 'total'> => {
   if (!Array.isArray(payload.clusters)) {
     throw new Error('Top-unlabeled clusters response must include a clusters array.');
   }
@@ -200,7 +233,6 @@ export const normalizeTopUnlabeledClustersResponse = (
   return {
     clusters: payload.clusters.map(normalizeTopUnlabeledCluster),
     limit: requireTopUnlabeledNumber(payload.limit, 'limit'),
-    total: requireTopUnlabeledNumber(payload.total, 'total'),
     truncated: requireTopUnlabeledBoolean(payload.truncated, 'truncated'),
     repair_pending: payload.repair_pending === true,
     singleton_count: singletonCount,
@@ -209,3 +241,10 @@ export const normalizeTopUnlabeledClustersResponse = (
     projection_status: projectionStatus ?? undefined,
   };
 };
+
+export const normalizeTopUnlabeledClustersResponse = (
+  payload: TopUnlabeledClustersResponsePayload,
+): TopUnlabeledClustersResponse => ({
+  ...normalizeTopUnlabeledFields(payload),
+  total: requireTopUnlabeledNumber(payload.total, 'total'),
+});

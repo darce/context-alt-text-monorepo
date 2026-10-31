@@ -101,6 +101,8 @@ export interface TopUnlabeledRepresentative {
  * Includes representatives with media IDs for thumbnail display.
  */
 export interface TopUnlabeledCluster {
+  /** Full membership distinct photos; absent/null is unavailable. */
+  photo_count?: number | null;
   id: string;
   tenant_id: string;
   label: string | null;
@@ -126,6 +128,10 @@ export interface TopUnlabeledClustersResponse {
   has_clusters?: boolean;
   data_source: DataSource;
   projection_status?: ProjectionStatus;
+}
+
+export interface TopUnlabeledPhotoPage extends Omit<TopUnlabeledClustersResponse, 'total'> {
+  total: number | null;
 }
 
 export interface ClusterListParams {

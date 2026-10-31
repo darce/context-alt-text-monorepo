@@ -8,7 +8,7 @@ import type {
   PendingNameSuggestionsResponse,
   PendingSuggestion,
 } from '../../../api/recognition';
-import type { TopUnlabeledClustersResponse } from '../../../api/recognition/types/cluster';
+import type { TopUnlabeledPhotoPage } from '../../../api/recognition/types/cluster';
 import type { CanonicalRosterPerson } from './canonicalRosterPerson';
 
 /** Shared fetch depth for all identity-keyed reads (fetch K, filter client-side). */
@@ -476,10 +476,10 @@ export const applyMergeTombstones = (
   return filtered.length === page.suggestions.length ? page : { ...page, suggestions: filtered };
 };
 
-export const applyTopUnlabeledTombstones = (
+export const applyTopUnlabeledTombstones = <T extends TopUnlabeledPhotoPage>(
   queryClient: QueryClient,
-  page: TopUnlabeledClustersResponse,
-): TopUnlabeledClustersResponse => {
+  page: T,
+): T => {
   const filtered = page.clusters.filter(
     (cluster) => !isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.TOP_UNLABELED, cluster.id),
   );
@@ -490,7 +490,7 @@ export const applyTopUnlabeledTombstones = (
   return {
     ...page,
     clusters: filtered,
-    total: Math.max(0, page.total - removed),
+    total: page.total === null ? null : Math.max(0, page.total - removed),
   };
 };
 
@@ -553,7 +553,7 @@ export const dropClusterFromReviewCaches = (
     );
   }
 
-  queryClient.setQueriesData<TopUnlabeledClustersResponse | undefined>(
+  queryClient.setQueriesData<TopUnlabeledPhotoPage | undefined>(
     { queryKey: [...queryKeys.clusters.all, 'top-unlabeled'] },
     (current) => {
       if (!current) {
@@ -567,7 +567,7 @@ export const dropClusterFromReviewCaches = (
       return {
         ...current,
         clusters: filtered,
-        total: Math.max(0, current.total - removed),
+        total: current.total === null ? null : Math.max(0, current.total - removed),
       };
     },
   );

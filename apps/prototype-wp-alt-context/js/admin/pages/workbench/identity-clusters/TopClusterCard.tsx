@@ -220,6 +220,11 @@ export const TopClusterCard = ({
           )}
         </p>
         <p className="acx-top-cluster-card__meta">{groupFaceCountCopy}</p>
+        <p className="acx-top-cluster-card__meta">
+          {typeof cluster.photo_count === 'number' && Number.isInteger(cluster.photo_count) && cluster.photo_count >= 0
+            ? sprintf(_n('%d photo', '%d photos', cluster.photo_count, 'alt-context'), cluster.photo_count)
+            : __('Photo count unavailable', 'alt-context')}
+        </p>
       </div>
 
       <div className="acx-top-cluster-card__actions">

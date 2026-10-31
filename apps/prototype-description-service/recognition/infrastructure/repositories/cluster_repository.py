@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from sqlalchemy import Select, delete, exists, func, null, or_, select, text, update
+from sqlalchemy import Select, case, delete, exists, func, null, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import raiseload, selectinload
 from sqlalchemy.orm.attributes import instance_state, set_committed_value
@@ -48,9 +48,34 @@ _TOP_UNLABELED_FALLBACK_REP_LIMIT = 4
 _SNAPSHOT_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
+def _review_photo_count(tenant_uuid: uuid.UUID):
+    """Full membership photo aggregate; incomplete photo IDs remain unknown."""
+    return (
+        select(
+            case(
+                (
+                    func.count(IdentityMemberModel.identity_id) != func.count(func.nullif(MediaIdentity.media_id, 0)),
+                    None,
+                ),
+                else_=func.count(func.distinct(MediaIdentity.media_id)),
+            )
+        )
+        .select_from(IdentityMemberModel)
+        .outerjoin(
+            MediaIdentity,
+            (MediaIdentity.id == IdentityMemberModel.identity_id) & (MediaIdentity.tenant_id == tenant_uuid),
+        )
+        .where(IdentityMemberModel.cluster_id == ClusterModel.id)
+        .where(IdentityMemberModel.tenant_id == tenant_uuid)
+        .correlate(ClusterModel)
+        .scalar_subquery()
+    )
+
+
 def _top_unlabeled_filters(
     tenant_uuid: uuid.UUID,
     min_identity_count: int,
+    min_photos: int | None = None,
 ) -> tuple[ColumnElement[bool], ...]:
     """Return the shared qualifying filter for top-unlabeled reads and counts."""
     accepted_member_suggestion_exists = (
@@ -66,7 +91,7 @@ def _top_unlabeled_filters(
         .where(IdentitySuggestion.suggested_cluster_id != ClusterModel.id)
     )
 
-    return (
+    filters = (
         ClusterModel.tenant_id == tenant_uuid,
         ClusterModel.user_confirmed.is_(False),
         or_(ClusterModel.label.is_(None), ClusterModel.label.startswith("cluster-")),
@@ -74,6 +99,9 @@ def _top_unlabeled_filters(
         ClusterModel.dismissed_at.is_(None),
         ~exists(accepted_member_suggestion_exists),
     )
+    if min_photos is not None:
+        return (*filters, _review_photo_count(tenant_uuid) >= min_photos)
+    return filters
 
 
 if TYPE_CHECKING:
@@ -377,6 +405,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         tenant_id: str,
         limit: int = 10,
         min_identity_count: int = 2,
+        min_photos: int | None = None,
+        offset: int = 0,
     ) -> list[IdentityCluster]:
         """Fetch top unlabeled clusters globally by size, with representatives for thumbnails.
 
@@ -388,17 +418,22 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         if tenant_uuid is None:
             return []
 
-        stmt: Select[tuple[ClusterModel]] = (
-            select(ClusterModel)
-            .where(*_top_unlabeled_filters(tenant_uuid, min_identity_count))
+        stmt: Select[tuple[ClusterModel, int | None]] = (
+            select(ClusterModel, _review_photo_count(tenant_uuid))
+            .where(*_top_unlabeled_filters(tenant_uuid, min_identity_count, min_photos))
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
             )
-            .order_by(ClusterModel.identity_count.desc(), ClusterModel.created_at.desc())
+            .order_by(ClusterModel.identity_count.desc(), ClusterModel.created_at.desc(), ClusterModel.id.asc())
             .limit(limit)
+            .offset(offset)
         )
         result = await self._session.execute(stmt)
-        results = [self._to_domain(row) for row in result.scalars().all()]
+        results = []
+        for row, photo_count in result.all():
+            cluster = self._to_domain(row)
+            cluster.photo_count = int(photo_count) if photo_count is not None else None
+            results.append(cluster)
         clusters_requiring_top_up = [
             cluster.id
             for cluster in results
@@ -447,14 +482,18 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         )
         return results
 
-    async def count_top_unlabeled(self, tenant_id: str, min_identity_count: int = 2) -> int:
+    async def count_top_unlabeled(
+        self, tenant_id: str, min_identity_count: int = 2, min_photos: int | None = None
+    ) -> int:
         """Count all clusters that qualify for the top-unlabeled listing."""
         tenant_uuid = _coerce_uuid(tenant_id)
         if tenant_uuid is None:
             return 0
 
-        stmt = select(func.count()).select_from(ClusterModel).where(
-            *_top_unlabeled_filters(tenant_uuid, min_identity_count)
+        stmt = (
+            select(func.count())
+            .select_from(ClusterModel)
+            .where(*_top_unlabeled_filters(tenant_uuid, min_identity_count, min_photos))
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)

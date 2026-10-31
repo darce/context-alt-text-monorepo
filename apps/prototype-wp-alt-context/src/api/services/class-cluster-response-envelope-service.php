@@ -147,7 +147,7 @@ class ClusterResponseEnvelopeService {
 	 * Normalize top-unlabeled proxy payloads with the same fail-loud contract
 	 * as members/list (no fabricated total/truncated from bare arrays) [rg-015].
 	 */
-	public function normalize_top_unlabeled_response( WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
+	public function normalize_top_unlabeled_response( WP_REST_Response|WP_Error $response, bool $allow_unknown_total = false ): WP_REST_Response|WP_Error {
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
 			return $response;
 		}
@@ -158,7 +158,7 @@ class ClusterResponseEnvelopeService {
 		}
 
 		if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
+			if ( ! isset( $data['limit'], $data['truncated'] ) || ! array_key_exists( 'total', $data ) || ! is_numeric( $data['limit'] ) || ! ( is_numeric( $data['total'] ) || ( $allow_unknown_total && null === $data['total'] ) ) || ! is_bool( $data['truncated'] ) ) {
 				return new WP_Error(
 					'invalid_top_unlabeled_envelope',
 					'Top-unlabeled clusters response must include limit, total, and truncated when clusters is present.',
@@ -182,7 +182,7 @@ class ClusterResponseEnvelopeService {
 				$kept[] = $this->cluster_mapper->ensure_emitted_label_state( $cluster );
 			}
 
-			$total = max( 0, (int) $data['total'] );
+			$total = null === $data['total'] ? null : max( 0, (int) $data['total'] );
 
 			return new WP_REST_Response(
 				array(

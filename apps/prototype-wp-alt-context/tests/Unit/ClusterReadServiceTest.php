@@ -1706,6 +1706,62 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame(2, $host->calls);
     }
 
+    public function testFg6ReviewLocalUsesFullPopulationProducerAndRetainsEmptyOffsetTotal(): void
+    {
+        $repo = new class() extends NullClustersRepository {
+            public array $calls = [];
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                $this->calls[] = [$tenant_id, $limit, $offset, $filters];
+                return $offset > 0 ? [] : [['cluster_uuid' => 'c', 'total_count' => 3]];
+            }
+        };
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $request->set_param('min_photos', 2);
+        $request->set_param('offset', 100);
+        $response = $this->makeService($this->localHost(), true, $repo)->list_top_unlabeled_clusters($request);
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(['tenant-1', 10, 100, ['review_only' => true, 'min_photos' => 2]], $repo->calls[0]);
+        $this->assertSame(['tenant-1', 1, 0, ['review_only' => true, 'min_photos' => 2]], $repo->calls[1]);
+        $this->assertSame(3, $response->get_data()['total']);
+        $this->assertFalse($response->get_data()['truncated']);
+        foreach ([0, null, '1.5', true] as $minimum) {
+            $request->set_param('min_photos', $minimum);
+            $result = $this->makeService($this->localHost(), true, $repo)->list_top_unlabeled_clusters($request);
+            $this->assertInstanceOf(WP_Error::class, $result);
+            $this->assertSame('invalid_min_photos', $result->get_error_code());
+        }
+    }
+
+    public function testFg6ReviewProxyForwardsSameFilterAndPreservesUnknownTotalAndFailure(): void
+    {
+        $host = new class() implements ClustersHostInterface {
+            public array $queries = [];
+            public bool $fail = false;
+            public function get_tenant_id(): string { return 'tenant-1'; }
+            public function host_should_use_local_projection_gate(SyncStateRepositoryInterface $r, string $t): bool { return false; }
+            public function host_is_projection_stale(?string $t): bool { return false; }
+            public function proxy_recognition_request(string $method, string $path, array $body = [], array $query = [], string $request_class = 'auto', string $body_kind = 'json', ?int $max_body_bytes = null): WP_REST_Response|WP_Error
+            {
+                $this->queries[] = [$path, $query];
+                return $this->fail ? new WP_Error('unavailable', 'Read failed', ['status' => 503]) : new WP_REST_Response([
+                    'clusters' => [], 'limit' => 10, 'total' => null, 'truncated' => true,
+                ]);
+            }
+        };
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $request->set_param('min_photos', 2);
+        $request->set_param('offset', 20);
+        $service = $this->makeService($host, false);
+        $result = $service->list_top_unlabeled_clusters($request);
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertNull($result->get_data()['total']);
+        $this->assertTrue($result->get_data()['truncated']);
+        $this->assertSame(['/recognition/clusters/top-unlabeled', ['tenant_id'=>'tenant-1','limit'=>10,'min_photos'=>2,'offset'=>20]], $host->queries[0]);
+        $host->fail = true;
+        $this->assertInstanceOf(WP_Error::class, $service->list_top_unlabeled_clusters($request));
+    }
+
     private function localHost(): ClustersHostInterface
     {
         return new class() implements ClustersHostInterface {

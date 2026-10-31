@@ -94,6 +94,8 @@ import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 import { useAriaAnnounce } from './useAriaAnnounce';
 import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
+import { useReviewPhotoFilter, useReviewNameDraft } from './ReviewPhotoFilterContext';
+import { MinimumPhotosControl } from './hooks/MinimumPhotosControl';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 /** aria-live position line — carries the loaded-page / filtered scope (A11Y-21). */
@@ -365,9 +367,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
   ): React.JSX.Element | null {
     const findings = useWorkbenchFindings();
     const data = useSuggestionReviewData();
-    const { topUnlabeledClusters } = useSuggestionReviewQueries();
+    const { topUnlabeledClusters, topUnlabeledQuery } = useSuggestionReviewQueries();
+    const photoFilter = useReviewPhotoFilter();
+    const photoScopeActive = photoFilter.minimumPhotos !== undefined || photoFilter.offset > 0;
+    const photoLoading = topUnlabeledQuery.data === undefined && topUnlabeledQuery.isPending && !data.isTopUnlabeledError;
+    const photoEmpty = photoFilter.minimumPhotos !== undefined && topUnlabeledQuery.isSuccess &&
+      topUnlabeledClusters.length === 0 && photoFilter.offset === 0 &&
+      !topUnlabeledQuery.data?.truncated && !topUnlabeledQuery.data?.repair_pending &&
+      topUnlabeledQuery.data?.data_source !== DATA_SOURCE.UNAVAILABLE;
+    const photoPageEmpty = photoScopeActive && topUnlabeledQuery.isSuccess && topUnlabeledClusters.length === 0 &&
+      topUnlabeledQuery.data?.data_source !== DATA_SOURCE.UNAVAILABLE && !topUnlabeledQuery.data?.repair_pending;
     const { resolveSurvivor } = useMergeSurvivors();
     const cardRegionRef = React.useRef<HTMLDivElement>(null);
+    const photoControlsRef = React.useRef<HTMLDivElement>(null);
     const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
     const [lightboxNaming, setLightboxNaming] = React.useState(false);
     const [closeMatchOffer, setCloseMatchOffer] = React.useState<{
@@ -809,6 +821,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
 
       if (!currentKey) {
+        // The filter status owns these announcements, avoiding two polite copies.
+        if (photoLoading || photoEmpty || photoPageEmpty) {
+          previousItemKeyRef.current = null;
+          emptyAnnouncedMessageRef.current = null;
+          setLivePositionMessage('');
+          return;
+        }
         const repairCopy = findings.repairPending
           ? gatedClusterCopy(
               repairGatedCount(
@@ -872,6 +891,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       setLivePositionMessage,
       topUnlabeledClusters.length,
       topUnlabeledErrorAnnouncement,
+      photoLoading,
+      photoEmpty,
+      photoPageEmpty,
     ]);
 
     const markAdvanceFocus = React.useCallback((): void => {
@@ -1223,9 +1245,64 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       [onCardPrimaryPresenceChange],
     );
 
+    const changePhotoScope = (change: () => void): void => {
+      navigateAfterFlush(() => {
+        change();
+        onClampIndex(0);
+        queueMicrotask(() => photoControlsRef.current?.querySelector('select')?.focus());
+      });
+    };
+    // Always occupies the same first-child slot, including pending/error renders.
+    // Scope changes leave focus here and leave selections/naming panels intact.
+    const photoControls = (
+      <div ref={photoControlsRef} className="acx-review-queue__photo-filter">
+        <MinimumPhotosControl
+          value={photoFilter.minimumPhotos}
+          onChange={(minimum) => changePhotoScope(() => photoFilter.setMinimumPhotos(minimum))}
+        />
+        <p>{__('Applies to unlabeled groups. Other review suggestions stay available.', 'alt-context')}</p>
+        <div role="status" aria-live="polite">
+          {photoLoading ? <p>{topUnlabeledQuery.isPaused
+            ? __('Waiting for connection to load groups.', 'alt-context')
+            : __('Loading unlabeled groups…', 'alt-context')}</p> : null}
+          {photoScopeActive && topUnlabeledQuery.data?.data_source === DATA_SOURCE.UNAVAILABLE ? (
+            <p>{__('Unlabeled groups are unavailable. Try again when the connection is ready.', 'alt-context')}</p>
+          ) : null}
+          {photoScopeActive && data.isTopUnlabeledError && topUnlabeledQuery.data ? (
+            <p>{__('Showing previously loaded groups. Refresh failed.', 'alt-context')}</p>
+          ) : null}
+          {photoEmpty ? <p>{__('No unlabeled groups match this minimum.', 'alt-context')}</p> : null}
+          {photoPageEmpty && !photoEmpty ? <p>{__('No unlabeled groups on this page.', 'alt-context')}</p> : null}
+          {photoScopeActive && topUnlabeledQuery.isSuccess && topUnlabeledQuery.data?.total === null ? (
+            <p>{__('Total groups unavailable.', 'alt-context')}</p>
+          ) : null}
+        </div>
+        {photoFilter.minimumPhotos !== undefined ? (
+          <button type="button" className="button" onClick={() => changePhotoScope(() => photoFilter.setMinimumPhotos(undefined))}>
+            {__('Clear minimum photos', 'alt-context')}
+          </button>
+        ) : null}
+        <div>
+          {photoFilter.offset > 0 ? (
+            <button type="button" className="button" disabled={topUnlabeledQuery.isFetching}
+              onClick={() => changePhotoScope(() => photoFilter.setOffset(Math.max(0, photoFilter.offset - (topUnlabeledQuery.data?.limit ?? 20))))}>
+              {__('Previous groups page', 'alt-context')}
+            </button>
+          ) : null}
+          {topUnlabeledQuery.data?.truncated ? (
+            <button type="button" className="button" disabled={topUnlabeledQuery.isFetching || topUnlabeledQuery.isError}
+              onClick={() => changePhotoScope(() => photoFilter.setOffset(photoFilter.offset + topUnlabeledQuery.data.limit))}>
+              {__('Next groups page', 'alt-context')}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+
     if (isErrorBranch) {
       return (
         <div className="acx-review-queue acx-review-queue--error">
+          {photoControls}
           {liveRegion}
           <QueryRetryButton
             describedBy="acx-review-queue-error"
@@ -1241,12 +1318,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     }
 
     if (isInitialFailureBranch) {
-      return <div className="acx-review-queue">{liveRegion}</div>;
+      return <div className="acx-review-queue">{photoControls}{liveRegion}</div>;
     }
 
     if (isLoadingBranch) {
       return (
         <div className="acx-review-queue acx-review-queue--loading">
+          {photoControls}
           {liveRegion}
           <p>{__('Loading review queue…', 'alt-context')}</p>
         </div>
@@ -1270,6 +1348,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
+        {photoControls}
         {liveRegion}
         {livePositionRegion}
         {/*
@@ -1652,7 +1731,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </div>
               ) : data.isTopUnlabeledError ? null : (
                 <>
-                  {!findings.repairPending ? (
+                  {!findings.repairPending && !photoLoading && !photoPageEmpty && topUnlabeledQuery.data?.data_source !== DATA_SOURCE.UNAVAILABLE ? (
                     <p className="acx-review-queue__empty">
                       {__('All caught up — no items need review', 'alt-context')}
                     </p>
@@ -2143,9 +2222,8 @@ const CurrentCard = ({
   reviewQueueItems,
   onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
-  const [independentNameDraft, setIndependentNameDraft] = React.useState('');
   const draftItemId = itemSuggestionId(item);
-  React.useEffect(() => setIndependentNameDraft(''), [draftItemId]);
+  const [independentNameDraft, setIndependentNameDraft] = useReviewNameDraft(`judgment:${draftItemId ?? ''}`);
   const currentNameJudgment =
     item.kind === NEXT_ACTION_KIND.NAME ? nameJudgments.get(item.suggestionId) : undefined;
   const showSuggestionRef = React.useRef<HTMLButtonElement>(null);

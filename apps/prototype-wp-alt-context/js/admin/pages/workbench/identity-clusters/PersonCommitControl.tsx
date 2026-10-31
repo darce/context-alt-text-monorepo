@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import { listRosterEntries } from '../../../api/rosterApi';
+import { useReviewNameDraft } from './ReviewPhotoFilterContext';
 import { NameFaceControl, type NameFaceResolution } from './NameFaceControl';
 import { buildNamingOptions } from './buildNamingOptions';
 import { mergeRosterCandidateOptions, useClusterRosterCandidates } from './useClusterRosterCandidates';
@@ -67,7 +68,7 @@ export const PersonCommitControl = ({
   accentPrimary = false,
   onCurateGroup,
 }: PersonCommitControlProps): React.JSX.Element => {
-  const [draft, setDraft] = React.useState('');
+  const [draft, setDraft] = useReviewNameDraft(`person:${clusterId}`, suggestedCreateName?.trim() ?? '');
   /** BR-59: reserved create-name rejection (inline, same role=alert pattern as commit failure). */
   const [reservedError, setReservedError] = React.useState<string | null>(null);
   const isBusy = phase === PERSON_COMMIT_PHASE.COMMITTING || disabled;
@@ -124,10 +125,9 @@ export const PersonCommitControl = ({
     return bound?.person_uuid ?? null;
   }, [committedPersonUuid, draft, rosterQuery.data]);
 
-  // Prefill create path from a suggested name once per cluster (FORM-04).
+  // Preserve the existing suggested initial value; never overwrite a human draft.
   React.useEffect(() => {
     setReservedError(null);
-    setDraft(suggestedCreateName?.trim() ?? '');
   }, [clusterId, suggestedCreateName]);
 
   const handleValueChange = (value: string): void => {

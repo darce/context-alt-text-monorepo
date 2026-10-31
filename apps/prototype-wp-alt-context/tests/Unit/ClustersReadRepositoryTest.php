@@ -51,6 +51,30 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertSame(['foreign'], array_column($foreign, 'cluster_uuid'));
     }
 
+    public function testFg6ReviewSqlPreservesPopulationAndFiltersBeforePage(): void
+    {
+        global $wpdb;
+        $wpdb->onGetResults = static function (string $sql): array {
+            $process = proc_open(['python3', __DIR__ . '/../fixtures/clusters-read/fg6-review-query.py'],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            if (!is_resource($process)) throw new \RuntimeException('SQL oracle failed to start');
+            fwrite($pipes[0], json_encode(['sql' => $sql], JSON_THROW_ON_ERROR));
+            fclose($pipes[0]);
+            $result = stream_get_contents($pipes[1]); $error = stream_get_contents($pipes[2]);
+            fclose($pipes[1]); fclose($pipes[2]);
+            if (proc_close($process) !== 0) throw new \RuntimeException($error);
+            return json_decode($result, true, 512, JSON_THROW_ON_ERROR);
+        };
+        $page = $this->repository->list_top_unlabeled('tenant-1', 1, 2, 1);
+        $this->assertSame(['two-b'], array_column($page, 'cluster_uuid'));
+        $this->assertSame(2, $page[0]['photo_count']);
+        $this->assertSame(2, $page[0]['total_count']);
+        $this->assertSame([], $this->repository->list_top_unlabeled('tenant-1', 1, 3));
+        $all = $this->repository->list_top_unlabeled('tenant-1', 20);
+        $this->assertSame(['duplicate', 'two-a', 'two-b', 'unknown'], array_column($all, 'cluster_uuid'));
+        $this->assertArrayNotHasKey('photo_count', $all[3]);
+    }
+
     private ClustersReadRepository $repository;
 
     protected function setUp(): void

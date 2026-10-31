@@ -563,3 +563,20 @@
     overflow-wrap: anywhere;
   }
 }
+
+// FG6: a view filter, aligned with the existing review controls.
+.acx-review-queue__photo-filter {
+  display: grid;
+  gap: var(--acx-space-8);
+  margin-block-end: var(--acx-space-16);
+
+  p {
+    margin-block: var(--acx-space-4);
+  }
+
+  > div:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+  }
+}

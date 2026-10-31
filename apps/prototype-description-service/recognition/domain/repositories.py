@@ -329,6 +329,8 @@ class ClusterRepository(Protocol):
         tenant_id: str,
         limit: int = 10,
         min_identity_count: int = 2,
+        min_photos: int | None = None,
+        offset: int = 0,
     ) -> list[IdentityCluster]:
         """Get unlabeled clusters sorted by identity_count descending.
 
@@ -342,7 +344,9 @@ class ClusterRepository(Protocol):
         """
         ...
 
-    async def count_top_unlabeled(self, tenant_id: str, min_identity_count: int = 2) -> int:
+    async def count_top_unlabeled(
+        self, tenant_id: str, min_identity_count: int = 2, min_photos: int | None = None
+    ) -> int:
         """Count clusters that qualify for the top-unlabeled listing."""
         ...
 

@@ -83,7 +83,7 @@
       "job_entry": true,
       "deep_link": true,
       "url_params": ["panes", "cluster", "endpoint"],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-run-recognition",
       "states": ["default", "loading", "empty", "error", "first_time", "degraded"],
       "zones": [
@@ -108,7 +108,7 @@
         },
         {
           "id": "z-cluster-list",
-          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref.",
+          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref. Minimum photos (optional), default All, applies to unlabeled groups only. Other review suggestions remain available. Groups show distinct photo counts separately from face counts; unavailable counts stay unavailable. Clear minimum photos recovers a successful no-match result; Retry recovers a failed read. Previous/Next groups page follows continuation without guessing a total. Selections and human name drafts survive filter changes.",
           "role": "queue",
           "states": ["default", "loading", "empty", "error", "first_time", "degraded", "edge_input"]
         },
@@ -299,6 +299,36 @@
     }
   ],
   "actions": [
+    {
+      "id": "act-filter-minimum-photos",
+      "verb": "Choose Minimum photos for unlabeled groups",
+      "target": "workbench-control",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "act-clear-minimum-photos",
+      "verb": "Clear minimum photos",
+      "target": "workbench-control",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "act-page-unlabeled-groups",
+      "verb": "Previous / Next groups page",
+      "target": "workbench-control",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
     {
       "id": "act-run-recognition",
       "verb": "Run / refresh recognition + grouping",

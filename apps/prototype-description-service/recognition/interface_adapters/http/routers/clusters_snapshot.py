@@ -122,8 +122,7 @@ def _export_quality_components(raw: dict[str, float] | None) -> ClusterSnapshotQ
     if not isinstance(raw, dict) or not raw:
         return None
     if any(
-        (value is None and key not in _QUALITY_COMPONENT_KEYS)
-        or (value is not None and _optional_float(value) is None)
+        (value is None and key not in _QUALITY_COMPONENT_KEYS) or (value is not None and _optional_float(value) is None)
         for key, value in raw.items()
     ):
         return None
@@ -560,6 +559,8 @@ async def get_top_unlabeled_clusters(
     tenant_id: str = Depends(get_authenticated_tenant_id),
     limit: int = Query(10, ge=1, le=500),
     min_identity_count: int = Query(2, ge=1, description="Minimum identity count (default 2 to skip singletons)"),
+    min_photos: str | None = Query(default=None),
+    offset: int = Query(0, ge=0),
     repo=Depends(get_cluster_repository),
     session=Depends(get_session),
 ) -> TopUnlabeledClustersResponse:
@@ -568,11 +569,15 @@ async def get_top_unlabeled_clusters(
     Includes cluster representatives with face thumbnails for display in the
     suggestion panel.
     """
-    total = await repo.count_top_unlabeled(tenant_id, min_identity_count=min_identity_count)
+    minimum = _parse_min_photos(min_photos)
+    photo_filters = {"min_photos": minimum} if minimum is not None else {}
+    page_filters = {**photo_filters, **({"offset": offset} if offset else {})}
+    total = await repo.count_top_unlabeled(tenant_id, min_identity_count=min_identity_count, **photo_filters)
     clusters = await repo.get_top_unlabeled(
         tenant_id,
         limit=limit,
         min_identity_count=min_identity_count,
+        **page_filters,
     )
     allowed_sources = {"identity", "roster", "similar_cluster", "none"}
 
@@ -619,6 +624,7 @@ async def get_top_unlabeled_clusters(
                 is_labeled=c.is_labeled,
                 is_auto_label=c.is_auto_label,
                 identity_count=c.identity_count,
+                photo_count=c.photo_count,
                 user_confirmed=c.user_confirmed,
                 representatives=[representative_response_from_domain(rep) for rep in (c.representatives or [])],
                 suggested_label=suggested_label,
@@ -632,7 +638,7 @@ async def get_top_unlabeled_clusters(
         clusters=responses,
         limit=limit,
         total=total,
-        truncated=total > len(responses),
+        truncated=total > offset + len(responses),
     )
 
 

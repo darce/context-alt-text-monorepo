@@ -256,7 +256,7 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertStringContainsString("'acx://cluster/cluster-thumb/media/42'", $query);
     }
 
-    public function testLabelOnlyUpsertBindsPersonForHumanLabel(): void
+    public function testLabelOnlyUpsertRetainsHumanLabelWithoutBindingPerson(): void
     {
         global $wpdb;
 
@@ -289,11 +289,12 @@ class ClusterSnapshotMergerTest extends TestCase
                 static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
             )
         );
-        $this->assertNotEmpty($personInserts, 'human label-only upsert must create a person');
-        $this->assertStringContainsString("'Daniel'", $personInserts[0]);
-
-        $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 21');
-        $this->assertStringContainsString('cluster-human', $bindUpdate);
+        // ADR019 rule 1b: the label stays evidence; it never creates or binds a person.
+        $this->assertCount(0, $personInserts, 'human label-only upsert must not create a person');
+        $this->assertCount(0, $this->queriesStartingWith('UPDATE wp_acx_clusters SET person_id'));
+        $this->assertSame([], $wpdb->tableRows['wp_acx_persons']);
+        $this->assertSame('Daniel', $wpdb->tableRows['wp_acx_clusters'][0]['label']);
+        $this->assertNull($wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
     }
 
     public function testDeleteThenSnapshotMergeDoesNotRecreatePerson(): void
@@ -481,11 +482,22 @@ class ClusterSnapshotMergerTest extends TestCase
                 static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
             )
         );
-        $this->assertNotEmpty($personInserts, 'a newer snapshot may re-label only when the incoming label differs');
-        $this->assertStringContainsString("'Ada Lovelace'", $personInserts[0]);
+        $this->assertCount(0, $personInserts, 'the new label must not create a person');
+        $upsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
+        $this->assertStringContainsString("VALUES ('cluster-tory', 'tenant-merge', NULLIF('Ada Lovelace', ''), ''", $upsert);
+        $this->assertSame(
+            'Ada Lovelace',
+            $wpdb->tableRows['wp_acx_clusters'][0]['label'],
+            'a newer snapshot may re-label only when the incoming label differs'
+        );
+        $this->assertTrue(
+            $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === null
+            || (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === 0,
+            'the cleared binding must stay cleared'
+        );
     }
 
-    public function testBackfillResolvesAgainstStoredLabelWhenIncomingDiffers(): void
+    public function testBackfillRetainsStoredLabelWithoutPersonWhenIncomingDiffers(): void
     {
         global $wpdb;
 
@@ -519,9 +531,10 @@ class ClusterSnapshotMergerTest extends TestCase
                 static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
             )
         );
-        $this->assertNotEmpty($personInserts);
-        $this->assertStringContainsString("'Stored Name'", $personInserts[0]);
-        $this->assertStringNotContainsString("'Incoming Name'", $personInserts[0]);
+        $this->assertCount(0, $personInserts, 'neither the stored nor the incoming label may create a person');
+        $this->assertSame([], $wpdb->tableRows['wp_acx_persons']);
+        $this->assertSame('Stored Name', $wpdb->tableRows['wp_acx_clusters'][0]['label']);
+        $this->assertNull($wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
     }
 
     public function testBackfillSkipsReservedStoredLabel(): void

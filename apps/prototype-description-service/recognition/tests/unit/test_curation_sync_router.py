@@ -38,6 +38,13 @@ class _SyncTestClient:
         return asyncio.run(_post())
 
 
+class _RouteSession:
+    """Route transaction stub; the handler commits before responding."""
+
+    async def commit(self) -> None:
+        return None
+
+
 class _FakeAdmission:
     def __init__(self) -> None:
         self.reserves: list[dict[str, object]] = []
@@ -111,7 +118,7 @@ def _build_client(
     app.state.usage_admission_service = admission
 
     async def _session_override() -> AsyncIterator[object]:
-        yield object()
+        yield _RouteSession()
 
     async def _no_session() -> None:
         return None
@@ -181,7 +188,7 @@ def test_curation_sync_router_passes_authenticated_tenant_and_returns_acknowledg
 def test_curation_sync_preflight_uses_authenticated_tenant_with_forged_tenant_inputs(monkeypatch) -> None:
     cluster_tenant_lookups: list[str] = []
 
-    class _Session:
+    class _Session(_RouteSession):
         async def execute(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
             return None
 
@@ -213,7 +220,7 @@ def test_curation_sync_preflight_uses_authenticated_tenant_with_forged_tenant_in
     client.app.dependency_overrides.update(
         {
             auth_deps.require_auth: _authenticated_tenant_override,
-            get_optional_session: _session_override,
+            curation_router.get_session: _session_override,
             get_cluster_service_builder: _cluster_service_builder_override,
         }
     )
@@ -235,6 +242,47 @@ def test_curation_sync_preflight_uses_authenticated_tenant_with_forged_tenant_in
 
 async def _tenant_context_noop(_session, _tenant_id) -> None:  # noqa: ANN001
     return None
+
+
+def test_curation_sync_refuses_memory_queue_when_route_session_is_unusable(monkeypatch) -> None:
+    applied: list[object] = []
+
+    class _UnusableSession(_RouteSession):
+        async def execute(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            raise ConnectionError("database probe failed")
+
+    async def _unusable_session():
+        yield _UnusableSession()
+
+    async def _cluster_service_builder_override():
+        async def _build(tenant_id: str):  # noqa: ARG001
+            return object()
+
+        return _build
+
+    async def _fake_apply(self, tenant_id: str, operation):  # noqa: ANN001, ARG001
+        applied.append(operation)
+        return CurationSyncResult(status="acknowledged", backend_version=23)
+
+    monkeypatch.setattr(curation_router.CurationSyncService, "apply", _fake_apply)
+    client, admission = _build_client(monkeypatch, override_job_service=False)
+    client.app.dependency_overrides.update(
+        {
+            curation_router.get_session: _unusable_session,
+            get_cluster_service_builder: _cluster_service_builder_override,
+        }
+    )
+
+    response = client.post(
+        "/roster/curation/sync",
+        headers=AUTH_HEADERS,
+        json=_payload("cluster_person_bound"),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"error": "curation_queue_unavailable"}}
+    assert applied == []
+    assert admission.reserves == []
 
 
 def test_curation_sync_router_maps_conflict_to_409(monkeypatch) -> None:

@@ -395,8 +395,19 @@ SQL;
 
     public function testVerifierAcceptsIndexAndConstraintLinesAndStamps(): void
     {
+        global $wpdb;
+
         $this->setOption('acx_version', '0.0.1-stale');
         $GLOBALS['__ac_error_log'] = [];
+        // The stamp also requires installed InnoDB transaction participants (ensure_transactional_outbox_tables).
+        // This persons-only map installs no other participant and declares no engine, so model an existing install.
+        $participants = [
+            'wp_acx_sync_outbox', 'wp_acx_sync_conflicts', 'wp_acx_binding_journal', 'wp_acx_persons',
+            'wp_acx_clusters', 'wp_acx_identity_members', 'wp_acx_sync_state',
+        ];
+        foreach ($participants as $table) {
+            $wpdb->tableEngines[$table] = 'InnoDB';
+        }
 
         $mgr = new LifecycleManagerSchemaOverride();
         $mgr->statementsOverride = [

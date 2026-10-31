@@ -357,21 +357,30 @@ class SqlAlchemyClusterRepository(ClusterRepository):
     ):
         """Fetch clusters for a tenant, with representatives eagerly loaded for discovery."""
         tenant_uuid = _coerce_uuid(tenant_id)
-        photo_counts = (
-            select(
-                IdentityMemberModel.cluster_id,
-                func.count(func.distinct(MediaIdentity.media_id)).label("photo_count"),
+        if min_photos is None:
+            photo_counts = (
+                select(
+                    IdentityMemberModel.cluster_id,
+                    func.count(func.distinct(MediaIdentity.media_id)).label("photo_count"),
+                )
+                .join(MediaIdentity, MediaIdentity.id == IdentityMemberModel.identity_id)
+                .where(IdentityMemberModel.tenant_id == tenant_uuid, MediaIdentity.tenant_id == tenant_uuid)
+                .group_by(IdentityMemberModel.cluster_id)
+                .subquery()
             )
-            .join(MediaIdentity, MediaIdentity.id == IdentityMemberModel.identity_id)
-            .where(IdentityMemberModel.tenant_id == tenant_uuid, MediaIdentity.tenant_id == tenant_uuid)
-            .group_by(IdentityMemberModel.cluster_id)
-            .subquery()
-        )
-        photo_count = func.coalesce(photo_counts.c.photo_count, 0)
+            photo_count = func.coalesce(photo_counts.c.photo_count, 0)
+            stmt = select(ClusterModel, photo_count).outerjoin(
+                photo_counts, photo_counts.c.cluster_id == ClusterModel.id
+            )
+        else:
+            if tenant_uuid is None:
+                return []
+            # A minimum needs the complete membership count: an unavailable
+            # photo ID leaves it unknown, and unknown cannot satisfy the minimum.
+            photo_count = _review_photo_count(tenant_uuid)
+            stmt = select(ClusterModel, photo_count)
         stmt = (
-            select(ClusterModel, photo_count)
-            .outerjoin(photo_counts, photo_counts.c.cluster_id == ClusterModel.id)
-            .where(ClusterModel.tenant_id == tenant_uuid)
+            stmt.where(ClusterModel.tenant_id == tenant_uuid)
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
                 selectinload(ClusterModel.centroid_data),
@@ -396,7 +405,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         clusters = []
         for model, count in result.all():
             cluster = self._to_domain(model)
-            cluster.photo_count = int(count)
+            cluster.photo_count = int(count) if count is not None else None
             clusters.append(cluster)
         return clusters
 

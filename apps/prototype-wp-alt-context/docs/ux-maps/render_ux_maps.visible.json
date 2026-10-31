@@ -37,16 +37,16 @@
       "source_sha256": "3e4cb3a201bf6c691e452d6cc67efbb38722fdd0a9eee2e1cf2555dc24167a66"
     },
     "workbench-2pane": {
-      "projection_sha256": "002c3784b52c4153b3b3266ba40060c6022efffee2add24c7fda93ae9384e77a",
-      "source_sha256": "aff114a823384eeb7b830cbf8611e1fcdffc9c757fd3686eeadbbe44adf684e7"
+      "projection_sha256": "8b768d58c5e410a7c5c05e271314f37549df4d65748be0c16e905c267373d85b",
+      "source_sha256": "ccaa3409d56643f8c15ef1e18a9469b6a9d2396dac87ba02443f7bc43676187e"
     },
     "workbench-identity-chips": {
       "projection_sha256": "f1b7719d1c01d1a4674f7f5c234048734f3a930fce90575fc1afd59fa82b364f",
       "source_sha256": "0353f69da55c79ac0fe7ae6e50a57df8ae4c95bf953931bd289c6a099838355d"
     },
     "workbench-operator-loop": {
-      "projection_sha256": "63db5c6b40d472941f6a6e8c0e4540fadad1814b432d91aa8e38d71c15838d0b",
-      "source_sha256": "f3f52f21681c8684241f6d1a7844f5643c650a5b98d55af2051105c32ef0505c"
+      "projection_sha256": "34cbd338ff1acbb43eb5fccd99f56cc17b383c3f56f98594af43cd5a8cb261c5",
+      "source_sha256": "97659e14461e9df96b30ea45f508936f189525d736d2d15f9cc999e23636c802"
     }
   },
   "version": 1

@@ -126,6 +126,34 @@ async def test_search_labeled_and_minimum_intersect(db_session, tenant):
 
 
 @pytest.mark.asyncio
+async def test_minimum_requires_complete_photo_ids_before_paging(db_session, tenant):
+    other = Tenant(site_url="https://other.test")
+    db_session.add(other)
+    await db_session.flush()
+    # media_id 0 is accepted input and has no positive CHECK; it is not a known photo.
+    incomplete = await seed_cluster(db_session, tenant.id, [0, 55], number=1, label="Alice zero", confirmed=True)
+    complete = await seed_cluster(db_session, tenant.id, [55, 56], number=2, label="Alice", confirmed=True)
+    repeated = await seed_cluster(db_session, tenant.id, [57, 57], number=3)
+    foreign = await seed_cluster(db_session, tenant.id, [58], number=4)
+    foreign_identity = await seed_identity(db_session, other.id, 59)
+    db_session.add(
+        IdentityMember(tenant_id=tenant.id, cluster_id=foreign.id, identity_id=foreign_identity.id, similarity=0.8)
+    )
+    await db_session.flush()
+    repo = SqlAlchemyClusterRepository(db_session)
+
+    async def listed(**kwargs):
+        return [(row.id, row.photo_count) for row in await repo.get_by_tenant(str(tenant.id), **kwargs)]
+
+    assert await listed(min_photos=2) == [(str(complete.id), 2)]
+    # Unknown counts cannot match, so no page publishes them as known photos.
+    assert await listed(min_photos=1) == [(str(complete.id), 2), (str(repeated.id), 1)]
+    assert await listed(min_photos=1, limit=1, offset=1) == [(str(repeated.id), 1)]
+    assert await listed(min_photos=1, labeled_only=True, search="alice") == [(str(complete.id), 2)]
+    assert {row_id for row_id, _ in await listed()} == {str(c.id) for c in (incomplete, complete, repeated, foreign)}
+
+
+@pytest.mark.asyncio
 async def test_synthetic_outlier_omitted_only_when_minimum_requested(db_session, tenant):
     real = await seed_cluster(db_session, tenant.id, [10, 11])
     stored_noise = await seed_cluster(db_session, tenant.id, [20], label="noise", algorithm="outlier")

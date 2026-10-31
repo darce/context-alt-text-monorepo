@@ -23,6 +23,40 @@ by other lanes and are not yet covered by this list.
 | Cluster member / Remove from cluster | Face / Remove this face | Review panel member rows + removal dialog |
 | Just label — don't add to roster | (removed) | Naming always creates/binds a roster person; the roster is a consequence, not a decision |
 
+### Minimum photos on the global review surface
+
+The optional native select is mounted in Review Suggestions. All omits the minimum and preserves the existing review population. Choosing a minimum applies to unlabeled groups across their full membership before paging. Separate close-match, merge and name suggestions stay available; the hint states that scope. No page is intersected with a second list.
+
+```
++------------------------------------------------------------+
+| Review Suggestions                                         |
+| Minimum photos (optional) [All v]                          |
+| Photos are distinct; unavailable counts do not match       |
+| Unlabeled groups only; other suggestions stay available    |
+| [Clear minimum photos] (when a minimum is selected)        |
+| [Previous groups page] [Next groups page]                  |
+| Existing kind / similarity chips and position              |
+| Suggestion OR unlabeled group: 2 photos / 8 faces          |
+| Name this person [human draft] [existing Save name]        |
++------------------------------------------------------------+
+```
+
+| State | Presentation and recovery | Focus / retained work |
+|---|---|---|
+| All | Existing review population; unknown photo counts say Photo count unavailable | Existing selection and naming remain |
+| Loading a new minimum/page | Loading unlabeled groups; old-scope rows are not placeholders | Native select keeps focus; prior request is cancelled on scope change |
+| Paused | Waiting for connection to load groups | Select and clear action remain reachable |
+| Successful no-match | No unlabeled groups match this minimum; Clear minimum photos | Clear returns focus to the select and resets the groups page |
+| Empty later page | No unlabeled groups on this page; Previous groups page remains | No claim of a zero backlog |
+| Request failure | Existing classified error with Retry; no no-match/all-caught-up claim | Select remains mounted; Retry keeps the same filter |
+| Cached rows plus failed refresh | Showing previously loaded groups. Refresh failed. | Rows remain visible as stale; next-page action is held |
+| Unknown remote total | Total groups unavailable; continuation alone governs Next groups page | No invented total or person binding |
+| Unavailable source | Unlabeled groups are unavailable | No measured zero or automatic name choice |
+
+The view state resets on tenant change. Filtering does not clear pending suggestion selection, independent name judgment, or human naming drafts; hidden group drafts are restored by group ID. Existing naming/commit gates, person authority, suggestion identity, thresholds, policy, Settings-only GPU controls and three-step/two-pane composition remain. Filter/page navigation uses the existing held-action flush before changing view state. Filter/page changes reset the card index and return focus to the select. The global findings summary keeps its existing unfiltered scope.
+
+Exact composition/query refs: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ReviewQueue.tsx`, `ReviewPhotoFilterContext.tsx`, and `useSuggestionReviewQueries.ts` in that same identity-clusters directory. Photo rendering: `TopClusterCard.tsx`; retained human draft adapter: `PersonCommitControl.tsx`. Opt-in envelope contract: `packages/shared-contracts/schemas/recognition-cluster-list-response.schema.json#/definitions/reviewPhotoFilteredResponse`. These are implemented source contracts, not a claim of installed canary or independent gate acceptance.
+
 ## Goals
 - Four ACX submenus have distinct goals: Overview orients; Review Queue owns recognizing people and reviewing/editing/approving descriptions beside each image; People manages named people; Settings configures the service. Previous description runs are choices within the image Alt text area. The retired Description Runs URL redirects to Workbench.
 - One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary. In the library footer the single primary is Describe — recognition is a global Settings toggle disclosed under the button, never a second competing CTA (INT-05, COG-03).
@@ -38,7 +72,7 @@ by other lanes and are not yet covered by this list.
 
 ## Code references
 - `screen:workbench-2pane-shell` — `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
-- `screen:workbench-control` — `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
+- `screen:workbench-control` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`
 - `screen:workbench-library` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx`
 - `screen:workbench-conflicts` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx`
 - `screen:workbench-dead-letter` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx`
@@ -110,7 +144,7 @@ url_params: `panes`, `cluster`, `endpoint`
 | `z-endpoint` | Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1) | status | default, loading, error, degraded |
 | `z-recognition-controls` | Face-group/recognition controls (run, refresh, threshold) | job | default, loading, error |
 | `z-cluster-umap` | Face-group status (scan/sync health; not a 2D scatter) | status | default, loading, empty, error, first_time, degraded |
-| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref. | queue | default, loading, empty, error, first_time, degraded, edge_input |
+| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref. Minimum photos (optional), default All, applies to unlabeled groups only. Other review suggestions remain available. Groups show distinct photo counts separately from face counts; unavailable counts stay unavailable. Clear minimum photos recovers a successful no-match result; Retry recovers a failed read. Previous/Next groups page follows continuation without guessing a total. Selections and human name drafts survive filter changes. | queue | default, loading, empty, error, first_time, degraded, edge_input |
 | `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, error, edge_input |
 
 ```
@@ -139,9 +173,17 @@ url_params: `panes`, `cluster`, `endpoint`
 |    twin; decision persists on the labeled survivor; COG-0\ |
 |   3 one decision per pair; DATA-14 single authority is th\ |
 |   e survivor resolver). Actions merge_twin / keep_separat\ |
-|   e are implemented in the list item — see code_ref. (que\ |
-|   ue) states=[default,loading,empty,error,first_time,degr\ |
-|   aded,edge_input]                                         |
+|   e are implemented in the list item — see code_ref. Mini\ |
+|   mum photos (optional), default All, applies to unlabele\ |
+|   d groups only. Other review suggestions remain availabl\ |
+|   e. Groups show distinct photo counts separately from fa\ |
+|   ce counts; unavailable counts stay unavailable. Clear m\ |
+|   inimum photos recovers a successful no-match result; Re\ |
+|   try recovers a failed read. Previous/Next groups page f\ |
+|   ollows continuation without guessing a total. Selection\ |
+|   s and human name drafts survive filter changes. (queue)\ |
+|    states=[default,loading,empty,error,first_time,degrade\ |
+|   d,edge_input]                                            |
 |   - Name this person (NameFaceControl; confirm / correct \ |
 |   / merge / split; forced-choice; loading = pending roste\ |
 |   r write; error = roster write failed; edge_input = ambi\ |
@@ -152,9 +194,14 @@ url_params: `panes`, `cluster`, `endpoint`
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p\ |
 |   ipeline (costly,preview)                                 |
+|   [secondary] Clear minimum photos -> workbench-control    |
+|   [secondary] Choose Minimum photos for unlabeled groups \ |
+|   -> workbench-control                                     |
 |   [secondary] Go to Roster -> exit-roster                  |
 |   [secondary] Save name (NameFaceControl) -> identity-sto\ |
 |   re (costly,preview)                                      |
+|   [secondary] Previous / Next groups page -> workbench-co\ |
+|   ntrol                                                    |
 |   [secondary] Select face group (list) -> workbench-libra\ |
 |   ry                                                       |
 |   [secondary] View / change recognition endpoint + recogn\ |
@@ -415,6 +462,9 @@ url_params: `section`
 
 | id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-filter-minimum-photos` | Choose Minimum photos for unlabeled groups | `workbench-control` | secondary | no | no | no | `workbench-control` |
+| `act-clear-minimum-photos` | Clear minimum photos | `workbench-control` | secondary | no | no | no | `workbench-control` |
+| `act-page-unlabeled-groups` | Previous / Next groups page | `workbench-control` | secondary | no | no | no | `workbench-control` |
 | `act-run-recognition` | Run / refresh recognition + grouping | `job-pipeline` | primary | yes | no | yes | `workbench-control` |
 | `act-select-cluster` | Select face group (list) | `workbench-library` | secondary | no | no | no | `workbench-control` |
 | `act-name-cluster` | Save name (NameFaceControl) | `identity-store` | secondary | yes | no | yes | `workbench-control` |
@@ -579,7 +629,7 @@ hand-edit one side.
 
 Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint z-recognition-controls z-cluster-umap z-cluster-list z-name-curate z-lib-filters z-lib-table z-lib-inline-edit z-lib-ai-suggest z-lib-actions z-lib-description-history z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-roster-entry z-settings-form z-settings-recognition z-settings-retention
 
-Action ids: act-run-recognition act-select-cluster act-name-cluster act-curate-cluster merge_twin keep_separate act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
+Action ids: act-filter-minimum-photos act-clear-minimum-photos act-page-unlabeled-groups act-run-recognition act-select-cluster act-name-cluster act-curate-cluster merge_twin keep_separate act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -591,7 +641,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)
 - Face-group/recognition controls (run, refresh, threshold)
 - Face-group status (scan/sync health; not a 2D scatter)
-- Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref.
+- Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref. Minimum photos (optional), default All, applies to unlabeled groups only. Other review suggestions remain available. Groups show distinct photo counts separately from face counts; unavailable counts stay unavailable. Clear minimum photos recovers a successful no-match result; Retry recovers a failed read. Previous/Next groups page follows continuation without guessing a total. Selections and human name drafts survive filter changes.
 - Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open)
 - Library filters (status, has-alt, has-description, face group, search)
 - Media library table (thumb | title | status | alt-text | long description | people)

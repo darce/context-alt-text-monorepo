@@ -11,6 +11,11 @@
   border-radius: var(--acx-radius-md);
   margin-bottom: 8px;
 
+  &--editing {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
   &__preview {
     display: flex;
     align-items: center;
@@ -131,13 +136,54 @@
 
   &__edit {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--acx-space-8);
     width: 100%;
     max-width: 400px;
+    min-width: 0;
+    scroll-margin-block: var(--acx-space-8);
   }
 
   @include name-face.acx-name-face-surface;
+
+  &__input-wrapper {
+    min-width: 0;
+  }
+
+  &__label-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+  }
+
+  &__edit-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+  }
+
+  &__save,
+  &__cancel {
+    min-block-size: var(--acx-space-24);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  &__result-count,
+  &__suggestions-error {
+    margin: 0;
+    font-size: var(--acx-text-sm);
+    line-height: var(--acx-line-height-base);
+    overflow-wrap: anywhere;
+  }
+
+  &__suggestions-error {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+  }
 
   &__save {
     padding: 6px 12px;
@@ -198,8 +244,11 @@
 
   &__error {
     width: 100%;
+    flex-basis: 100%;
     margin-top: 4px;
-    font-size: var(--acx-text-xs);
+    font-size: var(--acx-text-sm);
+    line-height: var(--acx-line-height-base);
+    overflow-wrap: anywhere;
     color: var(--acx-color-danger);
   }
 
@@ -512,5 +561,22 @@
 
   code {
     overflow-wrap: anywhere;
+  }
+}
+
+// FG6: a view filter, aligned with the existing review controls.
+.acx-review-queue__photo-filter {
+  display: grid;
+  gap: var(--acx-space-8);
+  margin-block-end: var(--acx-space-16);
+
+  p {
+    margin-block: var(--acx-space-4);
+  }
+
+  > div:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
   }
 }

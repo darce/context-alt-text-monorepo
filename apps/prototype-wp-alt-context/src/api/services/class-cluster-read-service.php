@@ -71,6 +71,10 @@ class ClusterReadService {
 	}
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$min_photos = $this->resolve_min_photos( $request );
+		if ( $min_photos instanceof WP_Error ) {
+			return $min_photos;
+		}
 		$tenant_id = $this->host->get_tenant_id();
 		$limit  = absint( $request->get_param( 'limit' ) ?? self::LIST_CLUSTERS_DEFAULT_LIMIT );
 		$limit  = max( 1, min( $limit, self::LIST_CLUSTERS_MAX_LIMIT ) );
@@ -78,16 +82,18 @@ class ClusterReadService {
 		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
 		$labeled_only = rest_sanitize_boolean( $request->get_param( 'labeled_only' ) );
 
+		$filters = array( 'search' => $search, 'labeled_only' => $labeled_only );
+		if ( null !== $min_photos ) {
+			$filters['min_photos'] = $min_photos;
+		}
+
 		if ( $this->dependencies->projection_sync_service->should_use_local_projection( $tenant_id ) ) {
 			try {
 				$rows = $this->dependencies->clusters_repository->list_for_tenant(
 					$tenant_id,
 					$limit,
 					$offset,
-					array(
-						'search' => $search,
-						'labeled_only' => $labeled_only,
-					)
+					$filters
 				);
 
 				$preview_limit      = self::PREVIEW_IDENTITIES_PER_CLUSTER;
@@ -95,7 +101,13 @@ class ClusterReadService {
 				$clusters           = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster, $preview_limit );
 				$this->schedule_repair_from_mapper( $tenant_id );
 
-				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
+				// An empty OFFSET page carries no window row. Recover the same
+				// filtered total with a bounded first-row query, never page length.
+				$total_rows = $rows;
+				if ( array() === $rows && $offset > 0 ) {
+					$total_rows = $this->dependencies->clusters_repository->list_for_tenant( $tenant_id, 1, 0, $filters );
+				}
+				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_list_envelope( $total_rows, $clusters, $limit, $offset ), 200 );
 			} catch ( ProjectionQueryException $exception ) {
 				return $this->projection_query_failed_error( 'list_clusters', $exception );
 			}
@@ -112,6 +124,10 @@ class ClusterReadService {
 			'offset'    => $offset,
 		);
 
+		if ( null !== $min_photos ) {
+			$query['min_photos'] = $min_photos;
+		}
+
 		if ( $labeled_only ) {
 			$query['labeled_only'] = 'true';
 		}
@@ -122,28 +138,66 @@ class ClusterReadService {
 
 		$response = $this->host->proxy_recognition_request( 'GET', '/recognition/clusters', array(), $query );
 		$response = $this->dependencies->projection_sync_service->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		if ( null !== $min_photos && $response instanceof WP_REST_Response && $response->get_status() >= 200 && $response->get_status() < 300 && is_array( $response->get_data() ) && ( array_values( $response->get_data() ) === $response->get_data() ) ) {
+			$has_more = false;
+			if ( count( $response->get_data() ) === $limit ) {
+				$probe_query = $query;
+				$probe_query['limit'] = 1;
+				$probe_query['offset'] = $offset + $limit;
+				$probe = $this->host->proxy_recognition_request( 'GET', '/recognition/clusters', array(), $probe_query );
+				if ( $probe instanceof WP_Error ) {
+					return $probe;
+				}
+				if ( $probe->get_status() < 200 || $probe->get_status() >= 300 || ! is_array( $probe->get_data() ) || array_values( $probe->get_data() ) !== $probe->get_data() || count( $probe->get_data() ) > 1 ) {
+					return new WP_Error( 'invalid_cluster_list_probe', 'Unable to establish cluster pagination.', array( 'status' => 502 ) );
+				}
+				$has_more = array() !== $probe->get_data();
+			}
+			return $this->dependencies->response_envelope_service->build_filtered_cluster_page_response( $response, $limit, $offset, $has_more );
+		}
 		return $this->dependencies->response_envelope_service->normalize_cluster_list_response( $response, $limit );
 	}
 
+	/** Reject before coercion: WordPress integer sanitization accepts fractions. */
+	private function resolve_min_photos( WP_REST_Request $request ): int|WP_Error|null {
+		if ( ! array_key_exists( 'min_photos', $request->get_params() ) ) {
+			return null;
+		}
+		$raw = $request->get_param( 'min_photos' );
+		if ( ( ! is_int( $raw ) && ! is_string( $raw ) ) || 1 !== preg_match( '/^[+-]?[0-9]+$/D', (string) $raw ) || (int) $raw < 1 || (int) $raw > 2147483647 ) {
+			return new WP_Error( 'invalid_min_photos', 'min_photos must be an integer between 1 and 2147483647.', array( 'status' => 400 ) );
+		}
+		return (int) $raw;
+	}
+
 	public function list_top_unlabeled_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$min_photos = $this->resolve_min_photos( $request );
+		if ( $min_photos instanceof WP_Error ) {
+			return $min_photos;
+		}
+		$offset = absint( $request->get_param( 'offset' ) ?? 0 );
 		$tenant_id = $this->host->get_tenant_id();
 		$limit     = absint( $request->get_param( 'limit' ) ?? self::LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT );
 		$limit     = max( 1, min( $limit, self::LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT ) );
 
 		if ( ! $this->dependencies->projection_sync_service->should_use_local_projection( $tenant_id ) ) {
+			$query = array( 'tenant_id' => $tenant_id, 'limit' => $limit );
+			if ( null !== $min_photos ) {
+				$query['min_photos'] = $min_photos;
+			}
+			if ( $offset > 0 ) {
+				$query['offset'] = $offset;
+			}
 			$response = $this->host->proxy_recognition_request(
 				'GET',
 				'/recognition/clusters/top-unlabeled',
 				array(),
-				array(
-					'tenant_id' => $tenant_id,
-					'limit'     => $limit,
-				)
+				$query
 			);
 			$response = $this->dependencies->projection_sync_service->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
 
 			if ( $response instanceof WP_REST_Response && $response->get_status() >= 200 && $response->get_status() < 300 ) {
-				$normalized = $this->dependencies->response_envelope_service->normalize_top_unlabeled_response( $response );
+				$normalized = $this->dependencies->response_envelope_service->normalize_top_unlabeled_response( $response, null !== $min_photos );
 				if ( $normalized instanceof WP_Error ) {
 					return $normalized;
 				}
@@ -159,6 +213,11 @@ class ClusterReadService {
 					}
 					return new WP_REST_Response( $data, 200 );
 				}
+			}
+
+			// Opt-in filtered/page reads cannot turn an upstream failure into empty success.
+			if ( null !== $min_photos || $offset > 0 ) {
+				return $response;
 			}
 
 			$args = array( $tenant_id );
@@ -183,7 +242,20 @@ class ClusterReadService {
 		try {
 			// Query errors throw before empty-member repair — repair only heals
 			// true projection gaps, not MySQL 1054 / read failures (RLSE-05).
-			$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
+			if ( null === $min_photos && 0 === $offset ) {
+				$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
+			} else {
+				// The repository applies the existing review population and full-set
+				// photo predicate before LIMIT/OFFSET; never intersect loaded pages.
+				$rows = $this->dependencies->clusters_repository->list_for_tenant(
+					$tenant_id, $limit, $offset, array( 'review_only' => true, 'min_photos' => $min_photos )
+				);
+				$sovereign_data = array(
+					'clusters' => $rows,
+					'members' => $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_FETCH_LIMIT ),
+					'singleton_count' => $this->dependencies->clusters_repository->count_top_unlabeled_singletons( $tenant_id ),
+				);
+			}
 
 			$has_clusters     = $this->dependencies->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
 			$preview_limit    = self::PREVIEW_IDENTITIES_PER_CLUSTER;
@@ -193,6 +265,18 @@ class ClusterReadService {
 				$tenant_id,
 				$preview_limit
 			);
+			$photo_counts = array();
+			foreach ( $sovereign_data['clusters'] as $row ) {
+				if ( array_key_exists( 'photo_count', $row ) ) {
+					$photo_counts[ $row['cluster_uuid'] ] = $this->dependencies->cluster_mapper->normalize_photo_count( $row['photo_count'] );
+				}
+			}
+			foreach ( $unlabeled_items as &$item ) {
+				if ( array_key_exists( $item['id'], $photo_counts ) ) {
+					$item['photo_count'] = $photo_counts[ $item['id'] ];
+				}
+			}
+			unset( $item );
 			$unlabeled_items = $this->resolve_suggested_target_labels( $unlabeled_items, $tenant_id );
 			$mapper_ids = $this->normalize_repair_cluster_ids(
 				$this->dependencies->cluster_mapper->requested_repair_cluster_ids()
@@ -211,6 +295,13 @@ class ClusterReadService {
 			} else {
 				// Missing COUNT(*) OVER() window: do not shrink on mapper drops.
 				$total = $fetched_page;
+				if ( $offset > 0 ) {
+					$first = $this->dependencies->clusters_repository->list_for_tenant(
+						$tenant_id, 1, 0, array( 'review_only' => true, 'min_photos' => $min_photos )
+					);
+					$total_count = isset( $first[0]['total_count'] ) ? (int) $first[0]['total_count'] : 0;
+					$total = max( 0, $total_count );
+				}
 			}
 			$repair_pending = array() !== $scheduled_ids || $dropped > 0;
 
@@ -219,7 +310,7 @@ class ClusterReadService {
 					'clusters' => $unlabeled_items,
 					'limit' => $limit,
 					'total' => $total,
-					'truncated' => null !== $total_count && $total_count > $fetched_page,
+					'truncated' => null !== $total_count && $total_count > $offset + $fetched_page,
 					'repair_pending' => $repair_pending,
 					'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
 					'has_clusters' => $has_clusters,

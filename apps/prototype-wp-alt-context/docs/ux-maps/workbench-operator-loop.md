@@ -109,7 +109,7 @@ Action states: policy_off, policy_on, policy_unknown, policy_saving, policy_read
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) | queue | default, loading, empty, error, first_time, edge_input |
+| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) Minimum photos (optional), default All, applies to unlabeled groups only. Other review suggestions remain available. Groups show distinct photo counts separately from face counts; unavailable counts stay unavailable. Clear minimum photos recovers a successful no-match result; Retry recovers a failed read. Previous/Next groups page follows continuation without guessing a total. Selections and human name drafts survive filter changes. | queue | default, loading, empty, error, first_time, edge_input |
 | `z-review-panel` | Face-group review panel (panel=review&cluster=) | ai_review | default, loading, empty, error, first_time, edge_input |
 | `z-filters` | Status / search filters | form | default, loading, error |
 | `z-media-queue` | Media selection table | queue | default, loading, empty, error, first_time, edge_input |
@@ -130,8 +130,16 @@ Action states: policy_off, policy_on, policy_unknown, policy_saving, policy_read
 |   - Review queue header / count with kind+band filter chi\ |
 |   ps, card-at-a-time (rq= URL is the single owner of chip\ |
 |    state; empty covers both a filter-empty queue and a fu\ |
-|   lly drained one) (queue) states=[default,loading,empty,\ |
-|   error,first_time,edge_input]                             |
+|   lly drained one) Minimum photos (optional), default All\ |
+|   , applies to unlabeled groups only. Other review sugges\ |
+|   tions remain available. Groups show distinct photo coun\ |
+|   ts separately from face counts; unavailable counts stay\ |
+|    unavailable. Clear minimum photos recovers a successfu\ |
+|   l no-match result; Retry recovers a failed read. Previo\ |
+|   us/Next groups page follows continuation without guessi\ |
+|   ng a total. Selections and human name drafts survive fi\ |
+|   lter changes. (queue) states=[default,loading,empty,err\ |
+|   or,first_time,edge_input]                                |
 |   - Face-group review panel (panel=review&cluster=) (ai_r\ |
 |   eview) states=[default,loading,empty,error,first_time,e\ |
 |   dge_input]                                               |
@@ -168,34 +176,61 @@ Action states: policy_off, policy_on, policy_unknown, policy_saving, policy_read
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 | when policy_off                                            |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 |   [secondary] Enable facial recognition                    |
 | when policy_on                                             |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 |   [secondary] Disable facial recognition                   |
 | when policy_unknown                                        |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 |   [secondary] Retry status (read only)                     |
 | when policy_saving                                         |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 | when policy_readback                                       |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 | when policy_readback_error                                 |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 |   [secondary] Retry status (read only)                     |
 | when policy_permission_denied                              |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 | when policy_read_only                                      |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 | when policy_rejected                                       |
+|   [secondary] Choose Minimum photos for unlabeled groups   |
+|   [secondary] Clear minimum photos                         |
+|   [secondary] Previous / Next groups page                  |
 |   [PRIMARY] Scan selected media                            |
 |   [secondary] Go to Roster                                 |
 |   [secondary] Retry status (read only)                     |
@@ -479,10 +514,47 @@ Component pointers:
 - `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/WorkbenchFindingsPanel.tsx`
 - `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx`
 
+### Minimum photos on the global review surface
+
+The optional native select is mounted in Review Suggestions. All omits the minimum and preserves the existing review population. Choosing a minimum applies to unlabeled groups across their full membership before paging. Separate close-match, merge and name suggestions stay available; the hint states that scope. No page is intersected with a second list.
+
+```
++------------------------------------------------------------+
+| Review Suggestions                                         |
+| Minimum photos (optional) [All v]                          |
+| Photos are distinct; unavailable counts do not match       |
+| Unlabeled groups only; other suggestions stay available    |
+| [Clear minimum photos] (when a minimum is selected)        |
+| [Previous groups page] [Next groups page]                  |
+| Existing kind / similarity chips and position              |
+| Suggestion OR unlabeled group: 2 photos / 8 faces          |
+| Name this person [human draft] [existing Save name]        |
++------------------------------------------------------------+
+```
+
+| State | Presentation and recovery | Focus / retained work |
+|---|---|---|
+| All | Existing review population; unknown photo counts say Photo count unavailable | Existing selection and naming remain |
+| Loading a new minimum/page | Loading unlabeled groups; old-scope rows are not placeholders | Native select keeps focus; prior request is cancelled on scope change |
+| Paused | Waiting for connection to load groups | Select and clear action remain reachable |
+| Successful no-match | No unlabeled groups match this minimum; Clear minimum photos | Clear returns focus to the select and resets the groups page |
+| Empty later page | No unlabeled groups on this page; Previous groups page remains | No claim of a zero backlog |
+| Request failure | Existing classified error with Retry; no no-match/all-caught-up claim | Select remains mounted; Retry keeps the same filter |
+| Cached rows plus failed refresh | Showing previously loaded groups. Refresh failed. | Rows remain visible as stale; next-page action is held |
+| Unknown remote total | Total groups unavailable; continuation alone governs Next groups page | No invented total or person binding |
+| Unavailable source | Unlabeled groups are unavailable | No measured zero or automatic name choice |
+
+The view state resets on tenant change. Filtering does not clear pending suggestion selection, independent name judgment, or human naming drafts; hidden group drafts are restored by group ID. Existing naming/commit gates, person authority, suggestion identity, thresholds, policy, Settings-only GPU controls and three-step/two-pane composition remain. Filter/page navigation uses the existing held-action flush before changing view state. Filter/page changes reset the card index and return focus to the select. The global findings summary keeps its existing unfiltered scope.
+
+Exact composition/query refs: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ReviewQueue.tsx`, `ReviewPhotoFilterContext.tsx`, and `useSuggestionReviewQueries.ts` in that same identity-clusters directory. Photo rendering: `TopClusterCard.tsx`; retained human draft adapter: `PersonCommitControl.tsx`. Opt-in envelope contract: `packages/shared-contracts/schemas/recognition-cluster-list-response.schema.json#/definitions/reviewPhotoFilteredResponse`. These are implemented source contracts, not a claim of installed canary or independent gate acceptance.
+
 ## Actions
 
 | id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-filter-minimum-photos` | Choose Minimum photos for unlabeled groups | `workbench-scan` | secondary | no | no | no | `workbench-scan` | always |
+| `act-clear-minimum-photos` | Clear minimum photos | `workbench-scan` | secondary | no | no | no | `workbench-scan` | always |
+| `act-page-unlabeled-groups` | Previous / Next groups page | `workbench-scan` | secondary | no | no | no | `workbench-scan` | always |
 | `act-open-scan` | Open Scan | `workbench-scan` | primary | no | no | no | `workbench-shell` | always |
 | `act-scan-selected` | Scan selected media | `job-pipeline` | primary | yes | no | yes | `workbench-scan` | always |
 | `act-open-conflicts` | Open Conflict Inbox | `workbench-conflicts` | secondary | no | no | no | `workbench-shell` | always |
@@ -776,7 +848,7 @@ hand-edit one side.
 
 Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-recognition-policy z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-attention-choice z-dl-list z-dl-actions z-dl-status-timeline z-dl-history z-review-header z-review-faces z-roster-main z-settings-form
 
-Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read act-choose-attention-status act-view-audit-history act-filter-history-status act-view-current-attention
+Action ids: act-filter-minimum-photos act-clear-minimum-photos act-page-unlabeled-groups act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection act-enable-recognition act-disable-recognition act-retry-policy-read act-choose-attention-status act-view-audit-history act-filter-history-status act-view-current-attention
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -785,7 +857,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Overlay host (conflicts | dead-letter)
 - Active tab content (Scan)
 - Advanced drawer
-- Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one)
+- Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) Minimum photos (optional), default All, applies to unlabeled groups only. Other review suggestions remain available. Groups show distinct photo counts separately from face counts; unavailable counts stay unavailable. Clear minimum photos recovers a successful no-match result; Retry recovers a failed read. Previous/Next groups page follows continuation without guessing a total. Selections and human name drafts survive filter changes.
 - Face-group review panel (panel=review&cluster=)
 - Status / search filters
 - Media selection table

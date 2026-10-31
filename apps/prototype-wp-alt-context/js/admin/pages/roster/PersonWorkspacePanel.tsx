@@ -297,9 +297,10 @@ const renderEvidenceMedia = ({
 interface PersonWorkspacePanelProps {
   entry: RosterEntry;
   onOpenQueue: (personUuid: string, queueId: string) => void;
+  preserveRequestedRoute?: boolean;
 }
 
-export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePanelProps): React.JSX.Element => {
+export const PersonWorkspacePanel = ({ entry, onOpenQueue, preserveRequestedRoute = false }: PersonWorkspacePanelProps): React.JSX.Element => {
   const [searchParams] = useSearchParams();
   const photosRef = React.useRef<HTMLElement | null>(null);
   const photosSectionRequested = searchParams.get('section') === 'photos';
@@ -315,8 +316,13 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
   const entryIdentity = `${entry.id}:${typeof entry.person_uuid === 'string' ? entry.person_uuid : ''}`;
   // [NAV-11] The existing face route preserves this query parameter on selection.
   React.useEffect(() => {
+    // Recovery can mount this panel while the operator is still using the
+    // refresh control or editing a directory draft. Announce the result there.
+    const active = document.activeElement;
+    if (preserveRequestedRoute && active instanceof HTMLElement && active !== document.body &&
+      !active.matches('.acx-roster__photos-link')) return;
     if (photosSectionRequested) focusPhotos();
-  }, [entryIdentity, focusPhotos, photosSectionRequested]);
+  }, [entryIdentity, focusPhotos, photosSectionRequested, preserveRequestedRoute]);
   const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
   const [photoOffset, setPhotoOffset] = React.useState(0);
   const [alsoWithPeople, setAlsoWithPeople] = React.useState<AlsoWithPerson[]>([]);
@@ -400,11 +406,11 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
   }, [entryIdentity]);
 
   React.useEffect(() => {
-    if (requestedFaceId === selectedId) {
+    if (preserveRequestedRoute || requestedFaceId === selectedId) {
       return;
     }
     writeFace(selectedId, personUuid);
-  }, [personUuid, requestedFaceId, selectedId, writeFace]);
+  }, [personUuid, preserveRequestedRoute, requestedFaceId, selectedId, writeFace]);
 
   React.useEffect(() => {
     if (!pinError) {

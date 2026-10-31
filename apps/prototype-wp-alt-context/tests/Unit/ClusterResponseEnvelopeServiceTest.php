@@ -16,6 +16,37 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
 {
     private ClusterResponseEnvelopeService $service;
 
+    public function testFg6LocalPaginationUsesOffsetAndRetainsWindowTotal(): void
+    {
+        $service = new ClusterResponseEnvelopeService();
+        $last = $service->build_cluster_list_envelope([['total_count' => 3]], [['id' => 'c']], 1, 2);
+        $this->assertSame(3, $last['total']);
+        $this->assertFalse($last['truncated']);
+    }
+
+    public function testFg6RemotePageReportsOnlyEstablishedTotalsAndUnknownPhotos(): void
+    {
+        $service = new ClusterResponseEnvelopeService();
+        $row = ['id' => 'c', 'identity_count' => 99, 'face_count' => 99, 'person_uuid' => 'remote-cannot-bind'];
+        foreach ([[2, 0, false, 1], [2, 2, false, 3], [1, 2, false, 3], [1, 2, true, null]] as [$limit, $offset, $more, $total]) {
+            $result = $service->build_filtered_cluster_page_response(new WP_REST_Response([$row]), $limit, $offset, $more);
+            $this->assertInstanceOf(WP_REST_Response::class, $result);
+            $data = $result->get_data();
+            $this->assertSame($total, $data['total']);
+            $this->assertSame($more, $data['truncated']);
+            $this->assertNull($data['clusters'][0]['photo_count']);
+            $this->assertNull($data['clusters'][0]['person_uuid']);
+        }
+        foreach ([0 => 0, 100 => null] as $offset => $total) {
+            $result = $service->build_filtered_cluster_page_response(new WP_REST_Response([]), 5, $offset, false)->get_data();
+            $this->assertSame($total, $result['total']);
+            $this->assertFalse($result['truncated']);
+        }
+        foreach ([[['id' => 'a'], ['id' => 'b']], [['photo_count' => 2]], ['clusters' => []]] as $invalid) {
+            $this->assertInstanceOf(WP_Error::class, $service->build_filtered_cluster_page_response(new WP_REST_Response($invalid), 1, 0, false));
+        }
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

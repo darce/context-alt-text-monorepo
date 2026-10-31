@@ -29,6 +29,12 @@ import { toWorkbench } from '../../navigation/appLinks';
 import { useWorkbenchFindings } from './identity-clusters/useWorkbenchFindings';
 import { useSuggestionReviewQueries } from './identity-clusters/useSuggestionReviewQueries';
 
+import {
+  ReviewPhotoFilterProvider,
+  UnfilteredReviewSummary,
+  useReviewPhotoFilter,
+} from './identity-clusters/ReviewPhotoFilterContext';
+
 export const WORKBENCH_SCAN_HEADING_ID = 'acx-workbench-scan-heading';
 
 export const focusWorkbenchScanHeading = (): void => {
@@ -330,7 +336,9 @@ const ScanTabContentBody = ({
         hidden={collapseReviews || undefined}
       >
         <ErrorBoundary>
-          <WorkbenchFindingsPanel onTargetFindings={handleTargetFindings} />
+          <UnfilteredReviewSummary>
+            <WorkbenchFindingsPanel onTargetFindings={handleTargetFindings} />
+          </UnfilteredReviewSummary>
         </ErrorBoundary>
       </section>
 
@@ -371,10 +379,14 @@ export const ScanTabContent = ({
   externalActivityStatus = false,
 }: ScanTabContentOptions): React.JSX.Element => {
   const tenantId = typeof window === 'undefined' ? '' : (window.AltContextAdmin?.tenant_id ?? '');
-  return compactEmptySections ? (
-    <CompactScanTabContent key={tenantId} externalActivityStatus={externalActivityStatus} />
-  ) : (
-    <ScanTabContentBody key={tenantId} externalActivityStatus={externalActivityStatus} />
+  return (
+    <ReviewPhotoFilterProvider key={tenantId}>
+      {compactEmptySections ? (
+        <CompactScanTabContent externalActivityStatus={externalActivityStatus} />
+      ) : (
+        <ScanTabContentBody externalActivityStatus={externalActivityStatus} />
+      )}
+    </ReviewPhotoFilterProvider>
   );
 };
 
@@ -382,10 +394,13 @@ export const ScanTabContent = ({
 const CompactScanTabContent = ({
   externalActivityStatus,
 }: Pick<ScanTabContentOptions, 'externalActivityStatus'>): React.JSX.Element => {
+  const photoFilter = useReviewPhotoFilter();
   const findings = useWorkbenchFindings();
   const { assignmentQuery, mergeQuery, nameQuery, topUnlabeledQuery } = useSuggestionReviewQueries();
   // Partial failures and unresolved reads never certify an empty review surface.
   const emptyReviews =
+    photoFilter.minimumPhotos === undefined &&
+    photoFilter.offset === 0 &&
     [assignmentQuery, mergeQuery, nameQuery, topUnlabeledQuery].every((query) => query.isSuccess) &&
     findings.queueSettled &&
     !findings.hasFindings &&

@@ -208,7 +208,7 @@ class ClusterResponseMapper {
 
 		$person_uuid = trim( (string) ( $cluster_row['person_uuid'] ?? '' ) );
 
-		return array(
+		$summary = array(
 			'id' => $cluster_id,
 			'label' => $label_flags['label'],
 			'label_state' => $this->resolve_emitted_label_state( $cluster_row ),
@@ -223,6 +223,12 @@ class ClusterResponseMapper {
 			'representative_media_id' => $this->normalize_representative_media_id( $cluster_row['representative_media_id'] ?? null ),
 			'undoable_merge_receipt_id' => $this->normalize_optional_string( $cluster_row['undoable_merge_receipt_id'] ?? null ),
 		);
+		// Older producers with no aggregate keep the field unavailable. Never
+		// infer a photo count from a member preview or identity_count.
+		if ( array_key_exists( 'photo_count', $cluster_row ) ) {
+			$summary['photo_count'] = $this->normalize_photo_count( $cluster_row['photo_count'] );
+		}
+		return $summary;
 	}
 
 	/**
@@ -238,6 +244,14 @@ class ClusterResponseMapper {
 
 		$decoded = json_decode( $value, true );
 		return is_array( $decoded ) ? $decoded : null;
+	}
+
+	/** Only a full producer aggregate establishes a count; previews do not. */
+	public function normalize_photo_count( mixed $value ): ?int {
+		if ( ! is_int( $value ) && ! ( is_string( $value ) && 1 === preg_match( '/^[0-9]+$/D', $value ) ) ) {
+			return null;
+		}
+		return $value >= 0 && $value <= PHP_INT_MAX ? (int) $value : null;
 	}
 
 	private function normalize_representative_quality( mixed $value ): ?float {

@@ -10,7 +10,7 @@
  * { kind: 'create', name } (create is the default outcome — PRINCIPLES §6).
  */
 
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { ComboboxMatchBand, ComboboxOption } from '../../../../components/ui/combobox';
@@ -26,6 +26,55 @@ export type NameFaceResolution =
 const MATCH_BAND_HIGH_THRESHOLD = 0.7;
 
 const LIVE_ANNOUNCE_DEBOUNCE_MS = 400;
+
+/** Read before React replaces the initiating button with the inline editor. */
+const captureNamingOpener = () => {
+  const element = document.activeElement;
+  if (!(element instanceof HTMLElement) || element === document.body) {
+    return null;
+  }
+  const parent = element.parentElement;
+  const tag = element.tagName;
+  const text = element.textContent;
+  const label = element.getAttribute('aria-label');
+  const id = element.id;
+  return () => {
+    if (element.isConnected) {
+      element.focus();
+      return;
+    }
+    // Library recreates its label and action buttons on cancel. Stay inside
+    // their original parent; never find an identically named person elsewhere.
+    if (parent?.isConnected) {
+      const replacement = Array.from(parent.children).find((child) =>
+        child instanceof HTMLElement && child.tagName === tag && child.id === id
+        && child.textContent === text && child.getAttribute('aria-label') === label,
+      );
+      if (replacement instanceof HTMLElement) {
+        replacement.focus();
+      }
+    }
+  };
+};
+
+/** Reveal the editor, including its actions, without moving outer panes. */
+const revealNamingEditor = (editor: HTMLElement) => {
+  for (let pane = editor.parentElement; pane; pane = pane.parentElement) {
+    if (!/(auto|scroll)/.test(window.getComputedStyle(pane).overflowY)
+      || pane.scrollHeight <= pane.clientHeight) {
+      continue;
+    }
+    const bounds = editor.getBoundingClientRect();
+    const top = pane.getBoundingClientRect().top + pane.clientTop;
+    const bottom = top + pane.clientHeight;
+    if (bounds.top < top || bounds.height > pane.clientHeight) {
+      pane.scrollTop += bounds.top - top;
+    } else if (bounds.bottom > bottom) {
+      pane.scrollTop += bounds.bottom - bottom;
+    }
+    break;
+  }
+};
 
 export const normalizeNameFaceLabel = (raw: string): string =>
   raw.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
@@ -198,9 +247,9 @@ interface NameFaceControlProps {
   onCancel?: () => void;
   isPending?: boolean;
   disabled?: boolean;
-  /** Roster/options still loading — announced, input disabled, create path blocked. */
+  /** Roster/options still loading — announced, commit blocked. */
   isLoading?: boolean;
-  /** Override for the input's disabled state (defaults to isPending || isLoading). */
+  /** Override for draft editing (defaults to isPending || isLoading). */
   inputDisabled?: boolean;
   /** Suppress the built-in result-count live region (surface renders its own). */
   hideStatusAnnouncement?: boolean;
@@ -272,7 +321,10 @@ export const NameFaceControl = ({
   suggestionsError = false,
   onRetrySuggestions,
 }: NameFaceControlProps): React.JSX.Element => {
+  const editorRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [restoreOpener] = useState(() => captureNamingOpener());
+  const focusedOnOpen = useRef(false);
   const reactId = useId();
   const listboxId = `acx-name-face-listbox-${reactId}`;
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -280,16 +332,32 @@ export const NameFaceControl = ({
   const [chosenOptionValue, setChosenOptionValue] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
   const isDisabled = isPending || disabled || isLoading;
-  const isInputDisabled = disabled || isLoading || (inputDisabled ?? isPending);
+  // Library explicitly permits drafting during unavailable reads. The override
+  // controls loading as well as pending; commit gates remain independent.
+  const isInputDisabled = disabled || (inputDisabled ?? (isPending || isLoading));
 
-  useEffect(() => {
-    if (autoFocus) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
+  useLayoutEffect(() => {
+    if (autoFocus && !isInputDisabled && !focusedOnOpen.current && inputRef.current) {
+      focusedOnOpen.current = true;
+      inputRef.current.focus({ preventScroll: true });
+      inputRef.current.select();
+      if (editorRef.current) {
+        revealNamingEditor(editorRef.current);
+      }
     }
-    // Autofocus once on mount only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [autoFocus, isInputDisabled]);
+
+  const handleCancel = () => {
+    const editor = editorRef.current;
+    onCancel?.();
+    // The caller owns draft retention and replaces the editor after this event.
+    // Do not return focus on unrelated unmounts or steal a later focus choice.
+    queueMicrotask(() => {
+      if (editor && !editor.isConnected && document.activeElement === document.body) {
+        restoreOpener?.();
+      }
+    });
+  };
 
   const canonicalOptions = React.useMemo(
     () => canonicalNamingOptions(options),
@@ -520,7 +588,11 @@ export const NameFaceControl = ({
         setListOpen(false);
         return;
       }
-      onCancel?.();
+      if (onCancel) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleCancel();
+      }
     }
   };
 
@@ -560,7 +632,7 @@ export const NameFaceControl = ({
     : __('People', 'alt-context');
 
   return (
-    <div className={className ?? classPrefix}>
+    <div ref={editorRef} className={className ?? classPrefix}>
       {visibleLabel && inputId ? (
         <label htmlFor={inputId} className={`${classPrefix}__visible-label`}>
           {visibleLabel}
@@ -714,7 +786,7 @@ export const NameFaceControl = ({
           {commitButtonLabel}
         </button>
         {onCancel ? (
-          <button type="button" className={`${classPrefix}__cancel`} onClick={onCancel}>
+          <button type="button" className={`${classPrefix}__cancel`} onClick={handleCancel}>
             {__('Cancel', 'alt-context')}
           </button>
         ) : null}

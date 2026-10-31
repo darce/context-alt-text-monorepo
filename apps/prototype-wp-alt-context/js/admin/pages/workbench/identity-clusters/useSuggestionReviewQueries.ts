@@ -23,6 +23,8 @@ import {
   type ProjectedSuggestion,
 } from './suggestionProjection';
 
+import { useReviewPhotoFilter } from './ReviewPhotoFilterContext';
+
 export const SUGGESTION_PAGE_SIZE = 25;
 const TOP_UNLABELED_LIMIT = 20;
 
@@ -40,6 +42,11 @@ export interface SuggestionReviewPage {
 
 export const useSuggestionReviewQueries = () => {
   const tenantId = getConfig().tenant_id ?? '';
+  const { minimumPhotos, offset } = useReviewPhotoFilter();
+  const topUnlabeledKey =
+    minimumPhotos === undefined && offset === 0
+      ? queryKeys.clusters.topUnlabeled(tenantId)
+      : [...queryKeys.clusters.topUnlabeled(tenantId), { min_photos: minimumPhotos, offset }];
   const queryClient = useQueryClient();
   // Idempotent: the app QueryClient installed it at creation; any other client installs here.
   const settledTopUnlabeledErrors = installTopUnlabeledErrorLatch(queryClient);
@@ -49,8 +56,7 @@ export const useSuggestionReviewQueries = () => {
     [queryClient],
   );
   const selectMerge = useCallback(
-    (page: Awaited<ReturnType<typeof fetchPendingMergeSuggestions>>) =>
-      applyMergeTombstones(queryClient, page),
+    (page: Awaited<ReturnType<typeof fetchPendingMergeSuggestions>>) => applyMergeTombstones(queryClient, page),
     [queryClient],
   );
   const selectName = useCallback(
@@ -58,8 +64,7 @@ export const useSuggestionReviewQueries = () => {
     [queryClient],
   );
   const selectTopUnlabeled = useCallback(
-    (page: Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>) =>
-      applyTopUnlabeledTombstones(queryClient, page),
+    (page: Awaited<ReturnType<typeof fetchTopUnlabeledClusters>>) => applyTopUnlabeledTombstones(queryClient, page),
     [queryClient],
   );
 
@@ -130,14 +135,25 @@ export const useSuggestionReviewQueries = () => {
   // not re-declare a local retry function; it would skip the cooldown seam.
   // eslint-disable-next-line @tanstack/query/exhaustive-deps -- tombstone prune reads QueryClient, not a fetch key
   const topUnlabeledQuery = useQuery({
-    queryKey: queryKeys.clusters.topUnlabeled(tenantId),
-    queryFn: async () => {
-      const page = await fetchTopUnlabeledClusters(tenantId, TOP_UNLABELED_LIMIT);
-      pruneReviewDropTombstones(
-        queryClient,
-        REVIEW_DROP_SCOPE.TOP_UNLABELED,
-        page.clusters.map((cluster) => cluster.id),
-      );
+    queryKey: topUnlabeledKey,
+    queryFn: async ({ signal }) => {
+      const page =
+        minimumPhotos === undefined && offset === 0
+          ? await fetchTopUnlabeledClusters(tenantId, TOP_UNLABELED_LIMIT, signal)
+          : await fetchTopUnlabeledClusters(tenantId, TOP_UNLABELED_LIMIT, signal, {
+              min_photos: minimumPhotos,
+              offset,
+            });
+      // An absent row in a filtered/page response says nothing about whether
+      // the source has caught up with a human decision. Only the legacy scope
+      // may retire its tombstones; all scopes still apply them in select.
+      if (minimumPhotos === undefined && offset === 0) {
+        pruneReviewDropTombstones(
+          queryClient,
+          REVIEW_DROP_SCOPE.TOP_UNLABELED,
+          page.clusters.map((cluster) => cluster.id),
+        );
+      }
       return page;
     },
     select: selectTopUnlabeled,
@@ -149,9 +165,9 @@ export const useSuggestionReviewQueries = () => {
   // RLSE-04 / REF-19: RQ v5 clears error + status on a no-data refetch.
   // Keep a settled outage through manual and background retries, but leave
   // the first load's automatic retries silent (errorUpdateCount is still 0).
-  const cachedTopUnlabeledQuery = queryClient.getQueryCache().get(
-    queryClient.defaultQueryOptions({ queryKey: queryKeys.clusters.topUnlabeled(tenantId) }).queryHash,
-  );
+  const cachedTopUnlabeledQuery = queryClient
+    .getQueryCache()
+    .get(queryClient.defaultQueryOptions({ queryKey: topUnlabeledKey }).queryHash);
   // UXREC-1-DEMOQ-G1-F1: offline (networkMode 'online') parks the same reset
   // refetch at fetchStatus 'paused', so the hold spans paused as well as
   // fetching — otherwise the queue reads as drained mid-outage.
@@ -167,7 +183,7 @@ export const useSuggestionReviewQueries = () => {
     error:
       topUnlabeledQuery.error ??
       (isTopUnlabeledOutageHeld && cachedTopUnlabeledQuery
-        ? settledTopUnlabeledErrors.get(cachedTopUnlabeledQuery) ?? null
+        ? (settledTopUnlabeledErrors.get(cachedTopUnlabeledQuery) ?? null)
         : null),
   };
 

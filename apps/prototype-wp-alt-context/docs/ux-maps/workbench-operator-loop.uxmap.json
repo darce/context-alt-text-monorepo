@@ -101,7 +101,7 @@
       "zones": [
         {
           "id": "z-review-queue",
-          "label": "Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one)",
+          "label": "Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) Minimum photos (optional), default All, applies to unlabeled groups only. Other review suggestions remain available. Groups show distinct photo counts separately from face counts; unavailable counts stay unavailable. Clear minimum photos recovers a successful no-match result; Retry recovers a failed read. Previous/Next groups page follows continuation without guessing a total. Selections and human name drafts survive filter changes.",
           "role": "queue",
           "evidence_linked": true,
           "states": ["default", "loading", "empty", "error", "first_time", "edge_input"]
@@ -312,6 +312,36 @@
     }
   ],
   "actions": [
+    {
+      "id": "act-filter-minimum-photos",
+      "verb": "Choose Minimum photos for unlabeled groups",
+      "target": "workbench-scan",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan"
+    },
+    {
+      "id": "act-clear-minimum-photos",
+      "verb": "Clear minimum photos",
+      "target": "workbench-scan",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan"
+    },
+    {
+      "id": "act-page-unlabeled-groups",
+      "verb": "Previous / Next groups page",
+      "target": "workbench-scan",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-scan"
+    },
     {
       "id": "act-open-scan",
       "verb": "Open Scan",

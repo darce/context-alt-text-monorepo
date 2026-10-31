@@ -13,6 +13,8 @@
   block-size: var(--acx-media-selection-available-height);
   min-block-size: 0;
   min-inline-size: 0;
+  // [LAY-03, PERC-01] The pane heading already supplies the outer interval.
+  margin-top: 0;
 
   &__toolbar,
   &__actions,
@@ -42,14 +44,17 @@
     min-inline-size: 0;
     overflow: auto;
     scroll-padding: var(--acx-space-8);
-    // Previews fit the actual scrollport (less row padding, scroll padding and the
-    // baseline gap), so the preview link, a row's tallest focus target, can always
-    // be scrolled fully into view.
+    // Previews fit the scrollport height (less row and scroll padding) and its
+    // inline share, leaving room for the real title and draft alongside them.
     container-type: size;
     --acx-media-selection-preview-size: max(
       var(--acx-thumb-size-md),
-      min(var(--acx-media-selection-thumb-size), calc(100cqb - var(--acx-space-48)))
+      min(var(--acx-media-selection-thumb-size), 28cqi, calc(100cqb - var(--acx-space-48)))
     );
+
+    :where(a, button, input, select, textarea, [tabindex]) {
+      scroll-margin: var(--acx-space-8);
+    }
 
     &:focus-visible {
       outline: 2px solid var(--acx-color-accent);
@@ -103,7 +108,7 @@
     flex: 1 1 12rem;
     min-inline-size: 0;
     box-sizing: border-box;
-    padding: var(--acx-space-12);
+    padding: var(--acx-space-8) var(--acx-space-12);
     border: 1px solid var(--acx-color-border);
     width: 100%;
   }
@@ -141,7 +146,7 @@
 
     th:first-child,
     td:first-child {
-      width: 48px;
+      width: var(--acx-space-48);
     }
   }
 
@@ -152,7 +157,7 @@
   &__thumb {
     border: 1px solid var(--acx-color-border);
     object-fit: contain;
-    display: inline-block;
+    display: block;
     width: var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size));
     height: var(--acx-media-selection-preview-size, var(--acx-media-selection-thumb-size));
     background-color: var(--acx-color-panel);
@@ -165,6 +170,89 @@
   &__media-title {
     margin: 0;
     font-weight: var(--acx-font-weight-semibold);
+    overflow-wrap: anywhere;
+    line-height: var(--acx-line-height-base);
+  }
+
+  &__details {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+
+  // [INT-03, PERC-01] Version review and fresh suggestions are separate scopes.
+  &__description-history {
+    margin-block: var(--acx-space-16);
+
+    > label {
+      display: block;
+      margin-block-end: var(--acx-space-4);
+      font-size: var(--acx-text-sm);
+      color: var(--acx-color-text-secondary);
+    }
+
+    > select {
+      inline-size: 100%;
+      max-inline-size: 100%;
+      min-inline-size: 0;
+      box-sizing: border-box;
+    }
+  }
+
+  &__media-alt-suggest,
+  &__media-alt-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--acx-space-8);
+    min-inline-size: 0;
+  }
+
+  &__media-alt-suggest {
+    margin-block: var(--acx-space-12);
+
+    // The producer renders text, editor and buttons as direct siblings.
+    // Full-width text keeps the wrapping action group below its evidence.
+    > :where(p, label, textarea, [role='alert']) {
+      flex-basis: 100%;
+      min-inline-size: 0;
+      margin: 0;
+    }
+
+    > .button {
+      margin: 0;
+      max-inline-size: 100%;
+      white-space: normal;
+    }
+  }
+
+  &__media-alt-draft {
+    line-height: var(--acx-line-height-base);
+  }
+
+  &__media-alt-suggest-accept,
+  &__media-alt-suggest-save {
+    font-weight: var(--acx-font-weight-semibold);
+  }
+
+  &__media-alt-disclosure {
+    color: var(--acx-color-text-secondary);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__media-alt-input,
+  &__media-alt-suggest-edit-input {
+    inline-size: 100%;
+    max-inline-size: 100%;
+    min-block-size: var(--acx-space-80);
+    box-sizing: border-box;
+    padding: var(--acx-space-8);
+    font: inherit;
+    line-height: var(--acx-line-height-base);
+    resize: vertical;
+  }
+
+  &__media-alt-actions {
+    margin-block-start: var(--acx-space-8);
   }
 
   &__media-id {
@@ -180,6 +268,7 @@
 
   &__tags {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--acx-space-8);
     list-style: none;
     padding: 0;
@@ -261,7 +350,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--acx-space-8);
+    gap: var(--acx-space-8) var(--acx-space-12);
   }
 
   &__bulk-describe-disclosure {

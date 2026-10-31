@@ -129,6 +129,10 @@
     border-radius: var(--acx-radius-md);
     background-color: var(--acx-color-surface-alt);
     overflow: auto;
+
+    :where(a, button, input, select, textarea, [tabindex]) {
+      scroll-margin-block: var(--acx-space-8);
+    }
   }
 
   /* Control default share is smaller; library flex-grows as dominant [LAY-01].
@@ -261,6 +265,23 @@
 
   &__headline svg {
     flex-shrink: 0;
+  }
+
+  // [PERC-01] Keep the status icon attached to the wrapped message, not Details.
+  &__headline.acx-media-selection__detail-chip {
+    align-items: flex-start;
+    gap: var(--acx-space-6);
+    padding: 0;
+    background-color: transparent;
+    line-height: var(--acx-line-height-base);
+
+    svg {
+      margin-block-start: var(--acx-space-2);
+    }
+  }
+
+  &__meta-actions {
+    margin-inline-start: auto;
   }
 }
 

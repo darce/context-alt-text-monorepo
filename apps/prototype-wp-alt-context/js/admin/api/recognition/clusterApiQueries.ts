@@ -9,6 +9,8 @@ import { parseDataSource, parseProjectionStatus } from './types/dataSource';
 import type {
   ClusterListResponse,
   ClusterListParams,
+  ClusterPhotoListParams,
+  ClusterPhotoListResponse,
   ClusterSummary,
   TopUnlabeledCluster,
   TopUnlabeledClustersResponse,
@@ -31,7 +33,7 @@ interface TopUnlabeledClustersResponsePayload {
 }
 
 interface ClusterListResponsePayload {
-  clusters?: ClusterSummary[] | null;
+  clusters?: ClusterPhotoListResponse['clusters'] | null;
   limit?: number | null;
   total?: number | null;
   truncated?: boolean | null;
@@ -76,10 +78,32 @@ const normalizeTopUnlabeledCluster = (cluster: TopUnlabeledClusterPayload): TopU
     : [],
 });
 
-export const listRecognitionClusters = async (
-  params: ClusterListParams = {},
+/** Explicit opt-in overload; the legacy overload and ReturnType remain unchanged. */
+export function listRecognitionClusters(
+  params: ClusterPhotoListParams & { min_photos: number },
   signal?: AbortSignal,
-): Promise<ClusterListResponse> => {
+): Promise<ClusterPhotoListResponse>;
+export function listRecognitionClusters(
+  params?: ClusterListParams & { min_photos?: never },
+  signal?: AbortSignal,
+): Promise<ClusterListResponse>;
+export function listRecognitionClusters(
+  params: ClusterPhotoListParams = {},
+  signal?: AbortSignal,
+): Promise<ClusterPhotoListResponse> {
+  return listRecognitionClusterPage(params, signal);
+}
+
+/** Use this contract when a minimum can be selected or cleared at runtime. */
+export const listRecognitionClusterPage = async (
+  params: ClusterPhotoListParams = {},
+  signal?: AbortSignal,
+): Promise<ClusterPhotoListResponse> => {
+  const minimum = params.min_photos;
+  const filtered = minimum !== undefined;
+  if (minimum !== undefined && (!Number.isInteger(minimum) || minimum < 1 || minimum > 2147483647)) {
+    throw new Error('min_photos must be an integer between 1 and 2147483647.');
+  }
   const base = getEndpoint('recognitionClusters');
   const url = new URL(base, window.location.origin);
   if (params.limit) {
@@ -94,6 +118,9 @@ export const listRecognitionClusters = async (
   if (params.search) {
     url.searchParams.set('search', params.search);
   }
+  if (filtered) {
+    url.searchParams.set('min_photos', String(params.min_photos));
+  }
 
   const payload = await fetchRequiredApi<ClusterListResponsePayload>(url.toString(), {
     method: 'GET',
@@ -104,11 +131,17 @@ export const listRecognitionClusters = async (
   if (!Array.isArray(payload.clusters)) {
     throw new Error('Cluster list response must include a clusters array.');
   }
+  for (const cluster of payload.clusters) {
+    const count = cluster.photo_count;
+    if (count !== undefined && count !== null && (!Number.isInteger(count) || count < 0)) {
+      throw new Error('Cluster photo_count must be a nonnegative integer or null.');
+    }
+  }
 
   return {
     clusters: payload.clusters,
     limit: requireClusterListNumber(payload.limit, 'limit'),
-    total: requireClusterListNumber(payload.total, 'total'),
+    total: filtered && payload.total === null ? null : requireClusterListNumber(payload.total, 'total'),
     truncated: requireClusterListBoolean(payload.truncated, 'truncated'),
   };
 };

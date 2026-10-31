@@ -17,6 +17,8 @@ export interface ClusterSummary {
   label: string | null;
   is_auto_label?: boolean;
   identity_count: number;
+  /** Distinct photos across the full group. Absent/null means unavailable, never face count. */
+  photo_count?: number | null;
   member_ids: string[];
   representative_identity: RepresentativeBounds;
   sample_identities: ClusterIdentity[];
@@ -34,6 +36,36 @@ export interface ClusterListResponse {
   clusters: ClusterSummary[];
   limit: number;
   total: number;
+  truncated: boolean;
+}
+
+/** Actual recognition ClusterResponse carried by the opt-in WordPress remote page.
+ * Local member previews and a WordPress person binding cannot be inferred from it.
+ */
+export interface RemoteClusterSummary {
+  id: string;
+  tenant_id: string;
+  label: string | null;
+  is_labeled: boolean;
+  is_auto_label: boolean;
+  identity_count: number;
+  photo_count?: number | null;
+  representatives: {
+    id: string;
+    media_id?: string | null;
+    thumb_url?: string | null;
+    media_url?: string | null;
+    bbox?: BoundingBox | null;
+    is_user_selected?: boolean;
+  }[];
+  person_uuid: null;
+}
+
+export interface ClusterPhotoListResponse {
+  clusters: (ClusterSummary | RemoteClusterSummary)[];
+  limit: number;
+  /** Exact when established by the producer; use truncated for continuation. */
+  total: number | null;
   truncated: boolean;
 }
 
@@ -101,6 +133,11 @@ export interface ClusterListParams {
   offset?: number;
   labeled_only?: boolean;
   search?: string;
+}
+
+/** Optional filter contract, kept separate so unfiltered consumers retain their shape. */
+export interface ClusterPhotoListParams extends ClusterListParams {
+  min_photos?: number;
 }
 
 export interface ClusterSuggestion {

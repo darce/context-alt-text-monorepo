@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/recognition-cluster-list-response.schema.json",
   "title": "Recognition Cluster List Response",
-  "description": "WordPress recognition proxy envelope for cluster list responses.",
+  "description": "Legacy unfiltered WordPress cluster list envelope. For opt-in min_photos requests validate against #/definitions/photoFilteredResponse; total may be unknown and rows may have the remote recognition shape. Missing photo_count is unavailable, never zero or a face count.",
   "type": "object",
   "required": ["clusters", "limit", "total", "truncated"],
   "properties": {
@@ -27,7 +27,7 @@
             "description": "Stable cluster UUID."
           },
           "label": {
-            "type": "string",
+            "type": ["string", "null"],
             "description": "Resolved cluster label presented by the admin UI."
           },
           "label_state": {
@@ -43,6 +43,11 @@
             "type": "integer",
             "minimum": 0,
             "description": "Observed member-row count when the member fetch is not truncated (list preview cap PREVIEW_IDENTITIES_PER_CLUSTER=4; detail cap DEFAULT_CLUSTER_MEMBER_LIMIT=500). When the fetch returns more than the cap, this is the projected column and representatives/samples are sliced to the cap."
+          },
+          "photo_count": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Distinct photos across the complete group. Absence or null means unavailable."
           },
           "member_ids": {
             "type": "array",
@@ -61,7 +66,7 @@
                 "description": "Attachment ID for the current representative image when available."
               },
               "bbox": {
-                "type": "object",
+                "type": ["object", "null"],
                 "required": ["x", "y", "width", "height"],
                 "description": "Face rect in the pixel space of media_url, not of the original attachment: a deleted original degrades url and bbox together into the largest surviving sub-size.",
                 "properties": {
@@ -167,6 +172,130 @@
     "truncated": {
       "type": "boolean",
       "description": "Whether additional matching clusters exist beyond this page."
+    }
+  },
+  "definitions": {
+    "min_photos": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "Optional query parameter. Omission means All; no display-page filtering."
+    },
+    "remoteCluster": {
+      "type": "object",
+      "required": [
+        "id",
+        "tenant_id",
+        "label",
+        "is_labeled",
+        "is_auto_label",
+        "identity_count",
+        "representatives",
+        "person_uuid"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_labeled": {
+          "type": "boolean"
+        },
+        "is_auto_label": {
+          "type": "boolean"
+        },
+        "identity_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "photo_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "person_uuid": {
+          "type": "null",
+          "description": "Remote labels never establish a local WordPress person binding."
+        },
+        "representatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "media_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "bbox": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "is_user_selected": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "photoFilteredResponse": {
+      "type": "object",
+      "description": "Opt-in listing envelope. Distinct photo filter is applied by the producer before pagination; unknown total remains null and truncated controls continuation. Older missing aggregates remain unavailable.",
+      "required": [
+        "clusters",
+        "limit",
+        "total",
+        "truncated"
+      ],
+      "properties": {
+        "clusters": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/properties/clusters/items"
+              },
+              {
+                "$ref": "#/definitions/remoteCluster"
+              }
+            ]
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

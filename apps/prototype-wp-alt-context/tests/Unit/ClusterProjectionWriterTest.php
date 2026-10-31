@@ -50,7 +50,7 @@ class ClusterProjectionWriterTest extends TestCase
         $this->assertSame(3, $row['identity_count']);
     }
 
-    public function testCreateLocalClusterUsesAutomaticBindAndEnqueuesPersonCreated(): void
+    public function testCreateLocalClusterRetainsHumanLabelWithoutCreatingPerson(): void
     {
         global $wpdb;
 
@@ -65,20 +65,25 @@ class ClusterProjectionWriterTest extends TestCase
             1
         );
 
+        // ADR019 rule 1b: the label is retained as evidence; it never creates or binds a person.
         $this->assertSame(1, $result);
         $outbox = array_values(array_filter(
             $wpdb->queries,
             static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
         ));
-        $this->assertNotEmpty($outbox, 'create_local_cluster must enqueue person_created');
-        $this->assertStringContainsString("'person_created'", $outbox[0]);
+        $this->assertCount(0, $outbox, 'create_local_cluster must not enqueue person_created');
+        $personInserts = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+        ));
+        $this->assertCount(0, $personInserts);
+        $this->assertSame([], $wpdb->tableRows['wp_acx_persons']);
         $row = $wpdb->tableRows['wp_acx_clusters'][0];
-        $this->assertArrayHasKey('person_id', $row);
-        $this->assertSame(40, (int) $row['person_id']);
+        $this->assertNull($row['person_id'] ?? null);
         $this->assertSame('Ada Lovelace', $row['label']);
     }
 
-    public function testCreateLocalClusterBindsResolvedPersonAndStoresItsName(): void
+    public function testCreateLocalClusterDoesNotSelectSameNamePersonBoundElsewhere(): void
     {
         global $wpdb;
 
@@ -117,12 +122,12 @@ class ClusterProjectionWriterTest extends TestCase
             }
         }
         $this->assertIsArray($created);
-        $this->assertArrayHasKey('person_id', $created);
-        $this->assertSame(41, (int) $created['person_id']);
-        $this->assertSame('Ada Lovelace (2)', $created['label']);
+        $this->assertNull($created['person_id'] ?? null, 'a same-name person bound elsewhere must not be selected');
+        $this->assertSame('Ada Lovelace', $created['label']);
+        $this->assertSame(3, (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
     }
 
-    public function testCreateLocalClusterCreatesDistinctPersonOnNameCollision(): void
+    public function testCreateLocalClusterNameCollisionCreatesNoDistinctPerson(): void
     {
         global $wpdb;
 
@@ -156,14 +161,19 @@ class ClusterProjectionWriterTest extends TestCase
             $wpdb->queries,
             static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
         ));
-        $this->assertNotEmpty($personInserts);
-        $this->assertStringContainsString("'Ada Lovelace (2)'", $personInserts[0]);
-        $ids = array_values(array_unique(array_map(
-            static fn(array $row): int => (int) ($row['id'] ?? 0),
-            $wpdb->tableRows['wp_acx_persons']
-        )));
-        $this->assertContains(3, $ids);
-        $this->assertGreaterThan(1, count($ids), 'collision must create a distinct person id');
+        $this->assertCount(0, $personInserts, 'collision must not create a distinct person');
+        $outbox = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+        ));
+        $this->assertCount(0, $outbox);
+        $this->assertCount(1, $wpdb->tableRows['wp_acx_persons']);
+        $person = $wpdb->tableRows['wp_acx_persons'][0];
+        $this->assertSame(3, (int) $person['id']);
+        $this->assertSame('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', $person['person_uuid']);
+        $this->assertSame('Ada Lovelace', $person['name']);
+        $this->assertSame('cluster-other', $wpdb->tableRows['wp_acx_clusters'][0]['cluster_uuid']);
+        $this->assertSame(3, (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
     }
 
     public function testUpsertProjectionClusterLeavesUserConfirmedUnset(): void

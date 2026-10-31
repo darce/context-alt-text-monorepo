@@ -774,7 +774,7 @@ class LifecycleManagerTest extends TestCase
         );
     }
 
-    public function testMaybeUpgradeHealsUnboundHumanLabelsIncludingUnderscoreSkip(): void
+    public function testMaybeUpgradeLabelHealRetainsUnboundHumanLabelsIncludingUnderscoreSkip(): void
     {
         $this->setOption('acx_version', '0.0.1-stale');
         global $wpdb;
@@ -798,10 +798,19 @@ class LifecycleManagerTest extends TestCase
                 static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
             )
         );
-        $this->assertNotEmpty($personInserts);
+        // ADR019 rule 1b: the heal inspects label evidence; it never creates or binds a person.
+        $this->assertCount(0, $personInserts, 'heal must not create a person from an unbound label');
+        $bindUpdates = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_starts_with($query, 'UPDATE wp_acx_clusters SET person_id')
+            )
+        );
+        $this->assertCount(0, $bindUpdates);
+        $this->assertSame([], $wpdb->tableRows['wp_acx_persons']);
     }
 
-    public function testMaybeUpgradeHealsUnboundHumanLabelSoRosterReadIsNotNull(): void
+    public function testMaybeUpgradeRetainsUnboundHumanLabelWithoutRosterName(): void
     {
         $this->setOption('acx_version', ACX_VERSION);
         $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
@@ -840,13 +849,13 @@ class LifecycleManagerTest extends TestCase
 
         $this->manager->maybe_upgrade();
 
-        $personName = trim((string) ($wpdb->tableRows['wp_acx_persons'][0]['name'] ?? ''));
-        $personId = $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] ?? null;
-        $this->assertSame('Tory Guzman', $personName);
-        $this->assertTrue(is_numeric($personId) && (int) $personId > 0, 'upgrade must bind the unbound human label');
-        $this->assertSame(
-            'Tory Guzman',
-            $this->projectedRosterLabel($personName, (string) $wpdb->tableRows['wp_acx_clusters'][0]['label'])
+        $this->assertSame([], $wpdb->tableRows['wp_acx_persons'], 'upgrade must not create a person from the label');
+        $cluster = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertNull($cluster['person_id'], 'upgrade must not bind the unbound human label');
+        $this->assertSame('Tory Guzman', $cluster['label'], 'the human label is retained as evidence');
+        $this->assertNull(
+            $this->projectedRosterLabel(null, (string) $cluster['label']),
+            'an unbound human label must not become a roster name'
         );
 
         $wpdb->mockResults = [];
@@ -859,6 +868,7 @@ class LifecycleManagerTest extends TestCase
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('THEN p.name', $sql);
         $this->assertStringContainsString('ELSE NULL END', $sql);
+        $this->assertStringContainsString("ELSE 'unbound' END", $sql);
     }
 
     public function testMaybeUpgradeDoesNotMarkHealCompleteWhenStalledAndRetries(): void

@@ -8,6 +8,7 @@ These docs can inform planning, but they are not themselves active epics or task
 
 ## Active Assessments
 
+- [Mozilla Human-Scale AI Incubator Fit](current/mozilla-human-scale-ai-incubator-fit-assessment-2026-10-30.md) finds neither ACX nor semantic-image-search meets the call's deployed-with-users gate; ACX is the vehicle only if a pilot with course authors and BLV readers is live before 2026-11-20, and lists ten gaps plus Workbench patterns to port.
 - [Description Model GTM Selection](current/description-model-gtm-selection-assessment-2026-10-28.md) keeps the served Qwen3-VL-30B-A3B Q4_K_M on the A10 as a reversible GTM keep, shows why sealed rule 20175 cannot decide a switch as built (no served candidate, 0/86 cells reviewed, OCR gating), and sets beta expectation-setting and telemetry directions.
 - [Demo Operability Defects](current/demo-operability-defects-assessment-2026-09-21.md) traces five demo symptoms to ten defects in three families (untruthful service state, derived state that cannot heal, no operator visibility), distinguishes confirmed mechanisms from hypotheses, validates remedies against the distilled canon, and feeds E25/DEMOHEAL with [parallel adjudication](../scopes/demoheal-parallel-delivery.md).
 - [FIR Model Capacity and Training](current/fir-model-capacity-and-training-2026-09-19.md) answers 128D vs 512D, checks higher-dimensional checkpoint licenses, and separates A10 feasibility from training-data readiness.

@@ -26,6 +26,7 @@ from time import perf_counter
 
 import numpy as np
 
+from recognition.infrastructure.face_pipeline._common import FacePipelineInputError, ZeroNormEmbeddingError
 from scripts.eval_harness.firbench_contract import (
     Arm,
     FrameContractError,
@@ -417,7 +418,7 @@ def produce_views(
     }
     recipe_json = json.dumps(recipe, sort_keys=True, separators=(",", ":"))
     recipe_sha = hashlib.sha256(recipe_json.encode()).hexdigest()
-    pixel_sha = hashlib.sha256(str(image_bgr.shape).encode() + b"\0uint8-bgr\0" + image_bgr.tobytes()).hexdigest()
+    pixel_sha = oriented_pixels_sha256(image_bgr)
     key = leg.leg_id(Arm.native).key()
     receipts, candidates = [], []
     calls, pixels, stage_calls = 0, 0, 0
@@ -465,7 +466,7 @@ def produce_views(
                     status = "compute_budget"
                 except RuntimeMismatchError:
                     raise  # space/shape corruption is a contract refusal, never a soft model failure
-                except (OSError, RuntimeError, ValueError) as exc:
+                except (OSError, RuntimeError, ValueError, FacePipelineInputError, ZeroNormEmbeddingError) as exc:
                     status = (
                         "timeout"
                         if isinstance(exc, TimeoutError)
@@ -508,4 +509,71 @@ def produce_views(
         calls,
         pixels,
         stage_calls,
+    )
+
+
+def oriented_pixels_sha256(image_bgr: np.ndarray) -> str:
+    """Same oriented-array identity as the offline producer; encoded bytes stay separate."""
+    return hashlib.sha256(str(image_bgr.shape).encode() + b"\0uint8-bgr\0" + image_bgr.tobytes()).hexdigest()
+
+
+@dataclass(frozen=True)
+class PersonProposalInput:
+    """Explicit offline JSON proposal outcome, bound to the actual oriented source."""
+
+    source_id: str
+    source_sha256: str
+    oriented_pixels_sha256: str
+    orientation: str
+    status: str
+    source_ref: str
+    boxes: tuple[PersonBox, ...]
+
+
+def person_proposals_from_json(payload, *, source_id, source_sha256, image_bgr) -> PersonProposalInput:
+    """No inference: consume an external, identity-blind proposal ledger [PROV-01].
+
+    Coordinates are pixel-edge xywh on the already-oriented decoded BGR array.
+    Missing means unavailable proposal evidence; empty means a completed zero-person
+    result. Failed and timeout are upstream outcomes, never synonyms for empty.
+    """
+    fields = {
+        "schema",
+        "source_id",
+        "source_sha256",
+        "oriented_pixels_sha256",
+        "orientation",
+        "status",
+        "source_ref",
+        "boxes",
+    }
+    if not isinstance(payload, dict) or set(payload) != fields or payload["schema"] != "firbench-person-boxes/v1":
+        raise FrameContractError("invalid firbench-person-boxes/v1 document")
+    if payload["source_id"] != source_id or payload["source_sha256"] != source_sha256:
+        raise FrameContractError("person proposals differ from bound source")
+    if payload["oriented_pixels_sha256"] != oriented_pixels_sha256(image_bgr):
+        raise FrameContractError("person proposals differ from actual oriented pixels")
+    if payload["orientation"] != "opencv-imread-color-exif":
+        raise FrameContractError("person proposals require opencv-imread-color-exif orientation provenance")
+    _text(payload["source_ref"], "source_ref")
+    status, rows = payload["status"], payload["boxes"]
+    if status not in {"ok", "empty", "missing", "failed", "timeout"} or not isinstance(rows, list) or len(rows) > 64:
+        raise FrameContractError("invalid or unbounded person proposal outcome")
+    if (status == "ok") != bool(rows):
+        raise FrameContractError("person boxes contradict proposal status")
+    boxes = []
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"proposal_id", "bbox_px", "provenance_ref"}:
+            raise FrameContractError("invalid person box fields")
+        boxes.append(PersonBox(row["proposal_id"], tuple(row["bbox_px"]), row["provenance_ref"]))
+    if len({b.proposal_id for b in boxes}) != len(boxes):
+        raise FrameContractError("duplicate person proposal IDs")
+    return PersonProposalInput(
+        source_id,
+        source_sha256,
+        payload["oriented_pixels_sha256"],
+        payload["orientation"],
+        status,
+        payload["source_ref"],
+        tuple(boxes),
     )

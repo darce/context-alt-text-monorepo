@@ -20,5 +20,5 @@ Decision records for durable architecture choices that both agents and humans ma
 - [ADR-017-description-authority-wordpress-curation-service-generation.md](ADR-017-description-authority-wordpress-curation-service-generation.md)
 - [ADR-019-person-anchored-curation-surfaces.md](ADR-019-person-anchored-curation-surfaces.md)
 - [ADR-018-post-curation-identity-weaving.md](ADR-018-post-curation-identity-weaving.md)
-- [ADR-020-recognition-on-by-default-tenant-controlled.md](ADR-020-recognition-on-by-default-tenant-controlled.md)
+- [ADR-020-recognition-opt-in-at-onboarding.md](ADR-020-recognition-opt-in-at-onboarding.md)
 - [ADR-ARCH-07-opencv-pin-for-face-pipeline-reference.md](ADR-ARCH-07-opencv-pin-for-face-pipeline-reference.md)

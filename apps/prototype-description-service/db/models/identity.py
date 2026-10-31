@@ -325,6 +325,8 @@ class CurationReplayRecord(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # NULL represents a legacy receipt whose immutable request cannot be proven.
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result_status: Mapped[str] = mapped_column(String(20), nullable=False)
     backend_version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
     conflict_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -344,6 +346,10 @@ class CurationReplayRecord(Base):
     tenant: Mapped[Tenant] = relationship(backref="curation_replay_records")
 
     __table_args__ = (
+        CheckConstraint(
+            "request_fingerprint IS NULL OR length(request_fingerprint) = 64",
+            name="ck_curation_replay_request_fingerprint",
+        ),
         CheckConstraint(
             "refresh_status IN ('not_applicable', 'queued', 'running', 'no_candidates', 'timed_out', 'completed', 'failed')",
             name="ck_curation_replay_refresh_status",

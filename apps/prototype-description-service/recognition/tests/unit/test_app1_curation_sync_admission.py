@@ -99,6 +99,10 @@ def _configure_auth(monkeypatch: pytest.MonkeyPatch, authenticated_tenant: UUID 
     monkeypatch.setattr(auth_deps, "_lookup_api_key", _lookup_api_key)
 
 
+async def _commit_noop() -> None:
+    return None
+
+
 def _build_client(
     monkeypatch: pytest.MonkeyPatch,
     admission: _FakeAdmission | None,
@@ -113,7 +117,7 @@ def _build_client(
         app.state.usage_admission_service = admission
 
     async def _session_override() -> AsyncIterator[object]:
-        yield object()
+        yield SimpleNamespace(commit=_commit_noop)
 
     async def _no_session():
         return None

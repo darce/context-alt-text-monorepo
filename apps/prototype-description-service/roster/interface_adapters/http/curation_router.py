@@ -11,10 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.tenant_context import set_tenant_context
 from recognition.application.orchestration.job_service import JobService
+from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.interface_adapters.http.deps import (
     get_cluster_service_builder,
     get_job_service,
-    get_optional_session,
 )
 from recognition.interface_adapters.http.deps.session import get_session
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
@@ -30,17 +30,26 @@ router = APIRouter(tags=["roster"])
 
 
 async def get_curation_sync_job_service(
-    session: AsyncSession | None = Depends(get_optional_session),
+    session: AsyncSession = Depends(get_session),
     tenant_id: str = Depends(get_authenticated_tenant_id),
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> JobService:
-    """Build the curation job service for the authenticated tenant."""
-    return await get_job_service(
+    """Build the curation job service on the route's own transaction.
+
+    The queued follow-up must commit or roll back with the effect and replay
+    record, so this shares the handler's cached ``get_session`` (same callable
+    and scope) and refuses the in-memory fallback.
+    """
+    job_service = await get_job_service(
         session=session,
         tenant_id=tenant_id,
         cluster_service_builder=cluster_service_builder,
         scan_service_builder=None,
     )
+    repository = job_service.repository
+    if not isinstance(repository, SqlAlchemyJobRepository) or repository.session is not session:
+        raise HTTPException(status_code=503, detail={"error": "curation_queue_unavailable"})
+    return job_service
 
 
 class CurationSyncRequest(BaseModel):
@@ -163,4 +172,7 @@ async def sync_curation_operation(
     for ticket in tickets:
         await usage_admission_service.commit(ticket)
 
+    # get_session commits only after FastAPI has sent the response; commit here
+    # so a failed commit can never be reported to the client as acknowledged.
+    await session.commit()
     return response

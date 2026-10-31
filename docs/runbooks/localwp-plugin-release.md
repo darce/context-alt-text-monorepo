@@ -39,8 +39,9 @@ header, manifest identity, all installed file digests and original custody ZIP.
 A reinstall of the active digest does these checks without another view/backup.
 `--dry-run` validates only the candidate, makes no site/store changes and reports
 that scope; compatibility and retention checks run under the promotion lock.
-All results, including errors, are JSON on stdout; errors exit nonzero. Once
-`--capacity` is valid, every result and refusal records the effective `capacity`.
+Structured results and refusals are JSON on stdout; refusals exit nonzero.
+Their `capacity` member is the validated integer, or `null` when no valid value
+was selected; it never echoes the untrusted raw input.
 Save the successful JSON as deployment evidence. The active view also contains
 `.release-receipt.json`; it has paths and identities, so configure the web server
 to deny dotfiles. Keep storage outside the web root and outside Git worktrees,
@@ -193,8 +194,9 @@ raises both counts for **that invocation only**. It accepts the exact decimal
 values 8 to 16. Anything else, including 7, 17, 0, signs, spaces, decimals
 and non-ASCII digits, refuses as a JSON error before any site or store access. The
 value is never written to the store or to `.release-receipt.json`, whose format is
-unchanged, so older receipts and readers stay compatible. The JSON result records
-it as `capacity`; save that JSON as the audit record.
+unchanged, so older receipts and readers stay compatible. JSON records only the
+validated integer as `capacity`, or `null` if validation rejects the input;
+save that JSON as the audit record.
 
 Promote with the same explicit value through dry-run, promotion and readback:
 

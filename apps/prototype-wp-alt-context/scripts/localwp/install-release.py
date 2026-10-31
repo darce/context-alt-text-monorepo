@@ -435,7 +435,7 @@ def main():
                              'operator headroom up to '+str(MAX_CAPACITY)+', never persisted, so repeat it for '
                              'later promotion/rollback; byte and entry ceilings do not change')
     args = parser.parse_args()
-    effective = {}
+    effective = {'capacity': None}
     try:
         args.capacity = capacity(args.capacity)
         effective = {'capacity': args.capacity}

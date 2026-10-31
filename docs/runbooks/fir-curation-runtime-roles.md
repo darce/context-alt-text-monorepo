@@ -76,6 +76,16 @@ affected users, a separately authorized owner hardening job can use
 `REVOKE CREATE ON SCHEMA public FROM PUBLIC` where applicable. Re-run preflight;
 never silently broaden the runtime role or treat a denial as successful work.
 
+Column privileges are audited the same way. PostgreSQL adds a column grant
+such as `UPDATE (version_num) ON alembic_version` to table rights, and a
+table-level check does not show it. Each role's effective SELECT, INSERT,
+UPDATE and REFERENCES on any column, including PUBLIC grants and grant
+options, must match its table manifest. Apply rolls back both new roles, and a
+custody repeat refuses without changes. The dry run cannot audit roles that do
+not exist yet, so an ambient PUBLIC column grant is first reported by `--apply`.
+After inventorying affected users, a separately authorized owner job revokes
+only that specific unintended grant. Then re-run the provisioner.
+
 ## Worker maintenance is an explicit scope
 
 The exact worker sets transaction-local `app.bypass_rls` before global queue
@@ -167,8 +177,8 @@ changes need their own reviewed policy scope.
 role OIDs, and a random role-comment marker. Protect and back it up with the
 same restrictions as the private profile. It contains no owner credential.
 A repeat requires the same database/role identities, marker, exact profile,
-scope, safe attributes, memberships, ownership and effective table/sequence
-rights. It returns unchanged and does not rotate passwords. Missing custody,
+scope, safe attributes, memberships, ownership and effective table, column and
+sequence rights. It returns unchanged and does not rotate passwords. Missing custody,
 an existing unowned role, privileges drifting, or a changed input/profile
 causes refusal. The tool never repairs or adopts those roles silently.
 

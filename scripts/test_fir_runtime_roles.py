@@ -502,6 +502,172 @@ def test_idempotence_refuses_extra_runtime_privileges(sandbox):
     assert before == {p.name: p.read_bytes() for p in s["output"].iterdir()}
 
 
+def acl(s, table, column):
+    # Exact table and column ACLs: refusal must neither revoke nor repair them.
+    with s["owner"].connect() as c:
+        return tuple(
+            c.execute(
+                text(
+                    "SELECT c.relacl::text, a.attacl::text FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid "
+                    "WHERE a.attrelid=CAST(:t AS regclass) AND a.attname=:c"
+                ),
+                {"t": table, "c": column},
+            ).one()
+        )
+
+
+def effective(s, grantee, table, column, privilege):
+    with s["owner"].connect() as c:
+        return tuple(
+            c.execute(
+                text(
+                    "SELECT has_table_privilege(:r,CAST(:t AS regclass),:p), "
+                    "has_column_privilege(:r,CAST(:t AS regclass),:c,:p)"
+                ),
+                {"r": grantee, "t": table, "c": column, "p": privilege},
+            ).one()
+        )
+
+
+def identities(s):
+    with s["owner"].connect() as c:
+        return c.execute(
+            text(
+                "SELECT rolname,oid,shobj_description(oid,'pg_authid') FROM pg_roles WHERE rolname IN (:a,:w) ORDER BY rolname"
+            ),
+            {"a": s["api"], "w": s["worker"]},
+        ).all()
+
+
+# privilege, table, column, service whose manifest it exceeds, outside-manifest SQL, legitimate manifest DML
+INITIAL_PUBLIC_COLUMN_GRANTS = {
+    "update-revision": (
+        "UPDATE",
+        "public.alembic_version",
+        "version_num",
+        "api",
+        "UPDATE public.alembic_version SET version_num='column-acl-drift'",
+        "UPDATE public.tenants SET site_url=site_url WHERE false",
+    ),
+    # Within the API manifest, outside the worker manifest: one exceeded role refuses the whole apply.
+    "select-key-hash": (
+        "SELECT",
+        "public.api_keys",
+        "api_key_hash",
+        "worker",
+        "SELECT api_key_hash FROM public.api_keys",
+        "UPDATE public.identity_scan_job_items SET status=status WHERE false",
+    ),
+}
+
+
+@pytest.mark.parametrize("vector", sorted(INITIAL_PUBLIC_COLUMN_GRANTS))
+def test_initial_apply_refuses_ambient_public_column_privileges(sandbox, vector):
+    s = sandbox
+    privilege, table, column, service, denied, allowed = INITIAL_PUBLIC_COLUMN_GRANTS[vector]
+    grant = f"{privilege} ({column}) ON {table}"
+    with s["owner"].begin() as c:
+        c.execute(text(f"GRANT {grant} TO PUBLIC"))
+    # A real effective right that a table-level check cannot see, not fixture noise.
+    assert effective(s, "public", table, column, privilege) == (False, True)
+    before = acl(s, table, column)
+    result = invoke(s, "--apply")
+    assert result.returncode != 0, "initial apply must refuse an ambient PUBLIC column privilege: " + result.stdout
+    assert "refused" in result.stderr and "column privileges" in result.stderr, result.stderr
+    assert roles(s) == [], "refusal must roll back both new roles"
+    assert not s["output"].exists()
+    assert acl(s, table, column) == before, "refusal must not revoke or repair any grant"
+    assert s["url"].password not in result.stdout + result.stderr
+    # Operator remedy: revoke only this inventoried grant; the normal manifest then applies.
+    with s["owner"].begin() as c:
+        c.execute(text(f"REVOKE {grant} FROM PUBLIC"))
+    result = invoke(s, "--apply")
+    assert result.returncode == 0, "the normal manifest must not be falsely refused: " + result.stderr
+    assert json.loads(result.stdout)["mode"] == "applied"
+    # Legitimate table DML implies the column rights the audit must accept.
+    assert effective(s, s["api"], "public.tenants", "site_url", "UPDATE") == (True, True)
+    assert effective(s, s["worker"], "public.identity_scan_job_items", "status", "UPDATE") == (True, True)
+    env = profile(s)["services"][service]["environment"]
+    probe = subprocess.run(
+        [sys.executable, "-c", COLUMN_PROBE, s[service], denied, allowed],
+        env={**os.environ, **env, "PYTHONPATH": str(APP)},
+        cwd=APP,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    with s["owner"].connect() as c:
+        assert c.scalar(text("SELECT version_num FROM alembic_version")) == "001_identity_schema"
+    print("column privilege qualification:", probe.stdout.strip())
+
+
+COLUMN_PROBE = r"""
+import asyncio,json,sys
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from db import session as db_session
+async def run():
+    role,denied,allowed=sys.argv[1:4]
+    try:
+        async with db_session.engine.connect() as c:
+            assert (await c.execute(text('SELECT current_user'))).scalar_one()==role
+            assert (await c.execute(text('SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user'))).one()==(False,False)
+            await c.execute(text(allowed))
+            await c.rollback()
+            try:await c.execute(text(denied))
+            except DBAPIError as e:state=e.orig.sqlstate
+            else:raise AssertionError('right outside the manifest unexpectedly effective')
+            finally:await c.rollback()
+            assert state=='42501',state
+        print(json.dumps({'role':role,'legitimate_dml':'allowed','outside_manifest_sqlstate':state}))
+    finally:
+        for e in (db_session.engine,db_session.observability_engine,db_session.clustering_engine):await e.dispose()
+asyncio.run(run())
+"""
+
+# privilege, table, column, grantee (service or PUBLIC), grant option
+REPEAT_COLUMN_GRANTS = {
+    "direct-update": ("UPDATE", "public.alembic_version", "version_num", "api", ""),
+    "public-update": ("UPDATE", "public.alembic_version", "version_num", "PUBLIC", ""),
+    "public-insert": ("INSERT", "public.alembic_version", "version_num", "PUBLIC", ""),
+    "worker-references": ("REFERENCES", "public.tenants", "id", "worker", ""),
+    # Manifest SELECT is legitimate; only the column grant option is extra. PUBLIC cannot hold one.
+    "grant-option": ("SELECT", "public.alembic_version", "version_num", "api", " WITH GRANT OPTION"),
+}
+
+
+@pytest.mark.parametrize("vector", sorted(REPEAT_COLUMN_GRANTS))
+def test_custody_repeat_refuses_extra_effective_column_privileges(sandbox, vector):
+    s = sandbox
+    privilege, table, column, grantee, option = REPEAT_COLUMN_GRANTS[vector]
+    r = invoke(s, "--apply")
+    assert r.returncode == 0, r.stderr
+    before = {p.name: p.read_bytes() for p in s["output"].iterdir()}
+    owned = identities(s)
+    role = s["api"] if grantee == "PUBLIC" else s[grantee]
+    target = "PUBLIC" if grantee == "PUBLIC" else f'"{role}"'
+    grant = f"{privilege} ({column}) ON {table}"
+    with s["owner"].begin() as c:
+        c.execute(text(f"GRANT {grant} TO {target}{option}"))
+    assert effective(s, role, table, column, privilege + option) == (False, True)
+    acl_before = acl(s, table, column)
+    for mode in (["--apply"], []):
+        r = invoke(s, *mode)
+        label = " ".join(mode) or "dry-run"
+        assert r.returncode != 0, f"custody {label} must refuse an extra effective column privilege: " + r.stdout
+        assert "refused" in r.stderr and "column privileges" in r.stderr, r.stderr
+        assert before == {p.name: p.read_bytes() for p in s["output"].iterdir()}
+    assert identities(s) == owned, "refusal must not drop, rotate or adopt roles"
+    assert acl(s, table, column) == acl_before, "refusal must not revoke or repair any grant"
+    with s["owner"].begin() as c:
+        c.execute(text(f"REVOKE {grant} FROM {target}"))
+    r = invoke(s, "--apply")
+    assert r.returncode == 0, "exact manifest custody must be accepted once the grant is revoked: " + r.stderr
+    assert json.loads(r.stdout)["mode"] == "unchanged"
+    assert before == {p.name: p.read_bytes() for p in s["output"].iterdir()}
+
+
 def test_explicit_worker_maintenance_is_purpose_scoped(sandbox):
     s = sandbox
     r = invoke(s, "--apply", "--worker-centroid-maintain")

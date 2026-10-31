@@ -381,6 +381,20 @@ def verify_grants(c, role, service, maintain=False):
     for schema, table, privilege, actual, grant_option in rows:
         wanted = schema == "public" and privilege in expected.get(table, set())
         require(actual == wanted and not grant_option, "runtime effective table privileges drifted; refuse repair")
+    # Column grants add to table rights, invisible to has_table_privilege. A
+    # manifest table right implies every column; any other column right refuses.
+    rows = c.execute(
+        text("""SELECT n.nspname,c.relname,p.privilege,
+       has_any_column_privilege(:r,c.oid,p.privilege),
+       has_any_column_privilege(:r,c.oid,p.privilege || ' WITH GRANT OPTION')
+       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+       CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']) AS p(privilege)
+       WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p','m','v','f')"""),
+        {"r": role},
+    )
+    for schema, table, privilege, actual, grant_option in rows:
+        wanted = schema == "public" and privilege in expected.get(table, set())
+        require(actual == wanted and not grant_option, "runtime effective column privileges drifted; refuse repair")
     sequences = sequence_manifest(c, service)
     rows = c.execute(
         text("""SELECT n.nspname,c.relname,p.privilege,

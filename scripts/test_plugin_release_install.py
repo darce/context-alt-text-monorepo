@@ -1,4 +1,5 @@
 """Synthetic Linux promotion tests; no WordPress, database or build required."""
+import contextlib
 import hashlib
 import http.server
 import json
@@ -251,6 +252,7 @@ def refuse_unchanged(site, archive, *args):
     # An unsupported-flag parser failure is not evidence of integrity validation.
     assert result.stdout.strip(), 'refusal must return a JSON error, not an unsupported CLI flag'
     assert json.loads(result.stdout).get('error'), result.stdout
+    return json.loads(result.stdout)
 
 
 def assert_graph_bytes(active, *archives):
@@ -401,3 +403,143 @@ def test_qb_cross_store_reap_refused_preserves_rollback(tmp_path, site):
     assert Path(result['view']).parent == second_site[1]/'views'
     assert_graph_bytes(site[0]/'wp-content/plugins/alt-context', a, b)
     run(second_site, a, '--verify')
+
+
+# Store capacity: default 8 managed views/custody ZIPs, explicit headroom <= 16.
+CAPACITY = ('--capacity', '16')
+FULL = 'artifact custody limit: operator retirement required'
+
+
+@contextlib.contextmanager
+def served(root):
+    handler = lambda *args, **kw: http.server.SimpleHTTPRequestHandler(*args, directory=str(root), **kw)
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    try:
+        yield f'http://127.0.0.1:{server.server_port}'
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
+def assert_served(url, *archives):
+    # Already-open pages fetch old modules over HTTP; compare ZIP bytes.
+    for archive in archives:
+        with zipfile.ZipFile(archive) as z:
+            for name in z.namelist():
+                relative = name.removeprefix('alt-context/')
+                if relative.startswith(DIST+'assets/'):
+                    with urllib.request.urlopen(url+'/wp-content/plugins/alt-context/'+relative) as response:
+                        assert response.read() == z.read(name), relative
+
+
+def assert_kept(root, before):
+    after = tree_state(root)
+    assert {path: after.get(path) for path in before} == before
+
+
+def full_store_history(tmp_path, site):
+    """Actual LocalWP shape: verified 0.0.36/0.0.38 adoption, then six managed
+    promotions: 8 custody ZIPs, 7 views, active view inheriting 7 digests."""
+    old, current, _, _ = legacy_install(tmp_path, site)
+    run(site, current, *compat_args(old))
+    history = [old, current]
+    for number in range(1, 7):
+        history.append(artifact(tmp_path, f'0.1.{number}'))
+        run(site, history[-1])
+    assert len(list((site[1]/'artifacts').iterdir())) == 8
+    assert len(list((site[1]/'views').iterdir())) == 7
+    receipt = json.loads((site[0]/'wp-content/plugins/alt-context/.release-receipt.json').read_text())
+    assert len(receipt['compatibility_artifacts']) == 7
+    return history
+
+
+def test_explicit_capacity_admits_ninth_release_with_full_history(tmp_path, site):
+    history = full_store_history(tmp_path, site)
+    ninth = artifact(tmp_path, '0.2.0')
+    active = site[0]/'wp-content/plugins/alt-context'
+    unmanaged = [tree_state(tmp_path/name) for name in ('original-036', 'deployed-038')]
+    with served(site[0]) as url:
+        # The default, spelled or implied, keeps refusing the ninth artifact.
+        for flags in ((), ('--capacity', '8')):
+            error = refuse_unchanged(site, ninth, '--site-url', url, *flags)
+            assert error == {'status': 'error', 'error': FULL, 'capacity': 8}
+        before = tree_state(site[1])
+        result = run(site, ninth, *CAPACITY, '--site-url', url)
+        assert result['capacity'] == 16 and result['http_verified'] and result['version'] == '0.2.0'
+        assert set(result['compatibility_artifacts']) == {zip_digest(a) for a in history}
+        # Headroom is per invocation: the receipt format stores no policy.
+        assert 'capacity' not in json.loads((active/'.release-receipt.json').read_text())
+        assert_kept(site[1], before)
+        assert_custody_and_provenance(site, *history, ninth)
+        assert_graph_bytes(active, *history, ninth)
+        assert_served(url, *history, ninth)
+        published = tree_state(site[1])
+        verified = run(site, ninth, '--verify', '--site-url', url, *CAPACITY)
+        assert verified['view'] == result['view'] and verified['http_verified']
+        assert run(site, ninth)['view'] == result['view']
+        assert tree_state(site[1]) == published
+        # Rollback inherits nine digests, so it needs the same explicit capacity.
+        previous = history[-1]
+        error = refuse_unchanged(site, previous, '--rollback', '--site-url', url)
+        assert error['error'] == 'compatibility artifact limit exceeded'
+        back = run(site, previous, '--rollback', *CAPACITY, '--site-url', url)
+        assert back['rolled_back'] and back['http_verified'] and back['capacity'] == 16
+        assert back['artifact_sha256'] == zip_digest(previous) and back['previous'] == result['view']
+        assert_kept(site[1], published)
+        assert_custody_and_provenance(site, *history, ninth)
+        assert_graph_bytes(active, *history, ninth)
+        assert_served(url, *history, ninth)
+        reaped = run(site, previous, '--reap', *CAPACITY)
+        assert reaped['reaped_views'] == [] and reaped['retention_limit'] == 16
+    assert len(list((site[1]/'views').iterdir())) == 9
+    assert len(list((site[1]/'artifacts').iterdir())) == 9
+    assert [tree_state(tmp_path/name) for name in ('original-036', 'deployed-038')] == unmanaged
+
+
+def test_explicit_capacity_cross_store_keeps_full_old_store(tmp_path, site):
+    history = full_store_history(tmp_path, site)
+    ninth = artifact(tmp_path, '0.2.0')
+    old_store = tree_state(site[1])
+    fresh = site[0], tmp_path/'store2'
+    # Another store inherits all eight custody ZIPs: a hop is no quota reset.
+    assert refuse_unchanged(fresh, ninth)['error'] == FULL
+    result = run(fresh, ninth, *CAPACITY)
+    assert Path(result['view']).parent == fresh[1]/'views'
+    assert_custody_and_provenance(fresh, *history, ninth)
+    active = site[0]/'wp-content/plugins/alt-context'
+    assert_graph_bytes(active, *history, ninth)
+    back = run(fresh, history[-1], '--rollback', *CAPACITY)
+    assert back['rolled_back'] and Path(back['view']).parent == fresh[1]/'views'
+    run(fresh, history[-1], '--verify')
+    assert_graph_bytes(active, *history, ninth)
+    refuse_unchanged(site, history[-1], '--reap', *CAPACITY)
+    assert tree_state(site[1]) == old_store
+
+
+def test_capacity_hard_bound_refuses_seventeenth_unchanged(tmp_path, site):
+    releases = [artifact(tmp_path, f'1.{number}') for number in range(1, 18)]
+    for release in releases[:16]:
+        assert run(site, release, *CAPACITY)['capacity'] == 16
+    assert len(list((site[1]/'artifacts').iterdir())) == 16
+    assert len(list((site[1]/'views').iterdir())) == 16
+    assert refuse_unchanged(site, releases[16], *CAPACITY)['error'] == FULL
+    assert 'capacity' in refuse_unchanged(site, releases[16], '--capacity', '17')['error']
+    # Refusal precedes reading inherited ZIPs past N, bounding held custody
+    # bytes; the oldest (16th inherited) ZIP is never opened by the 17th.
+    oldest = site[1]/'artifacts'/zip_digest(releases[0])
+    oldest.chmod(0o755); (oldest/'artifact.zip').chmod(0o644)
+    (oldest/'artifact.zip').write_bytes(b'beyond capacity')
+    assert refuse_unchanged(site, releases[16], *CAPACITY)['error'] == FULL
+    assert_graph_bytes(site[0]/'wp-content/plugins/alt-context', *releases[:16])
+    # Supplied compatibility ZIPs share the bound: at most N-1 beside the primary.
+    run(site, releases[16], '--dry-run', *CAPACITY, *compat_args(*releases[1:16]))
+    limit = 'compatibility artifact limit exceeded'
+    assert refuse_unchanged(site, releases[16], '--dry-run', *CAPACITY, *compat_args(*releases[:16]))['error'] == limit
+    assert refuse_unchanged(site, releases[16], '--dry-run', *compat_args(*releases[8:16]))['error'] == limit
+
+
+@pytest.mark.parametrize('value', ['7', '17', '0', '-1', '9.5', '16.0', '+16', ' 16', '１６', 'sixteen', ''])
+def test_invalid_capacity_refused_unchanged(tmp_path, site, value):
+    run(site, artifact(tmp_path, '1'))
+    error = refuse_unchanged(site, artifact(tmp_path, '2'), '--capacity', value)
+    assert error == {'status': 'error', 'error': 'invalid --capacity: integer 8..16 required'}

@@ -19,6 +19,11 @@ python3 apps/prototype-wp-alt-context/scripts/localwp/install-release.py \
   --dry-run
 ```
 
+The **default store capacity is 8** managed views and 8 custody ZIPs. A store
+already at that limit refuses the next artifact; read
+[Explicit capacity headroom](#explicit-capacity-headroom) before adding
+`--capacity N` (exact integer 8–16, hard maximum 16).
+
 Remove `--dry-run` to promote. Add `--site-url https://your-site.example` to check
 real served bytes. The URL is the WordPress root including any subdirectory;
 assets are requested on that same origin, redirects refused, with a three-second
@@ -34,8 +39,9 @@ header, manifest identity, all installed file digests and original custody ZIP.
 A reinstall of the active digest does these checks without another view/backup.
 `--dry-run` validates only the candidate, makes no site/store changes and reports
 that scope; compatibility and retention checks run under the promotion lock.
-All results, including errors, are JSON on stdout; errors exit nonzero. Save the
-successful JSON as deployment evidence. The active view also contains
+All results, including errors, are JSON on stdout; errors exit nonzero. Once
+`--capacity` is valid, every result and refusal records the effective `capacity`.
+Save the successful JSON as deployment evidence. The active view also contains
 `.release-receipt.json`; it has paths and identities, so configure the web server
 to deny dotfiles. Keep storage outside the web root and outside Git worktrees,
 on persistent local storage, with trusted ownership and web-server read access.
@@ -134,11 +140,16 @@ pages opened before rollback still have their modules. It records the rolled-fro
 target, allowing a later reversal. This does not roll back databases or backend
 API behavior; caller gates must establish their compatibility separately.
 
-There are at most **eight managed views and eight custody ZIPs per store**.
-Retained graph bytes can grow to at most eight bounded artifacts plus the initial
-unmanaged tree (also limited to 512 MiB on adoption). Limits stop
+**Store capacity** is the maximum number of managed views, and separately of
+custody ZIPs, in one store. The candidate, every digest inherited from the active
+receipt and every supplied compatibility ZIP count against it. The **default is
+8**, unchanged. `--capacity N` is explicit operator headroom described below; it
+never exceeds **16**. Capacity changes counts only. At every capacity, each view's
+retained graph stays within 4.5 GiB and 270,000 entries (nine 512 MiB units: eight
+bounded artifacts plus the initial unmanaged tree, also limited to 512 MiB on
+adoption), and one invocation expands at most 4 GiB of ZIP content. Limits stop
 promotion; they never expire an open page's assets. Failed publication also
-consumes capacity. The tool does not silently relax the limit.
+consumes capacity. The tool never raises the limit on its own.
 
 `--reap` requires the active view to belong to the selected store's `views/`;
 a store mismatch refuses before deletion. With the active ZIP/digest and matching
@@ -150,7 +161,7 @@ lock and does not prune caches, external targets or source trees. All views carr
 self-contained compatibility copies; no compatibility asset points into a reaped
 view. Invalid/tampered receipts stop cleanup.
 
-Routine successful history remains referenced. At the limit, keep the old store,
+Routine successful history remains referenced. At the capacity limit, keep the old store,
 custody ZIPs, receipts (including dotfiles) and rollback targets intact. Inventory
 every retained graph and its published ZIP/independently expected digest before
 a maintenance handoff. Do not strip receipt metadata to evade validation. A
@@ -168,7 +179,67 @@ digest or restore the intact managed target/store, then retry. Copying assets
 alone cannot establish provenance. Keep the old store until all site links,
 rollback requirements and external consumers have been checked explicitly;
 elapsed time alone does not make deletion safe. Supplied compatibility ZIPs
-count toward the eight-artifact limit, so a new store is not an unbounded escape.
+and inherited custody count toward the store capacity (8 unless `--capacity` is
+given), so a new store is neither an unbounded escape nor a quota reset.
+
+### Explicit capacity headroom
+
+Use this when a store is full under the default and its history must stay
+intact: for example 8 custody ZIPs and 7 views, with the active receipt
+inheriting 7 older digests. The next promotion refuses unchanged with
+`artifact custody limit: operator retirement required`. A different store does
+not help, because it inherits and copies all 8 custody ZIPs. `--capacity N`
+raises both counts for **that invocation only**. It accepts the exact decimal
+values 8 to 16. Anything else, including 7, 17, 0, signs, spaces, decimals
+and non-ASCII digits, refuses as a JSON error before any site or store access. The
+value is never written to the store or to `.release-receipt.json`, whose format is
+unchanged, so older receipts and readers stay compatible. The JSON result records
+it as `capacity`; save that JSON as the audit record.
+
+Promote with the same explicit value through dry-run, promotion and readback:
+
+```bash
+: "${ACX_NEW_ZIP:?Set the absolute path to the published ZIP}"
+: "${ACX_NEW_SHA256:?Set its independently known published SHA256}"
+python3 apps/prototype-wp-alt-context/scripts/localwp/install-release.py \
+  --zip "$ACX_NEW_ZIP" --sha256 "$ACX_NEW_SHA256" \
+  --wp-path /absolute/wordpress/app/public \
+  --store /stable/private/alt-context-releases \
+  --capacity 16 --dry-run
+# Then repeat without --dry-run and with --site-url https://your-site.example.
+```
+
+Rollback after such a promotion inherits the new view's digests (nine in the
+example). Without the flag it refuses unchanged with
+`compatibility artifact limit exceeded`, so the rollback command must name
+the same capacity:
+
+```bash
+: "${ACX_PREVIOUS_ZIP:?Set the absolute path to the previously active published ZIP}"
+: "${ACX_PREVIOUS_SHA256:?Set its independently known published SHA256}"
+python3 apps/prototype-wp-alt-context/scripts/localwp/install-release.py \
+  --zip "$ACX_PREVIOUS_ZIP" --sha256 "$ACX_PREVIOUS_SHA256" \
+  --wp-path /absolute/wordpress/app/public \
+  --store /stable/private/alt-context-releases \
+  --capacity 16 --rollback --site-url https://your-site.example
+```
+
+`--verify`, a same-digest reinstall and `--reap` count no history and work at any
+capacity. Pass `--capacity 16` to them as well so every saved JSON names one
+policy; `--reap` also reports it as `retention_limit`. While the store holds
+more than 8 artifacts, every later promotion and rollback over that history
+needs `--capacity`. The pre-capacity installer can still `--verify` and `--reap`
+such a store, but it refuses to promote or roll back there. Keep this installer
+revision available for as long as any store holds more than 8 artifacts.
+
+This is bounded operational headroom, not a history retirement mechanism. At
+16 a store refuses its 17th artifact or view exactly as it refuses the ninth at
+the default. Custody is never expired, and the byte and entry ceilings above do
+not grow. A promotion stops reading inherited custody at the limit, so it holds at
+most N custody ZIPs in memory. Worst-case disk is N custody ZIPs (512 MiB
+each) plus N views (4.5 GiB each). Check free space first. Before the first
+promotion past 8, archive the whole store and record the per-ZIP inventory
+described above.
 
 ## Runtime gate remains an operator responsibility
 
@@ -201,6 +272,13 @@ Stable IDs at their use:
 - Predicted RED: [TEST-06 Watch it fail once / predict the failure](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-06), *Modern Software Engineering*, ch. 8.
 - Escaped regressions: [TEST-15 Prove the green can go red](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-15), *The Pragmatic Programmer*, ch. 9.
 - Root joins both authors and retests every request: [TEST-33 Re-review every requested change](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-33), *Implementing Effective Code Reviews*, ch. 11.
+- Optional `--capacity`, default 8 kept: [API-09 Don't change it, add it](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#api-09), *RESTful Web API Patterns and Practices Cookbook*, ch. 2.
+- Pre-capacity and capacity-aware installers read each other's receipts: [DATA-03 Schema evolution compat](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#data-03), *Designing Data-Intensive Applications*, ch. 4.
+- Rollback repeats the explicit capacity: [RLSE-08 Rollback written before ship](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#rlse-08), *Continuous Delivery*, ch. 10 + *Continuous Delivery*, ch. 12.
+- Exact-value flag check before site/store access: [SEC-01 Validate at every trust boundary](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/security.md#sec-01), *The Developer's Playbook for LLM Security*, ch. 3.
+- Nine-artifact history, HTTP readback and both installer revisions tested together: [TEST-22 Test the assembled version tuple](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#test-22), *Continuous Delivery*, ch. 13.
+- One defined term; reap's `retention_limit` reports the same value: [NAME-02 One word per concept](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#name-02), *The Programmer's Brain*, ch. 8.
+- Finite headroom, not a purge: [RES-07 Steady-state reclaimer](https://github.com/darce/heuristics-canon/blob/1883d309b43665ba73b97da1b4aa4d2d1ee43f48/lexicons/engineering.md#res-07), *Release It!*, ch. 5. Contextual exemption: custody ZIPs are durable release evidence retired by the operator; `--reap` remains the view reclaimer and capacity stays capped.
 
 Operator-supplied semantic priors (not re-created DB evidence): 17007 WBTRUST-0
 requires served-build identity; 16293/16267 GTMSMOKE requires artifact release
@@ -209,6 +287,27 @@ operator's latest-published request; 19177 separates the historical scan 400.
 Frozen full QB priors 19183 (P1) and 19184 (P2), asset-gap prior 19178 and exact
 old-asset/FPM repair prior 18307 govern this revision. These are operator-supplied
 ONNX gte-base-en-v1.5 verified priors; this lane neither queries nor updates a DB.
+
+### Capacity headroom validation
+
+Base `cc9b9c63f2235fde9dde8127a9c4dd7db08526d5`. The 14 new cases were predicted
+and observed RED against the unchanged installer: **14 failed, 36 passed in 20.74s**. The
+default ninth-artifact refusal lacked `capacity`, `--capacity 16` was an
+`unrecognized arguments` parser exit, and every invalid value produced that
+parser exit instead of a JSON refusal. With the change: **50 passed in 30.98s**. Thirteen
+single-site source mutations each fail at least one new case: baseline
+production, each count check, the pre-read guard, reap reporting, an `int()`
+validator, a 17 bound, a raised default, error JSON without `capacity` and a
+persisted receipt field. In a cross-version run, the baseline installer wrote
+the 8-artifact history and the new installer admitted the ninth with
+`--capacity 16`. The baseline installer then verified that view over HTTP, and
+the new installer rolled back over baseline-written receipts.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 timeout 600 \
+  /home/gate/src/context-alt-text-monorepo/.venv/bin/python \
+  -m pytest -q -p no:cacheprovider --tb=short scripts/test_plugin_release_install.py
+```
 
 ### Dispatch2 validation and join
 

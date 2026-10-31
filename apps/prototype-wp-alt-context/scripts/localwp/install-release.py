@@ -20,7 +20,8 @@ import uuid
 
 DIST = 'public/assets/dist/'
 RECEIPT = '.release-receipt.json'
-MAX_VIEWS = 8
+MAX_VIEWS = 8  # default store capacity; also sizes the fixed byte/entry ceilings
+MAX_CAPACITY = 16  # hard bound for explicit --capacity operator headroom
 MAX_BYTES = 512 * 1024 * 1024
 
 
@@ -44,6 +45,13 @@ def read_file(path, limit=MAX_BYTES, follow_symlink=False):
         data = stream.read(limit+1)
         require(len(data) <= limit, 'file exceeds bounds: '+str(path))
         return data
+
+
+def capacity(value):
+    """Exact decimal 8..16 only: no signs, spaces, decimals or non-ASCII digits."""
+    require(value in [str(n) for n in range(MAX_VIEWS, MAX_CAPACITY+1)],
+            'invalid --capacity: integer '+str(MAX_VIEWS)+'..'+str(MAX_CAPACITY)+' required')
+    return int(value)
 
 
 def safe(name):
@@ -239,7 +247,7 @@ def readback(root, r, site_url):
     return True
 
 
-def reap(store, active):
+def reap(store, active, limit):
     """Conservative orphan cleanup; never retire a compatibility/rollback root."""
     views = store/'views'
     records = {p: check_view(p) for p in views.iterdir()}
@@ -257,7 +265,7 @@ def reap(store, active):
             removed.append(str(path))
     # ZIP custody is intentionally not reaped: it is small compared with views,
     # and may be retained as release evidence outside deployment references.
-    return {'reaped_views': removed, 'retention_limit': MAX_VIEWS}
+    return {'reaped_views': removed, 'retention_limit': limit}
 
 
 def swap(active, destination):
@@ -277,7 +285,7 @@ def execute(args):
     require(active.parent.is_dir(), 'missing plugins directory')
     require(not active.exists() or active.is_symlink(), 'existing directory requires operator migration to a stable symlink')
     require(len(args.compat_zip) == len(args.compat_sha256), 'compat ZIP/SHA256 counts differ')
-    require(len(args.compat_zip) < MAX_VIEWS, 'compatibility artifact limit exceeded')
+    require(len(args.compat_zip) < args.capacity, 'compatibility artifact limit exceeded')
     data = read_file(Path(args.zip))
     require(len(data) <= MAX_BYTES and re.fullmatch('[0-9a-fA-F]{64}', args.sha256) and digest(data) == args.sha256.lower(), 'ZIP SHA256 mismatch')
     # Candidate validation precedes all site/store mutation.
@@ -324,7 +332,7 @@ def execute(args):
                 require(old and old['artifact_sha256'] == identity['artifact_sha256'], 'reap requires active candidate')
                 require(Path(previous).parent == store/'views', 'reap requires active view in selected store/views')
                 require(json.loads(read_file(store/'site.json')) == str(wp), 'store belongs to another site')
-                return reap(store, active)
+                return reap(store, active, args.capacity)
             if args.rollback:
                 require(old and old['previous'] and Path(old['previous']).is_dir(), 'no rollback target')
                 prior_root = Path(old['previous'])
@@ -352,10 +360,12 @@ def execute(args):
                     # A managed view's receipt carries the graph automatically.
                     # Keep its verified custody when changing site-bound stores.
                     inherited = [old['artifact_sha256'], *old.get('compatibility_artifacts', [])]
-                    require(len(inherited) <= MAX_VIEWS, 'compatibility artifact limit exceeded')
+                    require(len(inherited) <= args.capacity, 'compatibility artifact limit exceeded')
                     for sha in inherited:
                         require(re.fullmatch('[0-9a-f]{64}', sha), 'invalid custody digest')
                         if sha not in archives:
+                            # Refuse before reading: at most `capacity` ZIPs are held.
+                            require(len(archives) < args.capacity, 'artifact custody limit: operator retirement required')
                             prior_data = read_file(Path(previous).parent.parent/'artifacts'/sha/'artifact.zip')
                             require(digest(prior_data) == sha, 'inherited custody ZIP differs')
                             archives[sha] = prior_data
@@ -363,7 +373,7 @@ def execute(args):
                             compatibility_artifacts.append(sha)
                 sources = {path: (sha, verified[path][1] if path in verified else Path(previous)/path) for path, sha in prior_graph.items()}
                 carry(candidate, compatibility, sources)
-            require(len(archives) <= MAX_VIEWS, 'artifact custody limit: operator retirement required')
+            require(len(archives) <= args.capacity, 'artifact custody limit: operator retirement required')
             store.mkdir(parents=True, exist_ok=True)
             owner = store/'site.json'
             if owner.exists():
@@ -371,10 +381,10 @@ def execute(args):
             else:
                 owner.write_text(json.dumps(str(wp)))
             views = store/'views'; views.mkdir(exist_ok=True)
-            require(len(list(views.iterdir())) < MAX_VIEWS, 'retention limit: operator retirement required')
+            require(len(list(views.iterdir())) < args.capacity, 'retention limit: operator retirement required')
             artifacts = store/'artifacts'
             retained = {p.name for p in artifacts.iterdir()} if artifacts.exists() else set()
-            require(len(retained | archives.keys()) <= MAX_VIEWS, 'artifact custody limit: operator retirement required')
+            require(len(retained | archives.keys()) <= args.capacity, 'artifact custody limit: operator retirement required')
             artifacts.mkdir(exist_ok=True)
             for sha, archive_data in archives.items():
                 custody = artifacts/sha
@@ -420,11 +430,18 @@ def main():
     for name in ('dry-run', 'verify', 'rollback', 'reap'):
         mode.add_argument('--'+name, action='store_true')
     parser.add_argument('--site-url', help='WordPress URL; compare every retained asset byte, no redirects, 3s/request')
+    parser.add_argument('--capacity', default=str(MAX_VIEWS), metavar='N',
+                        help='store capacity: max managed views and custody ZIPs (default %(default)s); explicit '
+                             'operator headroom up to '+str(MAX_CAPACITY)+', never persisted, so repeat it for '
+                             'later promotion/rollback; byte and entry ceilings do not change')
     args = parser.parse_args()
+    effective = {}
     try:
-        print(json.dumps(execute(args), sort_keys=True))
+        args.capacity = capacity(args.capacity)
+        effective = {'capacity': args.capacity}
+        print(json.dumps({**execute(args), **effective}, sort_keys=True))
     except Exception as error:
-        print(json.dumps({'status': 'error', 'error': str(error)}))
+        print(json.dumps({'status': 'error', 'error': str(error), **effective}))
         raise SystemExit(1)
 
 

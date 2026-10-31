@@ -12,6 +12,7 @@ import { useTopUnlabeledTotal } from './roster/hooks/useTopUnlabeledTotal';
 import { ClusterDrawerPanel, ROSTER_ASSIGN_STATUS } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
+import { PersonWorkspaceRecovery } from './roster/PersonWorkspaceRecovery';
 import { SamePersonPrompt } from './roster/SamePersonPrompt';
 import {
   ROSTER_ROUTE_PARAM_KEYS,
@@ -77,7 +78,10 @@ export const RosterPage = (): React.JSX.Element => {
     }
     return selectDeterministicDefaultWorkspaceEntry(rosterEntries);
   }, [defaultWorkspaceRoute, projectionShapeAvailable, projectionStatus, rosterEntries]);
-  const resolvedWorkspaceEntry = personWorkspaceEntry ?? defaultWorkspaceEntry;
+  // A cached successful row cannot turn a failed read into a fresh workspace.
+  const resolvedWorkspaceEntry = entriesQuery.isError || entriesQuery.isLoading
+    ? null
+    : personWorkspaceEntry ?? defaultWorkspaceEntry;
   const projectionStateNotice = React.useMemo(() => {
     if (!parsedRoute.requiresProjectionGateNotice) {
       return null;
@@ -106,6 +110,19 @@ export const RosterPage = (): React.JSX.Element => {
     personWorkspaceEntry,
   ]);
   const routeGateNotice = resolvedWorkspaceEntry === null ? projectionStateNotice : null;
+  const workspaceAvailability = resolvedWorkspaceEntry !== null
+    ? __('This person’s workspace is available.', 'alt-context')
+    : rosterEntries.length === 0 && entriesQuery.data !== undefined
+      ? __('No people are available for this workspace. Refresh to check again.', 'alt-context')
+      : projectionStatus === 'stale'
+        ? __('People data is still out of date. This workspace will stay unavailable until up-to-date data is available.', 'alt-context')
+        : projectionStatus === 'refreshing'
+          ? __('People data is still updating. Refresh to check again.', 'alt-context')
+          : projectionStatus === 'failed'
+            ? __('People data could not finish updating. This workspace is unavailable. Refresh to check again.', 'alt-context')
+            : !projectionShapeAvailable
+              ? __('This person’s workspace data is not available yet. Refresh to check again.', 'alt-context')
+              : __('This person is not in the latest people data. Your selected person is kept. Refresh to check again.', 'alt-context');
 
   const dragDrop = useClusterDragDrop();
 
@@ -202,10 +219,22 @@ export const RosterPage = (): React.JSX.Element => {
 
       <div className="acx-roster__panel">
         <SamePersonPrompt />
-        {resolvedWorkspaceEntry !== null && (
-          <PersonWorkspacePanel entry={resolvedWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} />
+        {(parsedRoute.requiresProjectionGateNotice || defaultWorkspaceRoute) && (
+          <PersonWorkspaceRecovery
+            query={entriesQuery}
+            personKey={personRouteUuid}
+            availability={workspaceAvailability}
+            unavailable={resolvedWorkspaceEntry === null}
+          />
         )}
-        <RosterEntriesSection query={entriesQuery} routeNotice={routeGateNotice} />
+        {resolvedWorkspaceEntry !== null && (
+          <PersonWorkspacePanel entry={resolvedWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} preserveRequestedRoute />
+        )}
+        <RosterEntriesSection
+          query={entriesQuery}
+          routeNotice={entriesQuery.isError || entriesQuery.isLoading ? null : routeGateNotice}
+          showQueryFeedback={!(parsedRoute.requiresProjectionGateNotice || defaultWorkspaceRoute)}
+        />
 
         <section
           className="acx-roster__review-cta"

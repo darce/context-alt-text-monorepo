@@ -129,9 +129,10 @@ export interface RosterEntriesQuery {
 export interface RosterEntriesSectionProps {
   query: RosterEntriesQuery;
   routeNotice?: string | null;
+  showQueryFeedback?: boolean;
 }
 
-export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntriesSectionProps): React.JSX.Element => {
+export const RosterEntriesSection = ({ query, routeNotice = null, showQueryFeedback = true }: RosterEntriesSectionProps): React.JSX.Element => {
   const [mergeSequence, setMergeSequence] = useState(0);
   const [mergeSessions, setMergeSessions] = useState<{ id: number; person: RosterEntry }[]>([]);
   const [isAdding, setIsAdding] = useState(false);
@@ -414,7 +415,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
         )}
       </header>
 
-      {!query.isLoading && !query.isError && !isTrueZeroState && (
+      {!query.isLoading && (!query.isError || entries.length > 0) && !isTrueZeroState && (
         <div className="acx-form-group">
           <label htmlFor="acx-roster-people-search">{__('Search people', 'alt-context')}</label>
           <input
@@ -428,9 +429,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
         </div>
       )}
 
-      {query.isLoading && <p>{__('Loading roster entries…', 'alt-context')}</p>}
+      {showQueryFeedback && query.isLoading && <p>{__('Loading roster entries…', 'alt-context')}</p>}
 
-      {query.isError && (
+      {showQueryFeedback && query.isError && (
         <div className="acx-error-state" role="status">
           <p>{__('Unable to load roster entries.', 'alt-context')}</p>
           <button type="button" className="acx-button acx-button--secondary" onClick={() => void query.refetch()}>
@@ -534,7 +535,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       )}
 
       {!query.isLoading &&
-        !query.isError &&
+        (!query.isError || entries.length > 0) &&
         (isTrueZeroState ? (
           <div className="acx-roster-section__empty" data-testid="roster-zero-state">
             <EmptyState

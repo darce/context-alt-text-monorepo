@@ -20,11 +20,17 @@ Exit codes distinguish who can fix the gap:
   name exists as a non-matview relation, a centroid typmod gap the current
   role cannot drop/rebuild, or a wrong-typmod *table* vector column): healing
   cannot repair these; see docs/runbooks/prod-identity-rls-remediation.md.
+
+``--runtime-role`` checks the actual request ``POSTGRES_DSN`` in a read-only
+transaction, with separate schema and principal evidence. It also refuses
+SUPERUSER/BYPASSRLS credentials. Without this flag the operator's standalone
+schema verifier continues to use ``POSTGRES_SYNC_DSN`` and permits schema owners.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib
 import json
 import re
@@ -33,6 +39,7 @@ from collections.abc import Iterable, Mapping
 from typing import TypedDict
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from db.settings import get_database_settings
 from recognition.application.health import IDENTITY_VECTOR_COLUMNS
@@ -75,6 +82,7 @@ class SchemaStateReport(TypedDict):
     matview_vanished_grantees: list[str]
     unique_constraint_gaps: list[str]
     operator_actions: list[str]
+    fingerprint_contract_gaps: list[str]
 
 
 def _normalize_policy_expr(expr: str | None) -> str:
@@ -123,6 +131,7 @@ def _validate_schema_state(
     matview_create_privilege_gaps: Iterable[str] | None = None,
     matview_vanished_grantees: Iterable[str] | None = None,
     unique_constraint_gaps: Iterable[str] | None = None,
+    fingerprint_contract_gaps: Iterable[str] = (),
     current_role_quoted: str | None = None,
     vector_typmods: Mapping[tuple[str, str], int | None],
 ) -> SchemaStateReport:
@@ -263,6 +272,7 @@ def _validate_schema_state(
         unique_gaps = [str(gap) for gap in unique_constraint_gaps if gap]
 
     table_vector_gaps: list[str] = []
+    fingerprint_gaps = list(fingerprint_contract_gaps)
     for table_name, column_name in IDENTITY_VECTOR_COLUMNS:
         if table_name == MATVIEW_NAME:
             continue
@@ -282,6 +292,7 @@ def _validate_schema_state(
         or na_col_gaps
         or matview_typmod_unrepairable
         or table_vector_gaps
+        or fingerprint_gaps
     ):
         exit_code = EXIT_OPERATOR_REQUIRED
     elif (
@@ -316,6 +327,7 @@ def _validate_schema_state(
         "matview_vanished_grantees": vanished_grantees,
         "unique_constraint_gaps": unique_gaps,
         "operator_actions": operator_actions,
+        "fingerprint_contract_gaps": fingerprint_gaps,
     }
 
 
@@ -435,8 +447,50 @@ def _collect_unique_constraint_gaps(connection, actual_tables: Iterable[str]) ->
     return gaps
 
 
-def collect_and_validate(connection) -> SchemaStateReport:
-    """Collect live schema facts on ``connection`` and classify them."""
+def _collect_fingerprint_contract_gaps(connection) -> list[str]:
+    """Check the replay identity contract, without repairing or adopting rows.
+
+    Missing columns are already classified by the general column collector.
+    Wrong existing shape/checks require operator attention; do not claim that
+    the additive healer can rewrite them safely.
+    """
+    column = connection.execute(text(
+        "SELECT a.atttypid = 'varchar'::regtype, a.atttypmod, a.attnotnull, a.atthasdef "
+        "FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = current_schema() AND c.relname = 'curation_replay_records' "
+        "AND a.attname = 'request_fingerprint' AND a.attnum > 0 AND NOT a.attisdropped"
+    )).one_or_none()
+    if column is None:
+        return []
+    gaps = []
+    if tuple(column) != (True, 68, False, False):  # varchar typmod includes its 4-byte header
+        gaps.append("curation_replay_records.request_fingerprint must be nullable VARCHAR(64) without a default")
+    check = connection.execute(text(
+        "SELECT pg_get_expr(k.conbin, k.conrelid), k.convalidated "
+        "FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = current_schema() AND c.relname = 'curation_replay_records' "
+        "AND k.conname = 'ck_curation_replay_request_fingerprint' AND k.contype = 'c'"
+    )).one_or_none()
+    expected = "request_fingerprint IS NULL OR length(request_fingerprint) = 64"
+    if check is None or not check[1] or _normalize_policy_expr(check[0]) != _normalize_policy_expr(expected):
+        gaps.append("curation_replay_records.request_fingerprint requires validated ck_curation_replay_request_fingerprint: NULL or length=64")
+    return gaps
+
+
+def _relkind_text(kind: str | bytes | None) -> str | None:
+    """asyncpg exposes PostgreSQL's internal char as bytes; psycopg uses str."""
+    return kind.decode("ascii") if isinstance(kind, bytes) else kind
+
+
+def collect_and_validate(connection, *, runtime_contract: bool = False) -> SchemaStateReport:
+    """Collect live schema facts on ``connection`` and classify them.
+
+    Runtime startup additionally checks the existing fingerprint column's
+    complete shape/check contract. Legacy schema-owner callers keep their
+    existing collection behavior; missing columns are checked in both modes.
+    """
     inspector = inspect(connection)
     table_names = inspector.get_table_names()
     actual_revision = None
@@ -489,8 +543,9 @@ def collect_and_validate(connection) -> SchemaStateReport:
         operator_policy_permissiveness = None
         operator_policy_commands = None
         operator_policy_roles = None
-    table_relkinds = dict(
-        connection.execute(
+    table_relkinds = {
+        name: _relkind_text(kind)
+        for name, kind in connection.execute(
             text(
                 "SELECT c.relname, c.relkind FROM pg_class c "
                 "JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -498,7 +553,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
             ),
             {"names": list(EXPECTED_TABLES)},
         ).all()
-    )
+    }
     matview_row = connection.execute(
         text(
             "SELECT c.relkind, pg_get_userbyid(c.relowner), "
@@ -517,6 +572,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
         create_gaps = _collect_matview_create_privilege_gaps(connection)
     else:
         matview_relkind, _owner, can_drop, current_role_quoted = matview_row
+        matview_relkind = _relkind_text(matview_relkind)
         # NULL from pg_has_role means the owner role is gone — fail closed (P3).
         matview_can_drop = bool(can_drop) if can_drop is not None else False
         create_gaps = _collect_matview_create_privilege_gaps(connection) if matview_relkind in (None, "m") else []
@@ -548,6 +604,7 @@ def collect_and_validate(connection) -> SchemaStateReport:
         unique_constraint_gaps=unique_constraint_gaps,
         current_role_quoted=None if current_role_quoted is None else str(current_role_quoted),
         vector_typmods=vector_typmods,
+        fingerprint_contract_gaps=_collect_fingerprint_contract_gaps(connection) if runtime_contract else (),
     )
 
 
@@ -609,14 +666,52 @@ def collect_matview_state(connection, *, expected_owner: str, expected_acl: list
     }
 
 
+async def _collect_runtime_state(dsn: str) -> tuple[SchemaStateReport, list[str]]:
+    """Use the request DSN, never a separate schema-owner connection or SET ROLE.
+
+    Check the authenticated login as well as current_user: a privileged login
+    with a connection-time role override still carries privileged credentials.
+    These are startup facts, not proof of per-request tenant isolation.
+    """
+    engine = create_async_engine(dsn)
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SET TRANSACTION READ ONLY"))
+            report = await connection.run_sync(lambda sync: collect_and_validate(sync, runtime_contract=True))
+            role = (await connection.execute(text(
+                "SELECT current_user, active.rolsuper, active.rolbypassrls, "
+                "session_user, login.rolsuper, login.rolbypassrls "
+                "FROM pg_roles active CROSS JOIN pg_roles login "
+                "WHERE active.rolname = current_user AND login.rolname = session_user"
+            ))).one()
+            gaps = []
+            for label, name, superuser, bypass in (
+                ("current_user", role[0], role[1], role[2]),
+                ("session_user", role[3], role[4], role[5]),
+            ):
+                if superuser:
+                    gaps.append(f"{label}={name} has SUPERUSER")
+                if bypass:
+                    gaps.append(f"{label}={name} has BYPASSRLS")
+            return report, gaps
+    finally:
+        await engine.dispose()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--runtime-role", action="store_true",
+        help="Verify schema and refuse privileged request credentials using POSTGRES_DSN (read-only)",
+    )
     parser.add_argument("--matview-only", action="store_true")
     parser.add_argument("--expected-owner")
     parser.add_argument(
         "--expected-acl", help='JSON non-owner grants: [["role", "SELECT", false]]; public denotes PUBLIC'
     )
     args = parser.parse_args(argv)
+    if args.runtime_role and args.matview_only:
+        parser.error("--runtime-role cannot be combined with --matview-only")
     expected_acl = None
     if args.matview_only:
         if not args.expected_owner or args.expected_acl is None:
@@ -636,22 +731,34 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"invalid --expected-acl: {exc}")
     elif args.expected_owner is not None or args.expected_acl is not None:
         parser.error("owner/ACL expectations require --matview-only")
-    dsn = get_database_settings().postgres_sync_dsn
-    engine = create_engine(dsn)
+    engine = None
+    role_gaps: list[str] = []
     try:
-        with engine.connect() as connection:
-            if args.matview_only:
-                report = collect_matview_state(
-                    connection, expected_owner=args.expected_owner, expected_acl=expected_acl
-                )
-                print(json.dumps(report, sort_keys=True))
-                return report["exit_code"]
-            report = collect_and_validate(connection)
+        settings = get_database_settings()
+        if args.runtime_role:
+            report, role_gaps = asyncio.run(_collect_runtime_state(settings.postgres_dsn))
+        else:
+            engine = create_engine(settings.postgres_sync_dsn)
+            with engine.connect() as connection:
+                if args.matview_only:
+                    report = collect_matview_state(
+                        connection, expected_owner=args.expected_owner, expected_acl=expected_acl
+                    )
+                    print(json.dumps(report, sort_keys=True))
+                    return report["exit_code"]
+                report = collect_and_validate(connection)
     except Exception as exc:  # infra failure, not schema drift — distinct exit code
         print(f"identity schema verification could not run: {exc}", file=sys.stderr)
         return EXIT_INFRA
     finally:
-        engine.dispose()
+        if engine is not None:
+            engine.dispose()
+
+    if args.runtime_role:
+        if role_gaps:
+            print("runtime role verification failed: " + "; ".join(role_gaps), file=sys.stderr)
+        else:
+            print("runtime role verified: current_user and session_user are NOSUPERUSER NOBYPASSRLS")
 
     if report["unexpected_tables"]:
         # advisory only: never affects the exit code, but surface the drift
@@ -662,7 +769,7 @@ def main(argv: list[str] | None = None) -> int:
             f"identity schema verified: revision={report['actual_revision']} "
             f"rls_ok={len(TENANT_TABLES)} matview=m centroid_typmod={report['matview_centroid_typmod']}"
         )
-        return EXIT_OK
+        return EXIT_OPERATOR_REQUIRED if role_gaps else EXIT_OK
 
     print("identity schema verification failed", file=sys.stderr)
     print(
@@ -676,6 +783,8 @@ def main(argv: list[str] | None = None) -> int:
         na = report["non_additive_column_gaps"].get(table_name, [])
         suffix = f" (non-additive, operator-required: {','.join(na)})" if na else ""
         print(f"column_gaps: {table_name} missing {','.join(cols)}{suffix}", file=sys.stderr)
+    for gap in report["fingerprint_contract_gaps"]:
+        print(f"fingerprint_contract_gaps: {gap}", file=sys.stderr)
     if report["matview_relkind"] != "m":
         print(f"matview_relkind={report['matview_relkind']}", file=sys.stderr)
     if report["matview_relkind"] == "m" and report["matview_centroid_typmod"] != EMBEDDING_DIMENSION:
@@ -695,7 +804,7 @@ def main(argv: list[str] | None = None) -> int:
             "operator action required: see docs/runbooks/prod-identity-rls-remediation.md",
             file=sys.stderr,
         )
-    return report["exit_code"]
+    return EXIT_OPERATOR_REQUIRED if role_gaps else report["exit_code"]
 
 
 if __name__ == "__main__":  # pragma: no cover

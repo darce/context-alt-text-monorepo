@@ -542,4 +542,6 @@ def test_capacity_hard_bound_refuses_seventeenth_unchanged(tmp_path, site):
 def test_invalid_capacity_refused_unchanged(tmp_path, site, value):
     run(site, artifact(tmp_path, '1'))
     error = refuse_unchanged(site, artifact(tmp_path, '2'), '--capacity', value)
-    assert error == {'status': 'error', 'error': 'invalid --capacity: integer 8..16 required'}
+    assert 'capacity' in error
+    assert error['capacity'] is None
+    assert error == {'status': 'error', 'error': 'invalid --capacity: integer 8..16 required', 'capacity': None}
